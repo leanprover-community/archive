@@ -1,0 +1,446 @@
+[
+    {
+        "content": "<p>Observe the following two <code>decidable</code> instances, one of which uses a rewrite, and fails on most inputs, and one which avoids using the rewrite, and works just fine.</p>\n<div class=\"codehilite\"><pre><span></span>inductive T : ℕ → Prop\n| t : Π {L : ℕ}, T L\n\ndef good : decidable_pred T\n| L := decidable.is_true T.t\n\nlemma T_iff (L : ℕ) : T L ↔ true :=\n⟨λ h, trivial, λ h, T.t⟩\n\ndef bad : decidable_pred T\n| L := by { rw T_iff, apply_instance, }\n\nsection good\nlocal attribute [instance] good\n\nexample : T 0 := dec_trivial\nend good\n\nsection bad\nlocal attribute [instance] bad\n\nexample : T 0 := dec_trivial  -- FAILS\nend bad\n</pre></div>",
+        "id": 174019102,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566613936
+    },
+    {
+        "content": "<p>I suspect that this, rather than any timeout issues, is actually the root cause of most of the failures I see in trying to use <code>dec_trivial</code>.</p>",
+        "id": 174019115,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566614000
+    },
+    {
+        "content": "<p>Can someone explain what is going on?</p>",
+        "id": 174019116,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566614007
+    },
+    {
+        "content": "<p>(Obviously this is a minimised example; I hit this problem \"in the wild\", with a decidability instance where it was more painful to avoid using rewrite.)</p>",
+        "id": 174019897,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566615569
+    },
+    {
+        "content": "<p>If you print them, you get</p>\n<div class=\"codehilite\"><pre><span></span>def good._main : @decidable_pred nat T :=\nλ (a : nat), id_rhs (decidable (T a)) (@decidable.is_true (T a) (@T.t a))\n</pre></div>\n\n\n<p>vs</p>\n<div class=\"codehilite\"><pre><span></span>def bad._main : @decidable_pred nat T :=\nλ (a : nat), id_rhs (decidable (T a))\n    (@eq.mpr (decidable (T a)) (decidable true)\n       (@id (@eq Type (decidable (T a)) (decidable true))\n          (@eq.rec Prop (T a) (λ (_a : Prop), @eq Type (decidable (T a)) (decidable _a))\n             (@eq.refl Type (decidable (T a)))\n             true\n             (@propext (T a) true (T_iff a))))\n       decidable.true)\n</pre></div>",
+        "id": 174019981,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1566615669
+    },
+    {
+        "content": "<p>The first one gives an <code>is_true</code> of the right type, along with a proof.<br>\nThe second one proves that what we are deciding is the same as just deciding true, and then just says \"true\".</p>",
+        "id": 174020116,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1566615927
+    },
+    {
+        "content": "<p>Of course, both actually decide the question...</p>",
+        "id": 174020164,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1566615973
+    },
+    {
+        "content": "<p>The underlying problem is that</p>\n<div class=\"codehilite\"><pre><span></span>example : @ite _ (good 0) _ true false := trivial\n</pre></div>\n\n\n<p>but</p>\n<div class=\"codehilite\"><pre><span></span>example : @ite _ (bad 0)  _ true false := trivial\n</pre></div>\n\n\n<p>doesn't. I don't know if that's really any simpler, since an <code>ite</code> is just a <code>rec</code> on <code>decidable</code>.</p>",
+        "id": 174020812,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1566617368
+    },
+    {
+        "content": "<p>Interestingly, if I replace the <code>ite</code> with its definition in either of those lines, both fail.</p>",
+        "id": 174021318,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1566618374
+    },
+    {
+        "content": "<p>It turns out this problem is the underlying cause of <code>decidable</code> instances for combinatorial games not working.</p>",
+        "id": 174025527,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566626617
+    },
+    {
+        "content": "<p>I could fix the <code>decidable</code> instances for the integer-valued games, but domineering seems to intrinsically involve non-definitional equations in the construction of <code>short</code> instances, so <code>dec_trivial</code> is still broken there.</p>",
+        "id": 174025571,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566626664
+    },
+    {
+        "content": "<p>It's to do with the fact that the proof of equality uses <code>propext</code>, and isn't a definitional equality, so the <code>eq.rec</code> application can't be iota reduced because the resulting expression won't type check.</p>",
+        "id": 174025976,
+        "sender_full_name": "Chris Hughes",
+        "timestamp": 1566627493
+    },
+    {
+        "content": "<p>the moral of the story is to always use <code>decidable_of_iff</code> instead of <code>rw</code> to prove decidable instances. (It doesn't matter how you prove the iff)</p>",
+        "id": 174025992,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566627583
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>, I think it's worse than that. I've been investigating the decidability instances in the combinatorial games PR. By carefully avoiding <code>rw</code> I can now prove <code>(0 : pgame) &lt; 1 := dec_trivial</code>, but <code>dec_trivial</code> still fails on everything involving domineering.</p>",
+        "id": 174026047,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566627708
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib/blob/surreal/src/set_theory/game/domineering.lean#L131\" target=\"_blank\" title=\"https://github.com/leanprover-community/mathlib/blob/surreal/src/set_theory/game/domineering.lean#L131\">https://github.com/leanprover-community/mathlib/blob/surreal/src/set_theory/game/domineering.lean#L131</a></p>",
+        "id": 174026095,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566627786
+    },
+    {
+        "content": "<p>The other problem I think you will run into with surreals and games is the use of well founded recursion</p>",
+        "id": 174026137,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566627853
+    },
+    {
+        "content": "<p>You may be able to make it compute, but everything in the proof of well foundedness needs to be able to reduce, i.e. it can't be marked <code>theorem</code> even if it's a proof</p>",
+        "id": 174026151,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566627922
+    },
+    {
+        "content": "<p>ooh, I never knew that defining something propositional using <code>def</code> was any different from defining it using <code>theorem</code>!</p>",
+        "id": 174026199,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566628006
+    },
+    {
+        "content": "<p>You rewrote in a proof of <code>short</code>? This is a bad idea and there is even a comment that says as much</p>",
+        "id": 174026253,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566628103
+    },
+    {
+        "content": "<p>You mean the <code>unfold domineering {single_pass:=tt}</code>?</p>",
+        "id": 174026266,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566628171
+    },
+    {
+        "content": "<p>yes</p>",
+        "id": 174026269,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566628176
+    },
+    {
+        "content": "<p>It's not clear to me why <code>short</code> is not a proposition</p>",
+        "id": 174026273,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566628188
+    },
+    {
+        "content": "<p>at the very least you should prove it's a subsingleton</p>",
+        "id": 174026320,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566628230
+    },
+    {
+        "content": "<p>I need to get the <code>fintype</code>s back out of it at various points, I think.</p>",
+        "id": 174026323,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566628246
+    },
+    {
+        "content": "<p>And if I make it a <code>Prop</code> I can't eliminate anymore.</p>",
+        "id": 174026326,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566628258
+    },
+    {
+        "content": "<p>is it preserved by equivalence?</p>",
+        "id": 174026400,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566628342
+    },
+    {
+        "content": "<p>Yes</p>",
+        "id": 174026510,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566628595
+    },
+    {
+        "content": "<p>oh ...</p>",
+        "id": 174026511,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566628609
+    },
+    {
+        "content": "<p>not obviously</p>",
+        "id": 174026512,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566628612
+    },
+    {
+        "content": "<p>sorry, no, it's not preserved under equivalence, I think!</p>",
+        "id": 174026518,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566628632
+    },
+    {
+        "content": "<p>You can just add infinitely many irrelevant options</p>",
+        "id": 174026519,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566628645
+    },
+    {
+        "content": "<p>Oh but I see you have <code>relabelling</code> for this</p>",
+        "id": 174026525,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566628676
+    },
+    {
+        "content": "<p>and possibly <code>restriction</code> too</p>",
+        "id": 174026567,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566628720
+    },
+    {
+        "content": "<p>so you may be able to prove <code>restriction x y -&gt; short y -&gt; short x</code></p>",
+        "id": 174026570,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566628743
+    },
+    {
+        "content": "<p>wait no, <code>restriction</code> does a different thing on the left and right</p>",
+        "id": 174026630,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566628848
+    },
+    {
+        "content": "<p>restriction says that things are better for Left, and worse for Right</p>",
+        "id": 174026653,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566628872
+    },
+    {
+        "content": "<p>(err, maybe other way round)</p>",
+        "id": 174026655,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566628884
+    },
+    {
+        "content": "<p>I proved <code>short</code> is a subsingleton.</p>",
+        "id": 174026663,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566628908
+    },
+    {
+        "content": "<p>Why is it that you're interested in whether <code>short</code> is preserved by equivalence?</p>",
+        "id": 174026703,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566628940
+    },
+    {
+        "content": "<p>I think it really doesn't descend to the quotient; you could define <code>short</code> on the quotient by asking that there exists a <code>pgame</code> representative that is <code>short</code>.</p>",
+        "id": 174026711,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566628975
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>, do you have any advice on diagnosing non-computable problems in <code>dec_trivial</code>? I don't even know how to track down \"the proof that is blocking reduction\" in any example. (That is, all I know how to do is read everything that might be involved and look for bad smells.)</p>",
+        "id": 174026967,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566629455
+    },
+    {
+        "content": "<p>You can use <code>#reduce</code> to find out what you got that isn't <code>of_true ...</code> or <code>of_false ...</code></p>",
+        "id": 174026976,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566629499
+    },
+    {
+        "content": "<p>In the literature they call this \"canonicity\", and lean doesn't have it because of axioms and irreducible proofs</p>",
+        "id": 174027023,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566629534
+    },
+    {
+        "content": "<p>irreducible proofs aren't usually a problem because of proof irrelevance, but subsingleton eliminators like <code>acc</code> use a proof as their major premise, so we have to be able to reduce that proof to a constructor</p>",
+        "id": 174027037,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566629596
+    },
+    {
+        "content": "<p>In fact <code>whnf</code> is sufficient, in case <code>#reduce</code> times out</p>",
+        "id": 174027079,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566629652
+    },
+    {
+        "content": "<p>What is it that I should be passing to <code>whnf</code>?</p>",
+        "id": 174027094,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566629727
+    },
+    {
+        "content": "<p><code>run_cmd tactic.whnf `(domineering.L ≤ 1) &gt;&gt;= tactic.trace</code></p>",
+        "id": 174027096,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566629737
+    },
+    {
+        "content": "<p>I'm missing a ...?</p>",
+        "id": 174027098,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566629748
+    },
+    {
+        "content": "<p>the proof of <code>decidable (domineering.L ≤ 1)</code></p>",
+        "id": 174027100,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566629755
+    },
+    {
+        "content": "<p>So</p>\n<div class=\"codehilite\"><pre><span></span>run_cmd tactic.whnf `(by apply_instance : decidable (domineering.L ≤ 1)) &gt;&gt;= tactic.trace\n</pre></div>",
+        "id": 174027148,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566629836
+    },
+    {
+        "content": "<p>?</p>",
+        "id": 174027149,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566629838
+    },
+    {
+        "content": "<p>yes, I think that should work</p>",
+        "id": 174027150,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566629848
+    },
+    {
+        "content": "<p>does it?</p>",
+        "id": 174027151,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566629851
+    },
+    {
+        "content": "<p>Yes</p>",
+        "id": 174027194,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566629890
+    },
+    {
+        "content": "<p><a href=\"https://gist.github.com/semorrison/2ab6ff0c68a69cc657752ef16145b031\" target=\"_blank\" title=\"https://gist.github.com/semorrison/2ab6ff0c68a69cc657752ef16145b031\">it's a little long</a></p>",
+        "id": 174027196,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566629900
+    },
+    {
+        "content": "<p>If it is successful, you will get a term that starts with <code>decidable.of_true</code>. Otherwise, you should look for the \"active\" part of the term; that's the head of the term unless it's a recursor, in which case you should look at the active part of the major premise, and recurse until you find something that's not a recursor</p>",
+        "id": 174027209,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566629972
+    },
+    {
+        "content": "<p>In this case we have a recursor, <code>decidable.rec</code>, applied to <code>fintype.decidable_forall_fintype</code> in the major premise (at the end)</p>",
+        "id": 174027265,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566630056
+    },
+    {
+        "content": "<p>so the question is, why isn't that reducing? You may need to turn on pp.implicit</p>",
+        "id": 174027275,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566630084
+    },
+    {
+        "content": "<p><code>pp.implicit</code> and <code>pp.max_steps</code> gives me: (message too long, truncated at 262144 characters)</p>",
+        "id": 174027377,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566630314
+    },
+    {
+        "content": "<p>I guess that's what the command line is for.</p>",
+        "id": 174027423,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566630366
+    },
+    {
+        "content": "<p>I weep for lean</p>",
+        "id": 174027425,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566630384
+    },
+    {
+        "content": "<p>Mario, you mean <code>is_true</code> and <code>is_false</code> in your comment up there right?</p>",
+        "id": 174027488,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1566630528
+    },
+    {
+        "content": "<p>yes, I always forget the names</p>",
+        "id": 174027552,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566630687
+    },
+    {
+        "content": "<p>Hmm, the full output with <code>pp.implicit</code> is now at <a href=\"https://gist.github.com/semorrison/56f6f878a3d60d8aaee93184146fff08\" target=\"_blank\" title=\"https://gist.github.com/semorrison/56f6f878a3d60d8aaee93184146fff08\">https://gist.github.com/semorrison/56f6f878a3d60d8aaee93184146fff08</a></p>",
+        "id": 174027559,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566630717
+    },
+    {
+        "content": "<p>but I can't find the \"active part\" anymore.</p>",
+        "id": 174027599,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566630727
+    },
+    {
+        "content": "<p>Unfortunately there are now 6 different appearances of <code>fintype.decidable_forall_fintype</code></p>",
+        "id": 174027601,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566630742
+    },
+    {
+        "content": "<p>counting brackets tells me it's now at line 7590. :-)</p>",
+        "id": 174027730,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566630972
+    },
+    {
+        "content": "<p>This is the <del>worst</del> __most fun__ thing ever</p>",
+        "id": 174027734,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1566630990
+    },
+    {
+        "content": "<p>The way I would analyze this is by manipulating the expr from lean, i.e. get the 6th subterm of the decidable.rec application, and print it</p>",
+        "id": 174027743,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566631036
+    },
+    {
+        "content": "<p>Even without knowing the arguments to <code>fintype.decidable_forall_fintype</code>, it's strange to me that this would be the active term, because it's a definition. It should have unfolded</p>",
+        "id": 174028299,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566632037
+    },
+    {
+        "content": "<p>Curiously, the output has exactly four instances of <code>eq.mpr</code>. I think I know how to get rid of them.</p>",
+        "id": 174028366,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566632162
+    },
+    {
+        "content": "<p>The very last thing printed is an underscore, though, suggesting that it may be stuck on a proof</p>",
+        "id": 174028409,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1566632192
+    },
+    {
+        "content": "<p>Hmm, got rid of the <code>eq.mpr</code>s, but that didn't help. Now trying <code>pp.proofs</code>...</p>",
+        "id": 174028531,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566632435
+    },
+    {
+        "content": "<p>Interestingly, shrinking the domineering board to a single cell causes it to reduce to <code>is_true</code>.</p>",
+        "id": 174028658,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1566632736
+    }
+]

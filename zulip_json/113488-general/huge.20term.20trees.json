@@ -1,0 +1,320 @@
+[
+    {
+        "content": "<p>I have been doing more performance analysis on mathlib, and I found something rather intriguing. At some point during compilation, there is a typeclass <strong>goal</strong> with a ~1GB string representation. The consequences of such huge term trees are subtle. Although I did not compute the size of the term DAG (as opposed to the term tree), my suspicion is that it is relatively small. Most modules in Lean3 (and Lean4) are careful to traverse expressions as DAGs instead of as trees, and for these modules, explosion in term tree sizes may not have much ill-effect. Indeed, typeclass synthesis only takes 5ms for this example despite the enormous term tree size. However, not all modules are designed to avoid this blowup, and so huge term trees do carry the risk of massive slowdowns in some parts of the system. In some cases, Lean has even been consciously removing support for efficiently handling huge term trees, since many of the things it seems to require actually hurt performance in the majority of cases. In particular, there is no current plan for Lean4 to address performance problems arising from huge term trees.</p>\n<p>What is causing these huge term trees? Can you design the libraries in a way that avoids this blowup?</p>",
+        "id": 185818122,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579184253
+    },
+    {
+        "content": "<p>In case it helps, here are the first 1,000 characters of the typeclass goal mentioned above:</p>\n<p>\"\"\"<br>\ndecidable (Pi {X : category_theory.functor.{v₁ (max u₂ v₃) u₁ (max v₂ v₃ u₂ u₃)} C 𝒞 (category_theory.functor.{v₂ v₃ u₂ u₃} D 𝒟 E ℰ) (category_theory.functor.category.{v₂ v₃ u₂ u₃} D 𝒟 E ℰ)} {Y : category_theory.functor.{v₁ (max u₂ v₃) u₁ (max v₂ v₃ u₂ u₃)} C 𝒞 (category_theory.functor.{v₂ v₃ u₂ u₃} D 𝒟 E ℰ) (category_theory.functor.category.{v₂ v₃ u₂ u₃} D 𝒟 E ℰ)} {Z : category_theory.functor.{v₁ (max u₂ v₃) u₁ (max v₂ v₃ u₂ u₃)} C 𝒞 (category_theory.functor.{v₂ v₃ u₂ u₃} D 𝒟 E ℰ) (category_theory.functor.category.{v₂ v₃ u₂ u₃} D 𝒟 E ℰ)} (f : category_theory.has_hom.hom.{(max u₁ u₂ v₃) (max v₁ (max u₂ v₃) u₁ v₂ v₃ u₂ u₃)} (category_theory.functor.{v₁ (max u₂ v₃) u₁ (max v₂ v₃ u₂ u₃)} C 𝒞 (category_theory.functor.{v₂ v₃ u₂ u₃} D 𝒟 E ℰ) (category_theory.functor.category.{v₂ v₃ u₂ u₃} D 𝒟 E ℰ)) (category_theory.category_struct.to_has_hom.{(max u₁ u₂ v₃) (max v₁ (max u₂ v₃) u₁ v₂ v₃ u₂ u₃)} (category_theory.functor.{v₁ (max u₂ v₃) u₁ (max v₂ v₃ u₂ u₃)} C 𝒞 (category_theory.functor.{v₂ v₃ '<br>\n\"\"\"</p>",
+        "id": 185818133,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579184265
+    },
+    {
+        "content": "<p>And here is a toy pattern that could explain:</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"n\">class</span> <span class=\"n\">C1</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span>  <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">u</span><span class=\"o\">:</span><span class=\"n\">Unit</span><span class=\"o\">:=())</span>\n<span class=\"kn\">instance</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span>  <span class=\"o\">:</span> <span class=\"n\">C1</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"o\">{}</span>\n<span class=\"n\">class</span> <span class=\"n\">C2</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">C1</span> <span class=\"n\">α</span><span class=\"o\">]</span>  <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">u</span><span class=\"o\">:</span><span class=\"n\">Unit</span><span class=\"o\">:=())</span>\n<span class=\"kn\">instance</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">C1</span> <span class=\"n\">α</span><span class=\"o\">]</span>  <span class=\"o\">:</span> <span class=\"n\">C2</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"o\">{}</span>\n<span class=\"n\">class</span> <span class=\"n\">C3</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">C1</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">C2</span> <span class=\"n\">α</span><span class=\"o\">]</span>  <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">u</span><span class=\"o\">:</span><span class=\"n\">Unit</span><span class=\"o\">:=())</span>\n<span class=\"kn\">instance</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">C1</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">C2</span> <span class=\"n\">α</span><span class=\"o\">]</span>  <span class=\"o\">:</span> <span class=\"n\">C3</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"o\">{}</span>\n<span class=\"n\">class</span> <span class=\"n\">C4</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">C1</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">C2</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">C3</span> <span class=\"n\">α</span><span class=\"o\">]</span>  <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">u</span><span class=\"o\">:</span><span class=\"n\">Unit</span><span class=\"o\">:=())</span>\n<span class=\"kn\">instance</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">C1</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">C2</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">C3</span> <span class=\"n\">α</span><span class=\"o\">]</span>  <span class=\"o\">:</span> <span class=\"n\">C4</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"o\">{}</span>\n<span class=\"n\">class</span> <span class=\"n\">C5</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">C1</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">C2</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">C3</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">C4</span> <span class=\"n\">α</span><span class=\"o\">]</span>  <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">u</span><span class=\"o\">:</span><span class=\"n\">Unit</span><span class=\"o\">:=())</span>\n<span class=\"kn\">instance</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">C1</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">C2</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">C3</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">C4</span> <span class=\"n\">α</span><span class=\"o\">]</span>  <span class=\"o\">:</span> <span class=\"n\">C5</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"o\">{}</span>\n<span class=\"c1\">-- and so on</span>\n</pre></div>",
+        "id": 185818383,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579184452
+    },
+    {
+        "content": "<p>First of all: Thanks for all your efforts. The Lean 4 team is doing a really great job!<br>\nThat said:</p>\n<blockquote>\n<p>Can you design the libraries in a way that avoids this blowup?</p>\n</blockquote>\n<p>I understand this question. But my first reaction is: mathematicians shouldn't have to care...</p>",
+        "id": 185818568,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1579184609
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"230999\">@Daniel Selsam</span> Do you have the name and line numbers for this instance in mathlib?</p>",
+        "id": 185818655,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1579184662
+    },
+    {
+        "content": "<blockquote>\n<p>In particular, there is no current plan for Lean4 to address performance problems arising from huge term trees.</p>\n</blockquote>\n<p>This is a bad idea. Large trees before deduplication is an inevitable consequence of dependent type theory due to redundancy inside types and dependent arguments. It's not a thing you can easily work around as a user. This will be <em>the</em> thing that we will all notice and hope to be improved in the next version if you don't fix it at this early stage.</p>",
+        "id": 185863167,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579210309
+    },
+    {
+        "content": "<p>There is a coq paper about typeclass slowness using exactly your C1-C5 example</p>",
+        "id": 185863279,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579210361
+    },
+    {
+        "content": "<blockquote>\n<p>There is a coq paper about typeclass slowness using exactly your C1-C5 example</p>\n</blockquote>\n<p>Using unbundled typeclasses.</p>",
+        "id": 185864985,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579211352
+    },
+    {
+        "content": "<p>I think that's what you are doing in the example as well</p>",
+        "id": 185865318,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579211385
+    },
+    {
+        "content": "<p>the parameters are stacking up, and each one refers to all the previous, so instances on C5 are already O(n^5)</p>",
+        "id": 185865442,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579211421
+    },
+    {
+        "content": "<blockquote>\n<p>I think that's what you are doing in the example as well</p>\n</blockquote>\n<p>Yes, but that is not the way typeclasses are generally used in mathlib.</p>",
+        "id": 185865456,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579211430
+    },
+    {
+        "content": "<p>It is, when more types get involved</p>",
+        "id": 185865489,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579211445
+    },
+    {
+        "content": "<p>For example <code>module A B</code> needs <code>ring A</code> and <code>add_group B</code> as parameters</p>",
+        "id": 185865534,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579211475
+    },
+    {
+        "content": "<p>And <code>topological_vector_space</code> needs ...</p>",
+        "id": 185865562,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1579211503
+    },
+    {
+        "content": "<p>I'm not exactly sure where your example is coming from but category theory has a similar problem with mandatory dependencies</p>",
+        "id": 185865568,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579211508
+    },
+    {
+        "content": "<p>Yes but <code>ring A</code> and <code>add_group B</code> internally bundle many layers. Do you know which class in mathlib takes the most instance parameters? It seems harder to accidentally take a ton of instance parameters in Lean since it doesn't support the implicit generalization that Coq does.</p>",
+        "id": 185865710,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579211597
+    },
+    {
+        "content": "<p>topological vector space is probably a contender</p>",
+        "id": 185865766,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579211636
+    },
+    {
+        "content": "<p>complete topological vector space?</p>",
+        "id": 185865820,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1579211649
+    },
+    {
+        "content": "<p>In Coq, the same example looks harmless :</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"kn\">Class</span> <span class=\"n\">C1</span> <span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span> <span class=\"o\">:=</span> <span class=\"o\">{}.</span>\n<span class=\"kn\">Instance</span> <span class=\"n\">I1</span> <span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">C1</span> <span class=\"n\">X</span> <span class=\"o\">:=</span> <span class=\"o\">{}.</span>\n<span class=\"kn\">Class</span> <span class=\"n\">C2</span> <span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span><span class=\"o\">)</span> <span class=\"o\">`{</span><span class=\"n\">C1</span> <span class=\"n\">X</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span> <span class=\"o\">:=</span> <span class=\"o\">{}.</span>\n<span class=\"kn\">Instance</span> <span class=\"n\">I2</span> <span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span><span class=\"o\">)</span> <span class=\"o\">`{</span><span class=\"n\">C1</span> <span class=\"n\">X</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">C2</span> <span class=\"n\">X</span> <span class=\"o\">:=</span> <span class=\"o\">{}.</span>\n<span class=\"kn\">Class</span> <span class=\"n\">C3</span> <span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span><span class=\"o\">)</span> <span class=\"o\">`{</span><span class=\"n\">C2</span> <span class=\"n\">X</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span> <span class=\"o\">:=</span> <span class=\"o\">{}.</span>\n<span class=\"kn\">Instance</span> <span class=\"n\">I3</span> <span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span><span class=\"o\">)</span> <span class=\"o\">`{</span><span class=\"n\">C2</span> <span class=\"n\">X</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">C3</span> <span class=\"n\">X</span> <span class=\"o\">:=</span> <span class=\"o\">{}.</span>\n<span class=\"kn\">Class</span> <span class=\"n\">C4</span> <span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span><span class=\"o\">)</span> <span class=\"o\">`{</span><span class=\"n\">C3</span> <span class=\"n\">X</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span> <span class=\"o\">:=</span> <span class=\"o\">{}.</span>\n<span class=\"kn\">Instance</span> <span class=\"n\">I4</span> <span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span><span class=\"o\">)</span> <span class=\"o\">`{</span><span class=\"n\">C3</span> <span class=\"n\">X</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">C4</span> <span class=\"n\">X</span> <span class=\"o\">:=</span> <span class=\"o\">{}.</span>\n<span class=\"kn\">Class</span> <span class=\"n\">C5</span> <span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span><span class=\"o\">)</span> <span class=\"o\">`{</span><span class=\"n\">C4</span> <span class=\"n\">X</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span> <span class=\"o\">:=</span> <span class=\"o\">{}.</span>\n<span class=\"kn\">Instance</span> <span class=\"n\">I5</span> <span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"o\">:</span> <span class=\"kn\">Set</span><span class=\"o\">)</span> <span class=\"o\">`{</span><span class=\"n\">C4</span> <span class=\"n\">X</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">C5</span> <span class=\"n\">X</span> <span class=\"o\">:=</span> <span class=\"o\">{}.</span>\n<span class=\"kn\">Example</span> <span class=\"n\">failing_tower</span> <span class=\"o\">:</span> <span class=\"n\">C5</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span> <span class=\"o\">_.</span>\n</pre></div>",
+        "id": 185865827,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579211654
+    },
+    {
+        "content": "<p>I recall that being a feature request on lean 3</p>",
+        "id": 185865855,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579211680
+    },
+    {
+        "content": "<p>Looking harmless was a feature request?</p>",
+        "id": 185866009,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1579211762
+    },
+    {
+        "content": "<p>Being able to write <code>[module A B]</code> and getting <code>{A} {B} [ring A] [add_group B] [module A B]</code> automatically</p>",
+        "id": 185866070,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579211801
+    },
+    {
+        "content": "<p>This is very nice when you are doing e.g. linear algebra between two or three vector spaces</p>",
+        "id": 185866134,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579211849
+    },
+    {
+        "content": "<p>Oooh...</p>",
+        "id": 185866161,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1579211867
+    },
+    {
+        "content": "<p>I didn't even know you could ask Santa Claus to get that.</p>",
+        "id": 185866243,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1579211905
+    },
+    {
+        "content": "<p>It would be delicate to get right -- if B was already an add_group for some other reason then you don't want to add it again.</p>",
+        "id": 185866296,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1579211951
+    },
+    {
+        "content": "<p>I would have pointed to the issue page but they are all gone :(</p>",
+        "id": 185866403,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579212018
+    },
+    {
+        "content": "<blockquote>\n<blockquote>\n<p>In particular, there is no current plan for Lean4 to address performance problems arising from huge term trees.</p>\n</blockquote>\n<p>This is a bad idea. Large trees before deduplication is an inevitable consequence of dependent type theory due to redundancy inside types and dependent arguments. It's not a thing you can easily work around as a user. This will be <em>the</em> thing that we will all notice and hope to be improved in the next version if you don't fix it at this early stage.</p>\n</blockquote>\n<p>I agree that it might be this critical, but I don't have enough information yet to have an informed opinion about what to do. In particular, there might be acceptable ways of keeping the heights of these towers acceptably bounded, and the possible backend solutions might all have substantial downsides. For now, let us all work together to investigate the problem and to assess our options.</p>",
+        "id": 185876715,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579220779
+    },
+    {
+        "content": "<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"230999\">Daniel Selsam</span> Do you have the name and line numbers for this instance in mathlib?</p>\n</blockquote>\n<p>Unfortunately, no. It would take quite a bit more bookkeeping to get location information for arbitrary typeclass queries, and I won't have time or CPU cycles for this for several days. Is somebody else able to investigate in the meantime with the new (and much improved) leancrawler? It is very well-documented. Here is what I suggest to start: create a lean file that imports all of mathlib, export it to a <code>.yaml</code> as described in the README, and run a simple script like the following:</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"kn\">from</span> <span class=\"nn\">crawler</span> <span class=\"kn\">import</span> <span class=\"n\">LeanLib</span>\n<span class=\"kn\">import</span> <span class=\"nn\">networkx</span>\n\n<span class=\"nb\">print</span><span class=\"p\">(</span><span class=\"s2\">&quot;Loading export.yaml&quot;</span><span class=\"p\">)</span>\n<span class=\"n\">lib</span> <span class=\"o\">=</span> <span class=\"n\">LeanLib</span><span class=\"o\">.</span><span class=\"n\">from_yaml</span><span class=\"p\">(</span><span class=\"s1\">&#39;FindBig&#39;</span><span class=\"p\">,</span> <span class=\"s1\">&#39;export.yaml&#39;</span><span class=\"p\">)</span>\n\n<span class=\"n\">decls</span> <span class=\"o\">=</span> <span class=\"nb\">list</span><span class=\"p\">(</span><span class=\"n\">lib</span><span class=\"p\">)</span>\n\n<span class=\"nb\">print</span><span class=\"p\">(</span><span class=\"s2\">&quot;</span><span class=\"se\">\\n</span><span class=\"s2\">Top-10 biggest decls by type:</span><span class=\"se\">\\n</span><span class=\"s2\">&quot;</span><span class=\"p\">)</span>\n<span class=\"n\">decls</span><span class=\"o\">.</span><span class=\"n\">sort</span><span class=\"p\">(</span><span class=\"n\">key</span><span class=\"o\">=</span><span class=\"p\">(</span><span class=\"k\">lambda</span> <span class=\"n\">decl</span><span class=\"p\">:</span> <span class=\"o\">-</span> <span class=\"n\">decl</span><span class=\"o\">.</span><span class=\"n\">type_size</span><span class=\"p\">))</span>\n<span class=\"k\">for</span> <span class=\"n\">i</span><span class=\"p\">,</span> <span class=\"n\">decl</span> <span class=\"ow\">in</span> <span class=\"nb\">enumerate</span><span class=\"p\">(</span><span class=\"n\">decls</span><span class=\"p\">[:</span><span class=\"mi\">10</span><span class=\"p\">]):</span>\n    <span class=\"nb\">print</span><span class=\"p\">(</span><span class=\"n\">decl</span><span class=\"p\">,</span> <span class=\"n\">decl</span><span class=\"o\">.</span><span class=\"n\">type_size</span><span class=\"p\">,</span> <span class=\"n\">decl</span><span class=\"o\">.</span><span class=\"n\">type_dedup_size</span><span class=\"p\">)</span>\n\n<span class=\"nb\">print</span><span class=\"p\">(</span><span class=\"s2\">&quot;</span><span class=\"se\">\\n</span><span class=\"s2\">Top-10 biggest decls by value:</span><span class=\"se\">\\n</span><span class=\"s2\">&quot;</span><span class=\"p\">)</span>\n<span class=\"n\">decls</span><span class=\"o\">.</span><span class=\"n\">sort</span><span class=\"p\">(</span><span class=\"n\">key</span><span class=\"o\">=</span><span class=\"p\">(</span><span class=\"k\">lambda</span> <span class=\"n\">decl</span><span class=\"p\">:</span> <span class=\"o\">-</span> <span class=\"n\">decl</span><span class=\"o\">.</span><span class=\"n\">value_size</span><span class=\"p\">))</span>\n<span class=\"k\">for</span> <span class=\"n\">i</span><span class=\"p\">,</span> <span class=\"n\">decl</span> <span class=\"ow\">in</span> <span class=\"nb\">enumerate</span><span class=\"p\">(</span><span class=\"n\">decls</span><span class=\"p\">[:</span><span class=\"mi\">10</span><span class=\"p\">]):</span>\n    <span class=\"nb\">print</span><span class=\"p\">(</span><span class=\"n\">decl</span><span class=\"p\">,</span> <span class=\"n\">decl</span><span class=\"o\">.</span><span class=\"n\">value_size</span><span class=\"p\">,</span> <span class=\"n\">decl</span><span class=\"o\">.</span><span class=\"n\">value_dedup_size</span><span class=\"p\">)</span>\n</pre></div>",
+        "id": 185876962,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579221046
+    },
+    {
+        "content": "<p>I just ran this, but only importing a few mathlib theories. This was the output:</p>\n<div class=\"codehilite\"><pre><span></span>Top-10 biggest decls by type:\n\ncategory_theory.limits.is_colimit.hom_desc 35592 1159\ncategory_theory.limits.is_limit.hom_lift 7508 1350\ngcd_domain.mk.inj 6650 3306\ngcd_domain.mk.inj_arrow 6643 3319\nalgebraic_geometry.PresheafedSpace.ext 6407 549\ndecidable_linear_ordered_semiring.mk.inj 6387 3709\ndecidable_linear_ordered_semiring.mk.inj_arrow 6378 3758\nlattice.complete_boolean_algebra.mk.inj 6252 4008\nlattice.complete_boolean_algebra.mk.inj_arrow 6241 4025\nlinear_ordered_semiring.mk.inj 5958 3444\n\nTop-10 biggest decls by value:\n\nfilter.is_lawful_monad 100044499 36343\nalgebraic_geometry.PresheafedSpace.stalk_map.comp 63928223 16816\nemetric.countable_closure_of_compact 6553913 35855\nreal.exists_sup 6422084 11798\nTop.presheaf.stalk_pushforward.comp 4524414 13016\ncategory_theory.equivalence.unit_inverse_comp 3779575 9474\nis_measurable.diff_null 1158921 7082\nset.is_lawful_monad 987060 26209\nfree_group.is_lawful_monad 961500 23022\nTop.presheaf.stalk_pushforward.id 899051 5074\n</pre></div>",
+        "id": 185877007,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579221104
+    },
+    {
+        "content": "<p>Also, to stress: most parts of the system are very careful to only traverse terms as DAGs. So, even with the status quo I don't think a term with a <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><msup><mn>2</mn><mn>10</mn></msup></mrow><annotation encoding=\"application/x-tex\">2^{10}</annotation></semantics></math></span><span aria-hidden=\"true\" class=\"katex-html\"><span class=\"base\"><span class=\"strut\" style=\"height:0.8141079999999999em;vertical-align:0em;\"></span><span class=\"mord\"><span class=\"mord\">2</span><span class=\"msupsub\"><span class=\"vlist-t\"><span class=\"vlist-r\"><span class=\"vlist\" style=\"height:0.8141079999999999em;\"><span style=\"top:-3.063em;margin-right:0.05em;\"><span class=\"pstrut\" style=\"height:2.7em;\"></span><span class=\"sizing reset-size6 size3 mtight\"><span class=\"mord mtight\"><span class=\"mord mtight\">1</span><span class=\"mord mtight\">0</span></span></span></span></span></span></span></span></span></span></span></span> tree-to-DAG ratio would in general suffer anywhere near <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><msup><mn>2</mn><mn>10</mn></msup></mrow><annotation encoding=\"application/x-tex\">2^{10}</annotation></semantics></math></span><span aria-hidden=\"true\" class=\"katex-html\"><span class=\"base\"><span class=\"strut\" style=\"height:0.8141079999999999em;vertical-align:0em;\"></span><span class=\"mord\"><span class=\"mord\">2</span><span class=\"msupsub\"><span class=\"vlist-t\"><span class=\"vlist-r\"><span class=\"vlist\" style=\"height:0.8141079999999999em;\"><span style=\"top:-3.063em;margin-right:0.05em;\"><span class=\"pstrut\" style=\"height:2.7em;\"></span><span class=\"sizing reset-size6 size3 mtight\"><span class=\"mord mtight\"><span class=\"mord mtight\">1</span><span class=\"mord mtight\">0</span></span></span></span></span></span></span></span></span></span></span></span> overhead overall. But if 10 becomes 20 or 30, then any weak link anywhere in the system could cause epic slowdowns.</p>",
+        "id": 185879772,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579224558
+    },
+    {
+        "content": "<p>This is completely crazy. The top two entries are</p>\n<div class=\"codehilite\"><pre><span></span>category_theory.limits.is_colimit.hom_desc 35592 1159\ncategory_theory.limits.is_limit.hom_lift 7508 1350\n</pre></div>\n\n\n<p>which are exactly each others duals. So why does the first one get a <code>35592</code> and the second one a <code>7508</code>.</p>",
+        "id": 185889854,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1579240141
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"230999\">@Daniel Selsam</span> Thanks for this little demo. I'm sure we can find a machine to crunch some numbers for us.</p>",
+        "id": 185889860,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1579240163
+    },
+    {
+        "content": "<p>Here is the experiment I suggest starting with:</p>\n<ul>\n<li>import all of mathlib (as described at <a href=\"https://github.com/leanprover-community/mathlib/pull/1281\" target=\"_blank\" title=\"https://github.com/leanprover-community/mathlib/pull/1281\">https://github.com/leanprover-community/mathlib/pull/1281</a>)</li>\n<li>use leancrawler and the script above to find the biggest top-level types and values</li>\n<li>for the def with the biggest value, list the K biggest subterms that appear &gt;N times for some big Ns.</li>\n<li>if there is a blowup, hopefully this list will provide a strong hint as to the cause</li>\n</ul>",
+        "id": 186456082,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579830613
+    },
+    {
+        "content": "<p>There is a phenomena in computer algebra called \"intermediate expression swell\". A computation can start with a small input and end with a small output but the intermediate steps generate many megabytes. I wonder if there is a similar phenomena that occurs in certain proofs. It may not be a \"bug\" per se, just an emergent property of the particular proof technique.</p>",
+        "id": 186482164,
+        "sender_full_name": "Tim Daly",
+        "timestamp": 1579864681
+    },
+    {
+        "content": "<p>Ran the script posted above on all of mathlib:<br>\n\"\"\"<br>\nTop-10 biggest decls by value:</p>\n<p>tangent_bundle_model_space_chart_at 2499367138 21824<br>\nGromov_Hausdorff.totally_bounded 2448909819 42588<br>\n...<br>\n\"\"\"<br>\nWith commas: 21,824 -&gt; 2,499,367,138 which is &gt;100,000x tree-to-dag ratio.</p>",
+        "id": 186520177,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579890829
+    },
+    {
+        "content": "<p>The proof seems to be mostly <code>simp</code>. Could someone who understands the proof comment on why there might be so much sharing?</p>",
+        "id": 186520527,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579891036
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110050\">@Sebastien Gouezel</span> Is the expert on that proof. <span class=\"user-mention\" data-user-id=\"230999\">@Daniel Selsam</span> I'm trying to understand what you mean. What are those numbers representing?</p>",
+        "id": 186520702,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1579891161
+    },
+    {
+        "content": "<p>The number of nodes in a dag (resp. tree) representation of the proof?</p>",
+        "id": 186520717,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1579891183
+    },
+    {
+        "content": "<blockquote>\n<p>The number of nodes in a dag (resp. tree) representation of the proof?</p>\n</blockquote>\n<p>Yes.</p>",
+        "id": 186520736,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579891200
+    },
+    {
+        "content": "<p>To clarify: this kind of repeated subterm might not be a problem at all. Based on Lean3's <code>--profile</code> report, it seems to only take a few seconds to elaborate and type-check it, and the moderate slowness might not even have anything to do with the tree size.</p>",
+        "id": 186521378,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1579891614
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"230999\">@Daniel Selsam</span> <a href=\"https://github.com/leanprover-community/mathlib/blob/9ac26cb6220deec0960f8a719572a82ead25f90e/src/geometry/manifold/basic_smooth_bundle.lean#L540L571\" target=\"_blank\" title=\"https://github.com/leanprover-community/mathlib/blob/9ac26cb6220deec0960f8a719572a82ead25f90e/src/geometry/manifold/basic_smooth_bundle.lean#L540L571\">https://github.com/leanprover-community/mathlib/blob/9ac26cb6220deec0960f8a719572a82ead25f90e/src/geometry/manifold/basic_smooth_bundle.lean#L540L571</a><br>\nI can't really parse this proof. But it's clear that it's doing some massive simps (-;</p>",
+        "id": 186521833,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1579891900
+    },
+    {
+        "content": "<p>I don't think I can really help here</p>",
+        "id": 186521908,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1579891931
+    },
+    {
+        "content": "<p>There's something kind of funny going on there with the <code>simp</code>s followed by <code>erw</code> too.</p>",
+        "id": 186521971,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1579892009
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"230999\">@Daniel Selsam</span> just to let you know in case you didn't already -- this work by <span class=\"user-mention\" data-user-id=\"110050\">@Sebastien Gouezel</span>  on real manifolds is mathematics which is not in any of the other theorem provers. It is interesting to note that it is also (final year) undergraduate-level mathematics. I have argued that the fact that Lean could do it at all means that Lean is more suitable for formalising all mathematics than Isabelle is. Isabelle is good at analysis but never got this far into the complex definitions in the theory.</p>",
+        "id": 186523015,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1579892711
+    },
+    {
+        "content": "<blockquote>\n<p>Ran the script posted above on all of mathlib:<br>\n\"\"\"<br>\nTop-10 biggest decls by value:<br>\nTop-10 biggest decls by value:</p>\n<p>tangent_bundle_model_space_chart_at 2499367138 21824<br>\nGromov_Hausdorff.totally_bounded 2448909819 42588<br>\n\"\"\"<br>\nWith commas: 21,824 -&gt; 2,499,367,138 which is &gt;100,000x tree-to-dag ratio.</p>\n</blockquote>\n<p>It's funny, I am responsible for both of them in two unrelated areas. What I can tell is that both involve complicated objects, but otherwise they are of a somewhat different nature. The first one has big simps, but otherwise it is mostly unfolding definitions. The main unusual point in the second one involves constructing new types depending on some objects in the proof.</p>",
+        "id": 186526363,
+        "sender_full_name": "Sebastien Gouezel",
+        "timestamp": 1579894748
+    },
+    {
+        "content": "<p>For the very big tree-to-dag ratio in <code>Gromov_Hausdorff.totally_bounded</code>, this proof uses a lot the Hausdorff distance. I remember that at the beginning these proofs were super-slow, and this was solved by making Hausdorff distance irreducible. If I understand correctly, making something irreducible does not change anything for the kernel, which still has to deal with the full definition. So maybe the definition of Hausdorff distance is already big, and since it appears a lot of times in the proof this might explain what is going on. Hausdorff distance is defined in terms of supremums of infimums of real numbers, which are themselves defined with Cauchy sequences, so depending on the inner workings this might definitely be huge.</p>",
+        "id": 186566491,
+        "sender_full_name": "Sebastien Gouezel",
+        "timestamp": 1579946124
+    },
+    {
+        "content": "<p>The kernel will only see this if it is unfolded. Making it irreducible should prevent the elaborator from creating terms which require such unfolding</p>",
+        "id": 186566557,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579946227
+    },
+    {
+        "content": "<p>I think what is actually happening is that those <code>have</code> statements are not actual <code>have</code>s, they are repeated subterms. For example, I can clearly see the full proof of</p>\n<div class=\"codehilite\"><pre><span></span>  <span class=\"k\">have</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span><span class=\"n\">p</span><span class=\"o\">:</span><span class=\"n\">GH_space</span><span class=\"o\">,</span> <span class=\"bp\">∃</span><span class=\"n\">s</span> <span class=\"o\">:</span> <span class=\"n\">set</span> <span class=\"o\">(</span><span class=\"n\">p</span><span class=\"bp\">.</span><span class=\"n\">rep</span><span class=\"o\">),</span> <span class=\"bp\">∃</span><span class=\"n\">N</span> <span class=\"bp\">≤</span> <span class=\"n\">K</span> <span class=\"n\">n</span><span class=\"o\">,</span> <span class=\"bp\">∃</span><span class=\"n\">E</span> <span class=\"o\">:</span> <span class=\"n\">equiv</span> <span class=\"n\">s</span> <span class=\"o\">(</span><span class=\"n\">fin</span> <span class=\"n\">N</span><span class=\"o\">),</span>\n    <span class=\"n\">p</span> <span class=\"err\">∈</span> <span class=\"n\">t</span> <span class=\"bp\">→</span> <span class=\"n\">univ</span> <span class=\"err\">⊆</span> <span class=\"err\">⋃</span><span class=\"n\">x</span><span class=\"err\">∈</span><span class=\"n\">s</span><span class=\"o\">,</span> <span class=\"n\">ball</span> <span class=\"n\">x</span> <span class=\"o\">(</span><span class=\"n\">u</span> <span class=\"n\">n</span><span class=\"o\">),</span>\n</pre></div>\n\n\n<p>copied many times in the <code>#print</code> output</p>",
+        "id": 186566789,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579946644
+    },
+    {
+        "content": "<p>Hm, I tried writing a variant of <code>have</code> that actually inserts beta redexes in the term, but they might be optimized away by <code>intro</code> or another tactic</p>",
+        "id": 186567831,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579948543
+    },
+    {
+        "content": "<p>Looks like <code>intro_core</code> will check to see if the current result has the form <code>?m a</code> and replaces it with <code>?m'[a]</code>, causing the substitution to occur when the metavariable is filled</p>",
+        "id": 186568020,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579948839
+    },
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span><span class=\"kn\">example</span> <span class=\"o\">:</span> <span class=\"n\">true</span> <span class=\"o\">:=</span>\n<span class=\"k\">begin</span>\n  <span class=\"n\">tactic</span><span class=\"bp\">.</span><span class=\"n\">assertv_core</span> <span class=\"bp\">`</span><span class=\"n\">H</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">true</span><span class=\"o\">)</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">trivial</span> <span class=\"o\">:</span> <span class=\"n\">true</span><span class=\"o\">),</span>\n  <span class=\"n\">tactic</span><span class=\"bp\">.</span><span class=\"n\">result</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">tactic</span><span class=\"bp\">.</span><span class=\"n\">trace</span><span class=\"o\">,</span> <span class=\"c1\">-- ?m_1 trivial</span>\n  <span class=\"n\">intro</span> <span class=\"n\">z</span><span class=\"o\">,</span>\n  <span class=\"n\">tactic</span><span class=\"bp\">.</span><span class=\"n\">result</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">tactic</span><span class=\"bp\">.</span><span class=\"n\">trace</span><span class=\"o\">,</span> <span class=\"c1\">-- ?m_1[trivial]</span>\n  <span class=\"n\">exact</span> <span class=\"n\">trivial</span><span class=\"o\">,</span>\n  <span class=\"n\">tactic</span><span class=\"bp\">.</span><span class=\"n\">result</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">tactic</span><span class=\"bp\">.</span><span class=\"n\">trace</span><span class=\"o\">,</span> <span class=\"c1\">-- trivial</span>\n<span class=\"kn\">end</span>\n</pre></div>",
+        "id": 186568229,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579949204
+    },
+    {
+        "content": "<p>It's a nice optimization that probably avoids a lot of superfluous redexes, but it's not obvious how to work around it from the lean side. I think you just have to detect these on the C++ side and introduce <code>have</code>s then. (Lean can't see subterm sharing, which limits the ability to do anything about this. It also means that you can't write any efficient dag traversal tactics in lean. I guess lean 4 must have fixed this, if you wrote the elaborator in lean.)</p>",
+        "id": 186568303,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579949383
+    }
+]

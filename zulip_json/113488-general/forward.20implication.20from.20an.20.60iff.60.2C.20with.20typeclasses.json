@@ -1,0 +1,470 @@
+[
+    {
+        "content": "<p>I've discovered a gap in <code>library_search</code>, and am having trouble fixing it.</p>",
+        "id": 163308580,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555232737
+    },
+    {
+        "content": "<p>The essential problem is that many library lemmas are <code>iff</code>, and we have to construct the forward and backward implications separately, so they can be <code>apply</code>d.</p>",
+        "id": 163308626,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555232774
+    },
+    {
+        "content": "<p>It's very important that this construction step is fast, because we're repeating this step over every relevant imported lemma in the library.</p>",
+        "id": 163308627,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555232813
+    },
+    {
+        "content": "<p>My current approach is to use <br>\n<code>iff_mp_core</code> in <code>tactic/basic.lean</code>. This takes an expression along with its known type, and builds the corresponding <code>.mp</code> after dropping down through all the arguments.</p>",
+        "id": 163308686,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555232920
+    },
+    {
+        "content": "<p>As an example, on <code>le_mul_iff_one_le_left</code> this creates the expression</p>\n<div class=\"codehilite\"><pre><span></span>λ {α : Type u} [_inst_1 : linear_ordered_semiring α] {a b : α} (hb : b &gt; 0), (le_mul_iff_one_le_left hb).mp\n</pre></div>",
+        "id": 163308696,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555232995
+    },
+    {
+        "content": "<p>and at this point you can see my problem... The instance <code>[_inst_1]</code> is not available in the later arguments or body of the lambda, so we get errors:</p>",
+        "id": 163308744,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555233025
+    },
+    {
+        "content": "<p>e.g. </p>\n<div class=\"codehilite\"><pre><span></span>failed to synthesize type class instance for\nα : Type u,\n_inst_1 : linear_ordered_semiring α,\na b : α\n⊢ has_zero αLean\n</pre></div>\n\n\n<p>at <code>b &gt; 0</code>.</p>",
+        "id": 163308746,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555233045
+    },
+    {
+        "content": "<p>... help?!</p>",
+        "id": 163308747,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555233052
+    },
+    {
+        "content": "<p>Why don't you skip the <code>apply</code> altogether and use <code>unify</code> instead?</p>",
+        "id": 163309244,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555234070
+    },
+    {
+        "content": "<p>actually I can't see the problem as you have articulated it. The <code>iff_mp_core</code> expression already has the instances filled in</p>",
+        "id": 163309301,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555234193
+    },
+    {
+        "content": "<p>The problem is that the expression that <code>iff_mp_core</code> produces doesn't even typecheck</p>",
+        "id": 163309686,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555234936
+    },
+    {
+        "content": "<p>Because when we put all the lambdas back in place, the instances don't enter the instance cache</p>",
+        "id": 163309692,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555234962
+    },
+    {
+        "content": "<p>Note that <code>iff_mp_core</code> is not using <code>to_expr</code> or anything, it's just building <code>expr</code> objects by hand.</p>",
+        "id": 163309709,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555235009
+    },
+    {
+        "content": "<p>Sorry, I'll try to make a MWE.</p>",
+        "id": 163309777,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555235139
+    },
+    {
+        "content": "<p>It is exactly because it is building exprs by hand that it doesn't have to worry about typeclass inference or to_expr or anything</p>",
+        "id": 163310324,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555236144
+    },
+    {
+        "content": "<p>it's just a fully elaborated and type correct expression</p>",
+        "id": 163310328,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555236159
+    },
+    {
+        "content": "<p>Okay, I agree, my diagnosis of the problem was completely wrong. Nevertheless, I can't get <code>apply</code> to work here. Here's a self-contained instance of the problem:</p>\n<div class=\"codehilite\"><pre><span></span>import algebra.ordered_ring\n\n#print le_mul_iff_one_le_left\n-- theorem le_mul_iff_one_le_left : ∀ {α : Type u} [_inst_1 : linear_ordered_semiring α] {a b : α}, b &gt; 0 → (b ≤ a * b ↔ 1 ≤ a) :=\n\n-- This works fine:\ndef oom {a b : ℕ} (h : 0 &lt; b) (w : 1 ≤ a) : b ≤ a * b :=\n(le_mul_iff_one_le_left h).mpr w\n\nopen tactic\nmeta def f : tactic unit :=\ndo d ← get_decl `le_mul_iff_one_le_left,\n   let n := d.to_name,\n   let t := d.type,\n   e ← mk_const n,\n   mp ← iff_mpr_core e t,\n   apply mp,\n   skip\n\nexample {a b : ℕ} : b ≤ a * b :=\nbegin\n  f,\n/-\ninvalid apply tactic, failed to unify\n  b ≤ a * b\nwith\n  ?m_3 ≤ ?m_4 * ?m_3\n-/\nend\n</pre></div>",
+        "id": 163310929,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555237367
+    },
+    {
+        "content": "<p>oh, crap, it's universes:</p>\n<div class=\"codehilite\"><pre><span></span>set_option pp.all true\n\nexample {a b : ℕ} : b ≤ a * b :=\nbegin\n  f,\n/-\ninvalid apply tactic, failed to unify\n  @has_le.le.{0} nat nat.has_le b (@has_mul.mul.{0} nat nat.has_mul a b)\nwith\n  @has_le.le.{u} ?m_1\n    (@preorder.to_has_le.{u} ?m_1\n       (@partial_order.to_preorder.{u} ?m_1\n          (@ordered_comm_monoid.to_partial_order.{u} ?m_1\n             (@ordered_cancel_comm_monoid.to_ordered_comm_monoid.{u} ?m_1\n                (@ordered_semiring.to_ordered_cancel_comm_monoid.{u} ?m_1\n                   (@linear_ordered_semiring.to_ordered_semiring.{u} ?m_1 ?m_2))))))\n    ?m_3\n    (@has_mul.mul.{u} ?m_1\n       (@mul_zero_class.to_has_mul.{u} ?m_1\n          (@semiring.to_mul_zero_class.{u} ?m_1\n             (@ordered_semiring.to_semiring.{u} ?m_1 (@linear_ordered_semiring.to_ordered_semiring.{u} ?m_1 ?m_2))))\n       ?m_4\n       ?m_3)\n-/\nend\n</pre></div>",
+        "id": 163310942,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555237425
+    },
+    {
+        "content": "<p>Or is it? I guess I don't know how <code>apply</code> deals with those <code>u</code>s.</p>",
+        "id": 163310998,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555237503
+    },
+    {
+        "content": "<p>Oooh... I think I see. The type coming out of <code>d.type</code> has a fixed universe already plugged in. The type for <code>e</code> coming out of <code>mk_const</code> (correctly) has fresh universe metavariables.</p>",
+        "id": 163311368,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238203
+    },
+    {
+        "content": "<p>Wah!</p>",
+        "id": 163311369,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238206
+    },
+    {
+        "content": "<p>I think this means I have to run <code>infer_type e</code> instead of just using <code>d.type</code>.<br>\n<span aria-label=\"+1\" class=\"emoji emoji-1f44d\" role=\"img\" title=\"+1\">:+1:</span></p>",
+        "id": 163311380,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238228
+    },
+    {
+        "content": "<p>Unfortunately this is slow, and will kill <code>library_search</code>, I think. :-(</p>",
+        "id": 163311384,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238239
+    },
+    {
+        "content": "<p>just create a bunch of metavariables for the declaration's universe variables and substitute</p>",
+        "id": 163311446,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555238346
+    },
+    {
+        "content": "<p>It seems <code>infer_type</code> is not actually a problem (this is strange, as previously it seemed it was).</p>",
+        "id": 163311515,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238467
+    },
+    {
+        "content": "<p>Let me actually profile before deciding whether to do the universe substitution.</p>",
+        "id": 163311518,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238483
+    },
+    {
+        "content": "<p>In any case:</p>\n<div class=\"codehilite\"><pre><span></span>example {a b : ℕ} (h : a ≥ 1): b ≤ a * b :=\nby library_search -- exact le_mul_of_ge_one_left&#39; (by norm_num) h\n</pre></div>",
+        "id": 163311564,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238526
+    },
+    {
+        "content": "<p>(well, not quite --- it does run <code>norm_num</code> to discharge the arithmetic goals, but for now it prints the term <code>norm_num</code> produces, which is no good)</p>",
+        "id": 163311566,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238550
+    },
+    {
+        "content": "<p>the <code>expr</code> substitution functions should be very fast, faster than <code>apply</code> since <code>apply</code> does that among many other things</p>",
+        "id": 163311567,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555238553
+    },
+    {
+        "content": "<p>I know how to fix this, but need to work out how to do substring replacement. :-)</p>",
+        "id": 163311570,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238574
+    },
+    {
+        "content": "<p>what's the issue / what are you aiming for?</p>",
+        "id": 163311580,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555238586
+    },
+    {
+        "content": "<p>The problem has just been the <code>library_search</code> has to date been failing to apply any <code>iff</code> lemmas that involved universes!</p>",
+        "id": 163311581,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238616
+    },
+    {
+        "content": "<p>Which is a lot of them</p>",
+        "id": 163311583,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238625
+    },
+    {
+        "content": "<p>you shouldn't be running <code>norm_num</code> as part of a library search, that will kill your performance</p>",
+        "id": 163311585,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555238632
+    },
+    {
+        "content": "<p>hmm..</p>",
+        "id": 163311597,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238642
+    },
+    {
+        "content": "<p>it seems okay on my example set</p>",
+        "id": 163311632,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238649
+    },
+    {
+        "content": "<p>I'm really confused on your goals now though</p>",
+        "id": 163311636,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555238671
+    },
+    {
+        "content": "<p>oh, sorry</p>",
+        "id": 163311640,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238683
+    },
+    {
+        "content": "<p>the norm_num issue is separate</p>",
+        "id": 163311641,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238689
+    },
+    {
+        "content": "<p>It should be a really simple dumb search to be performant on the whole library</p>",
+        "id": 163311642,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555238698
+    },
+    {
+        "content": "<p>okay... let's now change topics to norm_num. :-)</p>",
+        "id": 163311653,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238717
+    },
+    {
+        "content": "<p>if you can't afford to substitute metavariables you certainly can't afford <code>norm_num</code></p>",
+        "id": 163311654,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555238724
+    },
+    {
+        "content": "<p>I really want to be able to solve problems like this:</p>\n<div class=\"codehilite\"><pre><span></span>example {a b : ℕ} (h : a * 2 ≤ b) : a ≤ b / 2 :=\nby library_search -- exact (nat.le_div_iff_mul_le a b XXX).mpr h\n</pre></div>",
+        "id": 163311655,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238727
+    },
+    {
+        "content": "<p>where <code>XXX</code> should be <code>dec_trivial</code> or <code>(by norm_num)</code></p>",
+        "id": 163311662,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238762
+    },
+    {
+        "content": "<p>The problem is that too many library lemmas have arithmetic side conditions.</p>",
+        "id": 163311704,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238787
+    },
+    {
+        "content": "<p>You should note the initial success to shortlist it and come back to it later</p>",
+        "id": 163311706,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555238798
+    },
+    {
+        "content": "<p>Or just give them back as subgoals</p>",
+        "id": 163311717,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555238849
+    },
+    {
+        "content": "<p>no, giving back subgoals won't work --- there are way too many lemmas that successfully <code>apply</code>, but the hypotheses are just completely irrelevant to the problem you're actually working on</p>",
+        "id": 163311764,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238902
+    },
+    {
+        "content": "<p>I think a useful and general approach is to try to rank successes by how similar they are to the goal</p>",
+        "id": 163311770,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555238938
+    },
+    {
+        "content": "<p>i.e. don't necessarily close the goal outright but give some possible matching lemmas</p>",
+        "id": 163311787,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555238974
+    },
+    {
+        "content": "<p>Sorry -- do you mean how similar the newly generated goals (after the initial apply) are to the original goal?</p>",
+        "id": 163311790,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555238990
+    },
+    {
+        "content": "<p>The problem is there are many lemmas whose conclusion is just <code>a \\leq b</code>, and they only really differ in their hypotheses.</p>",
+        "id": 163311842,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555239045
+    },
+    {
+        "content": "<p>I mean how \"deeply\" the goal and hypotheses match with the target and things in the context</p>",
+        "id": 163311844,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555239052
+    },
+    {
+        "content": "<p>Ok.</p>",
+        "id": 163311856,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555239068
+    },
+    {
+        "content": "<p>So at the moment I only report lemmas that match so deeply that <code>solve_by_elim</code> can solve all the newly generated goals, from local hypotheses</p>",
+        "id": 163311864,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555239097
+    },
+    {
+        "content": "<p>I'm still thinking one step proofs here, but it's not an immediate fail if some hypotheses can't be found in the context</p>",
+        "id": 163311866,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555239111
+    },
+    {
+        "content": "<p>Okay.</p>",
+        "id": 163311911,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555239146
+    },
+    {
+        "content": "<p>If you like, you could try splitting into two tactics, one that finds likely candidates and another more <code>tidy</code>-like tactic that tries to kill the subgoals of the candidates</p>",
+        "id": 163311928,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555239196
+    },
+    {
+        "content": "<p>Even just: \"Apply a library lemma, and then as many as possible local hypotheses. Return the library lemma for which some combination of [number of applied hypotheses]/[number of remaining goals] is 'best'\".</p>",
+        "id": 163311929,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555239206
+    },
+    {
+        "content": "<p>This follows your description of trying to get good \"matching\" with the local goals/hypotheses</p>",
+        "id": 163311936,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555239238
+    },
+    {
+        "content": "<p>Especially if you can't close the goal, though, I think you should consider reporting multiple matches. If you can display the subgoals for each case I could quickly look through them to see things like \"this one needs 0 &gt; 2, no good, that one needs 2 | x, no good, that one says x &lt; x + 1, ok let's try that\"</p>",
+        "id": 163311998,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555239343
+    },
+    {
+        "content": "<p>Hmm... this sounds great, but realistically I can't work on that anytime soon.</p>",
+        "id": 163312119,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555239498
+    },
+    {
+        "content": "<p>I will PR a fix that deals with the universe issue.</p>",
+        "id": 163312122,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555239509
+    },
+    {
+        "content": "<p>okay, just thought I would give some ideas</p>",
+        "id": 163312123,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555239540
+    },
+    {
+        "content": "<p>No, they are great ideas. I will attempt to write up a description of some things someone should do, and shop it around here/to students. :-)</p>",
+        "id": 163312135,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555239576
+    },
+    {
+        "content": "<p>(on that note, we should keep thinking about how to make/maintain lists of \"things someone should do\")</p>",
+        "id": 163312182,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555239608
+    },
+    {
+        "content": "<p>The metamath IDE I use has a \"step search\" function that allows you to type a statement and then it searches the library and reports all matches. Many are silly matches but they are mostly organized in groups so you can still scroll through them to find the one you are after</p>",
+        "id": 163312183,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555239626
+    },
+    {
+        "content": "<p>that feature would be much improved if the matches were organized by relevance in terms of number of matched constants in the unify, so that things like \"\\all p, bla -&gt; bla -&gt; p\" don't appear in every match</p>",
+        "id": 163312201,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555239715
+    },
+    {
+        "content": "<p>So... in copying the universe metavariables over from <code>e &lt;- mk_const n</code> into <code>d.type</code>... how do I know which universes correspond to which?</p>",
+        "id": 163312494,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555240167
+    },
+    {
+        "content": "<p>I can call <code>expr.collect_univ_params d.type</code> to collect universes out of the type I get from the declaration, but I have no idea what order this list is in.</p>",
+        "id": 163312753,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555240594
+    },
+    {
+        "content": "<p>Is it certain to be in the same order as in <code>ls</code> when I match <code>mk_const n</code> against <code>expr.const _ ls</code>?</p>",
+        "id": 163312765,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555240631
+    },
+    {
+        "content": "<p><code>declaration</code> has a <code>list name</code> field for this</p>",
+        "id": 163312908,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555240885
+    },
+    {
+        "content": "<p>it lists the universe names used in <code>d.type</code> in the order they appear in <code>expr.const</code></p>",
+        "id": 163312910,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1555240906
+    },
+    {
+        "content": "<p>It looks like running <code>infer_type</code> costs about a 10% increase in runtime in the <code>library_search</code> tests, so I'll avoid it, I guess.</p>",
+        "id": 163313097,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1555241223
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> I never got this working, but I've made a [WIP] PR that shows the problem I ran into. <a href=\"https://github.com/leanprover-community/mathlib/issues/967\" target=\"_blank\" title=\"https://github.com/leanprover-community/mathlib/issues/967\">#967</a> I'm attempt to update the universe levels in <code>d.type</code> use the new universes from <code>e &lt;- mk_const d.to_name</code>, but apparently I'm not getting them all.</p>",
+        "id": 164785280,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1556881632
+    },
+    {
+        "content": "<p>Possibly I'm just doing something dumb as I traverse the <code>expr</code>.</p>",
+        "id": 164785286,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1556881644
+    },
+    {
+        "content": "<p>you wrote your own <code>instantiate_univ_params</code>?</p>",
+        "id": 164786349,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1556882957
+    },
+    {
+        "content": "<p>try this instead:</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">decl_mk_const</span> <span class=\"o\">(</span><span class=\"n\">d</span> <span class=\"o\">:</span> <span class=\"n\">declaration</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"o\">(</span><span class=\"n\">expr</span> <span class=\"bp\">×</span> <span class=\"n\">expr</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n<span class=\"n\">do</span> <span class=\"n\">subst</span> <span class=\"err\">←</span> <span class=\"n\">d</span><span class=\"bp\">.</span><span class=\"n\">univ_params</span><span class=\"bp\">.</span><span class=\"n\">mmap</span> <span class=\"err\">$</span> <span class=\"bp\">λ</span> <span class=\"n\">u</span><span class=\"o\">,</span> <span class=\"n\">prod</span><span class=\"bp\">.</span><span class=\"n\">mk</span> <span class=\"n\">u</span> <span class=\"bp\">&lt;</span><span class=\"err\">$</span><span class=\"bp\">&gt;</span> <span class=\"n\">mk_meta_univ</span><span class=\"o\">,</span>\n   <span class=\"k\">let</span> <span class=\"n\">e</span> <span class=\"o\">:</span> <span class=\"n\">expr</span> <span class=\"o\">:=</span> <span class=\"n\">expr</span><span class=\"bp\">.</span><span class=\"n\">const</span> <span class=\"n\">d</span><span class=\"bp\">.</span><span class=\"n\">to_name</span> <span class=\"o\">(</span><span class=\"n\">prod</span><span class=\"bp\">.</span><span class=\"n\">snd</span> <span class=\"bp\">&lt;</span><span class=\"err\">$</span><span class=\"bp\">&gt;</span> <span class=\"n\">subst</span><span class=\"o\">),</span>\n   <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"n\">e</span><span class=\"o\">,</span> <span class=\"n\">d</span><span class=\"bp\">.</span><span class=\"n\">type</span><span class=\"bp\">.</span><span class=\"n\">instantiate_univ_params</span> <span class=\"n\">subst</span><span class=\"o\">)</span>\n</pre></div>",
+        "id": 164786355,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1556882977
+    }
+]

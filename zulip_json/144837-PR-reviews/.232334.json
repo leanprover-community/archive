@@ -1,0 +1,86 @@
+[
+    {
+        "content": "<p>Hi <span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span>, in case it'</p>",
+        "id": 193309297,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1586347774
+    },
+    {
+        "content": "<p>it's easier to discuss here while we're both online rather than in the PR:</p>\n<p>It's working, in the sense that <code>trace_result</code> after <code>dsimp_result { equiv_rw e at h }</code> shows a result without the lambda, but it's not working in the sense that I then have no goals, and I can't quite work out why...</p>",
+        "id": 193309375,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1586347805
+    },
+    {
+        "content": "<p>And if I put the <code>dsimp_result</code> inside <code>equiv_rw_hyp</code>, then I get errors of the form <code>infer type failed, unknown variable i</code>. I think this indicates that the simulated goals you're creating in <code>dsimp_result</code> don't have the correct context attached?</p>",
+        "id": 193309777,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1586348057
+    },
+    {
+        "content": "<p>I can reproduce it locally, give me a second.</p>",
+        "id": 193309950,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1586348178
+    },
+    {
+        "content": "<p>So I think what's happening is that <code>dsimp</code> fails because we call it in the wrong local context, it should be the following:</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"n\">g&#39;</span> <span class=\"err\">←</span> <span class=\"n\">with_local_goals&#39;</span> <span class=\"o\">[</span><span class=\"n\">g</span><span class=\"o\">]</span> <span class=\"err\">$</span> <span class=\"n\">g&#39;</span><span class=\"bp\">.</span><span class=\"n\">dsimp</span> <span class=\"o\">{</span> <span class=\"n\">fail_if_unchanged</span> <span class=\"o\">:=</span> <span class=\"n\">ff</span> <span class=\"o\">},</span>\n</pre></div>",
+        "id": 193310781,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1586348662
+    },
+    {
+        "content": "<p>I'm still getting <code>no goals</code>.</p>",
+        "id": 193312307,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1586349469
+    },
+    {
+        "content": "<p>Let me commit my setup on the PR branch.</p>",
+        "id": 193312384,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1586349491
+    },
+    {
+        "content": "<p>See line 310 and following of <code>test/equiv_rw.lean</code> in <code>fix_equiv_rw</code>.</p>",
+        "id": 193312655,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1586349624
+    },
+    {
+        "content": "<p>Fixed version:</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">dsimp_result</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">t</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"n\">do</span>\n<span class=\"c1\">-- replace the first goal by a copy</span>\n<span class=\"n\">g</span> <span class=\"bp\">::</span> <span class=\"n\">gs</span> <span class=\"err\">←</span> <span class=\"n\">get_goals</span><span class=\"o\">,</span>\n<span class=\"n\">g&#39;</span> <span class=\"err\">←</span> <span class=\"n\">infer_type</span> <span class=\"n\">g</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">mk_meta_var</span><span class=\"o\">,</span>\n<span class=\"n\">set_goals</span> <span class=\"o\">(</span><span class=\"n\">g&#39;</span> <span class=\"bp\">::</span> <span class=\"n\">gs</span><span class=\"o\">),</span>\n<span class=\"c1\">-- run the tactic on the copied goal</span>\n<span class=\"n\">a</span> <span class=\"err\">←</span> <span class=\"n\">t</span><span class=\"o\">,</span>\n<span class=\"c1\">-- simplify the produced term</span>\n<span class=\"n\">g&#39;</span> <span class=\"err\">←</span> <span class=\"n\">instantiate_mvars</span> <span class=\"n\">g&#39;</span><span class=\"o\">,</span>\n<span class=\"n\">g&#39;</span> <span class=\"err\">←</span> <span class=\"n\">with_local_goals&#39;</span> <span class=\"o\">[</span><span class=\"n\">g</span><span class=\"o\">]</span> <span class=\"err\">$</span> <span class=\"n\">g&#39;</span><span class=\"bp\">.</span><span class=\"n\">dsimp</span> <span class=\"o\">{</span> <span class=\"n\">fail_if_unchanged</span> <span class=\"o\">:=</span> <span class=\"n\">ff</span> <span class=\"o\">},</span>\n<span class=\"c1\">-- and assign it to the original goal</span>\n<span class=\"n\">unsafe</span><span class=\"bp\">.</span><span class=\"n\">type_context</span><span class=\"bp\">.</span><span class=\"n\">run</span> <span class=\"err\">$</span> <span class=\"n\">unsafe</span><span class=\"bp\">.</span><span class=\"n\">type_context</span><span class=\"bp\">.</span><span class=\"n\">assign</span> <span class=\"n\">g</span> <span class=\"n\">g&#39;</span><span class=\"o\">,</span>\n<span class=\"n\">pure</span> <span class=\"n\">a</span>\n</pre></div>\n\n\n<p>Apparently <code>unify g g'</code> is a bit non-deterministic if <code>g</code> and <code>g'</code> are both metavariables.  The <code>exact</code> tactic has a similar bug: if you call <code>exact g</code> with another goal <code>g</code>, then it may close the other goal instead of the current goal.</p>",
+        "id": 193316064,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1586351067
+    },
+    {
+        "content": "<p>Wow, okay! Thanks for looking into this. I was not on the verge of finding that solution. :-)</p>",
+        "id": 193316218,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1586351150
+    },
+    {
+        "content": "<p>I think I may make a separate PR for <code>dsimp_result</code> first, since it's essentially a standalone tool, and then put <a href=\"https://github.com/leanprover-community/mathlib/issues/2334\" title=\"https://github.com/leanprover-community/mathlib/issues/2334\">#2334</a> on top of that.</p>",
+        "id": 193316437,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1586351237
+    },
+    {
+        "content": "<p>(Unless you want to do it of course! But I'm happy to construct some tests, write the docs, etc.)</p>",
+        "id": 193316470,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1586351256
+    },
+    {
+        "content": "<p>No, please PR it yourself.</p>",
+        "id": 193316505,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1586351276
+    },
+    {
+        "content": "<p>It's great to know that Lean is \"a bit non-deterministic\". Please don't tell the mathematicians!</p>",
+        "id": 193325659,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1586355188
+    }
+]
