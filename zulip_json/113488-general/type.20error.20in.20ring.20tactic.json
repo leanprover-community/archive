@@ -1,0 +1,134 @@
+[
+    {
+        "content": "<p>I was trying out some edge cases of <code>ring</code>, and the following code failed</p>\n<div class=\"codehilite\"><pre><span></span>  import tactic.ring\n  example (n : ℕ) (a : ℤ) : a^(n^0) = a^1 := by ring\n</pre></div>\n\n\n<p>with a type error:</p>\n<div class=\"codehilite\"><pre><span></span>error: type mismatch at application\n  tactic.ring.subst_into_pow a (n ^ 0) (tactic.ring.horner 1 a 1 0) 1\nterm\n  1\nhas type\n  ℤ\nbut is expected to have type\n  ℕ\n⊢ 0 = 1\n</pre></div>\n\n\n<p>I think the problem is that <code>ring</code> simplifies <code>n^0</code> to <code>1 : ℤ</code> instead of <code>1 : ℕ</code>. With the variable <code>a : ℕ</code> it works.</p>",
+        "id": 178201936,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1571151781
+    },
+    {
+        "content": "<p>the type error is a problem, but <code>ring</code> isn't supposed to be able to solve this anyway</p>",
+        "id": 178203394,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1571152741
+    },
+    {
+        "content": "<p>Yeah, I'm aware that <code>ring</code> doesn't really support this. On the other hand, <code>a^(n^0) = a^1 := by norm_num</code> also works, so it seems reasonable to me that <code>ring</code> shouldn't fail here either.</p>",
+        "id": 178203946,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1571153090
+    },
+    {
+        "content": "<p>that's because <code>norm_num</code> calls <code>simp</code></p>",
+        "id": 178203978,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1571153110
+    },
+    {
+        "content": "<p>I got the same type error again:</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"kn\">import</span> <span class=\"n\">tactic</span><span class=\"bp\">.</span><span class=\"n\">ring</span>\n<span class=\"kn\">example</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">ℚ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">x</span> <span class=\"err\">^</span> <span class=\"o\">(</span><span class=\"mi\">2</span> <span class=\"bp\">+</span> <span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">x</span><span class=\"err\">^</span><span class=\"mi\">4</span> <span class=\"o\">:=</span> <span class=\"k\">by</span> <span class=\"n\">ring</span>\n</pre></div>\n\n\n<p>I decided to investigate, and it seems to arise from:</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"kn\">eval</span> <span class=\"o\">:</span> <span class=\"n\">expr</span> <span class=\"bp\">→</span> <span class=\"n\">ring_m</span> <span class=\"o\">(</span><span class=\"n\">horner_expr</span> <span class=\"bp\">×</span> <span class=\"n\">expr</span><span class=\"o\">)</span>\n<span class=\"bp\">...</span>\n<span class=\"bp\">|</span> <span class=\"n\">e</span><span class=\"bp\">@`</span><span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">has_pow</span><span class=\"bp\">.</span><span class=\"n\">pow</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span> <span class=\"err\">%%</span><span class=\"n\">P</span> <span class=\"err\">%%</span><span class=\"n\">e₁</span> <span class=\"err\">%%</span><span class=\"n\">e₂</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">do</span>\n  <span class=\"o\">(</span><span class=\"n\">e₂&#39;</span><span class=\"o\">,</span> <span class=\"n\">p₂</span><span class=\"o\">)</span> <span class=\"err\">←</span> <span class=\"kn\">eval</span> <span class=\"n\">e₂</span><span class=\"o\">,</span>\n</pre></div>\n\n\n<p>Since <code>eval</code> assumes its argument is of a fixed <code>α</code> (here <code>ℚ</code>), but the exponent is in <code>ℕ</code>, we get a type error. One fix is to replace <code>eval</code> with <code>norm_num</code> (which would work, since we don't use the <code>horner_expr</code> data of `e₂'). I just tested this change, and mathlib compiles with the change.</p>\n<p>Thoughts?</p>",
+        "id": 179230566,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1572269546
+    },
+    {
+        "content": "<p>My thought is what about things like <code>a^(n + 1) = a^(1 + n)</code>, but now I don't know whether we're outside the scope of what <code>ring</code> is supposed to do</p>",
+        "id": 179230785,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1572269708
+    },
+    {
+        "content": "<p>yeah, those arguments have to be closed numerals so <code>norm_num</code> should work</p>",
+        "id": 179230883,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1572269764
+    },
+    {
+        "content": "<p>I'm actually working on a tactic that is designed to deal with expressions like <code>a^(n + 1) = a^(1 + n)</code>, so I'm not worried about <code>ring</code> being too powerless :)</p>",
+        "id": 179231014,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1572269872
+    },
+    {
+        "content": "<blockquote>\n<p>I just tested this change, and mathlib compiles with the change.</p>\n</blockquote>\n<p>Hmm, I must have done something wrong when testing it. Now this goal in <code>mathlib/src/data/polynomial.lean:2385:2</code> isn't solved: <code>(x + y) * (y ^ 2 * z + (x * x ^ n + (↑n + 1) * x ^ n * y)) = x * (x * x ^ n) + ((↑n + 2) * (x * x ^ n) * y + (z * x + (y * z + (↑n + 1) * x ^ n)) * y ^ 2)</code></p>",
+        "id": 179231476,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1572270157
+    },
+    {
+        "content": "<p>I suppose you could recognize that as <code>a^n * a</code> where <code>a^n</code> is an atom; or you could operate recursively in the argument with a different type (so you could do <code>a ^ (x ^ 2 - y ^ 2) = a ^ ((x + y) * (x - y))</code></p>",
+        "id": 179231495,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1572270166
+    },
+    {
+        "content": "<p>I pushed a fix for this to the PR</p>",
+        "id": 179231630,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1572270244
+    },
+    {
+        "content": "<p>Yeah, changing the type in <code>eval</code>ing the exponent seems doable; it's what I do in my new tactic.</p>",
+        "id": 179231666,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1572270289
+    },
+    {
+        "content": "<p>but travis takes just long enough for me to forget that I was compiling before it reports an error</p>",
+        "id": 179231687,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1572270308
+    },
+    {
+        "content": "<p>I think this is going outside <code>ring</code>'s intended domain though. If you have a ring equality stuffed in an exponent you should first use <code>congr</code> or other things designed for it</p>",
+        "id": 179231868,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1572270415
+    },
+    {
+        "content": "<p>I used <code>norm_num</code> and it seems I get less errors than the Travis build using <code>norm_num.derive</code>.</p>",
+        "id": 179234317,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1572271924
+    },
+    {
+        "content": "<p>The difference between <code>tactic.norm_num</code> and <code>tactic.norm_num.derive</code> is that <code>derive</code> supports more expressions, right?</p>",
+        "id": 179234318,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1572271928
+    },
+    {
+        "content": "<p>Ah, it's because <code>tactic.norm_num</code> threw an error so the <code>ring</code> tactic went over to simplification mode which just happened to end up with an equality, while <code>tactic.norm_num.derive</code> didn't throw an error and didn't reach the equality immediately</p>",
+        "id": 179235126,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1572272486
+    },
+    {
+        "content": "<p>It seems that going to <code>norm_num.derive</code> makes the following not work anymore:</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"kn\">example</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"bp\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"err\">^</span> <span class=\"n\">n</span> <span class=\"bp\">=</span> <span class=\"n\">a</span> <span class=\"err\">^</span> <span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"k\">by</span> <span class=\"n\">ring</span>\n</pre></div>",
+        "id": 179235666,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1572272882
+    },
+    {
+        "content": "<p>Tim, did you see Mario's PR here? <a href=\"https://github.com/leanprover-community/mathlib/pull/1557\" target=\"_blank\" title=\"https://github.com/leanprover-community/mathlib/pull/1557\">https://github.com/leanprover-community/mathlib/pull/1557</a></p>",
+        "id": 179236043,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1572273140
+    },
+    {
+        "content": "<p>It looks like <code>derive</code> was failing on input that was already a numeral. Mario added <code>derive'</code>.</p>",
+        "id": 179236067,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1572273160
+    },
+    {
+        "content": "<p>Aha, I didn't check the other changes in the PR.</p>",
+        "id": 179237657,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1572274170
+    },
+    {
+        "content": "<p>Thanks for the fix!</p>",
+        "id": 179237680,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1572274186
+    }
+]

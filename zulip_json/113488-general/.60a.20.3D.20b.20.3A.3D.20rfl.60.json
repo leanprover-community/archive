@@ -1,0 +1,440 @@
+[
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span><span class=\"kn\">definition</span> <span class=\"n\">xena</span><span class=\"bp\">.</span><span class=\"n\">zero</span> <span class=\"o\">:</span> <span class=\"bp\">ℕ</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span>\n\n<span class=\"kn\">theorem</span> <span class=\"n\">easy</span> <span class=\"o\">:</span> <span class=\"n\">xena</span><span class=\"bp\">.</span><span class=\"n\">zero</span> <span class=\"bp\">=</span> <span class=\"n\">nat</span><span class=\"bp\">.</span><span class=\"n\">zero</span> <span class=\"o\">:=</span> <span class=\"n\">rfl</span>\n</pre></div>\n\n\n<p>I usually stop thinking when it's got to this point -- my zeros are equal by definition and we're done. Yesterday, perhaps inspired by Ed's barrage, which reminded me how little I still knew about some aspects of Lean, I decided to dig a bit deeper into this easy theorem. I tried to take it apart completely given what I knew.</p>\n<p>Setting <code>pp.all true</code> shows me that my goal is</p>\n<div class=\"codehilite\"><pre><span></span>@eq.{1} nat xena.zero nat.zero\n</pre></div>\n\n\n<p>which is fine. My first question is how <code>rfl</code> is proving this. I'm assuming that the output of <code>#print rfl</code> is the code that's being run here. </p>\n<div class=\"codehilite\"><pre><span></span>@[pattern]\ndef rfl : ∀ {α : Sort u} {a : α}, @eq.{u} α a a :=\nλ {α : Sort u} {a : α}, @eq.refl.{u} α a\n</pre></div>\n\n\n<p>I have some things to solve here. I will set <code>u=1</code> for the universe, and now for the <code>{}</code> brackets I need to solve for <code>α</code> and <code>a</code>. Well <code>α</code> is easy, it's <code>nat</code>, but for <code>a</code> I seem to have two choices. <code>a = xena.zero</code> and <code>a=nat.zero</code> and neither of them are on the face of it right. One seems to create a term of type <code>@eq.{1} nat xena.zero xena.zero</code> and the other a term of type <code>@eq.{1} nat nat.zero nat.zero</code>. </p>\n<p>Whichever one Lean chooses, it -- by which I mean <em>something</em> -- is now faced with the problem that I am claiming that two types are equal when they are not literally the same thing. The same what? The same expressions? </p>\n<p>Proving that these two types are equal (<code>@eq.{1} nat xena.zero nat.zero</code> and <code>@eq.{1} nat a a</code> for whatever <code>rfl</code> decided to let <code>a</code> be -- how do I find out, by the way?) seems to be a case of proving <code>xena.zero</code> and <code>nat.zero</code> are the same term of type <code>nat</code>. So Lean has somehow now reduced to checking that these terms are the same. But the expressions (if they are expressions) are presumably different. </p>\n<p>What presumably happens next is that Lean has to try and check that both terms evaluate to the same term of type <code>nat</code>. Now <code>nat.zero</code> seems like it's somehow \"fully evaluated\" -- <code>#print nat.zero</code> indicates that it's a constructor of <code>nat</code> and we somehow can't get any further. On the other hand, <code>#print xena.zero</code> seems to indicate that more work needs to be done. The parser, or something, has interpreted <code>0 : nat</code> as <code>@has_zero.zero.{0} nat nat.has_zero</code>. I can't quite work out how -- <code>0</code> does not seem to be notation. I think Mario once told me that it was the \"number literal parser\" which changes <code>0</code> to <code>@has_zero.zero.{0} nat nat.has_zero</code>. So...<em>something</em> is now faced with the of verifying that <code>@has_zero.zero.{0} nat nat.has_zero</code> evaluates to <code>nat.zero</code>. I can understand that <code>nat.has_zero</code> has magically appeared because the type class inference system produced it, and looking at the definition of <code>has_zero.zero</code> I can see that this term evaluates to <code>nat.has_zero.zero</code>. This is a funny...term? expr? because I can't <code>#print</code> it even though I can <code>#check</code> it. I can <code>#reduce</code> it but I feel like this might be cheating -- I can <code>#reduce xena.zero</code> and everything gets unravelled. What is <code>#reduce</code> doing here? Is this all the alpha-equivalence beta-reduction stuff? </p>\n<p>Feeling like <code>#reduce nat.has_zero.zero</code> was cheating, I right-clicked on it -- I don't know any other way of seeing the definition, because <code>#print</code> doesn't work and <code>#reduce</code> does too much. Is there a way to investivate more carefully what type class inference did here? Right-clicking takes me to core Lean where I find <code>instance : has_zero nat := ⟨nat.zero⟩</code>, so indeed it was <code>nat.zero</code> after all.</p>\n<p>Whose job am I doing here? What does all this have to do with <code>expr</code>s and <code>pexpr</code>s?</p>",
+        "id": 131994333,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534074505
+    },
+    {
+        "content": "<p>You are doing the job of the kernel here, which is unfortunately not so verbose when it does things</p>",
+        "id": 131994536,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534075036
+    },
+    {
+        "content": "<blockquote>\n<p>for whatever rfl decided to let a be -- how do I find out, by the way?</p>\n</blockquote>\n<p>If you <code>#print easy</code> with <code>pp.all</code> you will see <code>@rfl.{1} nat xena.zero</code>, so rfl chose the LHS, forcing it to check <code>@eq.{1} nat xena.zero xena.zero =?= @eq.{1} nat xena.zero nat.zero</code>.</p>",
+        "id": 131994590,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534075190
+    },
+    {
+        "content": "<p>I've seen you write <code>=?=</code> many times here, and I still don't know what it means. I understand that the job Lean has to somehow do is to check LHS = RHS. What does <code>=?=</code> indicate though?</p>",
+        "id": 131994704,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534075397
+    },
+    {
+        "content": "<p>It is a defeq \"goal\"</p>",
+        "id": 131994706,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534075414
+    },
+    {
+        "content": "<p>so a sort of unification, I guess</p>",
+        "id": 131994709,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1534075439
+    },
+    {
+        "content": "<p>And what thing solves this goal? The kernel? Can we be more precise? Is it anything to do with the unifier or elaborator or something?</p>",
+        "id": 131994748,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534075450
+    },
+    {
+        "content": "<p>yes, it is used in unification and also pure defeq checking</p>",
+        "id": 131994751,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534075454
+    },
+    {
+        "content": "<p>the elaborator also solves this problem (both the kernel and the elaborator have slightly different approaches to solving defeq problems)</p>",
+        "id": 131994758,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534075499
+    },
+    {
+        "content": "<p>Right, I think I've also seen it in the context <code>?m_1 =?= nat</code> with metavariables. That's the same usage?</p>",
+        "id": 131994760,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534075502
+    },
+    {
+        "content": "<p>yes</p>",
+        "id": 131994771,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534075519
+    },
+    {
+        "content": "<p>So at any stage in time, does Lean have a list of <code>A =?= B</code> goals?</p>",
+        "id": 131994773,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534075540
+    },
+    {
+        "content": "<p>somewhere deep in the kernel, yes, more or less, although that list is spread over the recursive calls to <code>is_def_eq</code> rather than explicitly maintained</p>",
+        "id": 131994827,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534075646
+    },
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span><span class=\"c\">/-</span><span class=\"cm\">- Succeeds if `t` and `s` can be unified using the given transparency setting. -/</span>\n<span class=\"n\">meta</span> <span class=\"kn\">constant</span> <span class=\"n\">unify</span> <span class=\"o\">(</span><span class=\"n\">t</span> <span class=\"n\">s</span> <span class=\"o\">:</span> <span class=\"n\">expr</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">md</span> <span class=\"o\">:=</span> <span class=\"n\">semireducible</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">approx</span> <span class=\"o\">:=</span> <span class=\"n\">ff</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">unit</span>\n<span class=\"c\">/-</span><span class=\"cm\">- Similar to `unify`, but it treats metavariables as constants. -/</span>\n<span class=\"n\">meta</span> <span class=\"kn\">constant</span> <span class=\"n\">is_def_eq</span> <span class=\"o\">(</span><span class=\"n\">t</span> <span class=\"n\">s</span> <span class=\"o\">:</span> <span class=\"n\">expr</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">md</span> <span class=\"o\">:=</span> <span class=\"n\">semireducible</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">approx</span> <span class=\"o\">:=</span> <span class=\"n\">ff</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">unit</span>\n</pre></div>\n\n\n<p>The fact that these are constants somehow indicates that they are not written in Lean but perhaps in C++. How does Lean know that these are any different to <code>meta constant foo : nat</code> ? And what told Lean to use <code>is_def_eq</code>? Again is this something written in <code>C++</code>? I don't want to read any <code>C++</code> at this point, but I'd like to be able to get as far as it (hence at some point I'm going to have to read some tactic code, but not today)</p>",
+        "id": 131994964,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534075881
+    },
+    {
+        "content": "<p>Here's the process for checking defeq:</p>\n<ul>\n<li>Since <code>eq</code> is an axiomatic constant, it can't be unfolded, so it checks that the parts are equal, reducing to <code>xena.zero =?= nat.zero</code>.</li>\n<li>Since <code>xena.zero</code> has greater definitional height, and <code>nat.zero</code> is a constant anyway, it unfolds <code>xena.zero := @has_zero.zero.{0} nat nat.has_zero</code>.</li>\n<li><code>has_zero.zero</code> is a builtin projection, which I'm not sure how lean handles - if it is unfolded you see a macro for the projection and it's tricky to unfold these. For now let's just pretend that this term is an axiomatic constant.</li>\n<li>Since <code>has_zero.zero</code> is a projection, it tries to reduce the major premise, which is <code>nat.has_zero</code>.</li>\n<li>Since <code>nat.has_zero</code> is a definition, it is unfolded, to <code>@has_zero.mk.{0} nat nat.zero</code>.</li>\n<li>Since <code>has_zero.mk</code> is a constructor, unfolding stops.</li>\n<li>Now we have <code>@has_zero.zero.{0} nat (@has_zero.mk.{0} nat nat.zero)</code>, which is a projection applied to a constructor, so it iota reduces to <code>nat.zero</code>.</li>\n<li>We now have to show <code>nat.zero =?= nat.zero</code>, so we are done.</li>\n</ul>",
+        "id": 131995011,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534075935
+    },
+    {
+        "content": "<p>Those constants are written in C++; they hook into the elaborator code for defeq and unification</p>",
+        "id": 131995021,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534076015
+    },
+    {
+        "content": "<p>They are not any different from other meta constants, but when you <code>#eval</code> a meta constant it checks if it has builtin code for the constant</p>\n<div class=\"codehilite\"><pre><span></span>meta constant foo : nat\n#eval foo\n-- code generation failed, VM does not have code for &#39;foo&#39;\n#eval (undefined : nat)\n-- undefined\n</pre></div>",
+        "id": 131995076,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534076104
+    },
+    {
+        "content": "<p>the <code>DECLARE_VM_BUILTIN</code> function in C++ hooks a C++ function to a meta constant by name, so if you want to find out what function handles <code>unify</code>, say, you can just look for this in the code</p>",
+        "id": 131995164,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534076253
+    },
+    {
+        "content": "<p>Is there a formal definition of \"axiomatic constant\"? I thought <code>eq</code> was a Pi type and <code>nat.zero</code> was a constructor. They're also both constants somehow?</p>",
+        "id": 131995218,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534076315
+    },
+    {
+        "content": "<p><code>eq</code> has <em>type</em> <code>Π {α : Sort u}, α → α → Prop</code> but it has no <em>definition</em></p>",
+        "id": 131995229,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534076387
+    },
+    {
+        "content": "<p>similarly <code>nat.zero : nat</code> but <code>nat.zero :=</code> nothing</p>",
+        "id": 131995283,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534076418
+    },
+    {
+        "content": "<p>yes there is a formal definition. These are both constants introduced through the declaration of an inductive type. If you recall each inductive type comes axiomatically with a type (being declared), a list of constructors, and a recursor</p>",
+        "id": 131995306,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534076486
+    },
+    {
+        "content": "<p>Yes, inductive types I'm completely happy with.</p>",
+        "id": 131995321,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534076504
+    },
+    {
+        "content": "<p>I see. <code>#print eq</code> and <code>#print nat.zero</code> both return answers with no <code>:=</code> in</p>",
+        "id": 131995326,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534076520
+    },
+    {
+        "content": "<p>the important part is that this is a way to introduce constants that have no definition</p>",
+        "id": 131995369,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534076540
+    },
+    {
+        "content": "<p>all constants are either axiomatic from an inductive, declared via <code>axiom</code> or <code>constant</code>, or are definitions</p>",
+        "id": 131995373,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534076566
+    },
+    {
+        "content": "<p>or are <code>quot</code>, <code>quot.mk</code>, <code>quot.lift</code> or <code>quot.sound</code> which are special</p>",
+        "id": 131995382,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534076591
+    },
+    {
+        "content": "<p>So the type, the constructors and the recursor for an inductive type are all constants?</p>",
+        "id": 131995385,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534076601
+    },
+    {
+        "content": "<p>yes</p>",
+        "id": 131995389,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534076609
+    },
+    {
+        "content": "<p>Above I pretended that the projection of a structure is also a constant, but I'm not sure if lean unfolds that too</p>",
+        "id": 131995442,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534076652
+    },
+    {
+        "content": "<p>I'm happy with the explanation that \"it's iota reduction\"</p>",
+        "id": 131995451,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534076685
+    },
+    {
+        "content": "<p>technically the projections are defined in terms of the recursor, with a major premise like <code>(\\lam x y z, y)</code>, and it's an iota reduction and some betas to get to where I said</p>",
+        "id": 131995462,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534076736
+    },
+    {
+        "content": "<p><code>#print has_zero.zero</code> seems to give out some sort of junk answer -- it has no content somehow</p>",
+        "id": 131995505,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534076783
+    },
+    {
+        "content": "<p><code>has_zero.zero</code> is apparently defined in terms of a macro, also called <code>has_zero.zero</code></p>",
+        "id": 131995507,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534076807
+    },
+    {
+        "content": "<p>Oh so that's a different <code>has_zero.zero</code> in the output?</p>",
+        "id": 131995517,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534076843
+    },
+    {
+        "content": "<p>so basically <code>eq</code> is a constant and <code>eq a a</code> for every <code>a</code> is an axiom</p>",
+        "id": 131995518,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1534076848
+    },
+    {
+        "content": "<p><code>eq a a</code> is a proposition and I know a way of constructing a term of that type</p>",
+        "id": 131995557,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534076897
+    },
+    {
+        "content": "<p>ok</p>",
+        "id": 131995559,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1534076941
+    },
+    {
+        "content": "<p>ah, unfolding success</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"kn\">open</span> <span class=\"n\">tactic</span>\n<span class=\"n\">run_cmd</span> <span class=\"n\">do</span>\n  <span class=\"n\">d</span> <span class=\"err\">←</span> <span class=\"n\">get_decl</span> <span class=\"bp\">``</span><span class=\"n\">has_zero</span><span class=\"bp\">.</span><span class=\"n\">zero</span><span class=\"o\">,</span>\n  <span class=\"n\">expr</span><span class=\"bp\">.</span><span class=\"n\">lam</span> <span class=\"n\">n</span> <span class=\"n\">u</span> <span class=\"n\">bi</span> <span class=\"n\">v</span> <span class=\"err\">←</span> <span class=\"n\">return</span> <span class=\"n\">d</span><span class=\"bp\">.</span><span class=\"n\">value</span><span class=\"o\">,</span>\n  <span class=\"n\">x</span> <span class=\"err\">←</span> <span class=\"n\">mk_local&#39;</span> <span class=\"n\">n</span> <span class=\"n\">u</span> <span class=\"n\">bi</span><span class=\"o\">,</span>\n  <span class=\"n\">expr</span><span class=\"bp\">.</span><span class=\"n\">lam</span> <span class=\"n\">n</span> <span class=\"n\">u</span> <span class=\"n\">bi</span> <span class=\"n\">v</span> <span class=\"err\">←</span> <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"n\">v</span><span class=\"bp\">.</span><span class=\"n\">instantiate_var</span> <span class=\"n\">x</span><span class=\"o\">),</span>\n  <span class=\"n\">c</span> <span class=\"err\">←</span> <span class=\"n\">mk_local&#39;</span> <span class=\"n\">n</span> <span class=\"n\">u</span> <span class=\"n\">bi</span><span class=\"o\">,</span>\n  <span class=\"k\">let</span> <span class=\"n\">v</span> <span class=\"o\">:=</span> <span class=\"n\">v</span><span class=\"bp\">.</span><span class=\"n\">instantiate_var</span> <span class=\"n\">c</span><span class=\"o\">,</span>\n  <span class=\"n\">trace</span> <span class=\"n\">v</span><span class=\"o\">,</span>\n  <span class=\"c1\">-- [has_zero.zero c]</span>\n  <span class=\"n\">whnf</span> <span class=\"n\">v</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">trace</span>\n<span class=\"c1\">-- @has_zero.rec.{u+1 u} α (λ [c : has_zero.{u} α], α) (λ (zero : α), zero) c</span>\n</pre></div>",
+        "id": 131995739,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534077349
+    },
+    {
+        "content": "<p>I am sure there is a function for opening the lambdas there at the beginning, but I've forgotten what it is</p>",
+        "id": 131995789,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534077405
+    },
+    {
+        "content": "<p>Aah this is what I want to see. I have an underlying question really, which is basically how I can do all the unfolding which I did \"on paper\" above, but step by step, within Lean.</p>",
+        "id": 131996289,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534078474
+    },
+    {
+        "content": "<p>the key step there is <code>whnf</code></p>",
+        "id": 131996368,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534078631
+    },
+    {
+        "content": "<p>which will unfold a term until it hits a constructor, a pi, or other constant at head position</p>",
+        "id": 131996373,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534078663
+    },
+    {
+        "content": "<p>the name means \"weak head normal form\"</p>",
+        "id": 131996413,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534078697
+    },
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span><span class=\"kn\">definition</span> <span class=\"n\">xena</span><span class=\"bp\">.</span><span class=\"n\">zero</span> <span class=\"o\">:</span> <span class=\"bp\">ℕ</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">tactic</span>\n<span class=\"n\">run_cmd</span> <span class=\"n\">do</span>\n  <span class=\"n\">whnf</span> <span class=\"bp\">``</span><span class=\"n\">xena</span><span class=\"bp\">.</span><span class=\"n\">zero</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">trace</span> <span class=\"c1\">-- fails because I wrote nonsense</span>\n</pre></div>\n\n\n<p>How do I get to the <code>expr</code>? Ooh this might be in PIL.</p>",
+        "id": 131996658,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534079262
+    },
+    {
+        "content": "<p>that's what the first lines are for</p>",
+        "id": 131996713,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079325
+    },
+    {
+        "content": "<p><code>get_decl</code> gets a declaration, from which you can get the value with <code>d.value</code></p>",
+        "id": 131996726,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079351
+    },
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span><span class=\"kn\">open</span> <span class=\"n\">tactic</span>\n<span class=\"n\">run_cmd</span> <span class=\"n\">do</span>\n  <span class=\"n\">d</span> <span class=\"err\">←</span> <span class=\"n\">get_decl</span> <span class=\"bp\">``</span><span class=\"n\">xena</span><span class=\"bp\">.</span><span class=\"n\">zero</span><span class=\"o\">,</span>\n  <span class=\"n\">whnf</span> <span class=\"n\">d</span><span class=\"bp\">.</span><span class=\"n\">value</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">trace</span> <span class=\"c1\">-- nat.zero</span>\n</pre></div>",
+        "id": 131996786,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079422
+    },
+    {
+        "content": "<p>alternatively, you could just construct the expression <code>xena.zero</code> and reduce that, rather than getting the definition of <code>xena.zero</code> to reduce as I just did</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"n\">run_cmd</span> <span class=\"n\">do</span>\n  <span class=\"n\">e</span> <span class=\"err\">←</span> <span class=\"n\">mk_const</span> <span class=\"bp\">``</span><span class=\"n\">xena</span><span class=\"bp\">.</span><span class=\"n\">zero</span><span class=\"o\">,</span>\n  <span class=\"n\">whnf</span> <span class=\"n\">e</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">trace</span> <span class=\"c1\">-- nat.zero</span>\n</pre></div>",
+        "id": 131996842,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079536
+    },
+    {
+        "content": "<p><code>whnf `(xena.zero) &gt;&gt;= trace</code> also works</p>",
+        "id": 131996843,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079574
+    },
+    {
+        "content": "<p>I don't see <code>nat.zero</code> -- I just see <code>0</code>. This is the pretty printer folding stuff up again, I guess?</p>",
+        "id": 131996853,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534079599
+    },
+    {
+        "content": "<p>I have <code>pp.all</code> enabled</p>",
+        "id": 131996855,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079610
+    },
+    {
+        "content": "<p>got it -- so have I now</p>",
+        "id": 131996856,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534079618
+    },
+    {
+        "content": "<p>right, the pretty printer prints <code>nat.zero</code> as <code>0</code>. Which is actually kind of confusing since that would usually be reserved for <code>@has_zero.zero _ _</code></p>",
+        "id": 131996901,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079672
+    },
+    {
+        "content": "<p>So it's all happening too fast -- <code>whnf</code> turns <code>xena.zero</code> straight into <code>nat.zero</code> like <code>#reduce</code>?</p>",
+        "id": 131996904,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534079674
+    },
+    {
+        "content": "<p>right, <code>whnf</code> unfolds definitions until it reaches something which isn't a definition</p>",
+        "id": 131996916,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079714
+    },
+    {
+        "content": "<p>it is similar to <code>#reduce</code>, but it doesn't reduce everything, only stuff at the head</p>",
+        "id": 131996926,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079757
+    },
+    {
+        "content": "<p>for example:</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"n\">run_cmd</span> <span class=\"n\">whnf</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"bp\">ℕ</span><span class=\"o\">,</span> <span class=\"n\">xena</span><span class=\"bp\">.</span><span class=\"n\">zero</span><span class=\"o\">)</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">trace</span> <span class=\"c1\">-- λ (x : nat), xena.zero</span>\n</pre></div>",
+        "id": 131996972,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079795
+    },
+    {
+        "content": "<p><code>d.value</code> seems to have type <code>expr bool.tt</code>. What's that bool doing there?</p>",
+        "id": 131996982,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534079861
+    },
+    {
+        "content": "<p>the idea is that if <code>e1</code> unfolds to <code>sum A B</code> and <code>e2</code> unfolds to <code>prod C D</code>, then it is impossible for <code>e1 == e2</code></p>",
+        "id": 131996986,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079879
+    },
+    {
+        "content": "<p>even if <code>A B C D</code> are not completely unfolded</p>",
+        "id": 131997025,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079895
+    },
+    {
+        "content": "<p>What does <code>==</code> mean?</p>",
+        "id": 131997026,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534079924
+    },
+    {
+        "content": "<p>defeq</p>",
+        "id": 131997028,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079939
+    },
+    {
+        "content": "<p>It's different to <code>=</code> because if two things are equal they must have the same type.</p>",
+        "id": 131997030,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534079942
+    },
+    {
+        "content": "<p>it's not heq, I should use a better notation</p>",
+        "id": 131997038,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079955
+    },
+    {
+        "content": "<p>Oh I see</p>",
+        "id": 131997041,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534079971
+    },
+    {
+        "content": "<p>defeq things have to have the same type btw</p>",
+        "id": 131997042,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534079986
+    },
+    {
+        "content": "<p>great</p>",
+        "id": 131997043,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534079994
+    },
+    {
+        "content": "<p><code>expr tt</code> is <code>expr</code> and <code>expr ff</code> is <code>pexpr</code></p>",
+        "id": 131997088,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534080018
+    },
+    {
+        "content": "<p>Oh!</p>",
+        "id": 131997092,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534080028
+    },
+    {
+        "content": "<p>they have the same definition as inductive types so this saves some duplication</p>",
+        "id": 131997094,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1534080049
+    },
+    {
+        "content": "<p>Oh these are optional paramaters</p>",
+        "id": 131997095,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534080050
+    },
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span><span class=\"n\">run_cmd</span> <span class=\"n\">do</span>\n  <span class=\"n\">e</span> <span class=\"err\">←</span> <span class=\"n\">mk_const</span> <span class=\"bp\">``</span><span class=\"n\">xena</span><span class=\"bp\">.</span><span class=\"n\">zero</span><span class=\"o\">,</span>\n  <span class=\"n\">return</span> <span class=\"n\">e</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">trace</span>\n</pre></div>\n\n\n<p>woo I wrote something that worked.</p>",
+        "id": 131997237,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1534080336
+    }
+]

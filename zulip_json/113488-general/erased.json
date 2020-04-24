@@ -1,0 +1,194 @@
+[
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span> What would be the best way to define the following type:</p>\n<ul>\n<li><code>erased A</code> is a type with a computable function <code>A -&gt; erased A</code> and a noncomputable function <code>erased A -&gt; A</code></li>\n<li><code>A</code> and <code>erased A</code> are (noncomputably) equivalent with those functions</li>\n<li><code>erased A</code> is VM-erased, meaning elements of this type are stored as the \"proof object\" / \"neutral element\"</li>\n</ul>",
+        "id": 124681873,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522950961
+    },
+    {
+        "content": "<p>Attempt 1:</p>\n<div class=\"codehilite\"><pre><span></span>import data.set.basic data.equiv\n\ndef erased (α : Type*) : Type* := set.range (singleton : α → set α)\n\nnamespace erased\n\n@[inline] def mk {α} (a : α) : erased α := ⟨_, a, rfl⟩\n\nnoncomputable def out {α} (a : erased α) : α :=\nclassical.some a.2\n\ntheorem mk_out {α} (a : α) : (mk a).out = a :=\neq.symm $ set.mem_singleton_iff.1 $\nby unfold out; rw [classical.some_spec (mk a).2]; simp [mk]\n\ntheorem out_mk {α} (a : erased α) : mk (out a) = a :=\nsubtype.eq $ set.ext $ λ b,\nby simp [out, mk, classical.some_spec a.2]\n\nnoncomputable def equiv (α) : erased α ≃ α :=\n⟨out, mk, out_mk, mk_out⟩\n\nend erased\n</pre></div>",
+        "id": 124681928,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522950980
+    },
+    {
+        "content": "<p>The problem with this encoding is that <code>erased A</code> is essentially a <code>set A</code>, which is a <code>A -&gt; Prop</code>, which is stored as a closure returning a proof object. Thus it isn't fully erased, so it still causes its arguments to be evaluated:</p>\n<div class=\"codehilite\"><pre><span></span>#eval erased.mk (2+2) -- (erased.mk 4)\n</pre></div>\n\n\n<p>Do you know why type families aren't erased like types are?</p>",
+        "id": 124682307,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522951500
+    },
+    {
+        "content": "<p>Why not use <code>nonempty</code>?</p>",
+        "id": 124682380,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1522951586
+    },
+    {
+        "content": "<p>it's not noncomputably equivalent to <code>A</code></p>",
+        "id": 124682407,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522951650
+    },
+    {
+        "content": "<p>I withdraw my question, I get it</p>",
+        "id": 124682408,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1522951655
+    },
+    {
+        "content": "<p>The goal is to have a piece of \"data\" that is actually erased but still exists from the lean modeling POV</p>",
+        "id": 124682469,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522951708
+    },
+    {
+        "content": "<p>I see</p>",
+        "id": 124682497,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1522951799
+    },
+    {
+        "content": "<p>Wait, this no longer works?  Let me check.</p>",
+        "id": 124682565,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1522951842
+    },
+    {
+        "content": "<p>Mmmh, I can't reproduce this here.  The 2+2 computation is completely erased.  Let me upgrade Lean.</p>",
+        "id": 124682890,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1522952182
+    },
+    {
+        "content": "<p>Still can't reproduce.</p>",
+        "id": 124683007,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1522952397
+    },
+    {
+        "content": "<p>Actually that <code>#eval</code> doesn't work, lean complains about too few arguments since it's a closure which is waiting for an argument. This shows the closure creation:</p>\n<div class=\"codehilite\"><pre><span></span>set_option trace.compiler.code_gen true\ndef f := let x := erased.mk (2+2) in x\n-- [compiler.code_gen]  f._lambda_1 1\n-- 0: scnstr #0\n-- 1: ret\n-- [compiler.code_gen]  f 0\n-- 0: closure f._lambda_1 0\n-- 1: localinfo x @ 0\n-- 2: push 0\n-- 3: drop 1\n-- 4: ret\n</pre></div>",
+        "id": 124683060,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522952426
+    },
+    {
+        "content": "<p>What do you get with these changes (added <code>has_repr</code> and the <code>set_option</code>):</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"kn\">set_option</span> <span class=\"n\">trace</span><span class=\"bp\">.</span><span class=\"n\">compiler</span><span class=\"bp\">.</span><span class=\"n\">optimize_bytecode</span> <span class=\"n\">true</span>\n\n<span class=\"n\">def</span> <span class=\"n\">erased</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span> <span class=\"o\">:=</span> <span class=\"n\">set</span><span class=\"bp\">.</span><span class=\"n\">range</span> <span class=\"o\">(</span><span class=\"n\">singleton</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">set</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">erased</span>\n\n<span class=\"bp\">@</span><span class=\"o\">[</span><span class=\"kn\">inline</span><span class=\"o\">]</span> <span class=\"n\">def</span> <span class=\"n\">mk</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">erased</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"bp\">⟨_</span><span class=\"o\">,</span> <span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">rfl</span><span class=\"bp\">⟩</span>\n\n<span class=\"n\">noncomputable</span> <span class=\"n\">def</span> <span class=\"n\">out</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">erased</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"o\">:=</span>\n<span class=\"n\">classical</span><span class=\"bp\">.</span><span class=\"n\">some</span> <span class=\"n\">a</span><span class=\"bp\">.</span><span class=\"mi\">2</span>\n\n<span class=\"kn\">theorem</span> <span class=\"n\">mk_out</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">mk</span> <span class=\"n\">a</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">out</span> <span class=\"bp\">=</span> <span class=\"n\">a</span> <span class=\"o\">:=</span>\n<span class=\"n\">eq</span><span class=\"bp\">.</span><span class=\"n\">symm</span> <span class=\"err\">$</span> <span class=\"o\">(</span><span class=\"n\">set</span><span class=\"bp\">.</span><span class=\"n\">mem_singleton_iff</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"mi\">1</span> <span class=\"err\">$</span>\n<span class=\"k\">by</span> <span class=\"n\">unfold</span> <span class=\"n\">out</span><span class=\"bp\">;</span> <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">classical</span><span class=\"bp\">.</span><span class=\"n\">some_spec</span> <span class=\"o\">(</span><span class=\"n\">mk</span> <span class=\"n\">a</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"mi\">2</span><span class=\"o\">]</span><span class=\"bp\">;</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">mk</span><span class=\"o\">]</span>\n\n<span class=\"kn\">theorem</span> <span class=\"n\">out_mk</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">erased</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">mk</span> <span class=\"o\">(</span><span class=\"n\">out</span> <span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">a</span> <span class=\"o\">:=</span>\n<span class=\"n\">subtype</span><span class=\"bp\">.</span><span class=\"n\">eq</span> <span class=\"err\">$</span> <span class=\"n\">set</span><span class=\"bp\">.</span><span class=\"n\">ext</span> <span class=\"err\">$</span> <span class=\"bp\">λ</span> <span class=\"n\">b</span><span class=\"o\">,</span>\n<span class=\"k\">by</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">out</span><span class=\"o\">,</span> <span class=\"n\">mk</span><span class=\"o\">,</span> <span class=\"n\">classical</span><span class=\"bp\">.</span><span class=\"n\">some_spec</span> <span class=\"n\">a</span><span class=\"bp\">.</span><span class=\"mi\">2</span><span class=\"o\">]</span>\n\n<span class=\"n\">noncomputable</span> <span class=\"n\">def</span> <span class=\"n\">equiv</span> <span class=\"o\">(</span><span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">erased</span> <span class=\"n\">α</span> <span class=\"err\">≃</span> <span class=\"n\">α</span> <span class=\"o\">:=</span>\n<span class=\"bp\">⟨</span><span class=\"n\">out</span><span class=\"o\">,</span> <span class=\"n\">mk</span><span class=\"o\">,</span> <span class=\"n\">out_mk</span><span class=\"o\">,</span> <span class=\"n\">mk_out</span><span class=\"bp\">⟩</span>\n\n<span class=\"kn\">instance</span> <span class=\"o\">(</span><span class=\"n\">α</span><span class=\"o\">):</span> <span class=\"n\">has_repr</span> <span class=\"o\">(</span><span class=\"n\">erased</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"bp\">⟨λ</span> <span class=\"bp\">_</span><span class=\"o\">,</span> <span class=\"s2\">&quot;erased&quot;</span><span class=\"bp\">⟩</span>\n\n<span class=\"kn\">end</span> <span class=\"n\">erased</span>\n\n<span class=\"bp\">#</span><span class=\"kn\">eval</span> <span class=\"o\">(</span><span class=\"n\">erased</span><span class=\"bp\">.</span><span class=\"n\">mk</span> <span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"bp\">+</span><span class=\"mi\">2</span><span class=\"o\">))</span> <span class=\"c1\">-- (erased.mk 4)</span>\n</pre></div>",
+        "id": 124683063,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1522952432
+    },
+    {
+        "content": "<p>Hmm, as a workaround you can use <code>have ..., from ..., ...</code> instead of let.</p>",
+        "id": 124683113,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1522952513
+    },
+    {
+        "content": "<p>Well, the let was just to force the closure creation out of tail call position</p>",
+        "id": 124683168,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522952565
+    },
+    {
+        "content": "<p>if you use <code>have</code> instead it just adds an additional argument to the main function</p>",
+        "id": 124683177,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522952583
+    },
+    {
+        "content": "<p>I think the problem is just that prop-erasure is not implemented for <code>let</code>, because nobody ever uses lets except for data.</p>",
+        "id": 124683278,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1522952734
+    },
+    {
+        "content": "<p>Hm, you can still clearly tell the difference between these two pieces of code:</p>\n<div class=\"codehilite\"><pre><span></span>set_option trace.compiler.code_gen true\n#eval let x := 2 + 2 = 4 in x\n#eval let x := erased.mk (2+2) in x\n</pre></div>\n\n\n<p>I'm glad to see that <code>2+2</code> is not evaluated anywhere in the generated code, but it is still creating a closure returning <code>#0</code> rather than <code>#0</code> itself</p>",
+        "id": 124683920,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522953711
+    },
+    {
+        "content": "<p>Now I remember: we can't erase type families to <code>#0</code>.  We need to erase them to a function type, but I don't think such an erasure is implemented.  If <code>mk</code> is not inlined, then we actually compute <code>2+2</code> here.</p>",
+        "id": 124684479,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1522954551
+    },
+    {
+        "content": "<p>Here's attempt number 2, which tries to encode each element of erased A as a straight type:</p>\n<div class=\"codehilite\"><pre><span></span>import set_theory.ordinal\n\nuniverse u\ndef erased (α : Type u) : Type (u+1) :=\n{o // o &lt; cardinal.ord (cardinal.mk α)}\n\nnamespace erased\nopen cardinal ordinal\n\nnoncomputable def wo&#39; (α : Type u) :\n  {r : α → α → Prop // ∃ [wo : is_well_order α r],\n  ord (mk α) = @ordinal.type α r wo} :=\nclassical.choice $ let ⟨r, wo⟩ := cardinal.ord_eq α in ⟨⟨r, wo⟩⟩\n\ndef wo (α : Type u) (x y) := (wo&#39; α).1 x y\n\ninstance {α} : is_well_order α (wo α) := (wo&#39; α).2.fst\n\ntheorem wo_eq (α : Type u) : ord (mk α) = type (wo α) := (wo&#39; α).2.snd\n\n@[inline] def type {α} (r : α → α → Prop) [wo : is_well_order α r] : ordinal :=\nquot.mk _ ⟨α, r, wo⟩\n\n@[inline] def typein {α} (r : α → α → Prop) [is_well_order α r] (a : α) : ordinal :=\ntype (subrel r {b | r b a})\n\n@[inline] def mk {α} (a : α) : erased α :=\n⟨typein (wo α) a, (wo_eq α).symm ▸ typein_lt_type (wo α) a⟩\n\nnoncomputable def out {α} (a : erased α) : α :=\nenum (wo α) a.1 (wo_eq α ▸ a.2)\n\ntheorem out_mk {α} (a : α) : (mk a).out = a := enum_typein _ _\n\ntheorem mk_out {α} (a : erased α) : mk (out a) = a := subtype.eq $ typein_enum _ _\n\nnoncomputable def equiv (α) : erased α ≃ α :=\n⟨out, mk, mk_out, out_mk⟩\n\nend erased\n</pre></div>",
+        "id": 124684551,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522954664
+    },
+    {
+        "content": "<p>Since you can't really (provably) distinguish types except by their cardinality, this approach is rather more involved</p>",
+        "id": 124684600,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522954713
+    },
+    {
+        "content": "<p>It also requires a lot of inlining; I had to restate the definitions of <code>ordinal.type</code> and <code>ordinal.typein</code> so they would be inlined</p>",
+        "id": 124684622,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522954774
+    },
+    {
+        "content": "<p>Anything that relies on inlining will have the closure problem.</p>",
+        "id": 124684756,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1522954925
+    },
+    {
+        "content": "<p>Not true:</p>\n<div class=\"codehilite\"><pre><span></span>set_option trace.compiler.code_gen true\ndef f := @erased.mk ℕ\n#eval let x := f (2+2) in x\n</pre></div>\n\n\n<p>Note that even though <code>f</code> is not inlined <code>2+2</code> is not evaluated</p>",
+        "id": 124684912,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522955170
+    },
+    {
+        "content": "<p>If you're okay with a bit of extra ugliness, you can define an <code>erase</code> function in both versions:</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"bp\">@</span><span class=\"o\">[</span><span class=\"kn\">inline</span><span class=\"o\">]</span>\n<span class=\"n\">def</span> <span class=\"n\">erase</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">erased</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">erased</span> <span class=\"n\">α</span> <span class=\"o\">:=</span>\n<span class=\"bp\">⟨λ</span> <span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">a</span><span class=\"bp\">.</span><span class=\"mi\">1</span> <span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">a</span><span class=\"bp\">.</span><span class=\"mi\">2</span><span class=\"bp\">⟩</span>\n\n<span class=\"c1\">-- 👌</span>\n<span class=\"n\">def</span> <span class=\"n\">f&#39;</span> <span class=\"o\">:=</span> <span class=\"k\">let</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">erased</span><span class=\"bp\">.</span><span class=\"n\">mk</span> <span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"bp\">+</span><span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"k\">in</span> <span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"n\">erase</span>\n</pre></div>",
+        "id": 124684913,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1522955171
+    },
+    {
+        "content": "<p>Mmh, I still get a call to <code>erased.mk</code> and <code>2+2</code>, but no call to <code>f</code> since it is (of course) inlined.</p>",
+        "id": 124684994,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1522955321
+    },
+    {
+        "content": "<p>You should set the <code>optimize_bytecode</code> option instead of <code>code_gen</code>, otherwise you miss out on all the optimizations.</p>",
+        "id": 124685031,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1522955402
+    },
+    {
+        "content": "<p>I'm confused: why does <code>erase</code> work? The argument count goes down, but it still returns <code>#0</code>. I thought you said type/proof lambdas can't be implemented as <code>#0</code>?</p>",
+        "id": 124685258,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522955716
+    },
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span>set_option trace.compiler.optimize_bytecode true\ndef f1 : erased ℕ := (erased.mk (2+2))\ndef f2 : erased ℕ := (erased.mk (2+2)).erase\n</pre></div>",
+        "id": 124685263,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522955732
+    },
+    {
+        "content": "<p>I'm a bit lost as well.  Apparently the <code>apply</code> operation is special-cased to also work on <code>#0</code>.</p>",
+        "id": 124685972,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1522956774
+    },
+    {
+        "content": "<p>That's why I would expect that type families should also compile as <code>#0</code> rather than <code>lam x, #0</code></p>",
+        "id": 124686074,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1522956949
+    },
+    {
+        "content": "<p>You know, type families are actually erased, it's just that subtypes aren't because they haven't been erased yet....:</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"n\">def</span> <span class=\"n\">f</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">set</span> <span class=\"bp\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">x</span>\n<span class=\"n\">def</span> <span class=\"n\">g</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"o\">{</span> <span class=\"n\">s</span> <span class=\"o\">:</span> <span class=\"n\">set</span> <span class=\"bp\">ℕ</span> <span class=\"bp\">//</span> <span class=\"n\">true</span> <span class=\"o\">})</span> <span class=\"o\">:=</span> <span class=\"n\">x</span>\n</pre></div>",
+        "id": 124686214,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1522957128
+    }
+]
