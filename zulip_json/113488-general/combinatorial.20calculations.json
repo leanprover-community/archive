@@ -1,0 +1,176 @@
+[
+    {
+        "content": "<p>This week, I want to show my students how to do \"easy\" combinatorial calculations with fintypes and finsets, so I gave this one a try:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">algebra.big_operators.fin</span>\n<span class=\"kn\">import</span> <span class=\"n\">tactic</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">finset</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span>\n  <span class=\"n\">card</span> <span class=\"o\">(</span><span class=\"n\">univ.filter</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">p</span> <span class=\"o\">:</span> <span class=\"n\">fin</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">×</span> <span class=\"n\">fin</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">),</span> <span class=\"n\">p.1</span> <span class=\"bp\">&lt;</span> <span class=\"n\">p.2</span><span class=\"o\">))</span> <span class=\"bp\">=</span> <span class=\"n\">n</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">/</span> <span class=\"mi\">2</span> <span class=\"o\">:=</span>\n<span class=\"bp\">...</span>\n</code></pre></div>\n<p>To my dismay, it took me 30 lines. Can anyone show me the canonical way to do this?</p>",
+        "id": 303182839,
+        "sender_full_name": "Jeremy Avigad",
+        "timestamp": 1665362377
+    },
+    {
+        "content": "<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n<p>17 lines</p>\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<div class=\"codehilite\"><pre><span></span><code>import data.sym.card\n\nnamespace nat\nvariables {a b c : ℕ}\n\nprotected lemma eq_div_of_mul_eq_left (hb : 0 &lt; b) (h : a * b = c) : a = c / b :=\n(nat.div_eq_of_eq_mul_left hb h.symm).symm\n\nprotected lemma eq_div_of_mul_eq_right (hb : 0 &lt; b) (h : b * a = c) : a = c / b :=\n(nat.div_eq_of_eq_mul_right hb h.symm).symm\n\nend nat\n\nopen finset\n\nexample (n : ℕ) :\n  card (univ.filter (λ p : fin (n + 1) × fin (n + 1), p.1 &lt; p.2)) = n * (n + 1) / 2 :=\nbegin\n  refine nat.eq_div_of_mul_eq_left zero_lt_two _,\n  have : (univ.filter (λ p : fin (n + 1) × fin (n + 1), p.1 &lt; p.2)).card =\n    (univ.filter (λ p : fin (n + 1) × fin (n + 1), p.2 &lt; p.1)).card,\n  { rw ←finset.card_map ⟨prod.swap, prod.swap_injective⟩,\n    congr&#39; 1,\n    convert map_filter.symm,\n    { refl },\n    { simp },\n    { apply_instance } },\n  rw mul_two,\n  nth_rewrite 1 this,\n  rw [←card_union_eq, ←filter_or],\n  have : (λ (a : fin (n + 1) × fin (n + 1)), a.fst &lt; a.snd ∨ a.snd &lt; a.fst) = λ a, a.1 ≠ a.2 :=\n    funext (λ _, propext lt_or_lt_iff_ne),\n  simp_rw [this, ←univ_product_univ],\n  exact (off_diag_card _).trans (by simp [add_mul]),\n  { exact disjoint_filter.2 (λ x _, lt_asymm) }\nend\n</code></pre></div>\n</div></div>",
+        "id": 303184979,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1665364788
+    },
+    {
+        "content": "<p>The pain points here are</p>\n<ul>\n<li><code>simp_rw</code> isn't smart enough to rewrite <code>p</code> in the <code>decidable_pred p</code> of <code>finset.filter</code>, so you need to explicit it more</li>\n<li><a href=\"https://leanprover-community.github.io/mathlib_docs/find/finset.map_filter\">docs#finset.map_filter</a> doesn't seem to have a convenient variant for <code>equiv</code></li>\n</ul>",
+        "id": 303185120,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1665364982
+    },
+    {
+        "content": "<p>Without those pain points I would be at 7 lines.</p>",
+        "id": 303185205,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1665365055
+    },
+    {
+        "content": "<p>That solution is still surprisingly difficult, and it requires knowing about <code>off_diag</code>. My lower-tech solution is here:</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n<p>longer proof</p>\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<p>import algebra.big_operators.fin<br>\nimport tactic</p>\n<p>open finset</p>\n<p>example (n : ℕ) :<br>\n  card (univ.filter (λ p : fin (n + 1) × fin (n + 1), p.1 &lt; p.2)) = n * (n + 1) / 2 :=<br>\nbegin<br>\n  have : univ.filter (λ p : fin (n + 1) × fin (n + 1), p.1 &lt; p.2) =<br>\n    finset.bUnion univ<br>\n      (λ j : fin (n + 1), finset.image (λ i : fin j, (⟨i.val, i.property.trans j.property⟩, j)) univ),<br>\n    begin<br>\n      ext x, simp [prod.ext_iff], split,<br>\n      { intro h, use ⟨x.fst, h⟩, simp },<br>\n      rintros ⟨x', h⟩,<br>\n      rw ←h,<br>\n      apply x'.property<br>\n    end,<br>\n  rw [this, finset.card_bUnion],<br>\n  clear this, swap,<br>\n  { intros x _ y _ xney z,<br>\n    simp only [inf_eq_inter, mem_inter, mem_image, mem_univ, prod.ext_iff],<br>\n    rintros ⟨⟨_, _, _, rfl⟩, ⟨_, _, _, rfl⟩⟩,<br>\n    contradiction },<br>\n  transitivity ((univ : finset (fin (n + 1))).sum (λ u, ↑u)),<br>\n  { congr,<br>\n    ext x,<br>\n    rw [finset.card_image_of_injective],<br>\n    { rw finset.card_fin },<br>\n    intros i1 i2, simp [fin.ext_iff] },<br>\n  symmetry,<br>\n  apply nat.div_eq_of_eq_mul_left (show 0 &lt; 2, by norm_num),<br>\n  induction n with n ih,<br>\n  { simp },<br>\n  rw [fin.sum_univ_cast_succ, add_mul],<br>\n  simp only [fin.coe_cast_succ, fin.coe_last],<br>\n  rw [←ih, nat.succ_eq_add_one],<br>\n  ring<br>\nend</p>\n</div></div>",
+        "id": 303185386,
+        "sender_full_name": "Jeremy Avigad",
+        "timestamp": 1665365291
+    },
+    {
+        "content": "<p>Have you tried induction directly? I doubt it will be shorter, but who knows. The advantage is that the equivalences you need to prove should be easier.</p>",
+        "id": 303185493,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1665365438
+    },
+    {
+        "content": "<p>I started, and got tired... but maybe I'll try again tomorrow.</p>",
+        "id": 303186295,
+        "sender_full_name": "Jeremy Avigad",
+        "timestamp": 1665366432
+    },
+    {
+        "content": "<p>Jeremy I think we have different opinions on this but I'll say again that I would never be showing nat.div to undergraduates simply on the basis that it's not the function they think it is. I always coerce to rat first, where clearing denominators doesn't require nat-specific tricks.</p>",
+        "id": 303206406,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1665385325
+    },
+    {
+        "content": "<p>(btw you can write code in spoilers using four backticks)</p>",
+        "id": 303206489,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1665385395
+    },
+    {
+        "content": "<p>I would expect this to be hard because the obvious proof is by picture :-(</p>",
+        "id": 303206595,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1665385451
+    },
+    {
+        "content": "<p>(and you can syntax highlight that code if you use <code>lean</code> after the four backticks)</p>",
+        "id": 303206604,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1665385456
+    },
+    {
+        "content": "<p>Is the proof easier with <code>rat.div</code>? Can <code>qify</code> easily move from the <code>nat.div</code> to the <code>rat.div</code> version?</p>",
+        "id": 303207152,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1665385858
+    },
+    {
+        "content": "<p>The proof is not easier with <code>rat.div</code> (it is slightly harder), there is no pain in the proof from using <code>nat.div</code> (but I understand that you might want to avoid it for pedagogical reasons).</p>",
+        "id": 303226223,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1665394434
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110865\">@Jeremy Avigad</span> your first <code>have</code> can be proven by <code>simp</code> with a little more information, by</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">{</span> <span class=\"n\">ext</span> <span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">prod.ext_iff</span><span class=\"o\">],</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">fin.exists_iff</span><span class=\"o\">,</span> <span class=\"n\">fin.ext_iff</span><span class=\"o\">]</span> <span class=\"o\">},</span>\n</code></pre></div>\n<p>or as a single simp call, by</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">{</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">finset.ext_iff</span><span class=\"o\">,</span> <span class=\"n\">prod.ext_iff</span><span class=\"o\">,</span> <span class=\"n\">fin.exists_iff</span><span class=\"o\">,</span> <span class=\"n\">fin.ext_iff</span><span class=\"o\">,</span> <span class=\"bp\">@</span><span class=\"n\">and.left_comm</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"bp\">=</span> <span class=\"n\">_</span><span class=\"o\">)]</span> <span class=\"o\">},</span>\n</code></pre></div>\n<p>Moreover, if you prefer a version with fewer casts, you can prove \"the same\" lemma using <a href=\"https://leanprover-community.github.io/mathlib_docs/find/finset.range\">docs#finset.range</a>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span>\n  <span class=\"n\">card</span> <span class=\"o\">((</span><span class=\"n\">range</span> <span class=\"o\">(</span><span class=\"n\">n</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">×ˢ</span> <span class=\"n\">range</span> <span class=\"o\">(</span><span class=\"n\">n</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">))</span><span class=\"bp\">.</span><span class=\"n\">filter</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">p</span><span class=\"o\">,</span> <span class=\"n\">p.1</span> <span class=\"bp\">&lt;</span> <span class=\"n\">p.2</span><span class=\"o\">))</span> <span class=\"bp\">=</span> <span class=\"n\">n</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">/</span> <span class=\"mi\">2</span> <span class=\"o\">:=</span>\n<span class=\"kd\">begin</span>\n  <span class=\"k\">have</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">range</span> <span class=\"o\">(</span><span class=\"n\">n</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">×ˢ</span> <span class=\"n\">range</span> <span class=\"o\">(</span><span class=\"n\">n</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">))</span><span class=\"bp\">.</span><span class=\"n\">filter</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">p</span><span class=\"o\">,</span> <span class=\"n\">p.1</span> <span class=\"bp\">&lt;</span> <span class=\"n\">p.2</span><span class=\"o\">)</span> <span class=\"bp\">=</span>\n    <span class=\"o\">(</span><span class=\"n\">finset.range</span> <span class=\"o\">(</span><span class=\"n\">n</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">))</span><span class=\"bp\">.</span><span class=\"n\">bUnion</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">j</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">,</span> <span class=\"o\">(</span><span class=\"n\">range</span> <span class=\"n\">j</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">image</span> <span class=\"bp\">$</span> <span class=\"bp\">λ</span> <span class=\"n\">i</span><span class=\"o\">,</span> <span class=\"o\">(</span><span class=\"n\">i</span><span class=\"o\">,</span> <span class=\"n\">j</span><span class=\"o\">)),</span>\n  <span class=\"o\">{</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">finset.ext_iff</span><span class=\"o\">,</span> <span class=\"n\">prod.ext_iff</span><span class=\"o\">,</span> <span class=\"bp\">@</span><span class=\"n\">and.left_comm</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"bp\">=</span> <span class=\"n\">_</span><span class=\"o\">),</span> <span class=\"n\">iff_true_intro</span> <span class=\"n\">lt_trans</span><span class=\"o\">]</span> <span class=\"o\">},</span>\n  <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">this</span><span class=\"o\">,</span> <span class=\"n\">finset.card_bUnion</span><span class=\"o\">]</span><span class=\"bp\">;</span> <span class=\"n\">clear</span> <span class=\"n\">this</span><span class=\"o\">,</span>\n  <span class=\"n\">swap</span><span class=\"o\">,</span>\n  <span class=\"o\">{</span> <span class=\"n\">intros</span> <span class=\"n\">x</span> <span class=\"n\">_</span> <span class=\"n\">y</span> <span class=\"n\">_</span> <span class=\"n\">xney</span> <span class=\"n\">z</span><span class=\"o\">,</span>\n    <span class=\"n\">simp_rw</span> <span class=\"o\">[</span><span class=\"n\">inf_eq_inter</span><span class=\"o\">,</span> <span class=\"n\">mem_inter</span><span class=\"o\">,</span> <span class=\"n\">mem_image</span><span class=\"o\">,</span> <span class=\"n\">mem_range</span><span class=\"o\">,</span> <span class=\"n\">prod.ext_iff</span><span class=\"o\">],</span>\n    <span class=\"n\">rintros</span> <span class=\"o\">⟨⟨</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">rfl</span><span class=\"o\">⟩,</span> <span class=\"o\">⟨</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">rfl</span><span class=\"o\">⟩⟩,</span>\n    <span class=\"n\">contradiction</span> <span class=\"o\">},</span>\n  <span class=\"n\">transitivity</span> <span class=\"o\">(</span><span class=\"bp\">∑</span> <span class=\"n\">i</span> <span class=\"k\">in</span> <span class=\"n\">range</span> <span class=\"o\">(</span><span class=\"n\">n</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">),</span> <span class=\"n\">i</span><span class=\"o\">),</span>\n  <span class=\"o\">{</span> <span class=\"n\">congr</span><span class=\"o\">,</span>\n    <span class=\"n\">ext</span> <span class=\"n\">x</span><span class=\"o\">,</span>\n    <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">finset.card_image_of_injective</span><span class=\"o\">,</span> <span class=\"n\">card_range</span><span class=\"o\">],</span>\n    <span class=\"n\">intros</span> <span class=\"n\">i1</span> <span class=\"n\">i2</span><span class=\"o\">,</span> <span class=\"n\">simp</span> <span class=\"o\">},</span>\n  <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">finset.sum_range_id</span><span class=\"o\">,</span> <span class=\"n\">add_tsub_cancel_right</span><span class=\"o\">,</span> <span class=\"n\">mul_comm</span><span class=\"o\">],</span>\n  <span class=\"c1\">-- if you want to do the induction proof:</span>\n  <span class=\"c1\">-- symmetry,</span>\n  <span class=\"c1\">-- apply nat.div_eq_of_eq_mul_left (show 0 &lt; 2, by norm_num),</span>\n  <span class=\"c1\">-- induction n with n ih,</span>\n  <span class=\"c1\">-- { simp },</span>\n  <span class=\"c1\">-- rw [sum_range_succ, add_mul, ← ih, nat.succ_eq_add_one],</span>\n  <span class=\"c1\">-- ring</span>\n<span class=\"kd\">end</span>\n</code></pre></div>",
+        "id": 303226618,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1665394585
+    },
+    {
+        "content": "<p>This is a great example of something which should be easy <span class=\"user-mention\" data-user-id=\"240862\">@Oliver Nash</span></p>",
+        "id": 303237667,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1665399530
+    },
+    {
+        "content": "<p>Thanks! I take Floris' proof to be the canonical formalization of \"it's just adding up the numbers from 1 to n.\" Over time, I'd like to see MIL grow with chapters that show people the idiomatic ways to carry out proofs in different areas, and this is perfect for a chapter on discrete math and combinatorics. Yaël's formalization is a pretty good formalization of the picture proof, and it is worth knowing the best way to formalize that too.</p>\n<p><span class=\"user-mention\" data-user-id=\"110038\">@Kevin Buzzard</span>, I have no trouble telling students about division on nat and int. The class is about evenly split between math students and computer science students, and the computer science students are perfectly comfortable with div and mod on integers. Actually, mathematics students are generally familiar with it too, but in any case it only takes a minute to tell them what it is. We don't have to worry about the computer science corrupting the math students. They are adults. They can handle it. I <em>do</em> tell them that, for practical reasons, it is generally best to avoid subtraction on nat and division on nat and int, and you are right that in a library it might be better to state the version without division.</p>\n<p>This is a teaching moment in another sense: I often tell students that Zulip is a good place to talk about things they are working on. I'll show them my original proof and then the ones by Yaël and Floris to underscore that point.</p>",
+        "id": 303289344,
+        "sender_full_name": "Jeremy Avigad",
+        "timestamp": 1665418741
+    },
+    {
+        "content": "<p>This is a proof – also summation-based – that I found; a little messy* but fairly short:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">algebra.big_operators.fin</span>\n<span class=\"kn\">import</span> <span class=\"n\">algebra.big_operators.intervals</span>\n<span class=\"kn\">import</span> <span class=\"n\">tactic</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">finset</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span>\n  <span class=\"n\">card</span> <span class=\"o\">(</span><span class=\"n\">univ.filter</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">p</span> <span class=\"o\">:</span> <span class=\"n\">fin</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">×</span> <span class=\"n\">fin</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">),</span> <span class=\"n\">p.1</span> <span class=\"bp\">&lt;</span> <span class=\"n\">p.2</span><span class=\"o\">))</span> <span class=\"bp\">=</span> <span class=\"n\">n</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">/</span> <span class=\"mi\">2</span> <span class=\"o\">:=</span>\n<span class=\"kd\">begin</span>\n  <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">card_eq_sum_ones</span><span class=\"o\">,</span> <span class=\"n\">sum_filter</span><span class=\"o\">,</span>\n      <span class=\"n\">sum_finset_product_right</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">univ</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"n\">fin.fintype</span> <span class=\"n\">_</span><span class=\"o\">))</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"bp\">@</span><span class=\"n\">univ</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"n\">fin.fintype</span> <span class=\"n\">_</span><span class=\"o\">))],</span>\n  <span class=\"n\">swap</span><span class=\"o\">,</span> <span class=\"o\">{</span> <span class=\"n\">simp</span><span class=\"o\">,</span> <span class=\"o\">},</span>\n  <span class=\"n\">simp_rw</span> <span class=\"o\">[</span><span class=\"n\">sum_boole</span><span class=\"o\">,</span> <span class=\"n\">nat.cast_id</span><span class=\"o\">],</span>\n  <span class=\"n\">conv</span> <span class=\"o\">{</span> <span class=\"n\">to_lhs</span><span class=\"o\">,</span>\n         <span class=\"n\">congr</span><span class=\"o\">,</span>\n         <span class=\"n\">skip</span><span class=\"o\">,</span>\n         <span class=\"n\">funext</span><span class=\"o\">,</span>\n         <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">filter_gt_eq_Iio</span><span class=\"o\">,</span> <span class=\"n\">Iio_eq_Ico</span><span class=\"o\">,</span> <span class=\"n\">fin.card_Ico</span><span class=\"o\">,</span> <span class=\"n\">fin.bot_eq_zero</span><span class=\"o\">,</span> <span class=\"n\">fin.coe_zero</span><span class=\"o\">,</span> <span class=\"n\">tsub_zero</span><span class=\"o\">,</span>\n             <span class=\"bp\">←</span><span class=\"n\">id.def</span> <span class=\"bp\">↑</span><span class=\"n\">x</span><span class=\"o\">],</span> <span class=\"o\">},</span>\n  <span class=\"n\">rw</span> <span class=\"n\">fin.sum_univ_eq_sum_range</span><span class=\"o\">,</span>\n  <span class=\"n\">simp_rw</span> <span class=\"n\">id.def</span><span class=\"o\">,</span>\n  <span class=\"n\">rw</span> <span class=\"n\">finset.sum_range_id</span><span class=\"o\">,</span>\n  <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">mul_comm</span><span class=\"o\">],</span>\n<span class=\"kd\">end</span>\n</code></pre></div>\n<p>* I would especially have liked to trim down the <code>conv</code> block a bit by using <code>conv in (card _)</code>, but for some reason this caused the rewrites not to stick.</p>",
+        "id": 303296751,
+        "sender_full_name": "Joanna Choules",
+        "timestamp": 1665421796
+    },
+    {
+        "content": "<p>I couldn't reproduce the issue yo mentioned about the conv block, the following golf works for me:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">algebra.big_operators.fin</span>\n<span class=\"kn\">import</span> <span class=\"n\">algebra.big_operators.intervals</span>\n<span class=\"kn\">import</span> <span class=\"n\">tactic</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">finset</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span>\n  <span class=\"n\">card</span> <span class=\"o\">(</span><span class=\"n\">univ.filter</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">p</span> <span class=\"o\">:</span> <span class=\"n\">fin</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">×</span> <span class=\"n\">fin</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">),</span> <span class=\"n\">p.1</span> <span class=\"bp\">&lt;</span> <span class=\"n\">p.2</span><span class=\"o\">))</span> <span class=\"bp\">=</span> <span class=\"n\">n</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">/</span> <span class=\"mi\">2</span> <span class=\"o\">:=</span>\n<span class=\"kd\">begin</span>\n  <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">card_eq_sum_ones</span><span class=\"o\">,</span> <span class=\"n\">sum_filter</span><span class=\"o\">,</span>\n      <span class=\"n\">sum_finset_product_right</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">univ</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"n\">fin.fintype</span> <span class=\"n\">_</span><span class=\"o\">))</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"bp\">@</span><span class=\"n\">univ</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"n\">fin.fintype</span> <span class=\"n\">_</span><span class=\"o\">))],</span>\n  <span class=\"n\">swap</span><span class=\"o\">,</span> <span class=\"o\">{</span> <span class=\"n\">simp</span><span class=\"o\">,</span> <span class=\"o\">},</span>\n  <span class=\"n\">simp_rw</span> <span class=\"o\">[</span><span class=\"n\">sum_boole</span><span class=\"o\">,</span> <span class=\"n\">nat.cast_id</span><span class=\"o\">],</span>\n  <span class=\"n\">conv</span> <span class=\"k\">in</span> <span class=\"o\">(</span><span class=\"n\">card</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"o\">{</span>\n    <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">filter_gt_eq_Iio</span><span class=\"o\">,</span> <span class=\"n\">Iio_eq_Ico</span><span class=\"o\">,</span> <span class=\"n\">fin.card_Ico</span><span class=\"o\">,</span> <span class=\"n\">fin.bot_eq_zero</span><span class=\"o\">,</span> <span class=\"n\">fin.coe_zero</span><span class=\"o\">],</span> <span class=\"o\">},</span>\n  <span class=\"n\">erw</span> <span class=\"n\">fin.sum_univ_eq_sum_range</span> <span class=\"n\">id</span><span class=\"o\">,</span>\n  <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">finset.sum_range_id</span><span class=\"o\">,</span> <span class=\"n\">mul_comm</span><span class=\"o\">],</span>\n<span class=\"kd\">end</span>\n</code></pre></div>",
+        "id": 303301050,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1665423302
+    },
+    {
+        "content": "<p>Huh, and now I can't reproduce it either. I guess it must've only been when I was focusing <code>filter _ _</code>.</p>",
+        "id": 303305029,
+        "sender_full_name": "Joanna Choules",
+        "timestamp": 1665425178
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span>\n  <span class=\"n\">card</span> <span class=\"o\">(</span><span class=\"n\">univ.filter</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">p</span> <span class=\"o\">:</span> <span class=\"n\">fin</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">×</span> <span class=\"n\">fin</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">),</span> <span class=\"n\">p.1</span> <span class=\"bp\">&lt;</span> <span class=\"n\">p.2</span><span class=\"o\">))</span> <span class=\"bp\">=</span> <span class=\"n\">n</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">/</span> <span class=\"mi\">2</span> <span class=\"o\">:=</span>\n<span class=\"kd\">begin</span>\n  <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"bp\">←</span><span class=\"n\">univ_product_univ</span><span class=\"o\">,</span> <span class=\"n\">card_eq_sum_ones</span><span class=\"o\">,</span> <span class=\"n\">sum_filter</span><span class=\"o\">,</span> <span class=\"n\">sum_product_right</span><span class=\"o\">],</span>\n  <span class=\"n\">simp</span> <span class=\"n\">only</span> <span class=\"o\">[</span><span class=\"n\">sum_boole</span><span class=\"o\">,</span> <span class=\"n\">nat.cast_id</span><span class=\"o\">,</span> <span class=\"n\">filter_gt_eq_Iio</span><span class=\"o\">,</span> <span class=\"n\">fin.card_Iio</span><span class=\"o\">],</span>\n  <span class=\"n\">erw</span> <span class=\"n\">fin.sum_univ_eq_sum_range</span> <span class=\"n\">id</span><span class=\"o\">,</span>\n  <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">finset.sum_range_id</span><span class=\"o\">,</span> <span class=\"n\">mul_comm</span><span class=\"o\">],</span>\n<span class=\"kd\">end</span>\n</code></pre></div>",
+        "id": 303308544,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1665426807
+    },
+    {
+        "content": "<p>I think the most annoying thing here is that I need to do this <code>erw</code> step</p>",
+        "id": 303308560,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1665426819
+    },
+    {
+        "content": "<p>I guess \"how few lines can an expert get it down to\" is different to \"do we expect an undergraduate to be able to knock this off easily\" though. It would be lovely if this were easy even if you weren't an expert.</p>",
+        "id": 303309991,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1665427480
+    },
+    {
+        "content": "<p>Agreed - I've done many calculations like this, especially for the unit fractions project</p>",
+        "id": 303310287,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1665427603
+    },
+    {
+        "content": "<p>It also depends on whether this expertise is teachable. Bhavik, do you think you could write a MiL chapter about combinatorics that could allow people to learn how to do such proofs efficiently?</p>",
+        "id": 303310479,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1665427706
+    },
+    {
+        "content": "<p>I could try, but I'm not confident yet that it'd be very helpful - I'd need to think seriously first about if there are techniques useful to teach or if it's just familiarity with what's in the library and experience, which might be harder to put into words</p>",
+        "id": 303310686,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1665427806
+    },
+    {
+        "content": "<p>That's exactly the question indeed.</p>",
+        "id": 303310760,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1665427845
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"458865\">@Thomas Bloom</span> I think you had a cheat sheet for some tricks we used a lot, though I don't remember how many of them apply here?</p>",
+        "id": 303312244,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1665428626
+    },
+    {
+        "content": "<p>I could certainly put together such a tutorial. I just had to teach this at Kevin's workshop.</p>",
+        "id": 303333217,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1665440871
+    },
+    {
+        "content": "<p>Yeah I had to teach similar stuff, but I think it's hard to condense this into a useful tutorial</p>",
+        "id": 303343500,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1665448362
+    }
+]

@@ -1,0 +1,110 @@
+[
+    {
+        "content": "<p>Hi everyone,</p>\n<p>I am trying to simulate a sequence of <code>tactic.interactive.&lt;tactic_name&gt;</code> within a standard <code>meta def</code> metaprogramming definition. In order to to so, I write :</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">g</span> <span class=\"bp\">←</span> <span class=\"n\">tactic.mk_meta_var</span> <span class=\"n\">goal</span><span class=\"o\">,</span>\n<span class=\"n\">tactic.set_goals</span> <span class=\"o\">[</span><span class=\"n\">g</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>then</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">tactic.</span><span class=\"bp\">&lt;</span><span class=\"n\">tactic_name</span><span class=\"bp\">&gt;`</span>  <span class=\"c1\">-- instead of `tactic.interactive.&lt;tactic_name&gt;`</span>\n</code></pre></div>\n<p>However, due to the specific implicit arguments of the <code>tactic.interactive.&lt;tactic_name&gt;</code> (parsed arguments), I have to unfold the definition. For instance, if I want to use <code>norm_num</code>, I would write :</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">f</span> <span class=\"bp\">←</span> <span class=\"n\">norm_num.get_step</span><span class=\"o\">,</span>\n<span class=\"n\">tactic.norm_num</span> <span class=\"n\">f</span> <span class=\"o\">[]</span> <span class=\"n\">interactive.loc.wildcard</span>\n</code></pre></div>\n<p>However this solution is not tractable for some tactics, such as <code>linarith</code> for instance: as <code>tactic.linarith</code> calls <code>linarith.mk_single_comp_zero_pf</code> whose definition contains a <code> </code>[norm_num]<code> that is parsed as </code>tactic.interactive.norm_num<code>. But as we are not in interactive mode anymore, there is no implicit parsed arguments, so the call fails.\nThe  workaround I found is to copy-paste ALL functions called as to eventually change </code> <code>[norm_num]</code> by  <code>do f ← norm_num.get_step, tactic.norm_num f [] interactive.loc.wildcard</code>. This is obviously not super pratical nor scalable to other tactics.</p>\n<p>Is there a way in metaprogramming to have constructions such as <code> </code>[&lt;tactic_name&gt;]` are correctly called with their implicit parsed arguments?</p>\n<p>cc <span class=\"user-mention\" data-user-id=\"359917\">@Timothee Lacroix</span></p>",
+        "id": 267471132,
+        "sender_full_name": "Xavier Martinet",
+        "timestamp": 1641835695
+    },
+    {
+        "content": "<p>You <em>can</em> call <code>tactic.interactive.linarith</code> directly, the parser arguments are just wrappers.  For example, <code>parse p?</code> reduces to <code>option ...</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#check</span> <span class=\"n\">tactic.interactive.linarith</span> <span class=\"n\">none</span> <span class=\"o\">(</span><span class=\"n\">some</span> <span class=\"o\">())</span> <span class=\"o\">(</span><span class=\"n\">some</span> <span class=\"o\">[])</span> <span class=\"o\">{</span> <span class=\"n\">split_ne</span> <span class=\"o\">:=</span> <span class=\"n\">tt</span> <span class=\"o\">}</span> <span class=\"c1\">-- tactic unit</span>\n</code></pre></div>",
+        "id": 267473529,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1641836718
+    },
+    {
+        "content": "<p>(If you don't know what to write after <code>some</code>, you can at first write <code>some _</code>.  Then Lean will tell you explicitly what type it expected there.)</p>",
+        "id": 267473693,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1641836784
+    },
+    {
+        "content": "<p>Thanks.</p>\n<p>However for some reasons the issue remains: when there is something like <code>[norm_num]</code> written in a definition, it just fails <em>unless</em> I change it explicitely to <code>tactic.interactive.norm_num none none</code></p>\n<p>As <code>tactic.interactive.linarith</code> calls <code>mk_single_comp_zero_pf</code> which contains <code>[norm_num,done]</code>, it does not do exactly the same thing as in interactive mode</p>",
+        "id": 267477605,
+        "sender_full_name": "Xavier Martinet",
+        "timestamp": 1641838277
+    },
+    {
+        "content": "<p>(sorry, I meant <code>tactic.interactive.norm_num [] interactive.loc.wildcard</code>)</p>",
+        "id": 267478605,
+        "sender_full_name": "Xavier Martinet",
+        "timestamp": 1641838757
+    },
+    {
+        "content": "<p>Actually even the <code>cfg.discharger</code>, which is equal by default to <code>[norm_num]</code>, needs to be set to <code>{discharger := tactic.interactive.ring none}</code></p>\n<p>so a regular <code>by linarith</code> is actually a <code>tactic.interactive.linarith none none none {discharger := tactic.interactive.ring none}</code> instead of a <code>tactic.interactive.linarith none none none</code></p>\n<p>and then, as mentionned above, I still need to patch <code>mk_single_comp_zero_pf</code> for the same reason (it contains <code>[norm_num,done]</code>)</p>",
+        "id": 267480484,
+        "sender_full_name": "Xavier Martinet",
+        "timestamp": 1641839627
+    },
+    {
+        "content": "<p>To call a tactic literally as you would write it in interactive mode, you can use the notation <code> `[linarith]</code>. This is a term with type <code>tactic unit</code>. But you won't be able to pass variable arguments to it. That is, you can write <code> `[linarith [h1, h2]]</code>, but <code>h1</code> and <code>h2</code> will refer to whatever is in the context at the time the tactic is called; if you have <code>e : expr</code> when you're defining your tactic, you can't write <code> `[linarith [e]]</code>.</p>",
+        "id": 267486823,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1641842513
+    },
+    {
+        "content": "<p>Thanks!</p>\n<p>But how are the implicit parsed arguments created? For instance:<br>\n1) in <code>tactic.interactive.linarith</code>, there is a <code>cfg : linarith.linarith_config</code> where by default <code>cfg.discharger := [ring]</code>. When <code>tactic.interactive.ring</code> is actually called,  its parameter <code>red : parse (tk \"!\")?</code> is automatically filled with <code>none</code>.<br>\n2) in the case of <code>[norm_num,done]</code> in  <code>mk_single_comp_zero_pf</code>, the same goes for the <code>[norm_num]</code> parameters: <code>(hs : parse simp_arg_list)</code> and  <code>(l : parse location)</code>are respectively set to \"empty/default\" values <code>hs := []</code> and <code>l := interactive.loc.wildcard</code>.</p>\n<p>What I don't quite understand is: how are those arguments created? Is there some kind of \"parsing context\" in interactive mode that enable argument creation? If so, is there a way when in metaprogramming to fill out this context so in 1) <code>cfg.discharger := [ring]</code> is actually interpreted as <code>cfg.discharger := tactic.interactive.ring none</code>, and in 2) <code>[norm_num,done]</code> is interpreted as <code>tactic.interactive.norm_num [] interactive.loc.wildcard &gt;&gt; tactic.interactive.done</code> ?</p>",
+        "id": 267495568,
+        "sender_full_name": "Xavier Martinet",
+        "timestamp": 1641846730
+    },
+    {
+        "content": "<p>I assume I would have to fiddle with the <code>lean.parser_state</code>: any way to do it in Lean itself?</p>",
+        "id": 267496137,
+        "sender_full_name": "Xavier Martinet",
+        "timestamp": 1641847038
+    },
+    {
+        "content": "<p>When you write <code>ring</code> in interactive mode, you're calling <a href=\"https://leanprover-community.github.io/mathlib_docs/find/tactic.interactive.ring/src\">src#tactic.interactive.ring</a> . The argument <code>red</code> has type <code>interactive.parse (optional (lean.parser.tk \"!\"))</code>. If <code>p : parser T</code>, <code>interactive.parse p</code> is defeq to <code>T</code>, so this argument <code>red</code> really has type <code>option unit</code>. The <code>interactive.parse</code> tag is what makes the input syntax different in interactive mode: if it wants to parse <code>optional (tk \"!\")</code>, it will try to parse <code>tk \"!\"</code> and return <code>some</code> if it succeds, otherwise <code>none</code>.</p>",
+        "id": 267497903,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1641847962
+    },
+    {
+        "content": "<p>I'm not sure what you mean by the rest of your question. <code> `[ring]</code> is the same as <code>tactic.interactive.ring none</code>. It runs interactive mode parsing inside the <code> `[...]</code> block.</p>",
+        "id": 267497977,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1641848008
+    },
+    {
+        "content": "<p>Thanks Rob. I need to process that as I am surely being confused between several notions</p>",
+        "id": 267500192,
+        "sender_full_name": "Xavier Martinet",
+        "timestamp": 1641848998
+    },
+    {
+        "content": "<p>Thanks a lot for your answers.</p>\n<p>I have isolated the code that caused me troubles:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">tactic</span>\n\n<span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">tactic.interactive.dummy</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span> <span class=\"n\">tactic.trace</span> <span class=\"s2\">\"DUMMY\"</span>\n\n<span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">apply_dummy_on_app</span><span class=\"o\">:</span> <span class=\"n\">expr</span> <span class=\"bp\">→</span> <span class=\"n\">tactic</span> <span class=\"n\">unit</span>\n<span class=\"bp\">|</span> <span class=\"n\">e</span><span class=\"bp\">@</span><span class=\"o\">(</span><span class=\"n\">expr.app</span> <span class=\"n\">_</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"bp\">`</span><span class=\"o\">[</span><span class=\"n\">dummy</span><span class=\"o\">]</span> <span class=\"bp\">&lt;|&gt;</span> <span class=\"n\">tactic.trace</span> <span class=\"s2\">\"FAIL\"</span>\n<span class=\"bp\">|</span> <span class=\"n\">e</span><span class=\"bp\">@</span><span class=\"o\">(</span><span class=\"n\">expr.lam</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span> <span class=\"o\">⟨</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">body</span><span class=\"o\">⟩</span> <span class=\"bp\">←</span> <span class=\"n\">tactic.open_n_lambdas</span> <span class=\"n\">e</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">apply_dummy_on_app</span> <span class=\"n\">body</span>\n<span class=\"bp\">|</span> <span class=\"n\">_</span> <span class=\"o\">:=</span> <span class=\"n\">return</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">apply_dummy</span> <span class=\"o\">(</span><span class=\"n\">decl_nm</span> <span class=\"o\">:</span> <span class=\"n\">name</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">env</span> <span class=\"bp\">←</span> <span class=\"n\">tactic.get_env</span><span class=\"o\">,</span>\n  <span class=\"n\">decl</span> <span class=\"bp\">←</span> <span class=\"n\">env.get</span> <span class=\"n\">decl_nm</span><span class=\"o\">,</span>\n  <span class=\"n\">apply_dummy_on_app</span> <span class=\"n\">decl.value</span>\n\n<span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">apply_dummy_with_ref</span> <span class=\"o\">(</span><span class=\"n\">decl_nm</span> <span class=\"o\">:</span> <span class=\"n\">name</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">tactic.using_new_ref</span> <span class=\"o\">(</span><span class=\"mi\">0</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"bp\">$</span> <span class=\"bp\">λ</span> <span class=\"n\">dp_ref</span><span class=\"o\">,</span> <span class=\"n\">apply_dummy</span> <span class=\"n\">decl_nm</span>\n\n\n<span class=\"kd\">theorem</span> <span class=\"n\">mythm</span> <span class=\"o\">:</span> <span class=\"mi\">0</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span> <span class=\"n\">eq.refl</span> <span class=\"n\">_</span>\n\n<span class=\"kd\">run_cmd</span> <span class=\"n\">apply_dummy</span> <span class=\"bp\">`</span><span class=\"n\">mythm</span>  <span class=\"c1\">-- SUCCESS</span>\n<span class=\"kd\">run_cmd</span> <span class=\"n\">apply_dummy_with_ref</span> <span class=\"bp\">`</span><span class=\"n\">mythm</span>  <span class=\"c1\">-- FAILS</span>\n</code></pre></div>\n<p>For a reason I cannot fathom, the fact that there is a <code>tactic.using_new_ref </code> makes the use of the <code>[&lt;tactic&gt;]</code> construction fail.<br>\nDo you see any explanations?</p>",
+        "id": 267558803,
+        "sender_full_name": "Xavier Martinet",
+        "timestamp": 1641894871
+    },
+    {
+        "content": "<p>MWE:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">run_cmd</span> <span class=\"n\">tactic.using_new_ref</span> <span class=\"o\">(</span><span class=\"mi\">0</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"bp\">$</span> <span class=\"bp\">λ</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"bp\">`</span><span class=\"o\">[</span><span class=\"n\">skip</span><span class=\"o\">]</span>\n<span class=\"c1\">-- Failed to copy state to another thread</span>\n</code></pre></div>",
+        "id": 267559827,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1641895461
+    },
+    {
+        "content": "<p>What's happening is that Lean records the tactic state in interactive tactics (yes, even the ones in <code> `[] </code> blocks) to show the goal in the editor.</p>",
+        "id": 267559911,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1641895515
+    },
+    {
+        "content": "<p>Thanks!!! And why does it fail to copy the tactic state? the \"other\" thread is the one where there is a specific value for the ref?</p>",
+        "id": 267561195,
+        "sender_full_name": "Xavier Martinet",
+        "timestamp": 1641896331
+    },
+    {
+        "content": "<p>That's just because the case with references wasn't implemented.  <a href=\"https://github.com/leanprover-community/lean/pull/666\">lean#666</a></p>",
+        "id": 267562883,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1641897307
+    },
+    {
+        "content": "<p>References are just a tactic-state specific map from number-&gt;object.</p>",
+        "id": 267562926,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1641897336
+    }
+]

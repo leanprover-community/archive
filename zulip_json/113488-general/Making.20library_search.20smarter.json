@@ -1,0 +1,206 @@
+[
+    {
+        "content": "<p>I'm sure this has been asked before, but how difficult would it be to make <code>library_search</code> a little smarter and a little less frustrating?</p>\n<p>For example, the following fails:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">data.nat.basic</span>\n<span class=\"kn\">open</span> <span class=\"n\">nat</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">{</span><span class=\"n\">m</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">m</span> <span class=\"bp\">≠</span> <span class=\"mi\">0</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"mi\">0</span> <span class=\"bp\">&lt;</span> <span class=\"n\">m</span> <span class=\"bp\">+</span> <span class=\"n\">n</span> <span class=\"o\">:=</span>\n<span class=\"kd\">begin</span>\n  <span class=\"n\">library_search</span><span class=\"o\">,</span>\n<span class=\"kd\">end</span>\n</code></pre></div>\n<p>because <code>library_search</code> can't fill in <code>h.bot_lt : 0 &lt; m</code> that would then let it find the solution <code>exact add_pos_left h.bot_lt n</code>. </p>\n<p>A similar obstacle arises when we have something of the form <code>h : x &lt; y</code> in context but a lemma takes <code>x ≤ y</code>, and <code>library_search</code> can't produce <code>h.le</code> to use the lemma.</p>\n<p>So how difficult would it be to get <code>library_search</code> to (virtually) add things like this to the current context before searching?</p>",
+        "id": 282983937,
+        "sender_full_name": "Stuart Presnell",
+        "timestamp": 1652990392
+    },
+    {
+        "content": "<p>Library search has a fairly new feature where you can write <code>library_search with h</code> (maybe it's <code>using</code> instead of <code>with</code>? I can't remember). Does this work in your example?</p>",
+        "id": 282984395,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1652990534
+    },
+    {
+        "content": "<p>iIRC this only filters the results. It doesn't make <code>library_search</code> stronger per se.</p>",
+        "id": 282984467,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1652990569
+    },
+    {
+        "content": "<p>Ah okay.</p>",
+        "id": 282984502,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1652990579
+    },
+    {
+        "content": "<p>In such situations I tend to write <code>have := h.bot_lt</code> and try library search after that, and modify the code after the fact</p>",
+        "id": 282984728,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1652990671
+    },
+    {
+        "content": "<p>Yeah, I've resorted to doing the same hand-holding to help <code>library_search</code> do its job, but if you have several such inequalities this can be a lot of effort.</p>",
+        "id": 282986915,
+        "sender_full_name": "Stuart Presnell",
+        "timestamp": 1652991751
+    },
+    {
+        "content": "<p>Lines 60-63 of <code>tactic.suggest</code>, in  <a href=\"https://leanprover-community.github.io/mathlib_docs/find/tactic.suggest.allowed_head_symbols\">docs#tactic.suggest.allowed_head_symbols</a>, seem to give special support for ≤ and &lt; on ℕ.  Maybe, simply adding some support for <code>≠ 0</code> could be a simple modification with good results.  The main heuristic would be that the missed conversion <code>n ≠ 0 ↔ 0 &lt; n</code> may be one of the most frustrating failures of <code>library_search</code>.</p>\n<p>I have not looked deeper at the tactic, so I'm not really sure if this is a good idea or not.</p>",
+        "id": 283001433,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1653000138
+    },
+    {
+        "content": "<p>Every tweak of the algorithm to make one random case work better of course comes with the risk that it makes everything else worse. <code>library_search</code> is already slow when there are heavy imports. But I think there's a more fundamental reason why one shouldn't be doing this.</p>\n<p>It's pretty clear what the job of <code>library_search</code> is, and that's to find <em>exact matches</em> against results in the library rather than to do any thinking for itself. That's the formal spec of the tactic. If that spec isn't right for you then this doesn't mean the tactic needs \"fixing\", it means you're using the wrong tactic. Like Adam I use the workaround he describes: if I'm not sure what the input will be to the function I'm hoping is there, I hedge by adding more stuff to the local context, like h.le or <a href=\"http://h.ne\">h.ne</a>' or whatever.</p>\n<p>I was once frustrated by <code>linarith</code> for similar reasons: I couldn't see why it couldn't use <code>h : a &lt; b \\and P</code> to deduce <code>a &lt; b</code> until it was spelt out to me that this sort of idea goes under \"mission creep\" which is not the sort of thing one wants in general from a tactic.</p>\n<p>However my memory is that actually some minor tweaks were added to <code>linarith</code> to deal with a very small number of edge cases of this nature, and there is a chance that someone will come up with a minor tweak that solves the problem above. As I say there's then a risk that ten other people want other bells and whistles of this form. And if you want a tactic which applies <em>two</em> results from the library to solve a goal rather than one then this <em>isn't library_search</em>, it's a hammer, which typically takes much longer to run.</p>\n<p>The alternative fix is to come up with a convention for how these functions should look in the library. For example we could try and stick to the convention that for hypotheses we always demand <code>ne</code> and for conclusions <code>lt</code>, or that hypotheses and conclusions should always have the same choice, and then the user will know when to add stuff to the local context to maximise the chances that things work. Another possibility is <code>library_search!</code> which starts by adding all these extra bells and whistles to the hypotheses and conclusions before starting, and of course comes with a health warning that because it's now trying to solve 2^n times as many problems it will be 2^n times slower, which might not be what everyone wants but at least they can now avoid it.</p>",
+        "id": 283019873,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1653016674
+    },
+    {
+        "content": "<p>I agree. <code>library_search</code> isn't a magic wand that finds your theorem no matter how you write it down, and it isn't meant to be either.</p>",
+        "id": 283020427,
+        "sender_full_name": "Violeta Hernández",
+        "timestamp": 1653017464
+    },
+    {
+        "content": "<p>(funnily enough I find that <code>squeeze_simp</code> often does a better job than <code>library_search</code> does, haha)</p>",
+        "id": 283020438,
+        "sender_full_name": "Violeta Hernández",
+        "timestamp": 1653017482
+    },
+    {
+        "content": "<p>I'd definitely vote for a library_search! if not just adding these tweaks to library search, for me the goal of library search is to be maximally useful rather than appear in final proofs, so I don't mind it being a bit more hacky than other things spec-wise personally. The slowness argument is of course something to worry about, but I think changing nat ne 0 to 0 &lt; would save a lot of people frustration in the long run.</p>",
+        "id": 283032606,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1653031024
+    },
+    {
+        "content": "<p>Don't we already have <code>library_search!</code>?</p>",
+        "id": 283033996,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1653032080
+    },
+    {
+        "content": "<p>OK then maybe <code>library_search++</code></p>",
+        "id": 283034139,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1653032213
+    },
+    {
+        "content": "<p>I was going to suggest it would be useful to have <code>library_search [h.le]</code> instead of <code>have := h.le, library_search</code>, but the docs say that already works</p>",
+        "id": 283034788,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1653032719
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"422543\">@Stuart Presnell</span> is the current tactic documentation (e.g. Rob's six talks starting <a href=\"https://www.youtube.com/watch?v=o6oUjcE6Nz4&amp;list=PLlF-CfQhukNlxexiNJErGJd2dte_J1t1N&amp;index=19\">here</a>) good enough for you to try making the modification yourself? I know that <span class=\"user-mention\" data-user-id=\"321459\">@Damiano Testa</span> recently decided to learn tactic writing and seemed to get up to speed very quickly.</p>\n<div class=\"youtube-video message_inline_image\"><a data-id=\"o6oUjcE6Nz4\" href=\"https://www.youtube.com/watch?v=o6oUjcE6Nz4&amp;list=PLlF-CfQhukNlxexiNJErGJd2dte_J1t1N&amp;index=19\"><img src=\"https://uploads.zulipusercontent.net/91bdd8086a19f2547ba6eb478268759aecf3a000/68747470733a2f2f692e7974696d672e636f6d2f76692f6f366f556a6345364e7a342f64656661756c742e6a7067\"></a></div>",
+        "id": 283036302,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1653033771
+    },
+    {
+        "content": "<p>Besides the excellent videos that Rob has and that Kevin mentioned, I also learned a lot of meta-programming thanks to the help of Arthur Paulino.  Arthur wrote a preliminary version of the <code>move_add</code> tactic that I wanted to have and this has been incredibly beneficial for me.  And of course, all the follow up discussions that we had about it!</p>\n<p>I am not really in a position to prepare a canvas for the tactic, but I try to answer questions in the <code>meta-programming</code> stream, if I think that I can add anything helpful!</p>",
+        "id": 283036979,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1653034258
+    },
+    {
+        "content": "<p>Also, I was initially intimidated by <code>expr</code>.  It is a very sophisticated concept, but it is also something with which you have a lot of unconscious experience if you have played with formalization for a bit!</p>",
+        "id": 283037397,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1653034507
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110038\">Kevin Buzzard</span> <a href=\"#narrow/stream/113488-general/topic/Making.20library_search.20smarter/near/283036302\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"422543\">Stuart Presnell</span> is the current tactic documentation (e.g. Rob's six talks starting <a href=\"https://www.youtube.com/watch?v=o6oUjcE6Nz4&amp;list=PLlF-CfQhukNlxexiNJErGJd2dte_J1t1N&amp;index=19\">here</a>) good enough for you to try making the modification yourself?</p>\n</blockquote>\n<p>Thanks for the link!  Looks like I've got myself a project for the weekend</p>",
+        "id": 283067758,
+        "sender_full_name": "Stuart Presnell",
+        "timestamp": 1653052734
+    },
+    {
+        "content": "<p>As I understand it, the purpose of <code>library_search</code> is \"find the lemma that I expect mathlib already knows but whose name I can't remember/work out\".  At least, that's very much how I use it and how I imagine a lot of people use it.  I'm not proposing that we change that, just that we make it more capable of doing that job.</p>",
+        "id": 283068404,
+        "sender_full_name": "Stuart Presnell",
+        "timestamp": 1653053065
+    },
+    {
+        "content": "<p>While I agree with you in spirit, observe that to convert <code>h : m ≠ 0</code> to <code>h : 0 &lt; m</code> you are using a second lemma from the library.  Thus, either you add a lemma <code>add_ne_zero_left</code> to the library or what you want is a 2-step library search...</p>\n<p>I am still in favour of having an option of tweaking library_search to allow looking a little deeper into the library, but I agree with the comment that this should be an optional behaviour, not the standard one.</p>",
+        "id": 283069742,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1653053564
+    },
+    {
+        "content": "<p>I appreciate the concern about this change making <code>library_search</code> slower, and if that turns out to be a problem then the modified version should be a variant rather than a replacement.  </p>\n<p>For reference: when you manually add a bunch of <code>have := h.le</code> premises, do you find that <code>library_search</code> becomes noticeably slower?</p>",
+        "id": 283069828,
+        "sender_full_name": "Stuart Presnell",
+        "timestamp": 1653053599
+    },
+    {
+        "content": "<p>In my personal experience, it's already so slow that I couldn't say :)</p>",
+        "id": 283070175,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1653053756
+    },
+    {
+        "content": "<p>I personally found that the speed of library search is mostly affected by the number of imports that I have: depending on how much I am importing, I can either expect it to not timeout, or to timeout.  If it is ever successful, I normally do not care how long it took, though!  <span aria-label=\"wink\" class=\"emoji emoji-1f609\" role=\"img\" title=\"wink\">:wink:</span></p>",
+        "id": 283070230,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1653053765
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"321459\">Damiano Testa</span> <a href=\"#narrow/stream/113488-general/topic/Making.20library_search.20smarter/near/283069742\">said</a>:</p>\n<blockquote>\n<p>Thus, either you add a lemma <code>add_ne_zero_left</code> to the library or [...]</p>\n</blockquote>\n<p>In fact it was just such a situation that prompted this suggestion!  I'd proposed (in <a href=\"https://github.com/leanprover-community/mathlib/pull/14245\">#14245</a>) adding <code>mul_lt_one</code> to <code>algebra/order/ring</code> as a counterpart to <a href=\"https://leanprover-community.github.io/mathlib_docs/find/mul_le_one\">docs#mul_le_one</a> when I found that mathlib apparently didn't know that <code>a &lt; 1 → b &lt; 1 → a*b &lt; 1</code>.  But as <span class=\"user-mention\" data-user-id=\"387244\">@Yaël Dillies</span> pointed out, it doesn't make sense \"to write <code>2^n</code> version of each lemma where <code>n</code> is the number of times <code>≤</code> appears in it\".</p>",
+        "id": 283070758,
+        "sender_full_name": "Stuart Presnell",
+        "timestamp": 1653053970
+    },
+    {
+        "content": "<p>Maybe I should point out that I agree with not expanding the library: my suggestion was a hypothetical one with which I disagree!</p>",
+        "id": 283073974,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1653055258
+    },
+    {
+        "content": "<p>Oh, I agree!  It's impractical to explicitly list all the things we consider 'obvious'.  That's why I want to broaden the beam of the searchlight instead, so that lemmas like <code>add_pos_left</code> and <code>mul_le_one</code> gain an implicit neighbourhood of equally obvious statements that can also be found.</p>",
+        "id": 283074975,
+        "sender_full_name": "Stuart Presnell",
+        "timestamp": 1653055626
+    },
+    {
+        "content": "<p>I don't understand the argument for not having <a href=\"https://leanprover-community.github.io/mathlib_docs/find/mul_lt_one\">docs#mul_lt_one</a></p>",
+        "id": 283082153,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1653058752
+    },
+    {
+        "content": "<p>The argument is that we already have it. It's called <a href=\"https://leanprover-community.github.io/mathlib_docs/find/mul_lt_one_of_nonneg_of_lt_one_left\">docs#mul_lt_one_of_nonneg_of_lt_one_left</a></p>",
+        "id": 283092540,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1653063306
+    },
+    {
+        "content": "<p>Can I add a complaint/suggestion regarding <code>suggest</code> to this discussion?<br>\nWhen I use <code>suggest</code>, I frequently observe that when it does not come up with some <code>exact ...</code> suggestion, the list of <code>refine</code>s it presents me with rarely contains anything useful. Say, if the goal is some equality, it seems that I mostly get the same list of stuff that can be used to deduce any kind of equality, but nothing that is specific to the terms occurring on the left and right. I assume that this comes down to the way <code>suggest</code> orders its results. Would it be possible to change that in such a way that more specific proposals appear higher up in the list? I guess the question here is how one can measure the \"specificity\", which may not be so easy to do...</p>",
+        "id": 283113731,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1653073537
+    },
+    {
+        "content": "<p>For the people suggesting to make <code>library_search</code> two-step, consider that assuming no other guidance, finding a one-step proof is O(n) in the size of the library while finding a two-step proof is O(n^2). Now consider how slow <code>library_search</code> is already and how long you would be waiting for the two step version... Brute force search is <em>slow</em>.</p>",
+        "id": 283115327,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1653074472
+    },
+    {
+        "content": "<p>Michael, we have <code>suggest ... using \n...</code></p>",
+        "id": 283115380,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1653074514
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"387244\">Yaël Dillies</span> <a href=\"#narrow/stream/113488-general/topic/Making.20library_search.20smarter/near/283115380\">said</a>:</p>\n<blockquote>\n<p>Michael, we have <code>suggest ... using ...</code></p>\n</blockquote>\n<p>In my experience, that doesn't necessarily help.</p>",
+        "id": 283115526,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1653074595
+    },
+    {
+        "content": "<p>It's not quite as bad as that as long as you can give a small enumerated list of glue lemmas like <code>has_lt.lt.ne</code> but I think you will have difficulty avoiding extending the list, so it won't stay small for long</p>",
+        "id": 283115628,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1653074660
+    },
+    {
+        "content": "<p>Also, in some cases, there are no local hypotheses that would be useful.</p>",
+        "id": 283115656,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1653074687
+    }
+]

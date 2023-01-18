@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>I have observed a weird timeout in the measurability tactic and I would like to debug it but I don't know anything about how to do that. Here is the  mwe:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">measure_theory.tactic</span>\n<span class=\"kn\">import</span> <span class=\"n\">measure_theory.constructions.prod</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">measurable</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">p</span> <span class=\"o\">:</span> <span class=\"n\">ℝ</span> <span class=\"bp\">×</span> <span class=\"n\">ℝ</span><span class=\"o\">,</span> <span class=\"n\">p.fst</span> <span class=\"bp\">+</span> <span class=\"n\">p.snd</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n<span class=\"kd\">by</span> <span class=\"n\">measurability</span>  <span class=\"c1\">-- fast</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">{</span><span class=\"n\">ι</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">i</span> <span class=\"n\">k</span> <span class=\"o\">:</span> <span class=\"n\">ι</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">hik</span> <span class=\"o\">:</span> <span class=\"n\">i</span> <span class=\"bp\">≠</span> <span class=\"n\">k</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">measurable</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">p</span> <span class=\"o\">:</span> <span class=\"n\">ℝ</span> <span class=\"bp\">×</span> <span class=\"n\">ℝ</span><span class=\"o\">,</span> <span class=\"n\">p.fst</span> <span class=\"bp\">+</span> <span class=\"n\">p.snd</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n<span class=\"kd\">by</span> <span class=\"n\">measurability</span>  <span class=\"c1\">-- deterministic timeout</span>\n</code></pre></div>\n<p>in the second example I added some variables which are completely irrelevant, and I get a timeout. Removing <code>hik</code> makes it fast. I am interested in understanding why that happens, but I would be even more thankful if somebody could give me indications on how to debug that tactic myself.</p>",
+        "id": 286343604,
+        "sender_full_name": "Rémy Degenne",
+        "timestamp": 1655381652
+    },
+    {
+        "content": "<p>Replacing <code>i ≠ k</code> by <code>i = k</code> also makes it fast.</p>",
+        "id": 286346565,
+        "sender_full_name": "Rémy Degenne",
+        "timestamp": 1655383312
+    },
+    {
+        "content": "<p>First the explanation, then how I got there: the <code>measurability</code> tactic tries to call a bunch of different rules. One of them is <code>apply_assumption</code>, which will cause a loop if there's any negated hypothesis. First <code>apply_any</code> tries to apply each hypothesis directly. Then it calls <code>symmetry</code> and goes again. Then it calls <code>exfalso</code> and goes again. But if you have <code>h : ¬ P</code> in your context, this will always apply after calling <code>exfalso</code>. So <code>measurability</code> (via <code>tidy</code>) ends up in an infinite loop of <code>exfalso, apply hik</code>.</p>",
+        "id": 286371548,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1655394003
+    },
+    {
+        "content": "<p>To figure this out I looked at the definition of <code>measurability</code> and saw that it's essentially <code>tactic.tidy { tactics := measurability_tactics }</code>. I pasted this into your example and still saw the same behavior. Then I copied <code>measurability_tactics</code> and commented out the first one, and the behavior changed; I commented everything but the first one and the behavior returned, so that meant it was likely something with the <code>apply_assumption</code> rule.</p>",
+        "id": 286372049,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1655394214
+    },
+    {
+        "content": "<p>Thanks for the explanation!<br>\nThat call to <code>apply_assumption</code> is something I added when I adapted the <code>continuity</code> tactic to prove measurability. It has been there for a while and now I am surprised that we did not stumble upon that problem earlier.</p>",
+        "id": 286373671,
+        "sender_full_name": "Rémy Degenne",
+        "timestamp": 1655394869
+    },
+    {
+        "content": "<p>The only assumptions I really want to apply are of the shape <code>measurable</code> or <code>measurable_set</code> etc. I guess the safe way to replace <code>apply_assumption</code> is to write a tactic that applies only the ones I want.</p>",
+        "id": 286374331,
+        "sender_full_name": "Rémy Degenne",
+        "timestamp": 1655395134
+    },
+    {
+        "content": "<p>You could also modify <code>apply_assumption</code> to take an optional <code>apply_any_opt</code> config argument, which you can use to disable the <code>exfalso</code> behavior</p>",
+        "id": 286375699,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1655395709
+    },
+    {
+        "content": "<p>Thanks! That's what I also realized and I am doing that right now! I need to figure out the syntax for passing config options first :)</p>",
+        "id": 286375970,
+        "sender_full_name": "Rémy Degenne",
+        "timestamp": 1655395849
+    },
+    {
+        "content": "<p>You should be able to do something like</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">apply_assumption</span> <span class=\"o\">(</span><span class=\"n\">opt</span> <span class=\"o\">:</span> <span class=\"n\">apply_any_opt</span> <span class=\"o\">:=</span> <span class=\"o\">{})</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span>\n<span class=\"n\">local_context</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">apply_any</span> <span class=\"n\">opt</span>\n\n<span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">measurability_tactics'</span> <span class=\"o\">(</span><span class=\"n\">md</span> <span class=\"o\">:</span> <span class=\"n\">transparency</span> <span class=\"o\">:=</span> <span class=\"n\">semireducible</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"o\">(</span><span class=\"n\">tactic</span> <span class=\"n\">string</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n<span class=\"o\">[</span>\n  <span class=\"n\">propositional_goal</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"n\">apply_assumption</span> <span class=\"o\">{</span><span class=\"n\">use_exfalso</span> <span class=\"o\">:=</span> <span class=\"n\">ff</span><span class=\"o\">}</span>\n                        <span class=\"bp\">&gt;&gt;</span> <span class=\"n\">pure</span> <span class=\"s2\">\"apply_assumption\"</span>\n <span class=\"bp\">...</span><span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 286376516,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1655396108
+    },
+    {
+        "content": "<p>I could almost write exactly that. The apply_assumption tactic you wrote returns an error, but can be written as</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">apply_assumption'</span> <span class=\"o\">(</span><span class=\"n\">opt</span> <span class=\"o\">:</span> <span class=\"n\">apply_any_opt</span> <span class=\"o\">:=</span> <span class=\"o\">{})</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span>\n<span class=\"k\">do</span> <span class=\"n\">l</span> <span class=\"bp\">←</span> <span class=\"n\">local_context</span><span class=\"o\">,</span> <span class=\"n\">apply_any</span> <span class=\"n\">l</span> <span class=\"n\">opt</span>\n</code></pre></div>\n<p>It looks like it all works now. Thanks again!</p>",
+        "id": 286377705,
+        "sender_full_name": "Rémy Degenne",
+        "timestamp": 1655396665
+    }
+]

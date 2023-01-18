@@ -1,0 +1,110 @@
+[
+    {
+        "content": "<p>I am working on a code verification project with a number of large proofs. I recently updated Lean andmathlib from much older versions, and now I am experiencing the following behavior. The development gets stuck on a large file when I run <code>lean --make</code>, which is to say, the output freezes, the system monitor shows a cpu maxing out, and the fan keeps whirring. But when I open the file in VS Code, the yellow bars disappear after about a minute and everything looks o.k. I can step through the file and see the goals change in the infoview.</p>\n<p>Does anyone have any thoughts as to how I can debug, and what might explain the success of the lean server in contrast to lean from the command line? If I type <code>lean --help</code>, I see all kinds of options to increase various limits, but I have no idea what are reasonable numbers to type.</p>",
+        "id": 296025313,
+        "sender_full_name": "Jeremy Avigad",
+        "timestamp": 1661824979
+    },
+    {
+        "content": "<p>you could turn on the profiler in the file using <code>set_option profiler true</code> which should at least narrow the issue down to a specific proof, and may also pinpoint a bad tactic if that's the culprit</p>",
+        "id": 296025470,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1661825153
+    },
+    {
+        "content": "<p>Thanks for the suggestion. The file has a single theorem, a computer-generated proof of close to 500 lines, that uses <code>simp</code> and <code>norm_num</code> a lot to step through computations. Before <code>lean --make</code> freezes, the profiler reports that the elaborator succeeded in 78.3 seconds, so it seems that it is the kernel check that fails. (There is no smoking gun in the report from the profiler; it shows a lot of time spent in simp and norm_num, as expected.)</p>\n<p>The proof has a couple of calculations with 80-digit numbers, so there is plenty of room for the kernel to get lost. In the mathlib upgrade, I had to fix some problems that had to do with casts from nat to int to a field, so the problem may have to do with that. I will experiment.</p>\n<p>Is there anything to explain why the kernel check seems to work in VS Code but not from the command line?</p>",
+        "id": 296083607,
+        "sender_full_name": "Jeremy Avigad",
+        "timestamp": 1661859855
+    },
+    {
+        "content": "<p>Just guessing: does vscode pass any interesting command line options to lean that you don't use from the command line?</p>",
+        "id": 296084565,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1661860282
+    },
+    {
+        "content": "<p>It raises <code>-M</code> and <code>-T</code> (memory and timeout) if you happen not to be passing those -- the defaults at the minute are <code>-M 4096 and -T 100000</code> (from <a href=\"https://github.com/leanprover/vscode-lean/blob/8ca7fa689bc89f5d327a4d00017855e3ede0561b/package.json#L32-L50\">https://github.com/leanprover/vscode-lean/blob/8ca7fa689bc89f5d327a4d00017855e3ede0561b/package.json#L32-L50</a>)</p>",
+        "id": 296085075,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1661860521
+    },
+    {
+        "content": "<p>Does it help to start squeezing simps?</p>",
+        "id": 296085253,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1661860575
+    },
+    {
+        "content": "<p>Do we need a <code>squeeze_norm_num</code>?</p>",
+        "id": 296085287,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1661860586
+    },
+    {
+        "content": "<p>Thanks, Julian, I'll try messing around with the limits. Johan, virtually all our simps are squeezed, and generally we even use <code>norm_num1</code> instead of <code>norm_num</code>.</p>",
+        "id": 296089334,
+        "sender_full_name": "Jeremy Avigad",
+        "timestamp": 1661862097
+    },
+    {
+        "content": "<p>Hmmzz... then it must be a truly gigantic proof (-;</p>",
+        "id": 296089824,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1661862251
+    },
+    {
+        "content": "<p>The problem is solved. Here's the resolution.</p>\n<p>First, the problem was not in the file I thought it was, but in a dependency. There was a proof that passed the elaborator but led to a deterministic timeout in the kernel. VS Code compiled the later file without noticing the timeout (I guess the type signature was enough) and <code>lean --make</code> worked on parts in parallel, so it froze on the earlier dependency just after announcing the successful completion of the later one. Go figure.</p>\n<p>Second, the real problem was simply a numeric calculation with large nat numeral cast to int. If you are not careful (e.g. if you use the simplifier or force definitional reduction) Lean falls into unary notation.  Using the right <code>simp only</code> rules avoids that. I have gotten used to dealing with that, but this bit of code was written by a colleague who was not aware of the issue.</p>\n<p>Everything works great now. <span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span> Thanks everyone for the help.</p>",
+        "id": 296100875,
+        "sender_full_name": "Jeremy Avigad",
+        "timestamp": 1661865870
+    },
+    {
+        "content": "<p>To illustrate, the first proof below takes a number of seconds, whereas the second is instantaneous:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span><span class=\"o\">:</span> <span class=\"o\">((</span><span class=\"mi\">12345678901234567890123456789012345678901234567890</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span> <span class=\"bp\">=</span>\n  <span class=\"mi\">12345678901234567890123456789012345678901234567891</span> <span class=\"o\">:=</span>\n<span class=\"kd\">by</span> <span class=\"n\">norm_num</span>\n\n<span class=\"kd\">example</span><span class=\"o\">:</span> <span class=\"o\">((</span><span class=\"mi\">12345678901234567890123456789012345678901234567890</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span> <span class=\"bp\">=</span>\n  <span class=\"mi\">12345678901234567890123456789012345678901234567891</span>  <span class=\"o\">:=</span>\n<span class=\"kd\">begin</span>\n  <span class=\"n\">simp</span> <span class=\"n\">only</span> <span class=\"o\">[</span><span class=\"n\">int.coe_nat_zero</span><span class=\"o\">,</span> <span class=\"n\">int.coe_nat_one</span><span class=\"o\">,</span> <span class=\"n\">int.coe_nat_bit0</span><span class=\"o\">,</span> <span class=\"n\">int.coe_nat_bit1</span><span class=\"o\">],</span>\n  <span class=\"n\">norm_num1</span>\n<span class=\"kd\">end</span>\n</code></pre></div>",
+        "id": 296103528,
+        "sender_full_name": "Jeremy Avigad",
+        "timestamp": 1661866797
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"321696\">Julian Berman</span> <a href=\"#narrow/stream/113488-general/topic/lean.20failing.20on.20large.20proofs/near/296085075\">said</a>:</p>\n<blockquote>\n<p>It raises <code>-M</code> and <code>-T</code> (memory and timeout) if you happen not to be passing those -- the defaults at the minute are <code>-M 4096 and -T 100000</code> (from <a href=\"https://github.com/leanprover/vscode-lean/blob/8ca7fa689bc89f5d327a4d00017855e3ede0561b/package.json#L32-L50\">https://github.com/leanprover/vscode-lean/blob/8ca7fa689bc89f5d327a4d00017855e3ede0561b/package.json#L32-L50</a>)</p>\n</blockquote>\n<p>I think the default for <code>lean --make</code> is timeout and memory = 0 (aka infinite) though without extra options, so vscode settings are only there to tame lean</p>",
+        "id": 296103661,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1661866840
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110865\">Jeremy Avigad</span> <a href=\"#narrow/stream/113488-general/topic/lean.20failing.20on.20large.20proofs/near/296103528\">said</a>:</p>\n<blockquote>\n<p>To illustrate, the first proof below takes a number of seconds, whereas the second is instantaneous:</p>\n</blockquote>\n<p>Is that something that could be fixed in <code>norm_num</code>?</p>",
+        "id": 296103807,
+        "sender_full_name": "Sebastien Gouezel",
+        "timestamp": 1661866899
+    },
+    {
+        "content": "<p>The plot thickens. The proof <code>by simp; norm_num</code> has the same slow behavior, but if I squeeze that <code>simp</code>, Lean tells me to use <code>simp only [int.coe_nat_bit0, int.coe_nat_bit1, nat.cast_one], norm_num</code>, which has the fast behavior. So I guess <code>simp</code> is backtracking? Let me check...</p>",
+        "id": 296106478,
+        "sender_full_name": "Jeremy Avigad",
+        "timestamp": 1661867613
+    },
+    {
+        "content": "<p>The <code>trace</code> is huge. Trying a smaller example <code>100 + 1 = 101</code> shows that the simplifier is trying all kinds of crazy things because the head symbol <code>coe</code> matches a lot. That explains why elaboration would be slow, but it doesn't explain our deterministic timeout.</p>\n<p>I extracted the three big calculations below from the proof that was giving me a deterministic timeout. Replacing the proofs by <code>sorry</code> allowed the proof to compile. But separated out, none of them are problematic, and what squeeze simp tells me to do to speed it up is essentially what I did to fix the proof. So I really don't know why those calculations seemed to result in a failure in the kernel check rather than in the elaboration phase.</p>\n<p>So maybe I was wrong, the problem wasn't with the kernel check, just too much time elaborating calculations in an already long proof?</p>\n<p>Anyhow, it seems that the only way to solve the problem with <code>norm_num</code> is to avoid the use of the full-blown version of <code>simp</code> for preprocessing.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"mi\">19342813113834066795298816</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"mi\">4</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"bp\">-</span> <span class=\"bp\">↑</span><span class=\"o\">(</span><span class=\"mi\">2</span> <span class=\"bp\">^</span> <span class=\"mi\">86</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">))</span> <span class=\"bp\">%</span> <span class=\"bp\">↑</span><span class=\"o\">(</span><span class=\"mi\">3618502788666131213697322783095070105623107215331596699973092056135872020481</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span>\n<span class=\"kd\">by</span> <span class=\"n\">norm_num</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"mi\">19342813113834066795298816</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"mi\">4</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"bp\">-</span> <span class=\"bp\">↑</span><span class=\"o\">(</span><span class=\"mi\">2</span> <span class=\"bp\">^</span> <span class=\"mi\">86</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">))</span> <span class=\"bp\">%</span> <span class=\"bp\">↑</span><span class=\"o\">(</span><span class=\"mi\">3618502788666131213697322783095070105623107215331596699973092056135872020481</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span>\n<span class=\"kd\">by</span> <span class=\"n\">norm_num</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">((</span><span class=\"mi\">2</span><span class=\"bp\">^</span><span class=\"mi\">86</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"bp\">*</span> <span class=\"bp\">-</span><span class=\"mi\">46768052394588894761721767695234645457402928824320</span> <span class=\"bp\">%</span> <span class=\"bp\">↑</span><span class=\"o\">(</span><span class=\"mi\">3618502788666131213697322783095070105623107215331596699973092056135872020481</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span>\n<span class=\"kd\">by</span> <span class=\"n\">norm_num</span>\n</code></pre></div>\n<p>Incidentally, in case you are curious, I have discovered that you can Google 3618502788666131213697322783095070105623107215331596699973092056135872020481.</p>",
+        "id": 296136493,
+        "sender_full_name": "Jeremy Avigad",
+        "timestamp": 1661870357
+    },
+    {
+        "content": "<p>One last plot twist. I turns out that I oversimplified my examples. The large prime was hidden behind a definition, and my colleague used <code>dsimp</code> to unfold it, as in the example below. It produces a deterministic timeout in the kernel checking phase. Replacing <code>dsimp</code> by <code>rw</code> is slow but succeeds.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">PRIME</span> <span class=\"o\">:=</span> <span class=\"mi\">3618502788666131213697322783095070105623107215331596699973092056135872020481</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"bp\">^</span><span class=\"mi\">86</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"bp\">*</span> <span class=\"bp\">-</span><span class=\"mi\">46768052394588894761721767695234645457402928824320</span> <span class=\"bp\">%</span> <span class=\"bp\">↑</span><span class=\"n\">PRIME</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span>\n<span class=\"kd\">by</span> <span class=\"n\">dsimp</span> <span class=\"o\">[</span><span class=\"n\">PRIME</span><span class=\"o\">]</span><span class=\"bp\">;</span> <span class=\"n\">norm_num</span>\n</code></pre></div>",
+        "id": 296172409,
+        "sender_full_name": "Jeremy Avigad",
+        "timestamp": 1661879297
+    },
+    {
+        "content": "<p>You could also hack your car by googling MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAy8Dbv8prpJ : <a href=\"https://programmingwithstyle.com/posts/howihackedmycar/\">https://programmingwithstyle.com/posts/howihackedmycar/</a></p>",
+        "id": 296210897,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1661889289
+    },
+    {
+        "content": "<p>FYI, <code>norm_num</code> has no support for <code>coe</code>, so this is mostly <code>simp</code> behavior being observed</p>",
+        "id": 296263068,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1661927087
+    }
+]

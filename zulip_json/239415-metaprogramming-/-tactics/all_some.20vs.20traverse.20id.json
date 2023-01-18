@@ -1,0 +1,74 @@
+[
+    {
+        "content": "<p>In the new <code>induction'</code> tactic, there is a new <code>def all_some : list (option α) → option (list α)</code> defined, which is provably equal to <code>traverse id</code>. It is used solely in the body of <code>constructor_argument_naming_rule_index</code> as</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">let</span> <span class=\"n\">local_index_instantiations</span> <span class=\"o\">:=</span>\n  <span class=\"o\">(</span><span class=\"n\">index_occs.map</span> <span class=\"n\">get_major_premise_arg_local_names</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">all_some</span> <span class=\"k\">in</span>\n</code></pre></div>\n<p>Are there runtime efficiencies to providing this specialized function, or would <code>traverse id</code> be good enough? Just asking to understand what sorts of constraints there are for writing perfomant tactic code. <span class=\"user-mention\" data-user-id=\"256311\">@Jannis Limperg</span></p>",
+        "id": 219902715,
+        "sender_full_name": "Yakov Pechersky",
+        "timestamp": 1607980390
+    },
+    {
+        "content": "<p>If I had realised that <code>traverse id = all_some</code>, I would have probably used the former. However, I suspect (but haven't checked) that <code>traverse id</code> does not short-circuit when it encounters a <code>none</code>, so the specialised thing should be faster. Lean also doesn't specialise type class instances like Haskell probably would, so that's another source of overhead. Whether this sort of consideration matters, given Lean's general slowness, I don't know.</p>",
+        "id": 219903713,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1607980902
+    },
+    {
+        "content": "<p>What would be a way to check if the short-circuiting does occur?</p>",
+        "id": 219904020,
+        "sender_full_name": "Yakov Pechersky",
+        "timestamp": 1607981035
+    },
+    {
+        "content": "<p>Good question actually. I didn't immediately find a way to test this experimentally; maybe our resident wizards can help with that. Failing that, you can always try to mentally step through the strict execution of <code>traverse id [none, some1]</code>.</p>",
+        "id": 219907161,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1607982742
+    },
+    {
+        "content": "<p>Is short-circuiting is a meaningful thing to ask about if there are no observable side-effects?</p>",
+        "id": 219910211,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1607984188
+    },
+    {
+        "content": "<p>\"does <code>if c then f x else g x</code> short-circuit\" seems meaningless to me, and I'm not sure if this case is different</p>",
+        "id": 219910538,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1607984371
+    },
+    {
+        "content": "<p>Well, timing is observable; also lean isn't completely side effect free if you use <code>trace</code></p>",
+        "id": 219910554,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1607984386
+    },
+    {
+        "content": "<p>also nonterminating computations are observable, and it's not hard to make those in meta code</p>",
+        "id": 219910657,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1607984430
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">tactic.induction</span> <span class=\"n\">control.traversable.basic</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">l</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"o\">(</span><span class=\"n\">option</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">none</span><span class=\"o\">::(</span><span class=\"n\">list.range</span> <span class=\"mi\">1000000</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">map</span> <span class=\"n\">some</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">profiler</span> <span class=\"n\">true</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">list.all_some</span> <span class=\"n\">l</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">traverse</span> <span class=\"n\">id</span> <span class=\"n\">l</span>\n</code></pre></div>\n<p>implies <code>traverse</code> doesn't short circuit. (Both <code>eval</code>s are O(n) because of <code>list.map</code> but you can see the difference in the profiler output.)</p>",
+        "id": 219910982,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1607984609
+    },
+    {
+        "content": "<p>Here are some evaluation order puzzlers:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">loop</span> <span class=\"o\">:</span> <span class=\"n\">bool</span> <span class=\"o\">:=</span> <span class=\"n\">loop</span>\n\n<span class=\"c1\">-- #eval if tt then loop else ff -- don't use this, it will eat up all your memory</span>\n<span class=\"k\">#eval</span> <span class=\"k\">if</span> <span class=\"n\">tt</span> <span class=\"k\">then</span> <span class=\"n\">ff</span> <span class=\"k\">else</span> <span class=\"n\">undefined</span> <span class=\"c1\">-- ok</span>\n<span class=\"k\">#eval</span> <span class=\"k\">if</span> <span class=\"n\">tt</span> <span class=\"k\">then</span> <span class=\"n\">undefined</span> <span class=\"k\">else</span> <span class=\"n\">ff</span> <span class=\"c1\">-- fail</span>\n<span class=\"k\">#eval</span> <span class=\"n\">ff</span> <span class=\"bp\">&amp;&amp;</span> <span class=\"n\">undefined</span> <span class=\"c1\">-- ok</span>\n<span class=\"k\">#eval</span> <span class=\"k\">let</span> <span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">bool</span> <span class=\"o\">:=</span> <span class=\"n\">undefined</span> <span class=\"k\">in</span> <span class=\"n\">ff</span> <span class=\"bp\">&amp;&amp;</span> <span class=\"n\">n</span> <span class=\"c1\">-- ok</span>\n</code></pre></div>",
+        "id": 219911360,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1607984834
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">control.traversable.basic</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">l</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"o\">(</span><span class=\"n\">option</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">none</span><span class=\"o\">::(</span><span class=\"n\">list.range</span> <span class=\"mi\">1000000</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">map</span> <span class=\"n\">some</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">all_some</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"o\">(</span><span class=\"n\">option</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">option</span> <span class=\"o\">(</span><span class=\"n\">list</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"o\">[]</span> <span class=\"o\">:=</span> <span class=\"n\">some</span> <span class=\"o\">[]</span>\n<span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"n\">some</span> <span class=\"n\">a</span> <span class=\"o\">::</span> <span class=\"n\">as</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">list.cons</span> <span class=\"n\">a</span> <span class=\"bp\">&lt;$&gt;</span> <span class=\"n\">all_some</span> <span class=\"n\">as</span>\n<span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"n\">none</span> <span class=\"o\">::</span> <span class=\"n\">as</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">none</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">profiler</span> <span class=\"n\">true</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">all_some</span> <span class=\"n\">l</span>\n<span class=\"k\">#reduce</span> <span class=\"n\">all_some</span> <span class=\"o\">[</span><span class=\"n\">some</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">none</span><span class=\"o\">,</span> <span class=\"n\">some</span> <span class=\"mi\">2</span><span class=\"o\">]</span>\n<span class=\"k\">#reduce</span> <span class=\"n\">all_some</span> <span class=\"o\">[</span><span class=\"n\">some</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">some</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"n\">some</span> <span class=\"mi\">2</span><span class=\"o\">]</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">mmap</span> <span class=\"n\">id</span> <span class=\"n\">l</span>\n<span class=\"k\">#reduce</span> <span class=\"n\">mmap</span> <span class=\"n\">id</span> <span class=\"o\">[</span><span class=\"n\">some</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">none</span><span class=\"o\">,</span> <span class=\"n\">some</span> <span class=\"mi\">2</span><span class=\"o\">]</span>\n<span class=\"k\">#reduce</span> <span class=\"n\">mmap</span> <span class=\"n\">id</span> <span class=\"o\">[</span><span class=\"n\">some</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">some</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"n\">some</span> <span class=\"mi\">2</span><span class=\"o\">]</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">traverse</span> <span class=\"n\">id</span> <span class=\"n\">l</span>\n<span class=\"k\">#reduce</span> <span class=\"n\">traverse</span> <span class=\"n\">id</span> <span class=\"o\">[</span><span class=\"n\">some</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">none</span><span class=\"o\">,</span> <span class=\"n\">some</span> <span class=\"mi\">2</span><span class=\"o\">]</span>\n<span class=\"k\">#reduce</span> <span class=\"n\">traverse</span> <span class=\"n\">id</span> <span class=\"o\">[</span><span class=\"n\">some</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">some</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"n\">some</span> <span class=\"mi\">2</span><span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 219990419,
+        "sender_full_name": "Yakov Pechersky",
+        "timestamp": 1608044383
+    },
+    {
+        "content": "<p>so <code>mmap id</code> is exactly <code>all_some</code>, and on my machine, actually a little faster (?)</p>",
+        "id": 219990511,
+        "sender_full_name": "Yakov Pechersky",
+        "timestamp": 1608044405
+    }
+]

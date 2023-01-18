@@ -1,0 +1,956 @@
+[
+    {
+        "content": "<p>Lean 4 just got <a href=\"https://github.com/leanprover/lean4/commit/37dcbf34210d164b2bba657f18c7dd9762717e86\">a second instance for <code>LT Nat</code></a>  that is not definitionally equal to the first one.  I was just starting to jot down some notes for a pre-RFC, but I wasn't sure if there's a nice way to refactor this.</p>\n<p>Clearly you want to avoid writing both Ord and LT instances.  For programming, it's obviously a really bad idea to derive Ord from LT.  And you can't define LT in terms of Ord either (it's not possible with partial orders in general; and using it as a default results in diamonds with e.g. pi instances).</p>\n<p>The typical one-size-fits-all mathlib answer would be the following, right?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">Ord</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">LT</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">BEq</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"n\">where</span>\n  <span class=\"n\">compare</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">Ordering</span>\n  <span class=\"n\">compare_correct</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">,</span> <span class=\"c1\">-- not sure how helpful this is w/o laws on &lt; and ==</span>\n    <span class=\"kn\">open</span> <span class=\"n\">Ordering</span> <span class=\"k\">in</span> <span class=\"k\">match</span> <span class=\"n\">compare</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"k\">with</span>\n      <span class=\"bp\">|</span> <span class=\"n\">lt</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">a</span> <span class=\"bp\">&lt;</span> <span class=\"n\">b</span>\n      <span class=\"bp\">|</span> <span class=\"n\">eq</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">a</span> <span class=\"bp\">==</span> <span class=\"n\">b</span>\n      <span class=\"bp\">|</span> <span class=\"n\">gt</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">a</span> <span class=\"bp\">&gt;</span> <span class=\"n\">b</span>\n</code></pre></div>\n<p>But that doesn't look helpful for Ord/LT.  Is there a reasonable alternative to just removing the <code>Ord α → LT α</code> instance?  Ideally one that addresses the motivation for this instance, i.e., not having to write a separate LT instance?  Making it a def instead (but then you still need to write both instances)?</p>",
+        "id": 240762397,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1622391019
+    },
+    {
+        "content": "<p>I was thinking about the one you just described with <code>BEq</code>, when I was adding <code>Ord</code>, but I wasn't happy with it. I was also considering to do it using <code>DecidableEq</code>. But that wasn't truly satisfying either.</p>\n<p>In the end, I just made explicit <code>Ord</code> instances and added the helper <code>compareOfLessAndEq</code> this latter one is definitely safe, since you control when it's applied. And for basic data types like number or chars, it certainly is reasonable to derive <code>Ord</code> from that. But for other more complex types, you'd want to derive it explicitly, avoiding to redo work.</p>\n<p>Furthermore, <code>Ord</code> seems to imply a total order, but that's not quite right. In particular <code>Eq a b</code> doesn't imply <code>a = b</code>.</p>",
+        "id": 240763570,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622392392
+    },
+    {
+        "content": "<p>on the other hand, if we had a total order, deriving an <code>Ord</code> instance for that seems perfectly reasonable, what do you think?</p>",
+        "id": 240763757,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622392647
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"235513\">Daniel Fabian</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240763757\">said</a>:</p>\n<blockquote>\n<p>on the other hand, if we had a total order, deriving an <code>Ord</code> instance for that seems perfectly reasonable, what do you think?</p>\n</blockquote>\n<p>We want to avoid that for programming; an Ord instance defined in terms of &lt; is never going to be fast (with the few exceptions that you've listed).</p>",
+        "id": 240763924,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1622392830
+    },
+    {
+        "content": "<p>(The lexicographic order on strings is a decidable linear order.  But you don't want to define an Ord instance from it.)</p>",
+        "id": 240763949,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1622392879
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240763924\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"235513\">Daniel Fabian</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240763757\">said</a>:</p>\n<blockquote>\n<p>on the other hand, if we had a total order, deriving an <code>Ord</code> instance for that seems perfectly reasonable, what do you think?</p>\n</blockquote>\n<p>We want to avoid that for programming; an Ord instance defined in terms of &lt; is never going to be fast (with the few exceptions that you've listed).</p>\n</blockquote>\n<p>which is precisely, why I added a helper function to construct it for the 20 or so cases, but haven't added a typeclass instance.</p>",
+        "id": 240764278,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622393349
+    },
+    {
+        "content": "<p>How do the two instances for <code>Nat</code> compare? Does the old one have important defeqs the new one does not, e.g. <code>n &lt; m === n.succ &lt;= m</code>? (Is this one important?)</p>",
+        "id": 240766927,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1622397485
+    },
+    {
+        "content": "<p>The problem is that there's <em>two</em> of them now, i.e. <code>n &lt; m =!= n &lt; m</code></p>",
+        "id": 240767002,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1622397629
+    },
+    {
+        "content": "<p>Sure, but I'm asking whether we need the former one <span aria-label=\"big smile\" class=\"emoji emoji-1f604\" role=\"img\" title=\"big smile\">:big_smile:</span></p>",
+        "id": 240767646,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1622398646
+    },
+    {
+        "content": "<p>IIRC <span class=\"user-mention\" data-user-id=\"111080\">@Floris van Doorn</span> had some strong opinions on this.  But I don't think there's any technical requirement for nice definitional reduction of &lt;.</p>",
+        "id": 240768522,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1622400036
+    },
+    {
+        "content": "<p>Removing the other <code>LT Nat</code> does not fix the issue though (I've just picked the most prominent instance for the thread title).  The <code>Ord α → LT α</code> instance causes diamonds  even if all the duplicate LT instances for types in the core library are fixed, and we adopt the policy that every concrete type only has <code>Ord</code> defined and not <code>LT</code> (where possible).</p>\n<p>Blanket instances constructing data like <code>Ord α → LT α</code> always cause diamonds.  Say you make a type <code>LexPair α</code> for lexicographically ordered pairs.  You add an instance for <code>Ord α → Ord (LexPair α)</code> because you want your code to be fast.  Then you add <code>LT α → LT (LexPair α)</code> because the lexicographic ordering also makes sense for types that do not have an Ord instance (e.g. if they're not totally ordered).  And bam: you've got two instances <code>LT (LexPair α)</code> that are not definitionally equal.</p>",
+        "id": 240768888,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1622400679
+    },
+    {
+        "content": "<p>do you have a suggestion? That was something that was always annoying me about type classes. You don't even need a diamond, actually. Say, you have string comparison and case insensitive string comparison. Both are perfectly reasonable things to do. But the type class mechanism is based just on types, so there is really no sensible way to tell which instance you want applied, is there?</p>",
+        "id": 240769130,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622401120
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240766927\">said</a>:</p>\n<blockquote>\n<p>How do the two instances for <code>Nat</code> compare? Does the old one have important defeqs the new one does not, e.g. <code>n &lt; m === n.succ &lt;= m</code>? (Is this one important?)</p>\n</blockquote>\n<p>Yes, this defeq is used a lot in mathlib.</p>",
+        "id": 240769209,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622401265
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240768888\">said</a>:</p>\n<blockquote>\n<p>Then you add <code>LT α → LT (LexPair α)</code> because the lexicographic ordering also makes sense for types that do not have an Ord instance (e.g. if they're not totally ordered). </p>\n</blockquote>\n<p>Unless I'm mistaken though, <code>Ord</code> is not a total order. You can define and Ord instance for any type that has an decidable LT. For example,</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">compareOfLess</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">LT</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">DecidableRel</span> <span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">LT.lt</span> <span class=\"n\">α</span> <span class=\"n\">_</span><span class=\"o\">)]</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Ordering</span> <span class=\"o\">:=</span>\n  <span class=\"k\">if</span> <span class=\"n\">x</span> <span class=\"bp\">&lt;</span> <span class=\"n\">y</span> <span class=\"k\">then</span> <span class=\"n\">Ordering.lt</span>\n  <span class=\"k\">else</span> <span class=\"k\">if</span> <span class=\"n\">x</span> <span class=\"bp\">&gt;</span> <span class=\"n\">y</span> <span class=\"k\">then</span> <span class=\"n\">Ordering.gt</span>\n  <span class=\"k\">else</span> <span class=\"n\">Ordering.eq</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">[</span><span class=\"n\">LT</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">DecidableRel</span> <span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">LT.lt</span> <span class=\"n\">α</span> <span class=\"n\">_</span><span class=\"o\">)]</span> <span class=\"o\">:</span> <span class=\"n\">Ord</span> <span class=\"n\">α</span> <span class=\"o\">:=</span>\n  <span class=\"o\">⟨</span> <span class=\"n\">compareOfLess</span> <span class=\"o\">⟩</span>\n</code></pre></div>\n<p>In order to promote <code>Ord</code> to a true total order, a <code>((x &lt;=&gt; y) = Ordering.Eq) -&gt; (x = y)</code> law would need to be added.</p>",
+        "id": 240769214,
+        "sender_full_name": "Mac",
+        "timestamp": 1622401289
+    },
+    {
+        "content": "<p>Yes, these are all lawless.  For illustrative purposes, I only picked examples where the instances are lawful though.  Because the underlying point is the same no matter whether there are laws or not: blanket instances that construct data cause diamonds.</p>",
+        "id": 240769285,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1622401407
+    },
+    {
+        "content": "<p>My 2 cents: I think that the Ord -&gt; LT instance should be a def, and instantiated explicitly for any types where the simplest way to prove LT is via Ord.</p>",
+        "id": 240769287,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622401409
+    },
+    {
+        "content": "<p>I think it might be worth it to demote the current <code>Ord</code> to <code>POrd</code> (i.e. a partial order) with <code>Ordering := LT | GT | NA</code> and then introduce a new <code>Ord</code> that has the <code>((x &lt;=&gt; y) = Ordering.NA) -&gt; (x = y)</code> law. That way any all <code>LT</code>/<code>GT</code> simply leverage <code>POrd</code> (if they have a decidable LT/GT ordering relation).</p>",
+        "id": 240769356,
+        "sender_full_name": "Mac",
+        "timestamp": 1622401505
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"235513\">Daniel Fabian</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240769130\">said</a>:</p>\n<blockquote>\n<p>string comparison and case insensitive string comparison [...] But the type class mechanism is based just on types, so there is really no sensible way to tell which instance you want applied, is there?</p>\n</blockquote>\n<p>I think the cleanest way is to make type aliases, i.e., <code>def LocaleSpecificSortingAccordingToUnicode (locale : String) : Type := String</code>.</p>",
+        "id": 240769359,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1622401509
+    },
+    {
+        "content": "<p>Note that the idea of a function returning LT | GT | EQ already bakes in the concept of a \"total preorder\" for things like <code>lt</code> and <code>cmp</code> to cohere and be useful in data structures</p>",
+        "id": 240769585,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622401860
+    },
+    {
+        "content": "<p>hence why I suggested the rename to something more general</p>",
+        "id": 240769591,
+        "sender_full_name": "Mac",
+        "timestamp": 1622401904
+    },
+    {
+        "content": "<p>It's not a partial order though</p>",
+        "id": 240769632,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622401933
+    },
+    {
+        "content": "<p><code>Ord</code> has signature <code>A -&gt; A -&gt; Ordering</code> where <code>Ordering := LT | GT | EQ</code></p>",
+        "id": 240769638,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622401964
+    },
+    {
+        "content": "<p><code>EQ</code> doesn't necessarily mean equal, but it does mean comparable. A partial order would need a <code>none</code> option</p>",
+        "id": 240769653,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622402015
+    },
+    {
+        "content": "<p>Sorry for my imprecision. The point is pick a name that neither implies incomparability or comparability (i.e. <code>Ordering := Less | Greater | Neutral</code> and <code>DecidableOrd</code> for example) and use this more general Ord to always define decidable <code>LT</code>/<code>GT</code>.</p>",
+        "id": 240769778,
+        "sender_full_name": "Mac",
+        "timestamp": 1622402189
+    },
+    {
+        "content": "<p>See Rust's <code>PartialOrd</code>: it needs to be a fourth option</p>",
+        "id": 240769787,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622402221
+    },
+    {
+        "content": "<p>I believe partial orders are a red herring when it comes to Ord instances.  We only want Ord instances where the order needs to be total (sorting a list, keys in a tree map, etc.).  What is a difficulty though is that <code>Ordering.eq</code> does not mean <code>=</code>, it rather means <code>==</code> (there's of course no law requiring it).  For example <code>Ord Expr</code> would return <code>eq</code> for alpha-equivalent expresisons.</p>",
+        "id": 240769792,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1622402226
+    },
+    {
+        "content": "<p>I think it would be best to introduce a <code>Cmp</code> typeclass that just supplies the <code>cmp : A -&gt; A -&gt; Ordering</code> function, and then <code>Ord</code> can be reserved for the trifecta, possibly with laws relating them</p>",
+        "id": 240769803,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622402276
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240769803\">said</a>:</p>\n<blockquote>\n<p>I think it would be best to introduce a <code>Cmp</code> typeclass that just supplies the <code>cmp : A -&gt; A -&gt; Ordering</code> function, and then <code>Ord</code> can be reserved for the trifecta, possibly with laws relating them</p>\n</blockquote>\n<p>This is more-or-less what I was trying to suggest.</p>",
+        "id": 240769851,
+        "sender_full_name": "Mac",
+        "timestamp": 1622402341
+    },
+    {
+        "content": "<p>in particular I'm not suggesting \"and use this more general Ord to always define decidable LT/GT.\"</p>",
+        "id": 240769862,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622402388
+    },
+    {
+        "content": "<p>There is no a priori relation between the basic typeclasses</p>",
+        "id": 240769904,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622402407
+    },
+    {
+        "content": "<p><code>Ord</code> would combine several ordering operators for convenience: <code>BEq</code>, <code>LT</code>, <code>LE</code>, <code>Cmp</code>, <code>Decidable LE</code>, <code>Decidable LT</code></p>",
+        "id": 240769947,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622402512
+    },
+    {
+        "content": "<p><code>POrd</code> would have a <code>partial_cmp : A -&gt; A -&gt; Option Ordering</code> instead</p>",
+        "id": 240769998,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622402555
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240769904\">said</a>:</p>\n<blockquote>\n<p>There is no a priori relation between the basic typeclasses</p>\n</blockquote>\n<p>Why Not Though? From <code>Cmp</code> I can always  get <code>Lt</code>/<code>Le</code>/<code>Ge</code>/<code>Gt</code>.</p>",
+        "id": 240770024,
+        "sender_full_name": "Mac",
+        "timestamp": 1622402621
+    },
+    {
+        "content": "<p>Building data from data leads to the diamond problems that gabriel mentioned</p>",
+        "id": 240770074,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622402662
+    },
+    {
+        "content": "<p>you don't want to use a generic construction to get Lt from Cmp when the base type is <code>Nat</code>, because nat already has a <code>Lt</code></p>",
+        "id": 240770086,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622402691
+    },
+    {
+        "content": "<p>But why can't we remove those and just use <code>Cmp</code> for <code>Cmp</code> types?</p>",
+        "id": 240770108,
+        "sender_full_name": "Mac",
+        "timestamp": 1622402750
+    },
+    {
+        "content": "<p>So the generic construction is just a def, available as the default field value in the <code>Ord</code> typeclass</p>",
+        "id": 240770110,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622402759
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240770108\">said</a>:</p>\n<blockquote>\n<p>But why can't we remove those and just use <code>Cmp</code> for <code>Cmp</code> types?</p>\n</blockquote>\n<p>because that's less efficient? Also it's less convenient when you don't want cmp to get involved in proofs</p>",
+        "id": 240770161,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622402841
+    },
+    {
+        "content": "<p>Some types have <code>lt</code> as the basic notion and use it to define <code>le</code> and <code>cmp</code>; some have <code>cmp</code> as basic and define <code>lt</code> and <code>le</code>; others (like <code>Nat</code>!) have <code>lt</code> and <code>le</code> as basic and <code>cmp</code> is derived. When you have this kind of variety, you just need a class that supplies all of them as separate fields and you can pick which to define yourself and which to get automatically filled in</p>",
+        "id": 240770231,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622402973
+    },
+    {
+        "content": "<p>Actually, it's even more complicated than that because there is both <code>le</code> and <code>ble</code> and they have separate definitions. (In mathlib <code>le</code> is an inductive predicate and <code>ble</code> is a recursive function.) Again, to please everyone you need them to be separate fields, with a coherence lemma</p>",
+        "id": 240770374,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622403197
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240770231\">said</a>:</p>\n<blockquote>\n<p>When you have this kind of variety, you just need a class that supplies all of them as separate fields and you can pick which to define yourself and which to get automatically filled in</p>\n</blockquote>\n<p>That is what I am going for. For example, something like this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">BOrd.</span><span class=\"o\">{</span><span class=\"n\">u</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">)</span> <span class=\"kd\">extends</span> <span class=\"n\">Cmp</span> <span class=\"n\">α</span><span class=\"o\">,</span> <span class=\"n\">LT</span> <span class=\"n\">α</span><span class=\"o\">,</span> <span class=\"n\">LE</span> <span class=\"n\">α</span><span class=\"o\">,</span> <span class=\"n\">GT</span> <span class=\"n\">α</span><span class=\"o\">,</span> <span class=\"n\">GE</span> <span class=\"n\">α</span> <span class=\"n\">where</span>\n  <span class=\"n\">lt</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">cmp</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">==</span> <span class=\"n\">Ordering.lt</span>\n  <span class=\"n\">le</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">cmp</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">!=</span> <span class=\"n\">Ordering.gt</span>\n  <span class=\"n\">gt</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">cmp</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">==</span> <span class=\"n\">Ordering.gt</span>\n  <span class=\"n\">ge</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">cmp</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">!=</span> <span class=\"n\">Ordering.lt</span>\n  <span class=\"n\">eq</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">cmp</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">==</span> <span class=\"n\">Ordering.eq</span>\n</code></pre></div>",
+        "id": 240770386,
+        "sender_full_name": "Mac",
+        "timestamp": 1622403220
+    },
+    {
+        "content": "<p>oof, I really hope I don't have to worry about <code>GT</code> too</p>",
+        "id": 240770452,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622403296
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240770452\">said</a>:</p>\n<blockquote>\n<p>oof, I really hope I don't have to worry about <code>GT</code> too</p>\n</blockquote>\n<p>But the current definition of GT creates the same inefficiencies that are currently being railed against (<code>flip</code> is less efficient then a type that directly supports <code>GT</code>).</p>",
+        "id": 240770515,
+        "sender_full_name": "Mac",
+        "timestamp": 1622403380
+    },
+    {
+        "content": "<p><code>GT</code> doesn't create diamonds because we actually have a decent chance of actually ensuring that no alternate definitions are made</p>",
+        "id": 240770534,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622403432
+    },
+    {
+        "content": "<p>also if you inline <code>flip</code> it shouldn't be any slower</p>",
+        "id": 240770545,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622403481
+    },
+    {
+        "content": "<p>It may not create diamonds but it does produce inefficient code (which is the reason why diamonds are bad).</p>",
+        "id": 240770582,
+        "sender_full_name": "Mac",
+        "timestamp": 1622403485
+    },
+    {
+        "content": "<p>or better yet, just don't use <code>GT</code></p>",
+        "id": 240770588,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622403493
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240770545\">said</a>:</p>\n<blockquote>\n<p>also if you inline <code>flip</code> it shouldn't be any slower</p>\n</blockquote>\n<p>Not if the source arguments are already in the opposite order.</p>",
+        "id": 240770607,
+        "sender_full_name": "Mac",
+        "timestamp": 1622403570
+    },
+    {
+        "content": "<p>If a  I have <code>foo a b := lt b a</code> this will sometimes necessitate spending cycles to swap the argument order; <code>foo := gt</code> will never.</p>",
+        "id": 240770668,
+        "sender_full_name": "Mac",
+        "timestamp": 1622403649
+    },
+    {
+        "content": "<p>Working with closures is a lot slower than either one</p>",
+        "id": 240770682,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622403674
+    },
+    {
+        "content": "<p>always fully apply your functions if possible</p>",
+        "id": 240770690,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622403699
+    },
+    {
+        "content": "<p>I am pretty sure <code>foo := gt</code> is just as efficient as <code>foo a b := gt a b</code> (if not more so)</p>",
+        "id": 240770742,
+        "sender_full_name": "Mac",
+        "timestamp": 1622403750
+    },
+    {
+        "content": "<p>they are compiled to the same thing, it looks like <code>foo(a, b) { return gt(a, b) }</code> when it gets translated to C</p>",
+        "id": 240770768,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622403827
+    },
+    {
+        "content": "<p>and argument swapping is free at that point</p>",
+        "id": 240770814,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622403849
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240770690\">said</a>:</p>\n<blockquote>\n<p>always fully apply your functions if possible</p>\n</blockquote>\n<p>Are you sure about this? This is consider bad in most functional languages. I know this is definite no no in Haskell. I don't know enough about Lean's compiler to know if this is true in Lean though.</p>",
+        "id": 240770819,
+        "sender_full_name": "Mac",
+        "timestamp": 1622403855
+    },
+    {
+        "content": "<p>Haskell has to do crazy things to put the variables back in. Pointfree style is just a design aesthetic</p>",
+        "id": 240770828,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622403912
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240770814\">said</a>:</p>\n<blockquote>\n<p>and argument swapping is free at that point</p>\n</blockquote>\n<p>no its not?</p>\n<p><code>foo(a, b) { return gt(a, b) }</code> is faster than <code>foo(a, b) { return lt(b, a) }</code> in C.</p>\n<p>In fact, it is much faster in the standard C calling conventions as the latter requires swapping things on the stack.</p>",
+        "id": 240770832,
+        "sender_full_name": "Mac",
+        "timestamp": 1622403933
+    },
+    {
+        "content": "<p>if haskell didn't inline so heavily it wouldn't be a reasonable option at all</p>",
+        "id": 240770834,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622403937
+    },
+    {
+        "content": "<p>That function would not ever be called, it would be inlined</p>",
+        "id": 240770884,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622403983
+    },
+    {
+        "content": "<p>swapping is free here because it's just changing the way the inlining goes</p>",
+        "id": 240770892,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622404026
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240770828\">said</a>:</p>\n<blockquote>\n<p>Haskell has to do crazy things to put the variables back in. Pointfree style is just a design aesthetic</p>\n</blockquote>\n<p>This is not true. I clearer remember a number of situations in a Haskell where pointfree explicitly provides performance benefits. Its been a while since I've used Haskell, so I don't remember the specifics. But, for thing, I think Haskell as to evaluate the function's thunk in to in order to apply it so I think applications hurt laziness.</p>",
+        "id": 240770972,
+        "sender_full_name": "Mac",
+        "timestamp": 1622404169
+    },
+    {
+        "content": "<p>It's possible that haskell's evaluation semantics can cause a complication here, but you can still write in fully applied form if you evaluate the functions outside the lambda</p>",
+        "id": 240771042,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622404276
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240770884\">said</a>:</p>\n<blockquote>\n<p>That function would not ever be called, it would be inlined</p>\n</blockquote>\n<p>You are trusting inliners way to much. Second, it is completely possible that <code>lt</code> could be function pointer or a closure or something that is non-inlinable. <code>foo</code> could also be complex enough that it could not be inlined (or it could be being linked to in a manner that prevents inlining).</p>",
+        "id": 240771048,
+        "sender_full_name": "Mac",
+        "timestamp": 1622404299
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240771042\">said</a>:</p>\n<blockquote>\n<p>It's possible that haskell's evaluation semantics can cause a complication here, but you can still write in fully applied form if you evaluate the functions outside the lambda</p>\n</blockquote>\n<p>I am not arguing you can write in fully-applied form (and that there are probably cases where it is a good idea), but simply that (1) writing fully applied functions in Haskell is very bad style (in particular, linters will complain heavily about it) and (2) there are many cases where it is a performance problem and (3) it can also damage laziness</p>",
+        "id": 240771168,
+        "sender_full_name": "Mac",
+        "timestamp": 1622404453
+    },
+    {
+        "content": "<blockquote>\n<p>You are trusting inliners way too much.</p>\n</blockquote>\n<p>Functional programming languages depend on copious optimizations to work. The performance characteristics of a program change completely if you turn off the optimizer. Inlining in particular is really really important, and if it doesn't work then that's one of the first places to look for a performance issue.</p>\n<p>Anyway, like I said the easiest solution is to just never use <code>gt</code>. It never comes up outside contrived situations like <code>foo</code> (which is literally just <code>gt</code>) which <em>would</em> be optimized.</p>",
+        "id": 240771183,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622404479
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240771183\">said</a>:</p>\n<blockquote>\n<p>Anyway, like I said the easiest solution is to just never use <code>gt</code>. It never comes up outside contrived situations like <code>foo</code> (which is literally just <code>gt</code>) which <em>would</em> be optimized.</p>\n</blockquote>\n<p>I disagree greatly with this. Having played around with compilers a lot, I can tell you there are many cases where argument reordering incurs performance penalties. Optimizers can only do so much.</p>",
+        "id": 240771245,
+        "sender_full_name": "Mac",
+        "timestamp": 1622404577
+    },
+    {
+        "content": "<p>Furthemore, at a notational level I may wish to define <code>&gt;</code> for type without wanting to define <code>&lt;</code>.</p>",
+        "id": 240771254,
+        "sender_full_name": "Mac",
+        "timestamp": 1622404611
+    },
+    {
+        "content": "<p>It's very difficult to discuss this in the abstract, because there are so many confounding factors. It would need a full code example to say something more specific. Regarding notation, you can do that with macro magic, as ever.</p>",
+        "id": 240771324,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622404705
+    },
+    {
+        "content": "<p>I fully intend to keep up the mathlib 3 ban on <code>gt</code> in mathlib 4</p>",
+        "id": 240771347,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622404788
+    },
+    {
+        "content": "<p>also I fail to see what the overhead in <code>GT</code> type class would be anyway</p>",
+        "id": 240771392,
+        "sender_full_name": "Mac",
+        "timestamp": 1622404811
+    },
+    {
+        "content": "<p>the overhead of <code>GT</code> is the fact that the typeclass exists, and you have to relate the functions and duplicate all lemmas</p>",
+        "id": 240771408,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622404849
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240771347\">said</a>:</p>\n<blockquote>\n<p>I fully intend to keep up the mathlib 3 ban on <code>gt</code> in mathlib 4</p>\n</blockquote>\n<p>I think this is another good example of why alternative to mathlib will definitely pop up if/when Lean matures. It is far to opinionated to not  acquire competition.</p>",
+        "id": 240771423,
+        "sender_full_name": "Mac",
+        "timestamp": 1622404883
+    },
+    {
+        "content": "<p>perhaps. I have yet to see an actual reason to lift the ban though</p>",
+        "id": 240771478,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622404924
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240771408\">said</a>:</p>\n<blockquote>\n<p>the overhead of <code>GT</code> is the fact that the typeclass exists, and you have to relate the functions and duplicate all lemmas</p>\n</blockquote>\n<p>Can't you just elide the duplication with a <code>a &gt; b = b &lt; a</code> <code>simp</code> lemma?</p>",
+        "id": 240771485,
+        "sender_full_name": "Mac",
+        "timestamp": 1622404949
+    },
+    {
+        "content": "<p>presumably some alternately-opinionated mathlib alternative would be able to supply such a reason</p>",
+        "id": 240771488,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622404952
+    },
+    {
+        "content": "<p>Sure, but it still means the overhead of using simp more, supplying that lemma, larger proofs as a result, interaction between defeq and simp, etc etc</p>",
+        "id": 240771506,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622405003
+    },
+    {
+        "content": "<p>The best code is the code you don't have to write</p>",
+        "id": 240771512,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622405017
+    },
+    {
+        "content": "<p>I just think you and I are just not going to agree on design standards anytime soon. <span aria-label=\"rolling on the floor laughing\" class=\"emoji emoji-1f923\" role=\"img\" title=\"rolling on the floor laughing\">:rolling_on_the_floor_laughing:</span></p>",
+        "id": 240771577,
+        "sender_full_name": "Mac",
+        "timestamp": 1622405103
+    },
+    {
+        "content": "<p>Except, oddly, I guess, for <code>leanpkg</code>.</p>",
+        "id": 240771595,
+        "sender_full_name": "Mac",
+        "timestamp": 1622405134
+    },
+    {
+        "content": "<p>feel free to make a mathlib alternative and make it public</p>",
+        "id": 240771599,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622405140
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240771408\">said</a>:</p>\n<blockquote>\n<p>the overhead of <code>GT</code> is the fact that the typeclass exists, and you have to relate the functions and duplicate all lemmas</p>\n</blockquote>\n<p>Note that <code>GT</code> is not a typeclass, and wasn't in Lean 3 either.  (Only God knows why it's nevertheless called <code>GT.gt</code>...)  IIRC the only complications w.r.t. <code>gt</code> was that it broke simp and rw (due to head-symbol indexing), but could we write <code>ε &gt; 0</code> again if that's fixed?</p>",
+        "id": 240798977,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1622444906
+    },
+    {
+        "content": "<p>I wasn't quite sure myself, but it does currently work:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"mi\">0</span> <span class=\"bp\">&lt;</span> <span class=\"n\">ε</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ε</span> <span class=\"bp\">&gt;</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">h</span><span class=\"o\">]</span>\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">ε</span> <span class=\"bp\">&gt;</span> <span class=\"mi\">0</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"mi\">0</span> <span class=\"bp\">&lt;</span> <span class=\"n\">ε</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">h</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>This is because both patterns and queries are recursively brought into (reducible) whnf, <em>before</em> inserting/comparing them against each other in the discrimination tree (so you don't pay for all potential matches for each subexpression like in Lean 3)</p>",
+        "id": 240802648,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1622447439
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240769792\">said</a>:</p>\n<blockquote>\n<p>I believe partial orders are a red herring when it comes to Ord instances.  We only want Ord instances where the order needs to be total (sorting a list, keys in a tree map, etc.).  What is a difficulty though is that <code>Ordering.eq</code> does not mean <code>=</code>, it rather means <code>==</code> (there's of course no law requiring it).  For example <code>Ord Expr</code> would return <code>eq</code> for alpha-equivalent expresisons.</p>\n</blockquote>\n<p>It doesn't even mean <code>==</code>, it just means <code>not &lt;</code> and <code>not &gt;</code>. I was struggling with this when I tried to relate <code>Ord</code>, <code>LT</code> and <code>BEq</code> or <code>DecidableEq</code>. </p>\n<p>Or, more precisely, that's how it's used in the data structures.</p>",
+        "id": 240809802,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622452334
+    },
+    {
+        "content": "<p>Right it could be something different, so you shouldn't accidentally use <code>==</code> instead.  What I wanted to say is that <code>Ordering.eq</code> is usually an equivalence relation and in general not the same as <code>=</code> (and in this way it is similar to <code>==</code>).</p>",
+        "id": 240810182,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1622452598
+    },
+    {
+        "content": "<p>That comes back to the \"total preorder\" business mentioned earlier: you need <code>x &lt; y \\/ x == y \\/ x &gt; y</code> for the data structure to work</p>",
+        "id": 240810202,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622452619
+    },
+    {
+        "content": "<p>that's what justifies using <code>not &lt; and not &gt;</code> as synonymous for <code>==</code></p>",
+        "id": 240810261,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622452667
+    },
+    {
+        "content": "<p>and I was saying, that we don't rely <code>x == y</code>. It's a bit of an academic discussion, but it may be relevant in some of the more complicated types like <code>Expr</code>.</p>",
+        "id": 240810369,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622452733
+    },
+    {
+        "content": "<p>You can use just <code>&lt;</code> if you know that the ordering is induced by it, although using <code>cmp</code> is usually faster for the data structure</p>",
+        "id": 240810441,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622452799
+    },
+    {
+        "content": "<p>it means you only need a <code>[LT A]</code> typeclass in the data structure instead of the whole zoo implied by <code>Ord</code></p>",
+        "id": 240810508,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622452830
+    },
+    {
+        "content": "<p>yeah, that's the refactoring we did.</p>",
+        "id": 240810516,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622452839
+    },
+    {
+        "content": "<p>I took the <code>LT</code> implementation, and replaced it with <code>Ord</code>.</p>",
+        "id": 240810533,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622452855
+    },
+    {
+        "content": "<p>But <code>Eq</code> is just the fallback case, essentially.</p>",
+        "id": 240810545,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622452867
+    },
+    {
+        "content": "<p><code>Ord</code> is a cheap way of getting <code>&lt; a</code> and <code>&gt; a</code> in one operation.</p>",
+        "id": 240810678,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622452946
+    },
+    {
+        "content": "<p>I think the fact that these are lawless structures is confusing matters. The laws required for the data structure to work include transitivity, stuff like <code>x &lt; y -&gt; !(x == y)</code>, and <code>!(x &lt; y) -&gt; !(y &lt; x) -&gt; x == y</code></p>",
+        "id": 240810687,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622452955
+    },
+    {
+        "content": "<p>just because they aren't literally used in the programming version doesn't mean they don't conceptually exist anyway</p>",
+        "id": 240810722,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622452978
+    },
+    {
+        "content": "<p>it's mostly just simpler to leave the laws out since it means you don't have to prove anything while writing programs</p>",
+        "id": 240810770,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622453026
+    },
+    {
+        "content": "<p>Yeah, I get it. And in principle it would be nice to have some kind of lemma carried around with <code>Ord</code> instances. But, alas, that's not the case currently.</p>",
+        "id": 240810785,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622453041
+    },
+    {
+        "content": "<p>but the flip side of that is that it is safe to assume that when the laws don't hold, it is \"undefined behavior\", i.e. the data structure does something but we don't really care what</p>",
+        "id": 240810866,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622453089
+    },
+    {
+        "content": "<p>(Personally, I would like to see more access to actual C undefined behavior, but that's a whole separate discussion.)</p>",
+        "id": 240810935,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622453156
+    },
+    {
+        "content": "<p>It'd be nice to have a conditional proof, though. Something like \"if the instance is lawful, then the RBSet behaves like a set\" or something like that.</p>",
+        "id": 240811006,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622453181
+    },
+    {
+        "content": "<p>Sure, that's something that mathlib could prove even if the lawless data structure itself is in lean core</p>",
+        "id": 240811042,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622453206
+    },
+    {
+        "content": "<p>Nice</p>",
+        "id": 240811096,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622453272
+    },
+    {
+        "content": "<p>Speaking of which, I've thought of a simple way to avoid the issue with having the wrong invariants in things like <code>RBNode.WellFormed</code> (they are too strict, they should talk about the black height): Add another constructor to <code>WellFormed</code> using the full red-black invariant. It doesn't ever have to be used in lean core, the only requirement is that the predicate itself is defined. Then mathlib et al can prove that the inductive type \"generated by insert and erase and empty and the red-black invariant\" is equivalent to \"the red-black invariant\" by proving that insert, erase, and empty preserve the red-black invariant. The upside is that it then becomes possible to define operations directly on red-black trees that don't go via insert/erase and satisfy the red-black invariant for a different reason</p>",
+        "id": 240811451,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622453514
+    },
+    {
+        "content": "<p>Here's what the PR would look like:</p>\n<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"gi\">+def blackHeight : RBNode α β → OptionM Nat</span>\n<span class=\"gi\">+  | leaf =&gt; pure 0</span>\n<span class=\"gi\">+  | node red l k v r =&gt; do</span>\n<span class=\"gi\">+    let n ← blackHeight l</span>\n<span class=\"gi\">+    guard (!isRed l &amp;&amp; !isRed r &amp;&amp; (← blackHeight r) == n)</span>\n<span class=\"gi\">+    pure n</span>\n<span class=\"gi\">+  | node black l k v r =&gt; do</span>\n<span class=\"gi\">+    let n ← blackHeight l</span>\n<span class=\"gi\">+    guard (!isRed l &amp;&amp; (← blackHeight r) == n)</span>\n<span class=\"gi\">+    pure (n + 1)</span>\n<span class=\"gi\">+</span>\n<span class=\"gi\">+def ordered (cmp : α → α → Ordering) : RBNode α β → Bool</span>\n<span class=\"gi\">+  | leaf =&gt; true</span>\n<span class=\"gi\">+  | node _ l k _ r =&gt;</span>\n<span class=\"gi\">+    all (fun x _ =&gt; cmp x k == Ordering.lt) l &amp;&amp;</span>\n<span class=\"gi\">+    all (fun y _ =&gt; cmp k y == Ordering.lt) r &amp;&amp;</span>\n<span class=\"gi\">+    ordered cmp l &amp;&amp; ordered cmp r</span>\n\n inductive WellFormed (cmp : α → α → Ordering) : RBNode α β → Prop where\n   | leafWff : WellFormed cmp leaf\n   | insertWff {n n' : RBNode α β} {k : α} {v : β k} : WellFormed cmp n → n' = insert cmp n k v → WellFormed cmp n'\n   | eraseWff {n n' : RBNode α β} {k : α} : WellFormed cmp n → n' = erase cmp k n → WellFormed cmp n'\n<span class=\"gi\">+  | balancedWff {n : RBNode α β} : (blackHeight n).isSome → ordered cmp n → WellFormed cmp n</span>\n</code></pre></div>",
+        "id": 240815074,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622455698
+    },
+    {
+        "content": "<p>That doesn't feel like a good idea. The current predicate simply asserts that insertion is well-formed. Almost like an axiom. We should instead formulate the 5 invariants and show that the algorithm preserves them. Then the current predicate would simply assert that an rb tree was constructed by insertions. And your theorem would thus prove the invariants.</p>\n<p>And you could define union or intersection etc.</p>",
+        "id": 240816009,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622456396
+    },
+    {
+        "content": "<p>I would of course prefer to just prove the correctness of the operations. The advantage of this version is that the lean devs don't have to, it can be offloaded to a library like mathlib. As it currently is written it's not possible to prove this because the actual invariant as stated does not match the real red black invariant</p>",
+        "id": 240816151,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622456480
+    },
+    {
+        "content": "<p>What if lean you take the predicate and show that it implies the invariants? As is, you know a tree came into existence as a sequence of applications of those 3 functions</p>",
+        "id": 240816575,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622456757
+    },
+    {
+        "content": "<p>The \"minimal\" well formedness predicate is the inductive type generated by the operations you want to do on the data structure. The \"maximal\" well formedness predicate is the list of properties you expect (ordering, balance). The hard proof work that can be shifted around but not eliminated is showing that the minimum is less than the maximum. The predicate defined here is basically the larger of these two predicates, so it's obviously greater than the minimal one (so the operations are easy to define) and it's equivalent to the maximal predicate once you do the hard proof work</p>",
+        "id": 240816641,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622456779
+    },
+    {
+        "content": "<p>As it is currently, it is possible to prove that <code>WellFormed</code> implies ordering and balance, but not vice versa (I'm not positive but I think the converse is false)</p>",
+        "id": 240816849,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622456919
+    },
+    {
+        "content": "<p>Adding the <code>balancedWff</code> variant makes this true by fiat, and the hard proof work becomes showing that everything else in the <code>WellFormed</code> inductive type is superfluous</p>",
+        "id": 240817021,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622457050
+    },
+    {
+        "content": "<p>There are 5 rb invariants. I'm pretty sure you need all of them in the induction. Also, it's an rb tree with all 5.</p>\n<p>The predicate as is will create a provably well formed tree without proving it. If you formulate the 5 invariants, the current predicate should imply the 5 invariants.</p>\n<p>The converse won't hold, because you clearly can create a tree however you like.</p>\n<p>And only asserting a subset of the 5 invariants would be an rb tree anymore.</p>",
+        "id": 240818462,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622458210
+    },
+    {
+        "content": "<p>what 5 invariants? I think ordering and balance, defined above, cover it</p>",
+        "id": 240823540,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622461842
+    },
+    {
+        "content": "<p>If there are more invariants, yes they should show up (conjoined in that last <code>balanceWff</code> variant, not as separate constructors)</p>",
+        "id": 240823634,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622461905
+    },
+    {
+        "content": "<p>The main point I'm making is that this can be done with little impact on the code besides the need to write down what the invariant is; no proofs are required in lean core</p>",
+        "id": 240823730,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622461946
+    },
+    {
+        "content": "<blockquote>\n<p>The converse won't hold, because you clearly can create a tree however you like.</p>\n</blockquote>\n<p>It's a nontrivial theorem to show that there are trees that satisfy the invariants without being created by some sequence of insertions and deletions (or that there aren't). It's certainly not obvious to me whether it holds or not - you can get quite a lot of trees by carefully ordering the insertions and maybe getting unusual color layouts by adding and removing other values.</p>",
+        "id": 240824206,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622462224
+    },
+    {
+        "content": "<p>still, even if the given predicate is correct, because all well formed trees are accessible by some sequence of inserts and deletes, it seems like an unnecessarily hard theorem to deal with when simply stating the real predicate would solve the problem</p>",
+        "id": 240824416,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622462335
+    },
+    {
+        "content": "<p>oh, I think the red black trees as implemented also have a black root node, so you need that too</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">|</span> <span class=\"n\">balancedWff</span> <span class=\"o\">{</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">RBNode</span> <span class=\"n\">α</span> <span class=\"n\">β</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"bp\">!</span><span class=\"n\">isRed</span> <span class=\"n\">n</span> <span class=\"bp\">→</span> <span class=\"o\">(</span><span class=\"n\">blackHeight</span> <span class=\"n\">n</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">isSome</span> <span class=\"bp\">→</span> <span class=\"n\">ordered</span> <span class=\"n\">cmp</span> <span class=\"n\">n</span> <span class=\"bp\">→</span> <span class=\"n\">WellFormed</span> <span class=\"n\">cmp</span> <span class=\"n\">n</span>\n</code></pre></div>",
+        "id": 240824997,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622462699
+    },
+    {
+        "content": "<p>Oh yes, I totally get where you're coming from. On the other hand, I don't see what's hard to prove? Just make a copy of <code>insert</code> call it <code>insert'</code> and you've just given a counterexample? I.e. a different way to build a valid tree.</p>\n<p>Or did you mean to prove that any valid tree is somehow accessible as a construction of the aforementioned operations. Which I agree is non-obvious to say the least. Although, I don't see why you would care? Generally once a tree is valid, you get all the good properties like fast lookups, etc.</p>\n<p>The are the coloring invariants, the root color invariant, the height invariant, sortedness invariant  and the leaf color invariant. All 5 have to hold.</p>",
+        "id": 240825056,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622462742
+    },
+    {
+        "content": "<blockquote>\n<p>Oh yes, I totally get where you're coming from. On the other hand, I don't see what's hard to prove? Just make a copy of insert call it insert' and you've just given a counterexample? I.e. a different way to build a valid tree.</p>\n</blockquote>\n<p>No, because if <code>insert' t x y = insert t x y</code> then it still satisfies <code>insertWff</code></p>",
+        "id": 240825154,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622462786
+    },
+    {
+        "content": "<p>similarly, even if the function isn't defined using insert and erase, as long as it is provably equal to some sequence of insert and erase it is still well formed by the current predicate</p>",
+        "id": 240825207,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622462828
+    },
+    {
+        "content": "<blockquote>\n<p>Although, I don't see why you would care? Generally once a tree is valid, you get all the good properties like fast lookups, etc.</p>\n</blockquote>\n<p>The issue is that all operations on <code>RBTree</code> are gated behind this <code>WellFormed</code> predicate that is defined in terms of being accessible by insert and erase. If <code>WellFormed</code> contained the <code>balancedWff</code> variant then you could easily get around the need to prove some complicated accessibility thing by proving well formedness the normal way</p>",
+        "id": 240825370,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622462927
+    },
+    {
+        "content": "<p>Ok, so consider an insertion algorithm that, say always replaces <code>x</code> with <code>y</code> and one that keeps it in the <code>Ordering.Eq</code> case. Now you have two different trees that are both valid, but distinct. And one is never constructable from one algorithm and the other is.</p>\n<p>(We are talking about a case where <code>x = y</code> is not true, but <code>Ordering.Eq x y</code> is.</p>",
+        "id": 240825401,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622462951
+    },
+    {
+        "content": "<p>(note that I'm talking about additions to the <code>RBTree</code> data structure <em>outside</em> the core, where changing the definition of <code>WellFormed</code> isn't an option)</p>",
+        "id": 240825435,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622462981
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240825370\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>Although, I don't see why you would care? Generally once a tree is valid, you get all the good properties like fast lookups, etc.</p>\n</blockquote>\n<p>The issue is that all operations on <code>RBTree</code> are gated behind this <code>WellFormed</code> predicate that is defined in terms of being accessible by insert and erase. If <code>WellFormed</code> contained the <code>balancedWff</code> variant then you could easily get around the need to prove some complicated accessibility thing by proving well formedness the normal way</p>\n</blockquote>\n<p>ok, that one, makes a lot of sense.</p>",
+        "id": 240825437,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622462983
+    },
+    {
+        "content": "<p>but then you really want the full set of properties, imo</p>",
+        "id": 240825643,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622463113
+    },
+    {
+        "content": "<p>and I'd drop the empty case, then.</p>",
+        "id": 240825657,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622463121
+    },
+    {
+        "content": "<p>since that one trivially fulfills the complicated invariants.</p>",
+        "id": 240825713,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622463135
+    },
+    {
+        "content": "<p>Yeah the empty case is easy to prove</p>",
+        "id": 240825718,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622463140
+    },
+    {
+        "content": "<p>I checked wikipedia and it has a list of 5 properties but some are things like \"every node is red or black\" that don't need a mention</p>",
+        "id": 240825775,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622463190
+    },
+    {
+        "content": "<p>I think <a href=\"#narrow/stream/270676-lean4/topic/New.20LT.20instance/near/240824997\">this</a> is the complete list of invariants</p>",
+        "id": 240825826,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622463234
+    },
+    {
+        "content": "<p>that one not, but the color invariant definitely is needed</p>",
+        "id": 240825874,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622463244
+    },
+    {
+        "content": "<p>i.e. red parents have black children.</p>",
+        "id": 240825886,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622463253
+    },
+    {
+        "content": "<p>The <code>blackHeight</code> function bakes that in with internal <code>!isRed</code> checks</p>",
+        "id": 240825907,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622463267
+    },
+    {
+        "content": "<p>It's also possible to write it as an inductive predicate, that might be a bit shorter/cleaner but this one is actually executable which might be useful</p>",
+        "id": 240825995,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622463346
+    },
+    {
+        "content": "<p>like so</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">inductive</span> <span class=\"n\">Balanced</span> <span class=\"o\">:</span> <span class=\"n\">RBNode</span> <span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"bp\">→</span> <span class=\"n\">Rbcolor</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"kt\">Prop</span>\n<span class=\"bp\">|</span> <span class=\"n\">leaf</span> <span class=\"o\">:</span> <span class=\"n\">Balanced</span> <span class=\"n\">leaf</span> <span class=\"n\">black</span> <span class=\"mi\">0</span>\n<span class=\"bp\">|</span> <span class=\"n\">red</span> <span class=\"o\">:</span> <span class=\"n\">Balanced</span> <span class=\"n\">l</span> <span class=\"n\">black</span> <span class=\"n\">n</span> <span class=\"bp\">→</span> <span class=\"n\">Balanced</span> <span class=\"n\">r</span> <span class=\"n\">black</span> <span class=\"n\">n</span> <span class=\"bp\">→</span> <span class=\"n\">Balanced</span> <span class=\"o\">(</span><span class=\"n\">node</span> <span class=\"n\">red</span> <span class=\"n\">l</span> <span class=\"n\">k</span> <span class=\"n\">v</span> <span class=\"n\">r</span><span class=\"o\">)</span> <span class=\"n\">red</span> <span class=\"n\">n</span>\n<span class=\"bp\">|</span> <span class=\"n\">black</span> <span class=\"o\">:</span> <span class=\"n\">Balanced</span> <span class=\"n\">l</span> <span class=\"n\">black</span> <span class=\"n\">n</span> <span class=\"bp\">→</span> <span class=\"n\">Balanced</span> <span class=\"n\">r</span> <span class=\"n\">c</span> <span class=\"n\">n</span> <span class=\"bp\">→</span> <span class=\"n\">Balanced</span> <span class=\"o\">(</span><span class=\"n\">node</span> <span class=\"n\">black</span> <span class=\"n\">l</span> <span class=\"n\">k</span> <span class=\"n\">v</span> <span class=\"n\">r</span><span class=\"o\">)</span> <span class=\"n\">black</span> <span class=\"o\">(</span><span class=\"n\">n</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">)</span>\n\n<span class=\"bp\">...</span>\n  <span class=\"bp\">|</span> <span class=\"n\">balancedWff</span> <span class=\"o\">{</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">RBNode</span> <span class=\"n\">α</span> <span class=\"n\">β</span><span class=\"o\">}</span> <span class=\"o\">{</span><span class=\"n\">k</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">Balanced</span> <span class=\"n\">n</span> <span class=\"n\">black</span> <span class=\"n\">k</span> <span class=\"bp\">→</span> <span class=\"n\">ordered</span> <span class=\"n\">cmp</span> <span class=\"n\">n</span> <span class=\"bp\">→</span> <span class=\"n\">WellFormed</span> <span class=\"n\">cmp</span> <span class=\"n\">n</span>\n</code></pre></div>",
+        "id": 240826370,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622463573
+    },
+    {
+        "content": "<p>yeah, that's more or less the option I used when doing the RBTree with types. You can encode those type families too. Makes writing the algorithm a huge pain, though. Doing it as a predicate on the side might be fine option.</p>",
+        "id": 240826707,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622463752
+    },
+    {
+        "content": "<p>And if we had a <code>Decidable</code> instance, we can make it executable that way, no?</p>",
+        "id": 240826756,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622463776
+    },
+    {
+        "content": "<p>Yes, you can get the best of both worlds by adding decidability instances</p>",
+        "id": 240826928,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622463862
+    },
+    {
+        "content": "<p>although <code>blackHeight</code> is able to decide <code>\\exists k c, Balanced t c k</code> which is a bit less obvious with the inductive version</p>",
+        "id": 240827032,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622463922
+    },
+    {
+        "content": "<p>For implementing the programming stuff, you wouldn't need to interact with these inductive types at all. It's only when you need to prove something is well formed that it comes up</p>",
+        "id": 240827242,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622464027
+    },
+    {
+        "content": "<p>and for functions defined in core, they can cheat by using the other constructors and punt on the well formedness problem</p>",
+        "id": 240827286,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622464065
+    },
+    {
+        "content": "<p>yes, if it's a predicate aside from the data structure. In my case, I had them weaved in. As in I had height index and a color index.</p>",
+        "id": 240827348,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622464084
+    },
+    {
+        "content": "<p>now by construction you are balanced.</p>",
+        "id": 240827365,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622464092
+    },
+    {
+        "content": "<p>but that means when you want to temporarily violate the invariants you need these intermediate types.</p>",
+        "id": 240827394,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622464116
+    },
+    {
+        "content": "<p>it's not pretty.</p>",
+        "id": 240827396,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622464120
+    },
+    {
+        "content": "<p>I've got an implementation of this stuff in a side project, complete with all the proofs</p>",
+        "id": 240827437,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622464150
+    },
+    {
+        "content": "<p>you need some \"broken invariant\" invariants to deal with insert and erase</p>",
+        "id": 240827464,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622464171
+    },
+    {
+        "content": "<p>yeah, pretty messy :-)</p>",
+        "id": 240827491,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622464190
+    },
+    {
+        "content": "<p>but I like that the proposed approach means that core doesn't have to deal with any of that, it can be in mathlib where the supporting infrastructure for the proofs is more easily available</p>",
+        "id": 240827579,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622464232
+    },
+    {
+        "content": "<p>sooo... how about we define the inductive pred, then and replace the empty ctor with one, where you give a proof of the predicate?</p>",
+        "id": 240827666,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622464289
+    },
+    {
+        "content": "<p>Ditto for the <code>WellFounded</code> predicates in <code>HashMap</code>, <code>HashSet</code>, <code>BinomialHeap</code>, and <code>PrefixTree</code>, which use a similar technique. LMK if you want me to send the invariants for these structures</p>",
+        "id": 240828803,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622464916
+    },
+    {
+        "content": "<p>please make a bug for now and I'll bring up the context next time I have chat with leo in the next few days. After that, I think you can just make the pr, if that works for you.</p>",
+        "id": 240830173,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622465689
+    },
+    {
+        "content": "<p>Just to be clear, with these additional cases in the <code>WellFounded</code> predicates, we should be able to prove that lazy versions imply the invariant-based ones, correct?</p>",
+        "id": 240830548,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622465909
+    },
+    {
+        "content": "<p>Yes, although those proofs will often require additional assumptions, for example that the <code>cmp</code> operation is \"lawful\" (reflexive, transitive, symmetric)</p>",
+        "id": 240830638,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622465977
+    },
+    {
+        "content": "<p>that's another good reason to keep it out of core</p>",
+        "id": 240830666,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622465994
+    },
+    {
+        "content": "<p>then, that's actually quite nice... Because we show that the internal operations build up something that may or may not be a valid tree using applications of those algorithms. And if for a particular<code>\\alpha</code> and <code>Ord \\alpha</code> you know lawfulness, you can lift the statement into a proper well-formedness proof.</p>",
+        "id": 240830810,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622466072
+    },
+    {
+        "content": "<p>I like it.</p>",
+        "id": 240830815,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622466074
+    },
+    {
+        "content": "<p>I'll write up the issue</p>",
+        "id": 240830850,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622466112
+    },
+    {
+        "content": "<p>thx</p>",
+        "id": 240830867,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1622466119
+    }
+]

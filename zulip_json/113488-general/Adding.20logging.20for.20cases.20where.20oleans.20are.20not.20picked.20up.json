@@ -1,0 +1,362 @@
+[
+    {
+        "content": "<p>This is a question to Lean 3 maintainers mostly, but I am having a lot of difficulties to understand why Lean 3 makes some decisions in respect to olean reuse vs lean compilation from source.</p>\n<p>From what I gather:</p>\n<ul>\n<li>A module can be marked as: it has to be compiled from source, this is the case when I do: <code>lean --make src</code> and <code>src</code> must be compiled from source ;</li>\n<li>Some flag <code>can_use_oleans</code> is passed through the machinery to allow or not oleans, sometimes, it gets set, sometimes it does not.</li>\n<li>If an olean can be found and its hash is compatible, then it gets reused.</li>\n</ul>\n<p>Initially, I was making the changes to support emscripten v2 and <code>file_exists</code> relied on <code>stat</code> syscall to find out if a file existed or not, though emscripten didn't export <code>$ERRNO_CODES</code> properly, so in JavaScript, whenever there was an error with an FS syscall: the table <code>this.ERRNO_CODES[t.code]</code> returned <code>undefined</code>, then an exception with undefined errno was thrown, and it bubbled incorrectly as the file existed (error code: 0, which means everything is fine :&gt;), making believe Lean that the <code>.lean</code> existed when it didn't because next it tried to read the file, and it failed. (hinting on the <code>stat</code> issue, thanks the modern DevTools for being able to debug WASM!)</p>\n<p>It helped a lot during the debugging to have debug traces of the <code>module_mgr</code> class, now I'm doing something similar except that I'm not in the browser anymore, but I have a family of symlinks: <a href=\"https://github.com/RaitoBezarius/nixexprs/blob/master/pkgs/science/lean/make-lean-game.nix#L57-L66\">https://github.com/RaitoBezarius/nixexprs/blob/master/pkgs/science/lean/make-lean-game.nix#L57-L66</a></p>\n<p>Where I layer the source of a Lean repo containing a <code>src/</code> and all of its dependencies (a family of symlinks of the form <code>_target/deps/${dep}</code>, with a special behavior for mathlib where I go get the Azure cache in addition).</p>\n<p>What happens specifically for mathlib is the following:</p>\n<div class=\"codehilite\" data-code-language=\"Bash Session\"><pre><span></span><code><span class=\"go\">/nix/store/5ip4qjgmxxn7zfr9m2iy3vk6mi7lqbfh-Natural-Number-Game-library-src-bundle/_target/deps</span>\n<span class=\"go\">└──mathlib -&gt; /nix/store/di71hzh91zkv6jj7bvnfmg3c3fq1f02q-mathlib-with-cached-olean</span>\n</code></pre></div>\n<p>This derivation <code>mathlib-with-cached-olean</code> shows for example:</p>\n<div class=\"codehilite\" data-code-language=\"Bash Session\"><pre><span></span><code><span class=\"go\">&gt; ls -lah /nix/store/5ip4qjgmxxn7zfr9m2iy3vk6mi7lqbfh-Natural-Number-Game-library-src-bundle/_target/deps/mathlib/src/logic</span>\n<span class=\"go\">Permissions Size User Date Modified  Name</span>\n<span class=\"go\">lrwxrwxrwx    67 root  1 janv.  1970 basic.lean -&gt; /nix/store/3wrkkns24gsbpir93nrw0jx9aflif1g9-source/logic/basic.lean</span>\n<span class=\"go\">lrwxrwxrwx    68 root  1 janv.  1970 basic.olean -&gt; /nix/store/3wrkkns24gsbpir93nrw0jx9aflif1g9-source/logic/basic.olean</span>\n<span class=\"go\">lrwxrwxrwx    71 root  1 janv.  1970 embedding.lean -&gt; /nix/store/3wrkkns24gsbpir93nrw0jx9aflif1g9-source/logic/embedding.lean</span>\n<span class=\"go\">lrwxrwxrwx    72 root  1 janv.  1970 embedding.olean -&gt; /nix/store/3wrkkns24gsbpir93nrw0jx9aflif1g9-source/logic/embedding.olean</span>\n<span class=\"go\">lrwxrwxrwx    70 root  1 janv.  1970 function.lean -&gt; /nix/store/3wrkkns24gsbpir93nrw0jx9aflif1g9-source/logic/function.lean</span>\n<span class=\"go\">lrwxrwxrwx    71 root  1 janv.  1970 function.olean -&gt; /nix/store/3wrkkns24gsbpir93nrw0jx9aflif1g9-source/logic/function.olean</span>\n<span class=\"go\">lrwxrwxrwx    70 root  1 janv.  1970 relation.lean -&gt; /nix/store/3wrkkns24gsbpir93nrw0jx9aflif1g9-source/logic/relation.lean</span>\n<span class=\"go\">lrwxrwxrwx    71 root  1 janv.  1970 relation.olean -&gt; /nix/store/3wrkkns24gsbpir93nrw0jx9aflif1g9-source/logic/relation.olean</span>\n<span class=\"go\">lrwxrwxrwx    69 root  1 janv.  1970 relator.lean -&gt; /nix/store/3wrkkns24gsbpir93nrw0jx9aflif1g9-source/logic/relator.lean</span>\n<span class=\"go\">lrwxrwxrwx    70 root  1 janv.  1970 relator.olean -&gt; /nix/store/3wrkkns24gsbpir93nrw0jx9aflif1g9-source/logic/relator.olean</span>\n<span class=\"go\">lrwxrwxrwx    68 root  1 janv.  1970 unique.lean -&gt; /nix/store/3wrkkns24gsbpir93nrw0jx9aflif1g9-source/logic/unique.lean</span>\n<span class=\"go\">lrwxrwxrwx    69 root  1 janv.  1970 unique.olean -&gt; /nix/store/3wrkkns24gsbpir93nrw0jx9aflif1g9-source/logic/unique.olean</span>\n</code></pre></div>\n<p>Which is sane, but for some reason, it looks like it do not get picked by <code>lean --make src</code> and mathlib gets recompiled. Plus, as the compilation gets done in a Nix sandbox, it seems like <code>isatty(STDOUT_FILENO)</code> is false (?), therefore, no progress can be shown (or I'm wrong on what progress means).</p>\n<p>Leading me to this topic:</p>\n<ul>\n<li>Could there be a way to design a debugging machinery for oleans non-reuse in Lean?</li>\n<li>Could there be a way to show progress with: which file is getting compiled atm?</li>\n</ul>\n<p>Thanks!</p>",
+        "id": 259857126,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635769477
+    },
+    {
+        "content": "<p>Bonus question: what to do of very old Lean versions? It seems like NNG was made for 3.4.2, I guess 3.5.0 could work, but it seems like the olean machinery relies on mtime, so I guess Nix timestamps are not an issue here.</p>",
+        "id": 259857341,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635769585
+    },
+    {
+        "content": "<blockquote>\n<p>NNG was made for 3.4.2</p>\n</blockquote>\n<p>Can we upgrade it?  That seems like the easiest solution here.  3.4.2 is <em>ancient</em></p>",
+        "id": 259857404,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1635769636
+    },
+    {
+        "content": "<blockquote>\n<p>olean machinery relies on mtime</p>\n</blockquote>\n<p>No, it only relies on file hashes.</p>",
+        "id": 259857433,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1635769656
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/113488-general/topic/Adding.20logging.20for.20cases.20where.20oleans.20are.20not.20picked.20up/near/259857433\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>olean machinery relies on mtime</p>\n</blockquote>\n<p>No, it only relies on file hashes.</p>\n</blockquote>\n<p>Even for old versions like 3.5.0 ?</p>\n<div class=\"codehilite\" data-code-language=\"C++\"><pre><span></span><code><span class=\"w\">        </span><span class=\"k\">auto</span><span class=\"w\"> </span><span class=\"n\">olean_fn</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">olean_of_lean</span><span class=\"p\">(</span><span class=\"n\">lean_fn</span><span class=\"p\">);</span><span class=\"w\"></span>\n<span class=\"w\">        </span><span class=\"n\">shared_file_lock</span><span class=\"w\"> </span><span class=\"nf\">olean_lock</span><span class=\"p\">(</span><span class=\"n\">olean_fn</span><span class=\"p\">);</span><span class=\"w\"></span>\n<span class=\"w\">        </span><span class=\"k\">auto</span><span class=\"w\"> </span><span class=\"n\">olean_mtime</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">get_mtime</span><span class=\"p\">(</span><span class=\"n\">olean_fn</span><span class=\"p\">);</span><span class=\"w\"></span>\n<span class=\"w\">        </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"n\">olean_mtime</span><span class=\"w\"> </span><span class=\"o\">!=</span><span class=\"w\"> </span><span class=\"mi\">-1</span><span class=\"w\"> </span><span class=\"o\">&amp;&amp;</span><span class=\"w\"> </span><span class=\"n\">olean_mtime</span><span class=\"w\"> </span><span class=\"o\">&gt;=</span><span class=\"w\"> </span><span class=\"n\">lean_mtime</span><span class=\"w\"> </span><span class=\"o\">&amp;&amp;</span><span class=\"w\"></span>\n<span class=\"w\">            </span><span class=\"n\">can_use_olean</span><span class=\"w\"> </span><span class=\"o\">&amp;&amp;</span><span class=\"w\"></span>\n<span class=\"w\">            </span><span class=\"o\">!</span><span class=\"n\">m_modules_to_load_from_source</span><span class=\"p\">.</span><span class=\"n\">count</span><span class=\"p\">(</span><span class=\"n\">id</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"o\">&amp;&amp;</span><span class=\"w\"></span>\n<span class=\"w\">            </span><span class=\"n\">is_candidate_olean_file</span><span class=\"p\">(</span><span class=\"n\">olean_fn</span><span class=\"p\">))</span><span class=\"w\"> </span><span class=\"p\">{</span><span class=\"w\"></span>\n<span class=\"w\">            </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">make_shared</span><span class=\"o\">&lt;</span><span class=\"n\">module_info</span><span class=\"o\">&gt;</span><span class=\"p\">(</span><span class=\"n\">id</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"n\">read_file</span><span class=\"p\">(</span><span class=\"n\">olean_fn</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">ios_base</span><span class=\"o\">::</span><span class=\"n\">binary</span><span class=\"p\">),</span><span class=\"w\"> </span><span class=\"n\">module_src</span><span class=\"o\">::</span><span class=\"n\">OLEAN</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"n\">olean_mtime</span><span class=\"p\">);</span><span class=\"w\"></span>\n<span class=\"w\">        </span><span class=\"p\">}</span><span class=\"w\"></span>\n</code></pre></div>\n<p>seems to be hinting that?</p>",
+        "id": 259857528,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635769692
+    },
+    {
+        "content": "<blockquote>\n<p>Could there be a way to show progress with: which file is getting compiled atm?</p>\n</blockquote>\n<p>This is indeed shown, but only if stdout is a tty as you've discovered.</p>",
+        "id": 259857531,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1635769698
+    },
+    {
+        "content": "<blockquote>\n<blockquote>\n<p>No, it only relies on file hashes.</p>\n</blockquote>\n</blockquote>\n<blockquote>\n<p>Even for old versions like 3.5.0 ?</p>\n</blockquote>\n<p>No, 3.5.0 is ancient.</p>",
+        "id": 259857552,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1635769722
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/113488-general/topic/Adding.20logging.20for.20cases.20where.20oleans.20are.20not.20picked.20up/near/259857404\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>NNG was made for 3.4.2</p>\n</blockquote>\n<p>Can we upgrade it?  That seems like the easiest solution here.  3.4.2 is <em>ancient</em></p>\n</blockquote>\n<p>I think that's definitely the best solution, my NUR compiles and caches all versions starting 3.24.0 (<a href=\"https://github.com/RaitoBezarius/nixexprs/blob/master/pkgs/science/lean/default.nix#L16-L30\">https://github.com/RaitoBezarius/nixexprs/blob/master/pkgs/science/lean/default.nix#L16-L30</a>) and 3.5.0 too (but disabling tests as some libleanshared stuff is not picked up correctly by Nix I think).</p>",
+        "id": 259857611,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635769761
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/113488-general/topic/Adding.20logging.20for.20cases.20where.20oleans.20are.20not.20picked.20up/near/259857552\">said</a>:</p>\n<blockquote>\n<blockquote>\n<blockquote>\n<p>No, it only relies on file hashes.</p>\n</blockquote>\n</blockquote>\n<blockquote>\n<p>Even for old versions like 3.5.0 ?</p>\n</blockquote>\n<p>No, 3.5.0 is ancient.</p>\n</blockquote>\n<p>What would you say is the \"starting version\" for modern Lean 3 :) — I used 3.24.0 as a boundary but unsure.</p>",
+        "id": 259857650,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635769792
+    },
+    {
+        "content": "<p>When it comes to oleans and recompilation I don't think much has changed since 3.7.2</p>",
+        "id": 259857734,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1635769836
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/113488-general/topic/Adding.20logging.20for.20cases.20where.20oleans.20are.20not.20picked.20up/near/259857531\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>Could there be a way to show progress with: which file is getting compiled atm?</p>\n</blockquote>\n<p>This is indeed shown, but only if stdout is a tty as you've discovered.</p>\n</blockquote>\n<p>I didn't get that far: is that a necessary condition for stdout to be a tty?</p>",
+        "id": 259857878,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635769927
+    },
+    {
+        "content": "<p>necessary and sufficient iirc</p>",
+        "id": 259857926,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1635769978
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/113488-general/topic/Adding.20logging.20for.20cases.20where.20oleans.20are.20not.20picked.20up/near/259857926\">said</a>:</p>\n<blockquote>\n<p>necessary and sufficient iirc</p>\n</blockquote>\n<p>Then, do you see a way to have an escape hatch for Nix builds or that might be too complicated?</p>",
+        "id": 259858066,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635770061
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Bash\"><pre><span></span><code>sed -i <span class=\"s1\">'s/isatty(STDOUT_FILENO)/true/'</span> src/shell/lean.cpp\n</code></pre></div>\n<p><span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span></p>",
+        "id": 259858235,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1635770196
+    },
+    {
+        "content": "<p>:D</p>",
+        "id": 259858245,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635770204
+    },
+    {
+        "content": "<p>what about something like this <span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span> :</p>\n<div class=\"codehilite\" data-code-language=\"Darcs Patch\"><pre><span></span><code>From 0f07210d63cc668d9e130cc8163064dc932dcfd8 Mon Sep 17 00:00:00 2001\nFrom: Raito Bezarius &lt;masterancpp@gmail.com&gt;\nDate: Mon, 1 Nov 2021 13:47:56 +0100\nSubject: [PATCH] shell(progress): add a flag to force progress even if stdout\n is not a tty\n\n<span class=\"gd\">---</span>\n src/shell/lean.cpp | 27 ++++++++++++++++-----------\n 1 file changed, 16 insertions(+), 11 deletions(-)\n\ndiff --git a/src/shell/lean.cpp b/src/shell/lean.cpp\nindex 2a20bec60..37251e9b3 100644\n<span class=\"gd\">--- a/src/shell/lean.cpp</span>\n<span class=\"gi\">+++ b/src/shell/lean.cpp</span>\n@@ -243,6 +243,7 @@ static struct option g_long_options[] = {\n     {\"deps\",         no_argument,       0, 'd'},\n     {\"test-suite\",   no_argument,       0, 'e'},\n     {\"timeout\",      optional_argument, 0, 'T'},\n<span class=\"gi\">+    {\"force-show-progress\", no_argument, 0, 'F'},</span>\n #if defined(LEAN_JSON)\n     {\"json\",         no_argument,       0, 'J'},\n     {\"path\",         no_argument,       0, 'p'},\n@@ -260,7 +261,7 @@ static struct option g_long_options[] = {\n };\n\n static char const * g_opt_str =\n<span class=\"gd\">-    \"PdD:qpgvhet:012E:A:B:j:012rM:012T:012\"</span>\n<span class=\"gi\">+    \"FPdD:qpgvhet:012E:A:B:j:012rM:012T:012\"</span>\n #if defined(LEAN_MULTI_THREAD)\n     \"s:012\"\n #endif\n@@ -431,15 +432,16 @@ int main(int argc, char ** argv) {\n     LEAN_EMSCRIPTEN_FS\n #endif\n     ::initializer init;\n<span class=\"gd\">-    bool make_mode          = false;</span>\n<span class=\"gd\">-    bool export_tlean       = false;</span>\n<span class=\"gd\">-    bool export_ast         = false;</span>\n<span class=\"gd\">-    bool use_old_oleans     = false;</span>\n<span class=\"gd\">-    bool report_widgets     = true;</span>\n<span class=\"gd\">-    bool recursive          = false;</span>\n<span class=\"gd\">-    unsigned trust_lvl      = LEAN_BELIEVER_TRUST_LEVEL+1;</span>\n<span class=\"gd\">-    bool only_deps          = false;</span>\n<span class=\"gd\">-    bool test_suite         = false;</span>\n<span class=\"gi\">+    bool make_mode           = false;</span>\n<span class=\"gi\">+    bool export_tlean        = false;</span>\n<span class=\"gi\">+    bool export_ast          = false;</span>\n<span class=\"gi\">+    bool use_old_oleans      = false;</span>\n<span class=\"gi\">+    bool report_widgets      = true;</span>\n<span class=\"gi\">+    bool recursive           = false;</span>\n<span class=\"gi\">+    unsigned trust_lvl       = LEAN_BELIEVER_TRUST_LEVEL+1;</span>\n<span class=\"gi\">+    bool only_deps           = false;</span>\n<span class=\"gi\">+    bool test_suite          = false;</span>\n<span class=\"gi\">+    bool force_show_progress = false;</span>\n     unsigned num_threads    = 0;\n #if defined(LEAN_MULTI_THREAD)\n     num_threads = hardware_concurrency();\n@@ -511,6 +513,9 @@ int main(int argc, char ** argv) {\n         case 'q':\n             opts = opts.update(lean::get_verbose_opt_name(), false);\n             break;\n<span class=\"gi\">+   case 'F':</span>\n<span class=\"gi\">+      force_show_progress = true;</span>\n<span class=\"gi\">+      break;</span>\n         case 'd':\n             only_deps = true;\n             break;\n@@ -613,7 +618,7 @@ int main(int argc, char ** argv) {\n\n     log_tree lt;\n\n<span class=\"gd\">-    bool show_progress = (make_mode || export_tlean) &amp;&amp; isatty(STDOUT_FILENO);</span>\n<span class=\"gi\">+    bool show_progress = (make_mode || export_tlean) &amp;&amp; (isatty(STDOUT_FILENO) || force_show_progress);</span>\n     progress_message_stream msg_stream(std::cout, json_output, show_progress, lt.get_root());\n     if (json_output) ios.set_regular_channel(ios.get_diagnostic_channel_ptr());\n\n<span class=\"gd\">--</span>\n2.33.0\n</code></pre></div>\n<p>(modulo formatting)?</p>",
+        "id": 259859337,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635771017
+    },
+    {
+        "content": "<p>(except it might not apply very well across all versions hm)</p>",
+        "id": 259859361,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635771041
+    },
+    {
+        "content": "<p>Looks reasonable as well.  If it's just for the one-off emscripten build, then I'd just do the sed version.</p>",
+        "id": 259859421,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1635771097
+    },
+    {
+        "content": "<p>It would get used when I make library.zip bundles, so it's for the Lean x86_64 builds and if I do the sed version, I'd need to compile twice Lean I believe.</p>\n<p>Now, I have a way to know which file is getting compiled during library making, all that's left is to understand why an olean is not picked up, would you be interested in a patch towards this with debugging traces for emscripten <em>and</em> x86_64? <span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span></p>",
+        "id": 259859731,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635771287
+    },
+    {
+        "content": "<p>Maybe you're not using the same lean version to compile the olean as you use for the javascript version (there's a check that you can disable with <code>-DCHECK_OLEAN_VERSION=OFF</code>).</p>",
+        "id": 259859922,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1635771406
+    },
+    {
+        "content": "<p>Hm, is there a way to find out which lean version was compiled for a given olean? I'm using the oleans from the Azure cache for mathlib, so it could be this.</p>",
+        "id": 259860130,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635771545
+    },
+    {
+        "content": "<p>You can look in the <code>leanpkg.toml</code> file inside mathlib to figure out the correct Lean version to use.</p>",
+        "id": 259860652,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1635771839
+    },
+    {
+        "content": "<p>also see <a href=\"https://github.com/NixOS/nixpkgs/pull/124507\">https://github.com/NixOS/nixpkgs/pull/124507</a></p>",
+        "id": 259860772,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1635771908
+    },
+    {
+        "content": "<p>Ha, nice!</p>",
+        "id": 259861340,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635772289
+    },
+    {
+        "content": "<p>Many thanks for all the insights <span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span> !</p>",
+        "id": 259861785,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635772564
+    },
+    {
+        "content": "<p>It's on my job list for this month to deal with natural number game issues, I can update lean as part of it. My guess is that it will be extremely easy to bump mathlib although perhaps I might need help if things like the tactic hack breaks</p>",
+        "id": 259861904,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1635772645
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110038\">Kevin Buzzard</span> <a href=\"#narrow/stream/113488-general/topic/Adding.20logging.20for.20cases.20where.20oleans.20are.20not.20picked.20up/near/259861904\">said</a>:</p>\n<blockquote>\n<p>It's on my job list for this month to deal with natural number game issues, I can update lean as part of it. My guess is that it will be extremely easy to bump mathlib although perhaps I might need help if things like the tactic hack breaks</p>\n</blockquote>\n<p>To be honest, I quickly tried:<br>\n<a href=\"/user_uploads/3121/9KDOevE4Vjy-u8aowpQgcu-T/image.png\">image.png</a> </p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/9KDOevE4Vjy-u8aowpQgcu-T/image.png\" title=\"image.png\"><img src=\"/user_uploads/3121/9KDOevE4Vjy-u8aowpQgcu-T/image.png\"></a></div><p>For now, I'll start another Lean Game project from scratch to perform tests and come back to NNG to help porting it (and learn more about those tactic hacks!)</p>",
+        "id": 259862000,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635772700
+    },
+    {
+        "content": "<p>Getting back to disabling olean version check, I added some logging, here's an example of a trace:<br>\n<code>olean /nix/store/r1cwxp6krlghnb30gn3g5nm68djhjqb7-mathlib-azure-olean-with-src/src/tactic/simp_result.olean was rejected (can use olean: no, does it exist: yes, is it a module to load from source: no).</code></p>",
+        "id": 259868872,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635776262
+    },
+    {
+        "content": "<p>So it does exist, it's not a module to load from source, but for some reason, it cannot use olean, what are the causes of this?</p>",
+        "id": 259868888,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635776276
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>            <span class=\"bp\">//</span> <span class=\"n\">If</span> <span class=\"n\">anything</span> <span class=\"k\">in</span> <span class=\"n\">the</span> <span class=\"n\">reflexive</span><span class=\"bp\">-</span><span class=\"n\">transitive</span> <span class=\"n\">closure</span> <span class=\"n\">of</span> <span class=\"n\">this</span> <span class=\"n\">module</span> <span class=\"n\">under</span> <span class=\"n\">the</span> <span class=\"kn\">import</span> <span class=\"n\">relation</span>\n            <span class=\"bp\">//</span> <span class=\"n\">has</span> <span class=\"n\">changed</span><span class=\"o\">,</span> <span class=\"n\">rebuild</span> <span class=\"n\">the</span> <span class=\"n\">module.</span>\n            <span class=\"k\">if</span> <span class=\"o\">(</span><span class=\"n\">mod</span><span class=\"bp\">-&gt;</span><span class=\"n\">m_trans_hash</span> <span class=\"bp\">!=</span> <span class=\"n\">actual_trans_hash</span> <span class=\"bp\">&amp;&amp;</span> <span class=\"bp\">!</span><span class=\"n\">m_use_old_oleans</span><span class=\"o\">)</span>\n                <span class=\"n\">return</span> <span class=\"n\">build_module</span><span class=\"o\">(</span><span class=\"n\">id</span><span class=\"o\">,</span> <span class=\"n\">false</span><span class=\"o\">,</span> <span class=\"n\">orig_module_stack</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n</code></pre></div>\n<p>sounds like this is due to this</p>",
+        "id": 259868990,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635776310
+    },
+    {
+        "content": "<p>so if I pass <code>--old-oleans</code> maybe I have a chance :D</p>",
+        "id": 259869005,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635776319
+    },
+    {
+        "content": "<p>joy: <code>Added 1887 olean files from r1cwxp6krlghnb30gn3g5nm68djhjqb7-mathlib-azure-olean-with-src</code></p>",
+        "id": 259869891,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635776743
+    },
+    {
+        "content": "<p>Okay, I quite got there through disabling olean version check and forcing old oleans, just unsure if the transitive hash thing might become a problem.</p>",
+        "id": 259873569,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635778478
+    },
+    {
+        "content": "<p>In order to verify how these transitive hash works, I'd like to verify them externally using Python, so I tried to parse oleans, according to the C++ code, there should be:</p>\n<ul>\n<li>header (7s)</li>\n<li>version (27s in the case of <code>3.35.0, commit a68d251bfc57</code>)</li>\n<li>source hash (<code>unsigned</code> → <code>unsigned int</code>?)</li>\n<li>transitive hash (<code>unsigned</code>)</li>\n<li>claimed blob hash (<code>unsigned</code>)</li>\n<li>uses sorry or not (<code>bool</code>)</li>\n<li>number of imports (<code>unsigned</code>)</li>\n<li>for each import, a <code>module_name</code>, that is: a <code>name</code> structure and a <code>optional&lt;unsigned&gt;</code></li>\n</ul>\n<p>Assuming those are <code>unsigned short</code> in fact.<br>\nJust parsing up to the <code>sorry</code> field seems strange </p>\n<div class=\"codehilite\" data-code-language=\"Python\"><pre><span></span><code><span class=\"o\">&gt;&gt;&gt;</span> <span class=\"n\">struct</span><span class=\"o\">.</span><span class=\"n\">unpack_from</span><span class=\"p\">(</span><span class=\"s1\">'=9sx27sxHHH?H'</span><span class=\"p\">,</span> <span class=\"n\">data</span><span class=\"p\">)</span>\n<span class=\"p\">(</span><span class=\"sa\">b</span><span class=\"s1\">'oleanfile'</span><span class=\"p\">,</span> <span class=\"sa\">b</span><span class=\"s1\">'3.35.0, commit a68d251bfc57'</span><span class=\"p\">,</span> <span class=\"mi\">39679</span><span class=\"p\">,</span> <span class=\"mi\">23212</span><span class=\"p\">,</span> <span class=\"mi\">65475</span><span class=\"p\">,</span> <span class=\"kc\">True</span><span class=\"p\">,</span> <span class=\"mi\">46697</span><span class=\"p\">)</span>\n</code></pre></div>\n<p>And 46697 imports (<code>dlist/basic.lean</code>) seems too much. Is there any doc on the technical details of these formats (or existing external code of parsing) ?</p>",
+        "id": 259895863,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635788648
+    },
+    {
+        "content": "<p>Can you link to the relevant c++ code?</p>",
+        "id": 259896444,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1635788994
+    },
+    {
+        "content": "<p><code>H</code> is <code>short</code> not <code>int</code> though</p>",
+        "id": 259896572,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1635789050
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/113488-general/topic/Adding.20logging.20for.20cases.20where.20oleans.20are.20not.20picked.20up/near/259896572\">said</a>:</p>\n<blockquote>\n<p><code>H</code> is <code>short</code> not <code>int</code> though</p>\n</blockquote>\n<p>Indeed, I wrote I'm assuming that those are <code>unsigned short</code> in fact instead of <code>unsigned int</code> (with <code>I</code>, it shows way bigger numbers).</p>",
+        "id": 259896795,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635789210
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/113488-general/topic/Adding.20logging.20for.20cases.20where.20oleans.20are.20not.20picked.20up/near/259896444\">said</a>:</p>\n<blockquote>\n<p>Can you link to the relevant c++ code?</p>\n</blockquote>\n<p><a href=\"https://github.com/leanprover-community/lean/blob/master/src/library/module.cpp#L632-L649\">https://github.com/leanprover-community/lean/blob/master/src/library/module.cpp#L632-L649</a></p>",
+        "id": 259896830,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635789236
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/lean/blob/65ad4ffdb3abac75be748554e3cbe990fb1c6500/src/util/serializer.h#L65-L72\">https://github.com/leanprover-community/lean/blob/65ad4ffdb3abac75be748554e3cbe990fb1c6500/src/util/serializer.h#L65-L72</a></p>\n<p><a href=\"https://github.com/leanprover-community/lean/blob/65ad4ffdb3abac75be748554e3cbe990fb1c6500/src/util/serializer.cpp#L26-L37\">https://github.com/leanprover-community/lean/blob/65ad4ffdb3abac75be748554e3cbe990fb1c6500/src/util/serializer.cpp#L26-L37</a></p>",
+        "id": 259896951,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1635789298
+    },
+    {
+        "content": "<p>It's a variable width format</p>",
+        "id": 259896973,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1635789308
+    },
+    {
+        "content": "<p>Indeed</p>",
+        "id": 259897192,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635789394
+    },
+    {
+        "content": "<p>that will be ugly to parse</p>",
+        "id": 259897288,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635789455
+    },
+    {
+        "content": "<p>hm isn't just number in another endianness?</p>",
+        "id": 259897361,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635789483
+    },
+    {
+        "content": "<p>(and in 64 bits no matter what)</p>",
+        "id": 259897418,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635789507
+    },
+    {
+        "content": "<p>The struct module is unsuitable for parsing this</p>",
+        "id": 259897425,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1635789510
+    },
+    {
+        "content": "<p>No, it's 1 byte if the number is &lt;255, and 5 bytes if its greater</p>",
+        "id": 259897456,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1635789528
+    },
+    {
+        "content": "<p>I meant in the case where it's &gt;=255</p>",
+        "id": 259897503,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635789552
+    },
+    {
+        "content": "<p>You don't care about efficiency I assume for checking the hashes, just write a simple tokenizer</p>",
+        "id": 259897511,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1635789557
+    },
+    {
+        "content": "<p>excluding the -1</p>",
+        "id": 259897513,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635789558
+    },
+    {
+        "content": "<p>I indeed don't care</p>",
+        "id": 259897530,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635789568
+    },
+    {
+        "content": "<p>but rather than write something new, maybe I will just create a new Lean executable <code>lean_check_olean</code> which will reuse the existing deserializing machinery</p>",
+        "id": 259897583,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635789598
+    },
+    {
+        "content": "<p>We're talking around 15 lines, probably:</p>\n<div class=\"codehilite\" data-code-language=\"Python\"><pre><span></span><code><span class=\"k\">def</span> <span class=\"nf\">read_string</span><span class=\"p\">(</span><span class=\"n\">s</span><span class=\"p\">):</span>\n    <span class=\"n\">sofar</span> <span class=\"o\">=</span> <span class=\"n\">io</span><span class=\"o\">.</span><span class=\"n\">BytesIO</span><span class=\"p\">()</span>\n    <span class=\"k\">while</span> <span class=\"p\">(</span><span class=\"n\">c</span> <span class=\"o\">:=</span> <span class=\"nb\">next</span><span class=\"p\">(</span><span class=\"n\">s</span><span class=\"p\">))</span> <span class=\"o\">!=</span> <span class=\"mi\">0</span><span class=\"p\">:</span>\n        <span class=\"n\">sofar</span><span class=\"o\">.</span><span class=\"n\">write</span><span class=\"p\">(</span><span class=\"nb\">bytes</span><span class=\"p\">([</span><span class=\"n\">c</span><span class=\"p\">]))</span>\n    <span class=\"k\">return</span> <span class=\"n\">sofar</span><span class=\"o\">.</span><span class=\"n\">getvalue</span><span class=\"p\">()</span>\n\n<span class=\"c1\"># repeat for `read_unsigned`</span>\n\n<span class=\"k\">with</span> <span class=\"nb\">open</span><span class=\"p\">(</span><span class=\"s1\">'some_olean'</span><span class=\"p\">,</span> <span class=\"s1\">'rb'</span><span class=\"p\">)</span> <span class=\"k\">as</span> <span class=\"n\">f</span><span class=\"p\">:</span>\n    <span class=\"n\">header</span> <span class=\"o\">=</span> <span class=\"n\">read_string</span><span class=\"p\">(</span><span class=\"n\">f</span><span class=\"p\">)</span>\n    <span class=\"n\">version</span> <span class=\"o\">=</span> <span class=\"n\">read_string</span><span class=\"p\">(</span><span class=\"n\">f</span><span class=\"p\">)</span>\n    <span class=\"c1\"># etc</span>\n</code></pre></div>",
+        "id": 259898212,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1635789854
+    },
+    {
+        "content": "<p>The name deserializer won't be simple at all though</p>",
+        "id": 259898348,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635789931
+    },
+    {
+        "content": "<p>And if I want to reproduce the transitive hash computations, I'll need it I believe</p>",
+        "id": 259898364,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635789940
+    },
+    {
+        "content": "<p>Excluding shenanigans with transitive hashes of oleans (that is, <code>use_old_oleans=True</code> on emscripten bundle and Lean x86_64):<br>\n<a href=\"/user_uploads/3121/8Bw5fy05PeU-DgcDhpvMlePX/image.png\">image.png</a> <br>\nit works fine :)</p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/8Bw5fy05PeU-DgcDhpvMlePX/image.png\" title=\"image.png\"><img src=\"/user_uploads/3121/8Bw5fy05PeU-DgcDhpvMlePX/image.png\"></a></div>",
+        "id": 259898498,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635789998
+    },
+    {
+        "content": "<p>(@ name deserializer: I mean this: <a href=\"https://github.com/leanprover-community/lean/blob/master/src/util/name.cpp#L515-L538\">https://github.com/leanprover-community/lean/blob/master/src/util/name.cpp#L515-L538</a>)</p>",
+        "id": 259898588,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635790055
+    },
+    {
+        "content": "<p>well, doing it quickly in C++ yields to:</p>\n<div class=\"codehilite\" data-code-language=\"Bash\"><pre><span></span><code>reading /nix/store/r3iqrhwik0fx49b75vxhfkpfjdg50h4p-mathlib-with-cached-olean/src/algebra/abs.lean\nmodule loaded, is olean: yes\nolean parsed.\ntransitive <span class=\"nb\">hash</span> computed.\nmod trans hash: <span class=\"m\">1918900608</span>\nactual trans hash: <span class=\"m\">639958348</span>\n</code></pre></div>\n<p>so far so good :)</p>",
+        "id": 259905251,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635793060
+    },
+    {
+        "content": "<p>For fun, here's a graph of valid/invalid transitive dependencies: <a href=\"/user_uploads/3121/7aReHvOmj1k6WpoR-yAe7mwO/graph.svg\">graph.svg</a> </p>\n<p>I guess this is due to the fact that <code>src_hash = hash(remove_cr(lean_file))</code> changes due to the missing githash, which induces invalid transitive hash at some parts.</p>",
+        "id": 259922084,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635801036
+    },
+    {
+        "content": "<p>Okay, implementing the same thing as upstream nixpkgs for githash made everything work just fine, :-).<br>\nI pushed most of the stuff there: <a href=\"https://github.com/RaitoBezarius/nixexprs/tree/master/pkgs/science/lean\">https://github.com/RaitoBezarius/nixexprs/tree/master/pkgs/science/lean</a> if people are actually interested. I will now be able to focus more on frontend. Some patches are there to help for olean diagnostics over emscripten and x86_64 (hidden behind <code>debugOleans</code> attribute which enable very verbose logging.)</p>",
+        "id": 259936920,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635810488
+    },
+    {
+        "content": "<p>Thanks everyone for your insights :)</p>",
+        "id": 259936925,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1635810496
+    }
+]

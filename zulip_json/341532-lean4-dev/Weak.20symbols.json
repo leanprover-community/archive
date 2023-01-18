@@ -1,0 +1,848 @@
+[
+    {
+        "content": "<p>Hi <span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span>  at al.</p>\n<p>would you mind posting a few more details about the weak symbol project?  I'd like to start looking at it and having a few more details would help me.<br>\nThanks,</p>\n<p>Tom</p>",
+        "id": 301347033,
+        "sender_full_name": "Tom",
+        "timestamp": 1664408789
+    },
+    {
+        "content": "<p>Hi Tom,</p>\n<p>Thanks for asking. I see the following steps:</p>\n<ul>\n<li>Find out how to \"tell\" <code>clang</code> and <code>gcc</code> that we want to use a weak symbol for a function name. <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> posted a few links about it, but it would be great to have a solution that works for both <code>clang</code> and <code>gcc</code> in the platforms we care about.</li>\n<li>Find out which linker options (if any) we need to use to enable weak symbols.</li>\n<li>Create small experiment to ensure the approach works. Examples: a small program with two different .c files that define the same weak symbol, but the final executable contains only one copy of the function.</li>\n<li>Write a function in Lean that computes a strong hash for <code>Expr</code>. Recall that each code specialization in Lean is uniquely identified by a <code>Expr</code> that does not contain free variables. We will use the hashcode to name the new function produced by our code specializer. </li>\n</ul>\n<p>Best,<br>\nLeo</p>",
+        "id": 301347757,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1664409257
+    },
+    {
+        "content": "<p>The task is to confirm the concrete syntax for enabling weak symbols on the compilers / architectures we target, and make sure that it has the desired effect, such that we can feel safe emitting it in the generated C code.</p>",
+        "id": 301347758,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664409258
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span>   and <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> </p>\n<blockquote>\n<p>Find out how to \"tell\" clang and gcc that we want to use a weak symbol for a function name.</p>\n</blockquote>\n<p>That's pretty easy!  Can you just tell me whether we compile the generated code as C or as C++?  My understanding is we emit \"C\"-like code but C can often be compiled using a c++ compiler and it seems a lot of parts of Lean (including things like the runtime are actually c++).<br>\nDepending on which one, I may pick a different approach.</p>\n<blockquote>\n<p>Find out which linker options (if any) we need to use to enable weak symbols</p>\n</blockquote>\n<p>No linker options required on most \"Posix\" OSs (Linux/Solaris etc) and up-to-date gcc/clang linkers.  I would have to double-check if something is needed for MSVC but I'm not even sure if we're targeting it right now...?</p>\n<blockquote>\n<p>Create small experiment to ensure the approach works</p>\n</blockquote>\n<p>Sure, I can do that</p>\n<blockquote>\n<p>Write a function in Lean that computes a strong hash for Expr</p>\n</blockquote>\n<p>Are you thinking of something like a recursive sha256 digest of a LCNF function?  That sounds good but this one will probably take me a bit longer than the rest, as I'm not sure if the lean library actually has a sha256 (or similar) hash?</p>\n<p>However, I do want to bring up a few possible issue with the last suggestion:</p>\n<p>1) Since the hash is very strong and depends on the entire expression, is there a chance we would end up with two different versions of the same function in two different modules if they, for example, had different compilation options/optimizations enabled?</p>\n<p>2) This approach will not work for SOs/DLLs; or in general, will break for any form of separate compilation.  <br>\nI'm sure you're familiar with it but just for completeness:  Imagine that a lean program says \"I want to import a compiled function from an SO\"; the whole point is that you <em>don't</em> know the implementation, you only know the signature but without the implementation, you won't be able to know which symbol to bind to.  Typically, one doesn't look for weak symbols in DLLs but I can see it happening for specializations of polymorphic functions.</p>\n<p>3) This is related to 2) but a slightly different approach:  Most modern Unix systems support things like \"LD_PRELOAD\".  This allows the OS to load another library before loading the main executable image.  Since the dynamic linker works \"left to right\", it will bind to the first symbol it finds.  This allows easy experimentation and \"injecting\" of e.g. testing or other analysis code into the binary.  <br>\nLibraries can use this for things like replacing <code>malloc/free</code> with faster/tracing versions; and e.g. clang/gcc use this mechanism for things like the address, memory and thread sanitizer frameworks.  <br>\nThe <em>whole point</em> of this mechanism is to replace a function with a different implementation; so clearly the SHA would be different.</p>\n<p>I don't know if these usecases are important to you but I would like you to at least tell me a bit more about your view on the above.   However, my understanding is that the Lean compiler already has the ability to import compiled Lean code as a shared object and it this could lead to some breakage.</p>\n<p>As such, perhaps we should consider two classes of functions:</p>\n<p>\"weak\", which should be deduplicated (and in which case, their name should be <em>just the SHA</em>, not a \"name + SHA + something else, because you are really looking for \"content addressability\"/functional identity</p>\n<p>\"strong\"/exported symbols, whose names could perhaps be some mangling of the name, the input  and return types?</p>\n<p>Anyway, we can discuss this more; once you let me know of the the compilation and whether we want to support MSVC, I'll do the first part quickly.</p>\n<p>Thanks,</p>\n<p>Tom</p>",
+        "id": 301358751,
+        "sender_full_name": "Tom",
+        "timestamp": 1664419087
+    },
+    {
+        "content": "<blockquote>\n<p>That's pretty easy! Can you just tell me whether we compile the generated code as C or as C++? My understanding is we emit \"C\"-like code but C can often be compiled using a c++ compiler and it seems a lot of parts of Lean (including things like the runtime are actually c++).<br>\nDepending on which one, I may pick a different approach.</p>\n</blockquote>\n<p>Both. The generated code is usually treated as C, but it has ifdefs in it so it can be compiled in C++ mode as well</p>",
+        "id": 301358805,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664419153
+    },
+    {
+        "content": "<p>It might help to take a look at the generated .c files to get a sense of how it works</p>",
+        "id": 301358884,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664419204
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/blob/master/stage0/stdlib/Lean/Parser/Basic.c\">https://github.com/leanprover/lean4/blob/master/stage0/stdlib/Lean/Parser/Basic.c</a></p>",
+        "id": 301358922,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664419259
+    },
+    {
+        "content": "<p>the <a href=\"https://github.com/leanprover/lean4/blob/master/src/include/lean/lean.h\">lean.h header</a> is probably where we would set up some macros for the weak attribute that we can apply to generated functions</p>",
+        "id": 301359019,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664419334
+    },
+    {
+        "content": "<blockquote>\n<p>1) Since the hash is very strong and depends on the entire expression, is there a chance we would end up with two different versions of the same function in two different modules if they, for example, had different compilation options/optimizations enabled?</p>\n</blockquote>\n<p>Two different versions of the same function is okay. We would like to avoid it but it's fine if this happens sometimes, and we should not and cannot rely on deduplication for soundness.</p>\n<p>Two versions of the function with different compilation options sounds like a nightmare. I don't think this is a supported configuration.</p>",
+        "id": 301359200,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664419500
+    },
+    {
+        "content": "<p>A specific example of an optimization that would do bad things if we applied it inconsistently is removing unused arguments from a function. If we have already produced .o files for the upstream files then this would probably not be caught at compile time and we would just get UB</p>",
+        "id": 301359320,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664419612
+    },
+    {
+        "content": "<blockquote>\n<p>2) This approach will not work for SOs/DLLs; or in general, will break for any form of separate compilation.<br>\nI'm sure you're familiar with it but just for completeness: Imagine that a lean program says \"I want to import a compiled function from an SO\"; the whole point is that you don't know the implementation, you only know the signature but without the implementation, you won't be able to know which symbol to bind to. Typically, one doesn't look for weak symbols in DLLs but I can see it happening for specializations of polymorphic functions.</p>\n</blockquote>\n<p>I don't think this is an issue. We would only do this for specializations, and this requires that the body of the function be known to lean anyway.</p>",
+        "id": 301359427,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664419728
+    },
+    {
+        "content": "<p>If you use LD_PRELOAD, any and all breakage is on you. You can do arbitrary damage to a library using this mechanism and it should never have existed</p>",
+        "id": 301359571,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664419853
+    },
+    {
+        "content": "<blockquote>\n<p>\"weak\", which should be deduplicated (and in which case, their name should be just the SHA, not a \"name + SHA + something else, because you are really looking for \"content addressability\"/functional identity</p>\n</blockquote>\n<p>One reason to use the function's name in the mangling is so that it's not completely opaque to people looking at it in a debugger. I am fairly sure this is also why rust uses name + SHA in their mangling scheme</p>",
+        "id": 301359696,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664419975
+    },
+    {
+        "content": "<p>I don't think we care that much about providing pure content addressability. It's fine if definition names are mixed in the SHA, since we're just trying to avoid <code>@List.map Nat</code> from being generated twice</p>",
+        "id": 301359897,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664420126
+    },
+    {
+        "content": "<blockquote>\n<p>Two versions of the function with different compilation options sounds like a nightmare.</p>\n</blockquote>\n<p>This happens in very large projects when you need to e.g. compile some parts of your code in debug and others in optimized.  I realize that Lean doesn't have a debugger right now but probably not worth precluding that.  Anyway, the functions would have different hashes so it should be fine.</p>\n<blockquote>\n<p>We would only do this for specializations</p>\n</blockquote>\n<p>But presumably specializations could be generated inside of SOs... right?</p>\n<blockquote>\n<p>If you use LD_PRELOAD, any and all breakage is on you. </p>\n</blockquote>\n<p>That's understood.  My point is that this mechanism will basically preclude it.  And as I described above, there are some valid uses for it (e.g. developer/debug tools)</p>\n<blockquote>\n<p>One reason to use the function's name in the mangling is so that it's not completely opaque to people</p>\n</blockquote>\n<p>I expected that to be the case but wanted to mention it anyway.  There are some possible advantages to this but probably not worth it without better tooling support.</p>\n<blockquote>\n<p>I don't think we care that much about providing pure content addressability.</p>\n</blockquote>\n<p>There are some possible nice consequences to this design choice but I agree it's unlikely to be the right fit for Lean atm.</p>\n<p>Thanks!</p>",
+        "id": 301366017,
+        "sender_full_name": "Tom",
+        "timestamp": 1664426729
+    },
+    {
+        "content": "<blockquote>\n<p>This happens in very large projects when you need to e.g. compile some parts of your code in debug and others in optimized. I realize that Lean doesn't have a debugger right now but probably not worth precluding that. Anyway, the functions would have different hashes so it should be fine.</p>\n</blockquote>\n<p>Oh I'm aware some people do this, but most compilers explicitly disclaim responsibility for what happens if you do.</p>",
+        "id": 301366255,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664426934
+    },
+    {
+        "content": "<blockquote>\n<blockquote>\n<p>If you use LD_PRELOAD, any and all breakage is on you.</p>\n</blockquote>\n<p>That's understood. My point is that this mechanism will basically preclude it. And as I described above, there are some valid uses for it (e.g. developer/debug tools)</p>\n</blockquote>\n<p>I don't see how. At the end of the day you will get a pile of functions, and if some have been deduplicated and you LD_PRELOAD replace it you will also be replacing all the deduplicated copies. If that's not what you wanted, too bad. This isn't supported.</p>",
+        "id": 301366440,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664427122
+    },
+    {
+        "content": "<p>Treating that kind of debugger-like interaction with the code as observable behavior would basically make all compiler optimizations invalid</p>",
+        "id": 301366515,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664427220
+    },
+    {
+        "content": "<blockquote>\n<blockquote>\n<p>We would only do this for specializations</p>\n</blockquote>\n<p>But presumably specializations could be generated inside of SOs... right?</p>\n</blockquote>\n<p>That's one of the examples which explains why we can't guarantee deduplication even if we wanted to. If a specialization has been compiled into two independent dynamically linked libraries, there is nothing we can do to make them have the same address anymore. Same thing if you load an SO into a static executable.</p>",
+        "id": 301366733,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664427396
+    },
+    {
+        "content": "<blockquote>\n<p>Oh I'm aware some people do this, but most compilers explicitly disclaim responsibility for what happens if you do.</p>\n</blockquote>\n<p>Do you have any source/link for these disclaimers for any of the main C/C++ toolchains (gcc/clang)?  I'd like to read up on it.  <br>\nI'm aware that MSVC has potentially multiple incompatible runtimes but that's less of a compiler issue, per se.<br>\nI understand care has to be taken when mixing such <code>.o</code>s but have never seen any docs explicitly prohibiting/disclaiming this.  <br>\nIf this were the case, even loading debug SOs into e.g. a production Lean executable (or, say, into a Python executable built with optimizations on) would cause issues.</p>\n<blockquote>\n<p>I don't see how. At the end of the day you will get a pile of functions</p>\n</blockquote>\n<p>I still feel like we're still not understanding each other/I'm not explaining myself properly.  <br>\nIt's not that important right now so perhaps we can discuss this a bit in person on the call on Friday.</p>\n<blockquote>\n<p>That's one of the examples which explains why we can't guarantee deduplication even if we wanted to.</p>\n</blockquote>\n<p>A couple of thoughts: </p>\n<p>I am sure you are aware of this so I mention it just for clarity - the \"deduplication\" still happens.  The (non-hidden) symbols will resolve to the same address:  That's why globals/statics/function statics will have the same address irrespective of which dynamic module you're in.  What doesn't happen is that a duplicate function will still exists in (potentially several) binaries but that's less of an issue; the code will stay cold and likely just paged out by the OS.</p>\n<p>But I'm not worried about deduplication in the SO case - I am worried about how to find the symbol in the first place.  I don't know/think this is currently possible in Lean but consider the following scenario:</p>\n<p>1) In my SO, have a polymorphic function <code>foo</code><br>\n2) The function gets monomophized and then specialized for <code>Nat</code> during the build of the SO (and as such, will be weak and will have a hash in its name)</p>\n<p>In an ideal scenario, in order to use the shared library, I would just need the equivalent \"declaration\" for <code>foo</code> (i.e. without its source) in my executable.</p>\n<p>1) I build my executable against this interface (perhaps a module/interface file that Leo alluded to before?)<br>\n2) I call <code>foo  3</code>.  But because I don't have the source, I would not be able to find the symbol because I won't be able to generate the hash.</p>\n<p>But also, forget about Lean.  It should, ostensibly, be possible to write a SO in lean and then perhaps call it from another language altogether.  Unless we consider the external interface, a change in implementation of the function would break the external API/ABI.</p>\n<p>Again, maybe we don't care.  Or, maybe we don't care <em>right now</em>.  Still, sounds like we are effectively discussing at least an informal ABI and so I want to bring these things up.</p>\n<p>Hope that makes sense.</p>\n<p>Cheers!</p>\n<p>Tom</p>",
+        "id": 301368948,
+        "sender_full_name": "Tom",
+        "timestamp": 1664429212
+    },
+    {
+        "content": "<blockquote>\n<p>If this were the case, even loading debug SOs into e.g. a production Lean executable (or, say, into a Python executable built with optimizations on) would cause issues.</p>\n</blockquote>\n<p>Most linux toolchains don't explicitly say that these kinds of things are not allowed, but they underspecify what will happen and generally don't put too much emphasis on correctness in the face of such things. In particular, it is a false equivalence to say that just because the behavior is undefined there must be issues. It's quite possible for there not to be issues in the majority of plausible use cases while still not being something the compiler has explicit support for.</p>",
+        "id": 301376195,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664433356
+    },
+    {
+        "content": "<blockquote>\n<p>I am sure you are aware of this so I mention it just for clarity - the \"deduplication\" still happens. The (non-hidden) symbols will resolve to the same address: That's why globals/statics/function statics will have the same address irrespective of which dynamic module you're in. What doesn't happen is that a duplicate function will still exists in (potentially several) binaries but that's less of an issue; the code will stay cold and likely just paged out by the OS.</p>\n</blockquote>\n<p>This is only true if the call to the function is exposed to the linker. If the compiler inlines the function and/or does not give them external linkage then the linker may not be able to find the relocations in order to make them point to the same place.</p>",
+        "id": 301377379,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664433937
+    },
+    {
+        "content": "<blockquote>\n<p>1) In my SO, have a polymorphic function foo</p>\n</blockquote>\n<p>This is not possible. You would need a custom SO format in order to encode these kinds of properties, and lean already has that - it's the olean file. Loading SOs of unknown provenance is only ever going to work with C FFI style linkage, it will not participate in specialization or other lean-level optimizations.</p>",
+        "id": 301377757,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664434152
+    },
+    {
+        "content": "<blockquote>\n<p>But also, forget about Lean. It should, ostensibly, be possible to write a SO in lean and then perhaps call it from another language altogether. Unless we consider the external interface, a change in implementation of the function would break the external API/ABI.</p>\n<p>Again, maybe we don't care. Or, maybe we don't care right now. Still, sounds like we are effectively discussing at least an informal ABI and so I want to bring these things up.</p>\n</blockquote>\n<p>A stable ABI for lean suitable for FFI sounds way out of scope. The lingua franca of FFI is C, and C doesn't have template functions or specialization.</p>",
+        "id": 301378001,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664434296
+    },
+    {
+        "content": "<p>So has there been any discussion about using the linker's Identical Code Folding instead...? Since any of the issues discussed above would not even come up with that approach.</p>",
+        "id": 301383282,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664436694
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> It would be great to evaluate the linker's Identical Code Folding: robustness, performance, etc too. BTW, I was expecting the \"weak symbol\" solution to be simple. If it is not too complicated, I prefer to have our own solution that we fully control.</p>",
+        "id": 301440234,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1664458117
+    },
+    {
+        "content": "<p>We should definitely evaluate it first, though for weak symbols we are also dependent on the linker behavior <em>and</em> possibly on the platform behavior as mentioned above. For example, the text I <a href=\"#narrow/stream/341532-lean4-dev/topic/.5BCompiler.5D.20specialization.20reuse/near/300548693\">shared</a> in the other thread seemed to imply that weak symbols may not actually lead to deduplication, though I don't know if that is true.</p>",
+        "id": 301449626,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664460735
+    },
+    {
+        "content": "<p>A slight upside of ICF would be that we can continue to use nice symbol names without hashes, and in fact make them even nicer than right now since every specialization site would use its own symbol name without reuse (or at least reuse limited to the current file). If I understand it correctly, the linker will preserve these symbol names and simply have them point at the same code location.</p>",
+        "id": 301450262,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664460907
+    },
+    {
+        "content": "<p>A good thing in any case is that at least for users we can assume that all Lean code will be linked by the same linker, so if an approach looks good with current lld, it seems improbable that that will change for the worse in the future.</p>",
+        "id": 301450429,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664460959
+    },
+    {
+        "content": "<p>Also interesting part from the mold readme, which is the only other linker I can see us potentially switching to in the future:</p>\n<blockquote>\n<p>Similarly, BFD, gold an lld support Identical Comdat Folding (ICF) as yet another size optimization. ICF merges two or more read-only sections that happen to have the same contents and relocations. To do that, we have to find isomorphic subgraphs from larger graphs. I implemented a new algorithm for mold, which is 5x faster than lld to do ICF for Chromium (from 5 seconds to 1 second).</p>\n</blockquote>",
+        "id": 301451006,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664461129
+    },
+    {
+        "content": "<p>For reference, for Chromium we are talking about 3GB of linker inputs</p>",
+        "id": 301451415,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664461240
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> </p>\n<p>I think we can continue some of this discussion tomorrow, it feels like the text bandwidth is a bit low for such an in-depth discussion.</p>\n<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> </p>\n<blockquote>\n<p>linker's Identical Code Folding</p>\n</blockquote>\n<p>That's a good idea!  One thought though - if we fold two different specializations which happen to generate the same code, could this cause any issues with anything to do with \"addresses\"?  I think lean has an *Ref type, and also allows C/C++ FFI, so I wonder if that could come into play.  (I've not had a chance to read the FFI section of the docs yet, so please forgive my ignorance in this area)</p>",
+        "id": 301484097,
+        "sender_full_name": "Tom",
+        "timestamp": 1664470103
+    },
+    {
+        "content": "<p>I believe this is the difference between --icf=safe and --icf=all. But I can't think of any reason why we should guarantee that distinct symbols cannot be observed with the same address.</p>",
+        "id": 301485197,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664470414
+    },
+    {
+        "content": "<blockquote>\n<p>A slight upside of ICF would be that we can continue to use nice symbol names without hashes</p>\n</blockquote>\n<p>I actually like the hashing approach because it would guard us against (certain) types of ABI breaks and compatibility issues (i.e. what C++ defines at the ODR).  Violations of the ODR are really difficult to catch (and debug) and just lead to undefined behavior.  My discussion with <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> is mostly about trying to nail down more of the requirements and get a better understanding of the team's thinking and a potential roadmap in this area.</p>\n<p>Also, ICF will only apply when compiling an executable, so we still need a weak symbol story for when linking against SOs.</p>\n<p>Finally, if we're concerned about size/linker performance, it's worth considering split dwarf.  For large programs, not constantly loading the massive debug symbol tables from disk cuts on IO significantly and that's a major performance boost for such large programs.</p>",
+        "id": 301485388,
+        "sender_full_name": "Tom",
+        "timestamp": 1664470465
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> </p>\n<p>How do you want the \"example code\" posted?  As a GH repo or just inline here?  Unfortunately, I don't have easy access to a Windows box (and not sure if you want a MSVC version) but the g++/clang examples are working.</p>",
+        "id": 301485795,
+        "sender_full_name": "Tom",
+        "timestamp": 1664470579
+    },
+    {
+        "content": "<p>Ok, NVM - going to post here</p>",
+        "id": 301498628,
+        "sender_full_name": "Tom",
+        "timestamp": 1664474160
+    },
+    {
+        "content": "<p>main.cpp</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"kn\">include</span> <span class=\"bp\">&lt;</span><span class=\"n\">stdio.h</span><span class=\"bp\">&gt;</span>\n\n<span class=\"n\">char</span> <span class=\"n\">const</span> <span class=\"bp\">*</span><span class=\"n\">greeting</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n\n<span class=\"n\">int</span> <span class=\"n\">main</span><span class=\"o\">()</span>\n<span class=\"o\">{</span>\n    <span class=\"n\">printf</span><span class=\"o\">(</span><span class=\"s2\">\"%s</span><span class=\"se\">\\n</span><span class=\"s2\">\"</span><span class=\"o\">,</span> <span class=\"n\">greeting</span><span class=\"o\">())</span><span class=\"bp\">;</span>\n<span class=\"o\">}</span>\n</code></pre></div>\n<p>a.cpp</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"kn\">include</span> <span class=\"s2\">\"config.h\"</span>\n\n<span class=\"bp\">//</span> <span class=\"n\">This</span> <span class=\"n\">is</span> <span class=\"n\">an</span> <span class=\"kd\">example</span> <span class=\"n\">of</span> <span class=\"n\">using</span> <span class=\"n\">a</span> <span class=\"n\">weak</span> <span class=\"n\">symbol</span>\n<span class=\"bp\">//</span> <span class=\"n\">on</span> <span class=\"n\">a</span> <span class=\"kd\">definition</span>\n<span class=\"n\">char</span> <span class=\"n\">const</span> <span class=\"bp\">*</span><span class=\"n\">WEAK_SYMBOL</span>\n<span class=\"n\">greeting</span><span class=\"o\">()</span>\n<span class=\"o\">{</span>\n<span class=\"bp\">#</span><span class=\"n\">ifdef</span> <span class=\"n\">__cplusplus</span>\n    <span class=\"n\">return</span> <span class=\"s2\">\"Hello from C++\"</span><span class=\"bp\">;</span>\n<span class=\"bp\">#</span><span class=\"k\">else</span>\n    <span class=\"n\">return</span> <span class=\"s2\">\"Hello from C\"</span><span class=\"bp\">;</span>\n<span class=\"bp\">#</span><span class=\"n\">endif</span>\n<span class=\"o\">}</span>\n</code></pre></div>\n<p>b.cpp</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"kn\">include</span> <span class=\"s2\">\"config.h\"</span>\n\n<span class=\"bp\">//</span> <span class=\"n\">This</span> <span class=\"n\">is</span> <span class=\"n\">an</span> <span class=\"kd\">example</span> <span class=\"n\">of</span> <span class=\"n\">using</span> <span class=\"n\">the</span> <span class=\"kn\">attribute</span>\n<span class=\"bp\">//</span> <span class=\"n\">on</span> <span class=\"n\">a</span> <span class=\"n\">declaration</span>\n<span class=\"n\">char</span> <span class=\"n\">const</span> <span class=\"bp\">*</span><span class=\"n\">greeting</span><span class=\"o\">()</span> <span class=\"n\">WEAK_SYMBOL</span><span class=\"bp\">;</span>\n\n<span class=\"n\">char</span> <span class=\"n\">const</span> <span class=\"bp\">*</span><span class=\"n\">greeting</span><span class=\"o\">()</span>\n<span class=\"o\">{</span>\n<span class=\"bp\">#</span><span class=\"n\">ifdef</span> <span class=\"n\">__cplusplus</span>\n    <span class=\"n\">return</span> <span class=\"s2\">\"Hello from C++\"</span><span class=\"bp\">;</span>\n<span class=\"bp\">#</span><span class=\"k\">else</span>\n    <span class=\"n\">return</span> <span class=\"s2\">\"Hello from C\"</span><span class=\"bp\">;</span>\n<span class=\"bp\">#</span><span class=\"n\">endif</span>\n<span class=\"o\">}</span>\n</code></pre></div>\n<p>config.h</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"k\">if</span> <span class=\"n\">defined</span><span class=\"o\">(</span><span class=\"n\">__GNUC__</span><span class=\"o\">)</span> <span class=\"bp\">||</span> <span class=\"n\">defined</span><span class=\"o\">(</span><span class=\"n\">__clang__</span><span class=\"o\">)</span>\n\n<span class=\"bp\">//</span> <span class=\"n\">NOTE</span><span class=\"o\">:</span> <span class=\"n\">We</span> <span class=\"n\">could</span> <span class=\"n\">also</span> <span class=\"n\">decide</span> <span class=\"n\">to</span> <span class=\"n\">put</span> <span class=\"n\">our</span> <span class=\"n\">weak</span> <span class=\"n\">symbols</span>\n<span class=\"bp\">//</span> <span class=\"n\">into</span> <span class=\"n\">a</span> <span class=\"n\">separate</span> <span class=\"n\">linker</span> <span class=\"kn\">section</span> <span class=\"k\">in</span> <span class=\"n\">order</span> <span class=\"n\">to</span> <span class=\"n\">facilitate</span>\n<span class=\"bp\">//</span> <span class=\"n\">introspection</span><span class=\"bp\">/</span><span class=\"n\">debugging</span>\n<span class=\"bp\">#</span><span class=\"n\">define</span> <span class=\"n\">WEAK_SYMBOL</span> <span class=\"n\">__attribute__</span><span class=\"o\">((</span><span class=\"n\">weak</span><span class=\"o\">))</span>\n\n<span class=\"bp\">#</span><span class=\"n\">elif</span> <span class=\"n\">defined</span><span class=\"o\">(</span><span class=\"n\">_MSC_VER</span><span class=\"o\">)</span>\n<span class=\"bp\">#</span><span class=\"n\">error</span> <span class=\"n\">MSVC</span> <span class=\"n\">is</span> <span class=\"n\">not</span> <span class=\"n\">supported</span>\n<span class=\"bp\">//</span> <span class=\"n\">but</span> <span class=\"n\">we</span> <span class=\"n\">could</span> <span class=\"n\">use</span> <span class=\"n\">__declspec</span><span class=\"o\">(</span><span class=\"n\">selectany</span><span class=\"o\">)</span>\n\n<span class=\"bp\">#</span><span class=\"n\">endif</span>\n</code></pre></div>\n<p>Makefile</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">gcc_cpp</span><span class=\"o\">:</span>\n    <span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"n\">main.cpp</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">o</span> <span class=\"bp\">$@</span>\n\n<span class=\"n\">gcc_c</span><span class=\"o\">:</span>\n    <span class=\"n\">gcc</span> <span class=\"bp\">-</span><span class=\"n\">x</span> <span class=\"n\">c</span> <span class=\"n\">main.cpp</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">o</span> <span class=\"bp\">$@</span>\n\n<span class=\"n\">clang_cpp</span><span class=\"o\">:</span>\n    <span class=\"n\">clang</span> <span class=\"n\">main.cpp</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">o</span> <span class=\"bp\">$@</span>\n\n<span class=\"n\">clang_c</span><span class=\"o\">:</span>\n    <span class=\"n\">clang</span> <span class=\"bp\">-</span><span class=\"n\">x</span> <span class=\"n\">c</span> <span class=\"n\">main.cpp</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">o</span> <span class=\"bp\">$@</span>\n\n<span class=\"bp\">.</span><span class=\"n\">DEFAULT_GOAL</span> <span class=\"o\">:=</span> <span class=\"n\">test</span>\n<span class=\"bp\">.</span><span class=\"n\">PHONY</span><span class=\"o\">:</span> <span class=\"n\">test</span>\n<span class=\"n\">test</span><span class=\"o\">:</span> <span class=\"n\">gcc_cpp</span> <span class=\"n\">gcc_c</span> <span class=\"n\">clang_cpp</span> <span class=\"n\">clang_c</span>\n    <span class=\"bp\">@</span><span class=\"n\">echo</span> <span class=\"s2\">\"** gcc / c++ **\"</span>\n    <span class=\"bp\">@./</span><span class=\"n\">gcc_cpp</span>\n    <span class=\"bp\">@</span><span class=\"n\">nm</span> <span class=\"bp\">-</span><span class=\"n\">C</span> <span class=\"n\">gcc_cpp</span> <span class=\"bp\">|</span> <span class=\"n\">grep</span> <span class=\"n\">greeting</span>\n\n    <span class=\"bp\">@</span><span class=\"n\">echo</span> <span class=\"s2\">\"** gcc / c **\"</span>\n    <span class=\"bp\">@./</span><span class=\"n\">gcc_c</span>\n    <span class=\"bp\">@</span><span class=\"n\">nm</span> <span class=\"bp\">-</span><span class=\"n\">C</span> <span class=\"n\">gcc_c</span> <span class=\"bp\">|</span> <span class=\"n\">grep</span> <span class=\"n\">greeting</span>\n\n    <span class=\"bp\">@</span><span class=\"n\">echo</span> <span class=\"s2\">\"** clang / c++ **\"</span>\n    <span class=\"bp\">@./</span><span class=\"n\">clang_cpp</span>\n    <span class=\"bp\">@</span><span class=\"n\">nm</span> <span class=\"bp\">-</span><span class=\"n\">C</span> <span class=\"n\">clang_cpp</span> <span class=\"bp\">|</span> <span class=\"n\">grep</span> <span class=\"n\">greeting</span>\n\n    <span class=\"bp\">@</span><span class=\"n\">echo</span> <span class=\"s2\">\"** clang / c **\"</span>\n    <span class=\"bp\">@./</span><span class=\"n\">clang_c</span>\n    <span class=\"bp\">@</span><span class=\"n\">nm</span> <span class=\"bp\">-</span><span class=\"n\">C</span> <span class=\"n\">clang_c</span> <span class=\"bp\">|</span> <span class=\"n\">grep</span> <span class=\"n\">greeting</span>\n\n<span class=\"n\">clean</span><span class=\"o\">:</span>\n    <span class=\"n\">rm</span> <span class=\"bp\">-</span><span class=\"n\">f</span> <span class=\"n\">gcc_cpp</span> <span class=\"n\">gcc_c</span> <span class=\"n\">clang_cpp</span> <span class=\"n\">clang_c</span>\n</code></pre></div>",
+        "id": 301499252,
+        "sender_full_name": "Tom",
+        "timestamp": 1664474332
+    },
+    {
+        "content": "<p>Just stick these into the same directory and then type <code>make</code>.</p>\n<p>It will compile four programs, [c, c++] x [clang, gcc]; run all of them and grep out the <code>greeting</code> symbol to show it's weak. </p>\n<p>Please LMK if that's what yo had in mind.</p>",
+        "id": 301499641,
+        "sender_full_name": "Tom",
+        "timestamp": 1664474425
+    },
+    {
+        "content": "<p>This is the expected output</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">➜</span>   <span class=\"n\">make</span> <span class=\"n\">test</span>\n<span class=\"bp\">**</span> <span class=\"n\">gcc</span> <span class=\"bp\">/</span> <span class=\"n\">c</span><span class=\"bp\">++</span> <span class=\"bp\">**</span>\n<span class=\"n\">Hello</span> <span class=\"k\">from</span> <span class=\"n\">C</span><span class=\"bp\">++</span>\n<span class=\"mi\">0000000000000652</span> <span class=\"n\">W</span> <span class=\"n\">greeting</span><span class=\"o\">()</span>\n<span class=\"bp\">**</span> <span class=\"n\">gcc</span> <span class=\"bp\">/</span> <span class=\"n\">c</span> <span class=\"bp\">**</span>\n<span class=\"n\">Hello</span> <span class=\"k\">from</span> <span class=\"n\">C</span>\n<span class=\"mi\">0000000000000657</span> <span class=\"n\">W</span> <span class=\"n\">greeting</span>\n<span class=\"bp\">**</span> <span class=\"n\">clang</span> <span class=\"bp\">/</span> <span class=\"n\">c</span><span class=\"bp\">++</span> <span class=\"bp\">**</span>\n<span class=\"n\">Hello</span> <span class=\"k\">from</span> <span class=\"n\">C</span><span class=\"bp\">++</span>\n<span class=\"mi\">00000000004011</span><span class=\"n\">d0</span> <span class=\"n\">W</span> <span class=\"n\">greeting</span><span class=\"o\">()</span>\n<span class=\"bp\">**</span> <span class=\"n\">clang</span> <span class=\"bp\">/</span> <span class=\"n\">c</span> <span class=\"bp\">**</span>\n<span class=\"n\">Hello</span> <span class=\"k\">from</span> <span class=\"n\">C</span>\n<span class=\"mi\">00000000004011</span><span class=\"n\">d0</span> <span class=\"n\">W</span> <span class=\"n\">greeting</span>\n</code></pre></div>",
+        "id": 301499974,
+        "sender_full_name": "Tom",
+        "timestamp": 1664474508
+    },
+    {
+        "content": "<p>Also note that the linker has discarded the duplicates, as expected.</p>",
+        "id": 301500948,
+        "sender_full_name": "Tom",
+        "timestamp": 1664474765
+    },
+    {
+        "content": "<p>It has discarded the duplicate symbol, but not the code</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"mi\">0000000000401143</span> <span class=\"bp\">&lt;</span><span class=\"n\">greeting</span><span class=\"bp\">&gt;</span><span class=\"o\">:</span>\n  <span class=\"mi\">401143</span><span class=\"o\">:</span>       <span class=\"mi\">55</span>                      <span class=\"n\">push</span>   <span class=\"bp\">%</span><span class=\"n\">rbp</span>\n  <span class=\"mi\">401144</span><span class=\"o\">:</span>       <span class=\"mi\">48</span> <span class=\"mi\">89</span> <span class=\"n\">e5</span>                <span class=\"n\">mov</span>    <span class=\"bp\">%</span><span class=\"n\">rsp</span><span class=\"o\">,</span><span class=\"bp\">%</span><span class=\"n\">rbp</span>\n  <span class=\"mi\">401147</span><span class=\"o\">:</span>       <span class=\"n\">b8</span> <span class=\"mi\">04</span> <span class=\"mi\">20</span> <span class=\"mi\">40</span> <span class=\"mi\">00</span>          <span class=\"n\">mov</span>    <span class=\"bp\">$</span><span class=\"mi\">0x402004</span><span class=\"o\">,</span><span class=\"bp\">%</span><span class=\"n\">eax</span>\n  <span class=\"mi\">40114</span><span class=\"n\">c</span><span class=\"o\">:</span>       <span class=\"mi\">5</span><span class=\"n\">d</span>                      <span class=\"n\">pop</span>    <span class=\"bp\">%</span><span class=\"n\">rbp</span>\n  <span class=\"mi\">40114</span><span class=\"n\">d</span><span class=\"o\">:</span>       <span class=\"n\">c3</span>                      <span class=\"n\">ret</span>\n  <span class=\"mi\">40114</span><span class=\"n\">e</span><span class=\"o\">:</span>       <span class=\"mi\">55</span>                      <span class=\"n\">push</span>   <span class=\"bp\">%</span><span class=\"n\">rbp</span>\n  <span class=\"mi\">40114</span><span class=\"n\">f</span><span class=\"o\">:</span>       <span class=\"mi\">48</span> <span class=\"mi\">89</span> <span class=\"n\">e5</span>                <span class=\"n\">mov</span>    <span class=\"bp\">%</span><span class=\"n\">rsp</span><span class=\"o\">,</span><span class=\"bp\">%</span><span class=\"n\">rbp</span>\n  <span class=\"mi\">401152</span><span class=\"o\">:</span>       <span class=\"n\">b8</span> <span class=\"mi\">11</span> <span class=\"mi\">20</span> <span class=\"mi\">40</span> <span class=\"mi\">00</span>          <span class=\"n\">mov</span>    <span class=\"bp\">$</span><span class=\"mi\">0x402011</span><span class=\"o\">,</span><span class=\"bp\">%</span><span class=\"n\">eax</span>\n  <span class=\"mi\">401157</span><span class=\"o\">:</span>       <span class=\"mi\">5</span><span class=\"n\">d</span>                      <span class=\"n\">pop</span>    <span class=\"bp\">%</span><span class=\"n\">rbp</span>\n  <span class=\"mi\">401158</span><span class=\"o\">:</span>       <span class=\"n\">c3</span>                      <span class=\"n\">ret</span>\n</code></pre></div>\n<p>You need <code>-ffunction-sections -Wl,--gc-sections</code> to get rid of it</p>",
+        "id": 301515146,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664479373
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"515083\">Tom</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Weak.20symbols/near/301485388\">said</a>:</p>\n<blockquote>\n<p>I actually like the hashing approach because it would guard us against (certain) types of ABI breaks and compatibility issues (i.e. what C++ defines at the ODR).</p>\n</blockquote>\n<p>I'm not sure what you mean by that. As Mario said, there are no plans for a stable ABI.</p>\n<blockquote>\n<p>Also, ICF will only apply when compiling an executable, so we still need a weak symbol story for when linking against SOs.</p>\n</blockquote>\n<p>ICF applies to any kind of object. While it will not get rid of duplicates across dynamic linking boundaries, some duplication seems acceptable compared to the overhead of going through the GOT.</p>",
+        "id": 301521863,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664481799
+    },
+    {
+        "content": "<p>With weak symbols do we have to pay for indirection even within the same shared library? That may be significant for <a href=\"http://libleanshared.so\">libleanshared.so</a>. With ICF we would keep specializations <code>static</code> like today.</p>",
+        "id": 301523428,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664482347
+    },
+    {
+        "content": "<p>I don't see any reason not to enable ICF. It sounds like an LTO-style feature that requires no code changes, so if we can afford the link time cost then why not?</p>",
+        "id": 301524805,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664482873
+    },
+    {
+        "content": "<p>even if we implement all this weak symbol specialization stuff ICF will still be able to find other examples that just happen to be identical unrelated functions</p>",
+        "id": 301525043,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664482958
+    },
+    {
+        "content": "<blockquote>\n<p>You need -ffunction-sections -Wl,--gc-sections to get rid of it</p>\n</blockquote>\n<p>Thanks for catching - I forgot to re-add when I rewrite my CMakeLists.txt into the simplified Makefile to post here.</p>",
+        "id": 301525615,
+        "sender_full_name": "Tom",
+        "timestamp": 1664483178
+    },
+    {
+        "content": "<blockquote>\n<blockquote>\n<p>I actually like the hashing approach because it would guard us against (certain) types of ABI breaks and compatibility issues (i.e. what C++ defines at the ODR).</p>\n</blockquote>\n</blockquote>\n<blockquote>\n<p>I'm not sure what you mean by that. As Mario said, there are no plans for a stable ABI.</p>\n</blockquote>\n<p>I just mean that, inadvertently, someone will compile two binaries and link them to Lean and because the symbols will have a hash, they will not be found, rather than being \"accidentally\" linked.  I think that's good because it stops people from chasing phantom problems.</p>\n<blockquote>\n<p>With weak symbols do we have to pay for indirection even within the same shared library?<br>\nWith ICF we would keep specializations static like today.</p>\n</blockquote>\n<p>Weak symbols cannot be <code>static</code> (they need external linkage, which makes sense).  However, the default symbol visibility is set to \"hidden\", so it doesn't matter!  \"weakness\" is orthogonal to the GOT/PLT lookup.   See the following example:</p>",
+        "id": 301554507,
+        "sender_full_name": "Tom",
+        "timestamp": 1664498143
+    },
+    {
+        "content": "<p>a.cpp</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">char</span> <span class=\"n\">const</span> <span class=\"bp\">*</span><span class=\"n\">greeting</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n\n<span class=\"n\">char</span> <span class=\"n\">const</span> <span class=\"bp\">*</span><span class=\"n\">greeting2</span><span class=\"o\">()</span> <span class=\"n\">__attribute__</span><span class=\"o\">((</span><span class=\"n\">visibility</span><span class=\"o\">(</span><span class=\"s2\">\"default\"</span><span class=\"o\">)))</span><span class=\"bp\">;</span>\n<span class=\"n\">char</span> <span class=\"n\">const</span> <span class=\"bp\">*</span><span class=\"n\">greeting2</span><span class=\"o\">()</span>\n<span class=\"o\">{</span>\n    <span class=\"n\">return</span> <span class=\"n\">greeting</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n<span class=\"o\">}</span>\n</code></pre></div>\n<p>b.cpp</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"kn\">include</span> <span class=\"s2\">\"config.h\"</span>\n\n<span class=\"n\">char</span> <span class=\"n\">const</span> <span class=\"bp\">*</span><span class=\"n\">greeting</span><span class=\"o\">()</span> <span class=\"n\">WEAK_SYMBOL</span><span class=\"bp\">;</span>\n<span class=\"n\">char</span> <span class=\"n\">const</span> <span class=\"bp\">*</span><span class=\"n\">greeting</span><span class=\"o\">()</span>\n<span class=\"o\">{</span>\n<span class=\"bp\">#</span><span class=\"n\">ifdef</span> <span class=\"n\">__cplusplus</span>\n    <span class=\"n\">return</span> <span class=\"s2\">\"Hello from C++\"</span><span class=\"bp\">;</span>\n<span class=\"bp\">#</span><span class=\"k\">else</span>\n    <span class=\"n\">return</span> <span class=\"s2\">\"Hello from C\"</span><span class=\"bp\">;</span>\n<span class=\"bp\">#</span><span class=\"n\">endif</span>\n<span class=\"o\">}</span>\n</code></pre></div>\n<p>Now run:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">➜</span>   <span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">shared</span> <span class=\"bp\">-</span><span class=\"n\">o</span> <span class=\"n\">a.so</span> <span class=\"bp\">-</span><span class=\"n\">fvisibility</span><span class=\"bp\">=</span><span class=\"n\">hidden</span> <span class=\"bp\">-</span><span class=\"n\">fPIC</span>\n</code></pre></div>\n<p>Looking at <code>nm -DC a.so</code>, you should see that <code>greeting</code>  is not in the dynamic section</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">&lt;</span><span class=\"n\">snip</span><span class=\"bp\">&gt;</span>\n<span class=\"mi\">000000000000057</span><span class=\"n\">a</span> <span class=\"n\">T</span> <span class=\"n\">greeting2</span><span class=\"o\">()</span>\n</code></pre></div>\n<p>and using <code>objdump -d a.so</code> you see that</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"mi\">000000000000057</span><span class=\"n\">a</span> <span class=\"bp\">&lt;</span><span class=\"n\">_Z9greeting2v</span><span class=\"bp\">&gt;</span><span class=\"o\">:</span>\n <span class=\"mi\">57</span><span class=\"n\">a</span><span class=\"o\">:</span>   <span class=\"mi\">55</span>                      <span class=\"n\">push</span>   <span class=\"bp\">%</span><span class=\"n\">rbp</span>\n <span class=\"mi\">57</span><span class=\"n\">b</span><span class=\"o\">:</span>   <span class=\"mi\">48</span> <span class=\"mi\">89</span> <span class=\"n\">e5</span>                <span class=\"n\">mov</span>    <span class=\"bp\">%</span><span class=\"n\">rsp</span><span class=\"o\">,</span><span class=\"bp\">%</span><span class=\"n\">rbp</span>\n <span class=\"mi\">57</span><span class=\"n\">e</span><span class=\"o\">:</span>   <span class=\"n\">e8</span> <span class=\"mi\">02</span> <span class=\"mi\">00</span> <span class=\"mi\">00</span> <span class=\"mi\">00</span>          <span class=\"n\">callq</span>  <span class=\"mi\">585</span> <span class=\"bp\">&lt;</span><span class=\"n\">_Z8greetingv</span><span class=\"bp\">&gt;</span>\n <span class=\"mi\">583</span><span class=\"o\">:</span>   <span class=\"mi\">5</span><span class=\"n\">d</span>                      <span class=\"n\">pop</span>    <span class=\"bp\">%</span><span class=\"n\">rbp</span>\n <span class=\"mi\">584</span><span class=\"o\">:</span>   <span class=\"n\">c3</span>                      <span class=\"n\">retq</span>\n\n<span class=\"mi\">0000000000000585</span> <span class=\"bp\">&lt;</span><span class=\"n\">_Z8greetingv</span><span class=\"bp\">&gt;</span><span class=\"o\">:</span>\n <span class=\"mi\">585</span><span class=\"o\">:</span>   <span class=\"mi\">55</span>                      <span class=\"n\">push</span>   <span class=\"bp\">%</span><span class=\"n\">rbp</span>\n <span class=\"mi\">586</span><span class=\"o\">:</span>   <span class=\"mi\">48</span> <span class=\"mi\">89</span> <span class=\"n\">e5</span>                <span class=\"n\">mov</span>    <span class=\"bp\">%</span><span class=\"n\">rsp</span><span class=\"o\">,</span><span class=\"bp\">%</span><span class=\"n\">rbp</span>\n <span class=\"mi\">589</span><span class=\"o\">:</span>   <span class=\"mi\">48</span> <span class=\"mi\">8</span><span class=\"n\">d</span> <span class=\"mi\">05</span> <span class=\"mi\">0</span><span class=\"n\">d</span> <span class=\"mi\">00</span> <span class=\"mi\">00</span> <span class=\"mi\">00</span>    <span class=\"n\">lea</span>    <span class=\"mi\">0xd</span><span class=\"o\">(</span><span class=\"bp\">%</span><span class=\"n\">rip</span><span class=\"o\">),</span><span class=\"bp\">%</span><span class=\"n\">rax</span>        <span class=\"bp\">#</span> <span class=\"mi\">59</span><span class=\"n\">d</span> <span class=\"bp\">&lt;</span><span class=\"n\">_fini</span><span class=\"bp\">+</span><span class=\"mi\">0x9</span><span class=\"bp\">&gt;</span>\n <span class=\"mi\">590</span><span class=\"o\">:</span>   <span class=\"mi\">5</span><span class=\"n\">d</span>                      <span class=\"n\">pop</span>    <span class=\"bp\">%</span><span class=\"n\">rbp</span>\n <span class=\"mi\">591</span><span class=\"o\">:</span>   <span class=\"n\">c3</span>                      <span class=\"n\">retq</span>\n</code></pre></div>\n<p>So, as expected, the call to <code>greeting</code> goes through a relative jump rather than through an indirect jump.</p>",
+        "id": 301555023,
+        "sender_full_name": "Tom",
+        "timestamp": 1664498498
+    },
+    {
+        "content": "<p>Ah, that's good! It's especially important on Windows where we can only have a very limited amount of exported symbols.</p>",
+        "id": 301587487,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664523680
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"515083\">Tom</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Weak.20symbols/near/301554507\">said</a>:</p>\n<blockquote>\n<p>I just mean that, inadvertently, someone will compile two binaries and link them to Lean and because the symbols will have a hash, they will not be found, rather than being \"accidentally\" linked.  I think that's good because it stops people from chasing phantom problems.</p>\n</blockquote>\n<p><code>static</code> prevents accidental linking just as well.</p>\n<blockquote>\n<blockquote>\n<p>With weak symbols do we have to pay for indirection even within the same shared library?<br>\nWith ICF we would keep specializations static like today.</p>\n</blockquote>\n<p>Weak symbols cannot be <code>static</code> (they need external linkage, which makes sense)</p>\n</blockquote>\n<p>Sure, but what I meant is that with ICF I wouldn't use weak symbols at all.</p>",
+        "id": 301587820,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664523822
+    },
+    {
+        "content": "<p>All good points, and ultimately it's not my call - happy to defer to others.  For the sake of completeness (and something we can perhaps discuss in the meeting), here are a few other thoughts:</p>\n<ul>\n<li>icf may not be as portable a weak symbols because not all target platform linkers may not support it (Especially with LLVM on the way)</li>\n<li>gcc documents that its icf is behaviorally different from gold's.  Not sure if that could lead to issues (see here: <a href=\"https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html\">https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html</a>)</li>\n<li>I'm not 100% sure of the impact of ICF on debug symbols (and perhaps stack traces), but I've heard of some issues (which may have been fixed now).  I also cannot say anything about ICF behavior on MSVC, I have no experience there.</li>\n<li>(This now enters speculation area on my part so please treat with a pinch of salt).  You suggested <code>icf=safe</code> (so I assume you're referring to gold).  However, the docs say that it will only fold functions whose address is not taken.  My understanding of instances is they are effectively just dictionaries of function pointers; could this lead to issues with functions not getting folded?</li>\n</ul>\n<p>Cheers!</p>",
+        "id": 301681866,
+        "sender_full_name": "Tom",
+        "timestamp": 1664553808
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"515083\">@Tom</span> Do you think you could make an example using ICF and comparing results to the weak symbol example above?</p>",
+        "id": 301687504,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664555456
+    },
+    {
+        "content": "<p>I won't make it to today's meeting unfortunately</p>",
+        "id": 301689596,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664556085
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Weak.20symbols/near/301687504\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"515083\">Tom</span> Do you think you could make an example using ICF and comparing results to the weak symbol example above?</p>\n</blockquote>\n<p>Sure, and let me create an example when both are useful <span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span></p>\n<p>But in summary of the discussion today:  It seemed we were lean-ing (ha!) toward using my suggestion of using both weak symbols and then enabling folding, too, because it gives the compiler more control and is not completely reliant on the implementation details of the various linkers.  Please LMK if I misunderstood.</p>",
+        "id": 301748845,
+        "sender_full_name": "Tom",
+        "timestamp": 1664579720
+    },
+    {
+        "content": "<p>Here's the extended example, as promised.  Note that I have created two structurally equivalent types.  By including the function <code>reduceX</code> in both translation units, I create multiple (weak) definitions.</p>\n<p>test.h</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">struct</span> <span class=\"n\">X</span>\n<span class=\"o\">{</span>\n    <span class=\"n\">int</span> <span class=\"n\">a</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span><span class=\"bp\">;</span>\n    <span class=\"n\">int</span> <span class=\"n\">b</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span><span class=\"bp\">;</span>\n<span class=\"o\">}</span><span class=\"bp\">;</span>\n\n<span class=\"bp\">//</span> <span class=\"n\">create</span> <span class=\"n\">the</span> <span class=\"n\">same</span> <span class=\"n\">weak</span> <span class=\"n\">symbol</span> <span class=\"k\">in</span> <span class=\"n\">two</span> <span class=\"n\">translation</span> <span class=\"n\">units</span>\n<span class=\"n\">int</span> <span class=\"n\">reduceX</span><span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"n\">const</span> <span class=\"bp\">&amp;</span><span class=\"n\">x</span><span class=\"o\">)</span> <span class=\"n\">__attribute__</span><span class=\"o\">((</span><span class=\"n\">weak</span><span class=\"o\">))</span><span class=\"bp\">;</span>\n\n<span class=\"n\">int</span> <span class=\"n\">reduceX</span><span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"n\">const</span> <span class=\"bp\">&amp;</span><span class=\"n\">x</span><span class=\"o\">)</span>\n<span class=\"o\">{</span>\n    <span class=\"n\">return</span> <span class=\"n\">x.a</span> <span class=\"bp\">+</span> <span class=\"n\">x.b</span><span class=\"bp\">;</span>\n<span class=\"o\">}</span>\n\n<span class=\"n\">struct</span> <span class=\"n\">Y</span>\n<span class=\"o\">{</span>\n    <span class=\"n\">int</span> <span class=\"n\">w</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span><span class=\"bp\">;</span>\n    <span class=\"n\">int</span> <span class=\"n\">z</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span><span class=\"bp\">;</span>\n    <span class=\"n\">float</span> <span class=\"n\">r</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span><span class=\"bp\">;</span>\n<span class=\"o\">}</span><span class=\"bp\">;</span>\n</code></pre></div>\n<p>a.cpp</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"kn\">include</span> <span class=\"s2\">\"test.h\"</span>\n\n<span class=\"bp\">#</span><span class=\"kn\">include</span> <span class=\"bp\">&lt;</span><span class=\"n\">cstdio</span><span class=\"bp\">&gt;</span>\n\n<span class=\"n\">int</span> <span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span> <span class=\"bp\">&amp;</span><span class=\"n\">y</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n\n<span class=\"n\">int</span> <span class=\"n\">main</span><span class=\"o\">()</span>\n<span class=\"o\">{</span>\n    <span class=\"n\">X</span> <span class=\"n\">x</span><span class=\"o\">{</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">2</span><span class=\"o\">}</span><span class=\"bp\">;</span>\n    <span class=\"n\">Y</span> <span class=\"n\">y</span><span class=\"o\">{</span><span class=\"mi\">3</span><span class=\"o\">,</span> <span class=\"mi\">4</span><span class=\"o\">}</span><span class=\"bp\">;</span>\n\n    <span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">printf</span><span class=\"o\">(</span><span class=\"s2\">\"reduceX result = %d</span><span class=\"se\">\\n</span><span class=\"s2\">\"</span><span class=\"o\">,</span> <span class=\"n\">reduceX</span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"o\">))</span><span class=\"bp\">;</span>\n    <span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">printf</span><span class=\"o\">(</span><span class=\"s2\">\"reduceY result = %d</span><span class=\"se\">\\n</span><span class=\"s2\">\"</span><span class=\"o\">,</span> <span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">y</span><span class=\"o\">))</span><span class=\"bp\">;</span>\n<span class=\"bp\">#</span><span class=\"n\">ifdef</span> <span class=\"n\">WITH_ADDR</span>\n    <span class=\"bp\">//</span><span class=\"k\">if</span> <span class=\"n\">defined</span><span class=\"o\">,</span> <span class=\"n\">the</span> <span class=\"n\">address</span> <span class=\"n\">of</span> <span class=\"n\">the</span> <span class=\"n\">two</span> <span class=\"n\">functions</span> <span class=\"n\">will</span> <span class=\"n\">be</span> <span class=\"n\">taken</span>\n    <span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">printf</span><span class=\"o\">(</span><span class=\"s2\">\"folded = %d</span><span class=\"se\">\\n</span><span class=\"s2\">\"</span><span class=\"o\">,</span> <span class=\"o\">(</span><span class=\"n\">void</span> <span class=\"bp\">*</span><span class=\"o\">)</span><span class=\"n\">reduceX</span> <span class=\"bp\">==</span> <span class=\"o\">(</span><span class=\"n\">void</span> <span class=\"bp\">*</span><span class=\"o\">)</span><span class=\"n\">reduceY</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n<span class=\"bp\">#</span><span class=\"n\">endif</span>\n<span class=\"o\">}</span>\n</code></pre></div>\n<p>b.cpp</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"kn\">include</span> <span class=\"s2\">\"test.h\"</span>\n\n<span class=\"n\">int</span> <span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span> <span class=\"bp\">&amp;</span><span class=\"n\">y</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n\n<span class=\"n\">int</span> <span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span> <span class=\"bp\">&amp;</span><span class=\"n\">y</span><span class=\"o\">)</span>\n<span class=\"o\">{</span>\n    <span class=\"n\">return</span> <span class=\"n\">y.w</span> <span class=\"bp\">+</span> <span class=\"n\">y.z</span><span class=\"bp\">;</span>\n<span class=\"o\">}</span>\n</code></pre></div>\n<p>Makefile</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">weak_only</span><span class=\"o\">:</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span>\n    <span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">o</span> <span class=\"bp\">$@</span>\n\n<span class=\"n\">weak_only_addr</span><span class=\"o\">:</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span>\n    <span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"bp\">-</span><span class=\"n\">DWITH_ADDR</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">o</span> <span class=\"bp\">$@</span>\n\n<span class=\"n\">ld_icf</span><span class=\"o\">:</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span>\n    <span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">ffunction</span><span class=\"bp\">-</span><span class=\"n\">sections</span> <span class=\"bp\">-</span><span class=\"n\">fipa</span><span class=\"bp\">-</span><span class=\"n\">icf</span> <span class=\"bp\">-</span><span class=\"n\">o</span> <span class=\"bp\">$@</span>\n\n<span class=\"n\">gold_icf_safe</span><span class=\"o\">:</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span>\n    <span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">ffunction</span><span class=\"bp\">-</span><span class=\"n\">sections</span> <span class=\"bp\">-</span><span class=\"n\">fuse</span><span class=\"bp\">-</span><span class=\"n\">ld</span><span class=\"bp\">=</span><span class=\"n\">gold</span> <span class=\"bp\">-</span><span class=\"n\">Wl</span><span class=\"o\">,</span><span class=\"c1\">--icf=safe -o $@</span>\n\n<span class=\"n\">gold_icf_safe_addr</span><span class=\"o\">:</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span>\n    <span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"bp\">-</span><span class=\"n\">DWITH_ADDR</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">ffunction</span><span class=\"bp\">-</span><span class=\"n\">sections</span> <span class=\"bp\">-</span><span class=\"n\">fuse</span><span class=\"bp\">-</span><span class=\"n\">ld</span><span class=\"bp\">=</span><span class=\"n\">gold</span> <span class=\"bp\">-</span><span class=\"n\">Wl</span><span class=\"o\">,</span><span class=\"c1\">--icf=safe -o $@</span>\n\n<span class=\"n\">gold_icf_all</span><span class=\"o\">:</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span>\n    <span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">ffunction</span><span class=\"bp\">-</span><span class=\"n\">sections</span> <span class=\"bp\">-</span><span class=\"n\">fuse</span><span class=\"bp\">-</span><span class=\"n\">ld</span><span class=\"bp\">=</span><span class=\"n\">gold</span> <span class=\"bp\">-</span><span class=\"n\">Wl</span><span class=\"o\">,</span><span class=\"c1\">--icf=all -o $@</span>\n\n<span class=\"n\">gold_icf_all_addr</span><span class=\"o\">:</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span>\n    <span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"bp\">-</span><span class=\"n\">DWITH_ADDR</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">ffunction</span><span class=\"bp\">-</span><span class=\"n\">sections</span> <span class=\"bp\">-</span><span class=\"n\">fuse</span><span class=\"bp\">-</span><span class=\"n\">ld</span><span class=\"bp\">=</span><span class=\"n\">gold</span> <span class=\"bp\">-</span><span class=\"n\">Wl</span><span class=\"o\">,</span><span class=\"c1\">--icf=all -o $@</span>\n\n<span class=\"n\">TGTS</span> <span class=\"o\">:=</span> <span class=\"n\">weak_only</span> <span class=\"n\">weak_only_addr</span> <span class=\"n\">ld_icf</span> <span class=\"bp\">\\</span>\n        <span class=\"n\">gold_icf_safe</span> <span class=\"n\">gold_icf_safe_addr</span> <span class=\"n\">gold_icf_all</span> <span class=\"n\">gold_icf_all_addr</span>\n\n<span class=\"n\">define</span> <span class=\"n\">helper</span>\n    <span class=\"bp\">@</span><span class=\"n\">echo</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"mi\">1</span><span class=\"o\">)</span>\n    <span class=\"bp\">@./$</span><span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"o\">)</span>\n    <span class=\"bp\">@</span><span class=\"n\">nm</span> <span class=\"bp\">-</span><span class=\"n\">C</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"bp\">|</span> <span class=\"n\">grep</span> <span class=\"n\">reduce</span>\n    <span class=\"bp\">@</span><span class=\"n\">objdump</span> <span class=\"bp\">-</span><span class=\"n\">C</span> <span class=\"c1\">--disassemble=main $(2) | grep call | grep reduce</span>\n    <span class=\"bp\">@</span><span class=\"n\">echo</span>\n<span class=\"n\">endef</span>\n\n<span class=\"bp\">.</span><span class=\"n\">DEFAULT_GOAL</span> <span class=\"o\">:=</span> <span class=\"n\">test</span>\n<span class=\"bp\">.</span><span class=\"n\">PHONY</span><span class=\"o\">:</span> <span class=\"n\">test</span>\n<span class=\"n\">test</span><span class=\"o\">:</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">TGTS</span><span class=\"o\">)</span>\n    <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">call</span> <span class=\"n\">helper</span><span class=\"o\">,</span><span class=\"s2\">\"** gcc/ld standard **\"</span><span class=\"o\">,</span><span class=\"s2\">\"weak_only\"</span><span class=\"o\">)</span>\n    <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">call</span> <span class=\"n\">helper</span><span class=\"o\">,</span><span class=\"s2\">\"** gcc/ld standard - address taken **\"</span><span class=\"o\">,</span><span class=\"s2\">\"weak_only_addr\"</span><span class=\"o\">)</span>\n    <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">call</span> <span class=\"n\">helper</span><span class=\"o\">,</span><span class=\"s2\">\"** gcc/ld icf **\"</span><span class=\"o\">,</span><span class=\"s2\">\"ld_icf\"</span><span class=\"o\">)</span>\n    <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">call</span> <span class=\"n\">helper</span><span class=\"o\">,</span><span class=\"s2\">\"** gcc/gold icf safe**\"</span><span class=\"o\">,</span><span class=\"s2\">\"gold_icf_safe\"</span><span class=\"o\">)</span>\n    <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">call</span> <span class=\"n\">helper</span><span class=\"o\">,</span><span class=\"s2\">\"** gcc/gold icf safe - address taken **\"</span><span class=\"o\">,</span><span class=\"s2\">\"gold_icf_safe_addr\"</span><span class=\"o\">)</span>\n    <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">call</span> <span class=\"n\">helper</span><span class=\"o\">,</span><span class=\"s2\">\"** gcc/gold icf all **\"</span><span class=\"o\">,</span><span class=\"s2\">\"gold_icf_all\"</span><span class=\"o\">)</span>\n    <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">call</span> <span class=\"n\">helper</span><span class=\"o\">,</span><span class=\"s2\">\"** gcc/gold icf all - address taken **\"</span><span class=\"o\">,</span><span class=\"s2\">\"gold_icf_all_addr\"</span><span class=\"o\">)</span>\n\n\n<span class=\"n\">clean</span><span class=\"o\">:</span>\n    <span class=\"n\">rm</span> <span class=\"bp\">-</span><span class=\"n\">f</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">TGTS</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>The makefile dumps the (C++ filtered) symbols, as well as grepping out the function calls from the main function to verify their assembly call addresses.</p>",
+        "id": 301768929,
+        "sender_full_name": "Tom",
+        "timestamp": 1664600191
+    },
+    {
+        "content": "<p>This is the output</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">➜</span>   <span class=\"n\">make</span> <span class=\"n\">test</span>\n<span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">o</span> <span class=\"n\">weak_only</span>\n<span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"bp\">-</span><span class=\"n\">DWITH_ADDR</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">o</span> <span class=\"n\">weak_only_addr</span>\n<span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">ffunction</span><span class=\"bp\">-</span><span class=\"n\">sections</span> <span class=\"bp\">-</span><span class=\"n\">fipa</span><span class=\"bp\">-</span><span class=\"n\">icf</span> <span class=\"bp\">-</span><span class=\"n\">o</span> <span class=\"n\">ld_icf</span>\n<span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">ffunction</span><span class=\"bp\">-</span><span class=\"n\">sections</span> <span class=\"bp\">-</span><span class=\"n\">fuse</span><span class=\"bp\">-</span><span class=\"n\">ld</span><span class=\"bp\">=</span><span class=\"n\">gold</span> <span class=\"bp\">-</span><span class=\"n\">Wl</span><span class=\"o\">,</span><span class=\"c1\">--icf=safe -o gold_icf_safe</span>\n<span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"bp\">-</span><span class=\"n\">DWITH_ADDR</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">ffunction</span><span class=\"bp\">-</span><span class=\"n\">sections</span> <span class=\"bp\">-</span><span class=\"n\">fuse</span><span class=\"bp\">-</span><span class=\"n\">ld</span><span class=\"bp\">=</span><span class=\"n\">gold</span> <span class=\"bp\">-</span><span class=\"n\">Wl</span><span class=\"o\">,</span><span class=\"c1\">--icf=safe -o gold_icf_safe_addr</span>\n<span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">ffunction</span><span class=\"bp\">-</span><span class=\"n\">sections</span> <span class=\"bp\">-</span><span class=\"n\">fuse</span><span class=\"bp\">-</span><span class=\"n\">ld</span><span class=\"bp\">=</span><span class=\"n\">gold</span> <span class=\"bp\">-</span><span class=\"n\">Wl</span><span class=\"o\">,</span><span class=\"c1\">--icf=all -o gold_icf_all</span>\n<span class=\"n\">g</span><span class=\"bp\">++</span> <span class=\"bp\">-</span><span class=\"n\">DWITH_ADDR</span> <span class=\"n\">a.cpp</span> <span class=\"n\">b.cpp</span> <span class=\"bp\">-</span><span class=\"n\">ffunction</span><span class=\"bp\">-</span><span class=\"n\">sections</span> <span class=\"bp\">-</span><span class=\"n\">fuse</span><span class=\"bp\">-</span><span class=\"n\">ld</span><span class=\"bp\">=</span><span class=\"n\">gold</span> <span class=\"bp\">-</span><span class=\"n\">Wl</span><span class=\"o\">,</span><span class=\"c1\">--icf=all -o gold_icf_all_addr</span>\n<span class=\"bp\">**</span> <span class=\"n\">gcc</span><span class=\"bp\">/</span><span class=\"n\">ld</span> <span class=\"n\">standard</span> <span class=\"bp\">**</span>\n<span class=\"n\">reduceX</span> <span class=\"n\">result</span> <span class=\"bp\">=</span> <span class=\"mi\">3</span>\n<span class=\"n\">reduceY</span> <span class=\"n\">result</span> <span class=\"bp\">=</span> <span class=\"mi\">7</span>\n<span class=\"mi\">0000000000001121</span> <span class=\"n\">W</span> <span class=\"n\">reduceX</span><span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span>\n<span class=\"mi\">00000000000011</span><span class=\"n\">cb</span> <span class=\"n\">T</span> <span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span>\n    <span class=\"mi\">116</span><span class=\"n\">e</span><span class=\"o\">:</span>       <span class=\"n\">e8</span> <span class=\"n\">ae</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span>          <span class=\"n\">call</span>   <span class=\"mi\">1121</span> <span class=\"bp\">&lt;</span><span class=\"n\">reduceX</span><span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span><span class=\"bp\">&gt;</span>\n    <span class=\"mi\">1190</span><span class=\"o\">:</span>       <span class=\"n\">e8</span> <span class=\"mi\">36</span> <span class=\"mi\">00</span> <span class=\"mi\">00</span> <span class=\"mi\">00</span>          <span class=\"n\">call</span>   <span class=\"mi\">11</span><span class=\"n\">cb</span> <span class=\"bp\">&lt;</span><span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span><span class=\"bp\">&gt;</span>\n\n<span class=\"bp\">**</span> <span class=\"n\">gcc</span><span class=\"bp\">/</span><span class=\"n\">ld</span> <span class=\"n\">standard</span> <span class=\"bp\">-</span> <span class=\"n\">address</span> <span class=\"n\">taken</span> <span class=\"bp\">**</span>\n<span class=\"n\">reduceX</span> <span class=\"n\">result</span> <span class=\"bp\">=</span> <span class=\"mi\">3</span>\n<span class=\"n\">reduceY</span> <span class=\"n\">result</span> <span class=\"bp\">=</span> <span class=\"mi\">7</span>\n<span class=\"n\">folded</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span>\n<span class=\"mi\">0000000000001121</span> <span class=\"n\">W</span> <span class=\"n\">reduceX</span><span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span>\n<span class=\"mi\">0000000000001201</span> <span class=\"n\">T</span> <span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span>\n    <span class=\"mi\">116</span><span class=\"n\">e</span><span class=\"o\">:</span>       <span class=\"n\">e8</span> <span class=\"n\">ae</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span>          <span class=\"n\">call</span>   <span class=\"mi\">1121</span> <span class=\"bp\">&lt;</span><span class=\"n\">reduceX</span><span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span><span class=\"bp\">&gt;</span>\n    <span class=\"mi\">1190</span><span class=\"o\">:</span>       <span class=\"n\">e8</span> <span class=\"mi\">6</span><span class=\"n\">c</span> <span class=\"mi\">00</span> <span class=\"mi\">00</span> <span class=\"mi\">00</span>          <span class=\"n\">call</span>   <span class=\"mi\">1201</span> <span class=\"bp\">&lt;</span><span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span><span class=\"bp\">&gt;</span>\n\n<span class=\"bp\">**</span> <span class=\"n\">gcc</span><span class=\"bp\">/</span><span class=\"n\">ld</span> <span class=\"n\">icf</span> <span class=\"bp\">**</span>\n<span class=\"n\">reduceX</span> <span class=\"n\">result</span> <span class=\"bp\">=</span> <span class=\"mi\">3</span>\n<span class=\"n\">reduceY</span> <span class=\"n\">result</span> <span class=\"bp\">=</span> <span class=\"mi\">7</span>\n<span class=\"mi\">0000000000001121</span> <span class=\"n\">W</span> <span class=\"n\">reduceX</span><span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span>\n<span class=\"mi\">00000000000011</span><span class=\"n\">cb</span> <span class=\"n\">T</span> <span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span>\n    <span class=\"mi\">116</span><span class=\"n\">e</span><span class=\"o\">:</span>       <span class=\"n\">e8</span> <span class=\"n\">ae</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span>          <span class=\"n\">call</span>   <span class=\"mi\">1121</span> <span class=\"bp\">&lt;</span><span class=\"n\">reduceX</span><span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span><span class=\"bp\">&gt;</span>\n    <span class=\"mi\">1190</span><span class=\"o\">:</span>       <span class=\"n\">e8</span> <span class=\"mi\">36</span> <span class=\"mi\">00</span> <span class=\"mi\">00</span> <span class=\"mi\">00</span>          <span class=\"n\">call</span>   <span class=\"mi\">11</span><span class=\"n\">cb</span> <span class=\"bp\">&lt;</span><span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span><span class=\"bp\">&gt;</span>\n\n<span class=\"bp\">**</span> <span class=\"n\">gcc</span><span class=\"bp\">/</span><span class=\"n\">gold</span> <span class=\"n\">icf</span> <span class=\"n\">safe</span><span class=\"bp\">**</span>\n<span class=\"n\">reduceX</span> <span class=\"n\">result</span> <span class=\"bp\">=</span> <span class=\"mi\">3</span>\n<span class=\"n\">reduceY</span> <span class=\"n\">result</span> <span class=\"bp\">=</span> <span class=\"mi\">7</span>\n<span class=\"mi\">00000000000006</span><span class=\"n\">c1</span> <span class=\"n\">W</span> <span class=\"n\">reduceX</span><span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span>\n<span class=\"mi\">00000000000006</span><span class=\"n\">c1</span> <span class=\"n\">T</span> <span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span>\n <span class=\"mi\">70</span><span class=\"n\">e</span><span class=\"o\">:</span>   <span class=\"n\">e8</span> <span class=\"n\">ae</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span>          <span class=\"n\">call</span>   <span class=\"mi\">6</span><span class=\"n\">c1</span> <span class=\"bp\">&lt;</span><span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span><span class=\"bp\">&gt;</span>\n <span class=\"mi\">730</span><span class=\"o\">:</span>   <span class=\"n\">e8</span> <span class=\"mi\">8</span><span class=\"n\">c</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span>          <span class=\"n\">call</span>   <span class=\"mi\">6</span><span class=\"n\">c1</span> <span class=\"bp\">&lt;</span><span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span><span class=\"bp\">&gt;</span>\n\n<span class=\"bp\">**</span> <span class=\"n\">gcc</span><span class=\"bp\">/</span><span class=\"n\">gold</span> <span class=\"n\">icf</span> <span class=\"n\">safe</span> <span class=\"bp\">-</span> <span class=\"n\">address</span> <span class=\"n\">taken</span> <span class=\"bp\">**</span>\n<span class=\"n\">reduceX</span> <span class=\"n\">result</span> <span class=\"bp\">=</span> <span class=\"mi\">3</span>\n<span class=\"n\">reduceY</span> <span class=\"n\">result</span> <span class=\"bp\">=</span> <span class=\"mi\">7</span>\n<span class=\"n\">folded</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span>\n<span class=\"mi\">00000000000006</span><span class=\"n\">c1</span> <span class=\"n\">W</span> <span class=\"n\">reduceX</span><span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span>\n<span class=\"mi\">00000000000007</span><span class=\"n\">a1</span> <span class=\"n\">T</span> <span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span>\n <span class=\"mi\">70</span><span class=\"n\">e</span><span class=\"o\">:</span>   <span class=\"n\">e8</span> <span class=\"n\">ae</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span>          <span class=\"n\">call</span>   <span class=\"mi\">6</span><span class=\"n\">c1</span> <span class=\"bp\">&lt;</span><span class=\"n\">reduceX</span><span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span><span class=\"bp\">&gt;</span>\n <span class=\"mi\">730</span><span class=\"o\">:</span>   <span class=\"n\">e8</span> <span class=\"mi\">6</span><span class=\"n\">c</span> <span class=\"mi\">00</span> <span class=\"mi\">00</span> <span class=\"mi\">00</span>          <span class=\"n\">call</span>   <span class=\"mi\">7</span><span class=\"n\">a1</span> <span class=\"bp\">&lt;</span><span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span><span class=\"bp\">&gt;</span>\n\n<span class=\"bp\">**</span> <span class=\"n\">gcc</span><span class=\"bp\">/</span><span class=\"n\">gold</span> <span class=\"n\">icf</span> <span class=\"n\">all</span> <span class=\"bp\">**</span>\n<span class=\"n\">reduceX</span> <span class=\"n\">result</span> <span class=\"bp\">=</span> <span class=\"mi\">3</span>\n<span class=\"n\">reduceY</span> <span class=\"n\">result</span> <span class=\"bp\">=</span> <span class=\"mi\">7</span>\n<span class=\"mi\">00000000000006</span><span class=\"n\">c1</span> <span class=\"n\">W</span> <span class=\"n\">reduceX</span><span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span>\n<span class=\"mi\">00000000000006</span><span class=\"n\">c1</span> <span class=\"n\">T</span> <span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span>\n <span class=\"mi\">70</span><span class=\"n\">e</span><span class=\"o\">:</span>   <span class=\"n\">e8</span> <span class=\"n\">ae</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span>          <span class=\"n\">call</span>   <span class=\"mi\">6</span><span class=\"n\">c1</span> <span class=\"bp\">&lt;</span><span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span><span class=\"bp\">&gt;</span>\n <span class=\"mi\">730</span><span class=\"o\">:</span>   <span class=\"n\">e8</span> <span class=\"mi\">8</span><span class=\"n\">c</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span>          <span class=\"n\">call</span>   <span class=\"mi\">6</span><span class=\"n\">c1</span> <span class=\"bp\">&lt;</span><span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span><span class=\"bp\">&gt;</span>\n\n<span class=\"bp\">**</span> <span class=\"n\">gcc</span><span class=\"bp\">/</span><span class=\"n\">gold</span> <span class=\"n\">icf</span> <span class=\"n\">all</span> <span class=\"bp\">-</span> <span class=\"n\">address</span> <span class=\"n\">taken</span> <span class=\"bp\">**</span>\n<span class=\"n\">reduceX</span> <span class=\"n\">result</span> <span class=\"bp\">=</span> <span class=\"mi\">3</span>\n<span class=\"n\">reduceY</span> <span class=\"n\">result</span> <span class=\"bp\">=</span> <span class=\"mi\">7</span>\n<span class=\"n\">folded</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span>\n<span class=\"mi\">00000000000006</span><span class=\"n\">c1</span> <span class=\"n\">W</span> <span class=\"n\">reduceX</span><span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span>\n<span class=\"mi\">00000000000006</span><span class=\"n\">c1</span> <span class=\"n\">T</span> <span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span>\n <span class=\"mi\">70</span><span class=\"n\">e</span><span class=\"o\">:</span>   <span class=\"n\">e8</span> <span class=\"n\">ae</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span>          <span class=\"n\">call</span>   <span class=\"mi\">6</span><span class=\"n\">c1</span> <span class=\"bp\">&lt;</span><span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span><span class=\"bp\">&gt;</span>\n <span class=\"mi\">730</span><span class=\"o\">:</span>   <span class=\"n\">e8</span> <span class=\"mi\">8</span><span class=\"n\">c</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span> <span class=\"n\">ff</span>          <span class=\"n\">call</span>   <span class=\"mi\">6</span><span class=\"n\">c1</span> <span class=\"bp\">&lt;</span><span class=\"n\">reduceY</span><span class=\"o\">(</span><span class=\"n\">Y</span> <span class=\"n\">const</span><span class=\"bp\">&amp;</span><span class=\"o\">)</span><span class=\"bp\">&gt;</span>\n</code></pre></div>\n<p>Summary:</p>\n<p>I deliberately designed the test so you get both equality (in the case of weak symbols) and structural equivalence (two structurally equivalent  -but nominally different - functions/types.</p>\n<p>1) Weak symbols work in all cases<br>\n2) gcc's code folding doesn't do anything in this case (even if the symbols are both weak or if the structures are actually structurally equivalent - I tried both)<br>\n3) gcc with gold + safe will fold the code, but switches off in the case when the addresses are used (as per the docs)<br>\n4) gcc with gold + all works as expected - the code is always folded</p>",
+        "id": 301769306,
+        "sender_full_name": "Tom",
+        "timestamp": 1664600526
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> - any thoughts on the example above?  Does that satisfy what you were looking for?  It'll be easier for me to make any adjustments on the weekend rather than during the week so if there's anything that's not clear, please LMK and I can try to have it ready at least prior to the meeting tomorrow.  Thanks!</p>",
+        "id": 301982922,
+        "sender_full_name": "Tom",
+        "timestamp": 1664754337
+    },
+    {
+        "content": "<p>Does that work on all the platforms we test in CI?</p>",
+        "id": 301982993,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664754412
+    },
+    {
+        "content": "<p>if <code>gcc icf all</code> doesn't require any code changes, I would suggest turning it on in a PR and benchmarking it</p>",
+        "id": 301983060,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664754486
+    },
+    {
+        "content": "<p>It should, assuming we only build with gcc/clang and a recent version of binutils.</p>\n<p>However, my understanding of the point of the example your were looking for was to contrast weak symbols and linker folding, so in this case it didn't seem to matter if it's portable or not.</p>",
+        "id": 301983100,
+        "sender_full_name": "Tom",
+        "timestamp": 1664754563
+    },
+    {
+        "content": "<p>the question is whether it is worth enabling, or if it's too brittle and/or causes issues</p>",
+        "id": 301983359,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664754865
+    },
+    {
+        "content": "<blockquote>\n<p>and benchmarking it</p>\n</blockquote>\n<p>What would that mean here?  Just looking at the resulting Lean binary code size?  </p>\n<p>Or is there a collection of benchmarks I can run?  I don't see how this would meaningfully affect runtime performance unless we're looking at some very minor i-cache behaviors which I find unlikely.</p>\n<blockquote>\n<p>I would suggest turning it on in a PR</p>\n</blockquote>\n<p>What do you mean?  \"Turn it on for code generated by lean\"?  Turn it for the lean compiler itself (I assume you mean for stage 1?  Stage 0 seems to have a lot of C++ code and I think enabling that there would lead to problems.</p>",
+        "id": 301983364,
+        "sender_full_name": "Tom",
+        "timestamp": 1664754877
+    },
+    {
+        "content": "<p>benchmarking it meaning <code>!bench</code> which collects a bunch of metrics including code size as well as performance</p>",
+        "id": 301983386,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664754937
+    },
+    {
+        "content": "<blockquote>\n<p>Stage 0 seems to have a lot of C++ code and I think enabling that there would lead to problems.</p>\n</blockquote>\n<p>Yes, that's exactly why we should enable it and make this more than just speculation</p>",
+        "id": 301983443,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664754983
+    },
+    {
+        "content": "<p>Would you be able to please point me at either some docs/READMEs about bench, or at least give an example how to run it?  <br>\nSorry for stupid questions, I appreciate the help.</p>",
+        "id": 301983448,
+        "sender_full_name": "Tom",
+        "timestamp": 1664755000
+    },
+    {
+        "content": "<p>my guess is that this won't cause problems because we don't write the kind of code you are worried about, but if something breaks during deployment this will make everything more concrete</p>",
+        "id": 301983466,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664755048
+    },
+    {
+        "content": "<p>I think you have to be leo to actually kick the benchmark bot, but you can do the PR</p>",
+        "id": 301983530,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664755112
+    },
+    {
+        "content": "<p>Stage 1 and stage 0 are ~the same (stage 0 is stage 1 from a few commits prior)</p>",
+        "id": 301983607,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664755208
+    },
+    {
+        "content": "<blockquote>\n<p>Yes, that's exactly why we should enable it and make this more than just speculation</p>\n</blockquote>\n<p>I'm confused by that statement.  </p>\n<p>If stage 0 contains a lot of C++ code (and it does - it seems to be e.g. using the C++ standard library; std::string etc) I would strongly consider <strong>avoiding</strong> linker folding, as I've mentioned in previous conversations.</p>\n<p>If C code generated by the Lean codegen only creates \"C\" functions without relying on e.g. C++ templates and the standard library, then I think we are potentially in safe territory (modulo any address comparisons but you and others have said not to worry about it) and we should feel ok about turning this flag on for such binaries.</p>\n<p>Which one are we talking about here?</p>",
+        "id": 301983662,
+        "sender_full_name": "Tom",
+        "timestamp": 1664755280
+    },
+    {
+        "content": "<p>I'm talking about enabling aggressive linker folding in the C++ code</p>",
+        "id": 301983682,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664755310
+    },
+    {
+        "content": "<p>yes, the kind that you are concerned about</p>",
+        "id": 301983697,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664755321
+    },
+    {
+        "content": "<p>how are we supposed to know if there is actually a problem otherwise</p>",
+        "id": 301983754,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664755344
+    },
+    {
+        "content": "<p>In which case I would just eschew the experiment.</p>\n<p>There is a documented history of problems in C++ when enabling linker folding.  MSVC, for one, did it a while back and had to roll back the changes because it broke people's code.  This is what I've been concerned about all along.</p>\n<p>Since C++ can always assume that pointer and object identities are preserved between different instantiations of types and functions - and parts of the compiler depend on C++ - I don't see how we can enable it.</p>\n<p>Even though it may work <em>today</em>, when you e.g. update the compiler (or its standard library) something might break.  Even more so, now that LLVM is being pulled in, I don't think we can make any claims about the validity of any linker folding as the LLVM implementation could change in arbitrary ways; and part of the problem is that the breakage may well be silent, which seems highly undesirable.</p>",
+        "id": 301985507,
+        "sender_full_name": "Tom",
+        "timestamp": 1664757448
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"515083\">@Tom</span> Unlike MSVC, we're not trying to defend against issues in arbitrary code, only in the lean implementation. I assert that the issues you are worrying about don't occur in that code because you need to write contrived code to hit the issue, and the lean implementation doesn't do that. This isn't an issue of depending on UB that could break our code in the future - as long as we don't use pointer identity of template functions (which, again, why would one ever think that is okay?) then we're fine AFAICT.</p>\n<p>The only way to find out if it's an issue <em>in practice</em> is to do the experiment, and audit the code to be sure that none of those issues might pop up in the future. It's not a black box or something users can extend, so we can just double check that the crazy code you are talking about doesn't happen.</p>",
+        "id": 301996581,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664770922
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> AFAIU, Tom is arguing arguing that though Lean4 contains no contrived code, some dependency of Lean4 (eg. GMP, LLVM) very well may contain contrived code. Thus, turning on linker folding could cause bugs in a <em>dependency</em> of the Lean compiler (eg. LLVM). Furthermore, this bug could be <em>silent</em> (are we confident that our tests will uncover such a bug?)</p>",
+        "id": 302122015,
+        "sender_full_name": "Siddharth Bhat",
+        "timestamp": 1664821522
+    },
+    {
+        "content": "<p>This is still pure speculation though. It's extremely non-actionable</p>",
+        "id": 302122293,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664821612
+    },
+    {
+        "content": "<p>It also only matters for LLVM if we do switch it to static linking</p>",
+        "id": 302122396,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664821648
+    },
+    {
+        "content": "<p>if we actually uncovered such an issue in a dependency, I would report it as a bug (or get it to be prominently labeled as not compatible with ICF)</p>",
+        "id": 302122856,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664821789
+    },
+    {
+        "content": "<blockquote>\n<p>This is still pure speculation though.</p>\n</blockquote>\n<p>Seems a bit harsh, TBH (and not the first time in this thread).</p>\n<p>I've gone ahead an implemented every follow-up you've requested, and taken care to explain why it's a concern and why it could become one in the future, and laid out examples when it has happened in practice.</p>\n<p>As you know, I am inexperienced in the codebase, and don't have an oracle so am erring on the side of caution.  Perhaps our respective risk profiles/concerns are different but I would appreciate your help/guidance instead of just classifying the above information as \"speculation\" - it seems a little dismissive.</p>\n<p>As I have mentioned before, I am happy to enable and test the linker folding.  I'm not afraid of a good technical back-and-forth but would appreciate a toning down the the rhetoric.  <span aria-label=\"thank you\" class=\"emoji emoji-1f64f\" role=\"img\" title=\"thank you\">:thank_you:</span></p>",
+        "id": 302178018,
+        "sender_full_name": "Tom",
+        "timestamp": 1664847427
+    },
+    {
+        "content": "<p>I don't mean that rhetorically. Unless and until we get data on whether and how big a problem it is, it is speculation. The point of the PR is to get data, I don't know how else to express that. I understand that you are worried about bugs, but that's why we have a test suite. If there's an issue, let's find out what it looks like and what we can do to resolve it. Being afraid to do a test because something could break makes no sense to me at all.</p>",
+        "id": 302182322,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664851257
+    },
+    {
+        "content": "<p>To be clear, what I consider speculation is not that there is a potential for issues when crazy C++ code meets linker optimizations, but rather that crazy C++ code and linker optimizations will combine into a bug in the lean codebase.</p>",
+        "id": 302182521,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664851400
+    },
+    {
+        "content": "<p>If we grant your premise that there might be a latent bug caused by linker folding, please tell me what path you see to eliminating this possibility. What is the review protocol such that we can be confident that the risks are sufficiently mitigated? (This is what I mean when I talk about it being \"actionable\". A vague threat which can't be falsified is difficult to work with.)</p>",
+        "id": 302182908,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664851791
+    },
+    {
+        "content": "<blockquote>\n<p>I don't mean that rhetorically</p>\n</blockquote>\n<p>Fair enough, let's move on.  No problem, sometimes text is hard.  </p>\n<p>For completeness, I am trying to get a build of the compiler going before Friday's meeting, if not sooner, to test as requested.</p>\n<p>Please see below the other answers:</p>\n<blockquote>\n<p>but that's why we have a test suite.</p>\n</blockquote>\n<p>I am still confused by this and completely open to the fact that I'm misunderstanding you -please hear me out.</p>\n<p>I grant you that we may be able to show that the Lean compiler doesn't suffer from this problem.  The part I don't get is:  How does the test suite help with showing that some arbitrary program written in a mix of Lean and C or C++ doesn't exhibit it?   <br>\nThe initial problem, as I understood from <span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> , was to apply weak symbols to the generated code in order to reduce code size/duplication.  As such,  I understood the subsequent discussion of linker optimizations has been predominantly aimed at the <em>results</em> of Lean compilation, not just the compiler itself.</p>\n<p>Hence  I thought the point people were interested in is turning on linker folding for <em>Lean-compiled outputs</em> (i.e. the binaries the compiler produces), and to the best of my understanding <code>lake</code> could build mixed binaries of Lean and C++  code, no? (including static linking?). </p>\n<p>How does the test suite help here?</p>\n<blockquote>\n<p>but rather that crazy C++ code</p>\n</blockquote>\n<p>This is the part I am still unclear on.  For example, if I write</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">int</span> <span class=\"n\">x</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n<span class=\"n\">int</span> <span class=\"n\">y</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n\n<span class=\"n\">std</span><span class=\"o\">::</span> <span class=\"n\">vector</span> <span class=\"n\">fns</span> <span class=\"bp\">=</span> <span class=\"o\">{</span><span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">y</span><span class=\"o\">}</span><span class=\"bp\">;</span>\n</code></pre></div>\n<p>in C++, I can <strong>assume</strong> that this container contains two distinct elements and build further invariants around that premise.  It doesn't seem  that \"crazy\" to me.</p>\n<blockquote>\n<p>please tell me what path you see to eliminating this possibility</p>\n</blockquote>\n<p>I assumed we would still pursue <span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> 's original idea of using weak symbols.  As I summarized above after our last meeting, he seemed in favor of giving more control to the Lean compiler, which weak symbols would give it.  I then viewed linker folding just as a \"cherry on top\" and after the first part, I wouldn't expect it to have an appreciable effect; and if it's still needed we could look at using <code>icf=safe</code> rather than <code>icf=all</code>.   </p>\n<blockquote>\n<p>What is the review protocol such that we can be confident that the risks are sufficiently mitigated?</p>\n</blockquote>\n<p>Not using <code>icf=all</code> for now would not create the problem in the first place, right?</p>\n<blockquote>\n<p>A vague threat which can't be falsified</p>\n</blockquote>\n<p>I have not used any \"vague threats\" but believe we're going back to a somewhat un-constructive territory here.  <br>\nI've done my best to support everything I've said with examples and feel I've taken the time to explain and clarify any misunderstandings.</p>\n<p>If you could provide your guidance regarding my questions or possible confusion above, I would appreciate your and <span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> 's feedback (and perhaps <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span>, since he was the first to suggest linker folding)</p>\n<p>Many thanks.</p>",
+        "id": 302191231,
+        "sender_full_name": "Tom",
+        "timestamp": 1664860250
+    },
+    {
+        "content": "<blockquote>\n<p>I grant you that we may be able to show that the Lean compiler doesn't suffer from this problem. The part I don't get is: How does the test suite help with showing that some arbitrary program written in a mix of Lean and C or C++ doesn't exhibit it? </p>\n</blockquote>\n<p>We aren't trying to support arbitrary C++ in lean programs. We're trying to support the C++ in the lean core, plus an open-ended amount of lean-generated C code using very particular patterns. For FFI, there will always be a bunch of gotchas and I don't mind this being one more thing to tell people to keep in mind.</p>",
+        "id": 302196509,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664863985
+    },
+    {
+        "content": "<blockquote>\n<p>Hence I thought the point people were interested in is turning on linker folding for Lean-compiled outputs (i.e. the binaries the compiler produces), and to the best of my understanding lake could build mixed binaries of Lean and C++ code, no? (including static linking?). </p>\n</blockquote>\n<p>You could say the same thing about linking assembly code - you <em>could</em> link assembly, and there are a ton of observable things that the compiler will stomp all over in that code. If you do that the consequences are on you. I don't see that as a reason to scale back optimizations as long as <em>lean</em> code avoids the issue by construction.</p>",
+        "id": 302196779,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664864220
+    },
+    {
+        "content": "<blockquote>\n<p>in C++, I can assume that this container contains two distinct elements and build further invariants around that premise. It doesn't seem that \"crazy\" to me.</p>\n</blockquote>\n<p>That does seem crazy to me. Comparing function pointers for equality is a fundamentally suspicious operation. The only direction that makes sense to me is that if two function pointers compare equal then calling one is equivalent to calling the other, although even this is suspicious because of pointer provenance. You have to be writing some really sketchy code for this question to even arise.</p>",
+        "id": 302196879,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664864305
+    },
+    {
+        "content": "<blockquote>\n<p>I assumed we would still pursue <span class=\"user-mention silent\" data-user-id=\"112857\">Leonardo de Moura</span> 's original idea of using weak symbols. As I summarized above after our last meeting, he seemed in favor of giving more control to the Lean compiler, which weak symbols would give it. I then viewed linker folding just as a \"cherry on top\" and after the first part, I wouldn't expect it to have an appreciable effect; and if it's still needed we could look at using icf=safe rather than icf=all. </p>\n</blockquote>\n<p>I'm interested to see ICF first because by all accounts it's a much simpler thing to do, just flipping a switch somewhere. I don't think that the two approaches are in opposition. As I and others said at the meeting, we should start an ICF experiment with the most aggressive setting and scale back in response to issues, not the other way around.</p>",
+        "id": 302197296,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664864637
+    },
+    {
+        "content": "<blockquote>\n<blockquote>\n<p>A vague threat which can't be falsified</p>\n</blockquote>\n<p>I have not used any \"vague threats\" but believe we're going back to a somewhat un-constructive territory here.<br>\nI've done my best to support everything I've said with examples and feel I've taken the time to explain and clarify any misunderstandings.</p>\n</blockquote>\n<p>I think you misunderstood what I mean by \"threat\" here. There is some threat / danger that we will have written a bug and that the bug will go undetected. We are trying to assess the risk here, and my point is that the <em>first step</em> is to gather data by doing the most aggressive version of everything in a test and seeing what that unearths. If nothing shows up and the numbers look good then it will already be within our usual margin of error. We do a fair bit of testing on users anyway so it isn't the end of the world if an issue comes up in one of the dependent projects and we have to re-evaluate. And if nothing shows up even then, I think we're golden.</p>\n<p>The not-useful direction is to say that because the possibility of a bug persists, we had best avoid the path altogether, because more testing, more auditing, more anything isn't going to eliminate that possibility completely. There is <em>always</em> the possibility of bugs as long as lean remains formally unverified, which is why we have procedures to mitigate the risk and proceed anyway, and backpedal later if it turned out not to be a good idea.</p>",
+        "id": 302198316,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664865297
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"515083\">Tom</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Weak.20symbols/near/302191231\">said</a>:</p>\n<blockquote>\n<p>For example, if I write</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">int</span> <span class=\"n\">x</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n<span class=\"n\">int</span> <span class=\"n\">y</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n\n<span class=\"n\">std</span><span class=\"o\">::</span> <span class=\"n\">vector</span> <span class=\"n\">fns</span> <span class=\"bp\">=</span> <span class=\"o\">{</span><span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">y</span><span class=\"o\">}</span><span class=\"bp\">;</span>\n</code></pre></div>\n<p>in C++, I can <strong>assume</strong> that this container contains two distinct elements and build further invariants around that premise.  It doesn't seem  that \"crazy\" to me.</p>\n</blockquote>\n<p>By the way, could you quote where the standard promises that x and y will compare unequal? This sounds suspicious to me - I would guess that the standard says it's implementation defined.</p>",
+        "id": 302198920,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664865643
+    },
+    {
+        "content": "<p>It's worse than I thought - the C++ standard is worded ambiguously on this point. Here's a <a href=\"https://stackoverflow.com/questions/26533740/do-distinct-functions-have-distinct-addresses\">SO post</a> where people argue over what it means. My reading is that it's legal to put different functions in the same place, and have <code>==</code> do pointer equality, since the wording says that function pointers should compare equal if they have the same address but this is satisfied in this case. However, this is a change to the observable behavior of the program, and that's what the <code>icf=safe</code> vs <code>icf=all</code> thing is about.</p>",
+        "id": 302200876,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664866770
+    },
+    {
+        "content": "<blockquote>\n<p>We aren't trying to support arbitrary C++ in lean programs. </p>\n</blockquote>\n<p>I'm just being practical.  Seems that code in the near- to medium- future will likely include mixed binaries.</p>\n<blockquote>\n<p>As I and others said at the meeting, we should start an ICF experiment with the most aggressive setting and scale back in response to issues, not the other way around.</p>\n</blockquote>\n<p>I have to admit I don't remember anyone else following this line except you but in general, the statement does seem to illustrate an interesting difference in our world views/risk tolerance.</p>\n<blockquote>\n<p>I think you misunderstood what I mean by \"threat\" here.</p>\n</blockquote>\n<p>No, I don't think so - I understand your points, I was asking for a change in rhetoric.  I have for example not characterized your ideas as being e.g. \"cavalier\" because you want to turn everything up to 11 and then see what breaks.  It's just a difference in world view.<br>\nIt would make it easier for me to stay engaged in a positive way.</p>\n<blockquote>\n<p>By the way, could you quote where the standard promises that x and y will compare unequal?</p>\n</blockquote>\n<p>Ok, I don't want this to stray too far from the topic at hand but my reading of 7.6.10 point 3 implies this:</p>\n<p>“ - Otherwise, if the pointers are both null, both point to the same function, or both represent the same address (6.8.2), they compare equal.</p>\n<p>— Otherwise, the pointers compare unequal.<br>\n”</p>\n<p>I don't want to go down the road of giving the subsequents statements of what \"same function\" etc means.  I have also reached out to a few of my friends on the committee to get some additional input.  I don't think this blocks the progress thought; I'll let you know what they say.</p>\n<p>Cheers!</p>",
+        "id": 302294937,
+        "sender_full_name": "Tom",
+        "timestamp": 1664899419
+    },
+    {
+        "content": "<p>If <code>x()</code> and <code>y()</code> are functions at the same address, then it would seem the third clause is satisfied</p>",
+        "id": 302295919,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664899708
+    },
+    {
+        "content": "<p>Fwiw, I don't mind being conservative and choosing <code>--icf=safe</code> if there isn't a large binary size difference to <code>all</code>. And I don't mind the weak symbols approach either, in which case ICF savings might be small enough to not justify the additional (linker) effort.</p>",
+        "id": 302296242,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664899806
+    },
+    {
+        "content": "<p>My expectation is that the difference between <code>icf=safe</code> and <code>icf=all</code> will be huge, because almost every lean function is address-taken by its boxed version</p>",
+        "id": 302296442,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664899860
+    },
+    {
+        "content": "<p>I have seen some indications that it might be possible to mark specific functions as ICF candidates, in which case we could just do this on all lean functions</p>",
+        "id": 302296660,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664899921
+    },
+    {
+        "content": "<p>The boxed version should not take an address, though using it in a partial application of course does</p>",
+        "id": 302296941,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664899990
+    },
+    {
+        "content": "<p>ah yes you're right, it's actually <code>lean_alloc_closure</code> calls that need it</p>",
+        "id": 302297444,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664900136
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Weak.20symbols/near/302296660\">said</a>:</p>\n<blockquote>\n<p>I have seen some indications that it might be possible to mark specific functions as ICF candidates, in which case we could just do this on all lean functions</p>\n</blockquote>\n<p>Oh nice, this should close any gap between <code>safe</code> and <code>all</code> at least for the LLVM backend <a href=\"https://llvm.org/docs/Extensions.html#sht-llvm-addrsig-section-address-significance-table\">https://llvm.org/docs/Extensions.html#sht-llvm-addrsig-section-address-significance-table</a></p>",
+        "id": 302298332,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664900425
+    },
+    {
+        "content": "<blockquote>\n<p>ICF can cause problems when<br>\nthe program depends on functions having a unique address, both gold<br>\nand LLD have an --icf=safe mode that limits the scope of the<br>\noptimization to avoid folding sections that are \"address-significant\".<br>\nThe implementation in gold uses linker heuristics such as relocation<br>\ntype to determine address significance. The implementation in LLD uses<br>\ninformation generated by the compiler, which is placed in .addrsig.</p>\n</blockquote>",
+        "id": 302298849,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664900552
+    },
+    {
+        "content": "<p>Hi <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span>, I just got a build of lean and am planning to run the experiments with both <code>safe</code> and <code>all</code> and report back.</p>\n<p>After running the tests on a clean checkout, I am getting a number of test failures (without any modifications).  Is that expected on <code>master</code>?</p>\n<p>(It's a fairly small number:</p>\n<p>96% tests passed, 64 tests failed out of 1567</p>\n<p>I'm not sure what the expectations on <code>HEAD</code> are)</p>",
+        "id": 302301364,
+        "sender_full_name": "Tom",
+        "timestamp": 1664901334
+    },
+    {
+        "content": "<p>no, all tests pass on master</p>",
+        "id": 302302329,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664901639
+    },
+    {
+        "content": "<p>Yeah, that's not expected to happen</p>",
+        "id": 302302829,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664901826
+    },
+    {
+        "content": "<p>Ok, thanks.  I wanted to check first if perhaps just certain releases/tags had to be \"stable\" while HEAD might be a little more \"WIP\".<br>\nI'll dig, thanks for the confirmation.</p>",
+        "id": 302303437,
+        "sender_full_name": "Tom",
+        "timestamp": 1664902031
+    },
+    {
+        "content": "<p>There are links to CI runs for each commit which you can investigate if you want to track down a divergence</p>",
+        "id": 302303981,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664902204
+    },
+    {
+        "content": "<p>like this &gt; <a href=\"https://github.com/leanprover/lean4/actions/runs/3182701601/jobs/5188989980\">https://github.com/leanprover/lean4/actions/runs/3182701601/jobs/5188989980</a></p>",
+        "id": 302304072,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664902233
+    },
+    {
+        "content": "<p>As an aside, I've heard back from some of the people I know that are on the committee/deep in the C++ world and the consensus is that the intent is that distinct functions do, in fact, keep distinct addresses.  <br>\nI have a couple of additional \"gems\", just for general interest:</p>\n<p>1) If you enable <code>-flto</code>, in the case when the compiler previously returned \"true\" for the function identity equality, it will actually go back and \"fix it up\" to ensure they actually no longer compare equal!<br>\n2) There is a defect report (DR1400) that is supposed to specifically address this issue and I feel the wording does clarify <br>\n3) This also seems to have been such an issue that some compilers will generate/fold the two functions and just pad one of them with a bunch of <code>nop</code>s to give them distinct addresses despite the code being \"the same\".  You can test it using the code/makefile I provided above but you may also need to mark <code>reduceX/Y</code> as <code>[[gnu::noinline]]</code> to ensure the LTO doesn't just inline everything <span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span></p>",
+        "id": 302365851,
+        "sender_full_name": "Tom",
+        "timestamp": 1664927423
+    },
+    {
+        "content": "<p>I opened <a href=\"https://github.com/leanprover/lean4/pull/1689\">https://github.com/leanprover/lean4/pull/1689</a> for some quick benchmarking experiments, first enabling fine-grained, GC-ed sections and then safe ICF in a second run (unfortunately I've already made a mess of the history). Happy to push more simple experiments.</p>",
+        "id": 302413894,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664960123
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> This is great. It would be great to disable the specialization reuse between different compilation units in the old code generator, and then test whether ICF can merge the different copies. To disable specialization reuse between different compilation units, we have to move<br>\n<a href=\"https://github.com/leanprover/lean4/blob/85c468c8532d023f733c583fc23774c1733bdf0e/src/Lean/Compiler/Specialize.lean#L87\">https://github.com/leanprover/lean4/blob/85c468c8532d023f733c583fc23774c1733bdf0e/src/Lean/Compiler/Specialize.lean#L87</a><br>\nto a non-persistent environment extension.<br>\nThat is, we need to split <br>\n<a href=\"https://github.com/leanprover/lean4/blob/85c468c8532d023f733c583fc23774c1733bdf0e/src/Lean/Compiler/Specialize.lean#L107\">https://github.com/leanprover/lean4/blob/85c468c8532d023f733c583fc23774c1733bdf0e/src/Lean/Compiler/Specialize.lean#L107</a><br>\ninto two environment extensions.</p>\n<ul>\n<li>A persistent one containing <code>specInfo : SMap Name SpecInfo</code></li>\n<li>A non-persistent one containing <code>cache    : SMap Expr Name</code></li>\n</ul>",
+        "id": 302443745,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1664972187
+    },
+    {
+        "content": "<p>Yes, if someone could assemble that and ideally test if stage2 passes, I'd be happy to cherry-pick that! As it is right now, I'm already struggling to get the much simpler changes to work correctly, hehe...</p>",
+        "id": 302461650,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664978202
+    },
+    {
+        "content": "<p>I pushed a <a href=\"https://github.com/Kha/lean4/commit/456b4fae8fa82557e297c07d9bc8af5323cb4701\">much simpler version</a>, though in the whole PR there is something weird going on where only the test/ binaries are affected, not leanshared. Even though we do benchmark stage 2.</p>",
+        "id": 302478252,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664982669
+    },
+    {
+        "content": "<p>For <code>-ffunction-sections --gc-sections</code> alone I guess it makes sense that leanshared is not affected as all functions should be reachable from an exported symbol</p>",
+        "id": 302481517,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664983286
+    },
+    {
+        "content": "<p>Hi, I managed to get my changes to build on Linux last night (still very hacky as I'm not that familiar with the current build and leanc) and my first result was that stage1 <code>libleanshared.so</code>'s size didn't change at all with icf all.  Did you observe the same thing?</p>",
+        "id": 302494208,
+        "sender_full_name": "Tom",
+        "timestamp": 1664986800
+    },
+    {
+        "content": "<p>We should know soon when the bot replies to the PR :)</p>",
+        "id": 302494607,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664986920
+    },
+    {
+        "content": "<p>Huh, looks like the binary actually got smaller, i.e. <code>--icf=all</code> was able to remove more code than deactivating the specialization cache added</p>",
+        "id": 302495575,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664987193
+    },
+    {
+        "content": "<p>I didn't try pushing a PR before testing locally, largely because I'm still trying to get to grips with the build system.  There seems to be multiple layers (I read the bootstrapping doc) but also <code>leanc</code> appears to be involved.  After a few failed attempts this is what I came up with:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">cmake</span> <span class=\"bp\">-</span><span class=\"n\">DLEAN_EXTRA_CXX_FLAGS</span><span class=\"bp\">=</span><span class=\"s2\">\"-ffunction-sections\"</span> <span class=\"bp\">-</span><span class=\"n\">DLEAN_EXTRA_LINKER_FLAGS</span><span class=\"bp\">=</span><span class=\"s2\">\"-fuse-ld=gold -Wl,--icf=all\"</span> <span class=\"bp\">-</span><span class=\"n\">DLEANSHARED_LINKER_FLAGS</span><span class=\"bp\">=</span><span class=\"s2\">\"-fuse-ld=gold -Wl,--icf=all\"</span> <span class=\"bp\">../..</span>\n</code></pre></div>\n<p>I looked at the linking step for <code>libleanshared.so</code> and I saw the options seemed correct.</p>\n<p>I can look at your PR later to see what you've done but if you have any comments on the above/could tell me what I'm doing wrong, that would also help me learn a bit more about the build process.</p>\n<p>Thanks!</p>",
+        "id": 302535351,
+        "sender_full_name": "Tom",
+        "timestamp": 1665000251
+    },
+    {
+        "content": "<p><code>LEAN_EXTRA_LINKER_FLAGS</code> should subsume <code>LEANSHARED_LINKER_FLAGS</code>. And <code>LEAN_EXTRA_CXX_FLAGS</code> is not really relevant as the C++ code doesn't matter here, you'll want <code>LEANC_EXTRA_FLAGS</code> like in the PR</p>",
+        "id": 302535854,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665000452
+    },
+    {
+        "content": "<p>I had originally tried that and couldn't get them to appear on the <code>leanc.sh</code> command line for stage1 until I added <code>LEANSHARED_LINKER_FLAGS</code>.  It's possible I made a mistake (at that point I had already been at this for a long time) but that wasn't my experience.</p>",
+        "id": 302536451,
+        "sender_full_name": "Tom",
+        "timestamp": 1665000684
+    },
+    {
+        "content": "<p>You'll find the <code>LEANC_*</code> flags inside <code>leanc.sh</code> itself, not on the cmdline</p>",
+        "id": 302536528,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665000715
+    },
+    {
+        "content": "<p>I had tried that, unsuccessfully <span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span></p>",
+        "id": 302555612,
+        "sender_full_name": "Tom",
+        "timestamp": 1665008963
+    },
+    {
+        "content": "<p>I'll check out your PR later, see what I did wrong.</p>",
+        "id": 302555640,
+        "sender_full_name": "Tom",
+        "timestamp": 1665008981
+    },
+    {
+        "content": "<p>So here's my preliminary analysis of these numbers:</p>\n<ul>\n<li>Just adding <code>-fdata-section -ffunction-sections -Wl,--gc-sections</code> reduces tests/compiler binaries by 37% on average, so we should just make it the default immediately imo. No effect on Lean itself as explained above.</li>\n<li><code>--icf=safe/all</code> reduces <a href=\"http://libleanshared.so\">libleanshared.so</a> by 0%/10% and tests/compiler by another 6%/7%. <code>safe</code> not affecting leanshared at all may be explained by the fact that folding exported symbols in a shared library is unsafe, and we export <em>all</em> functions except for initializers. A semi-conservative choice might be to use <code>safe</code> for linking Lean user binaries, as we don't know what else they might be statically linking against, but <code>all</code> for linking leanshared as we assume there's no sufficiently crazy C++ code in there, and we want to reduce it in the future anyway.</li>\n<li>Finally, disabling the specialization cache cross-module incurs an unavoidable overhead of 12% compilation time, 4% total build time, and 13% C lines. Which is not great, but might be tolerable in exchange for better separate compilation. The leanshared binary size increases by 14%, which icf=all manages to get down to -2%, i.e. it was able to negate some but not all of the increase compared to the 10% savings in the previous bullet point.</li>\n</ul>",
+        "id": 302615359,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665049208
+    },
+    {
+        "content": "<p>Frankly I'm surprised ICF is that effective. Because it definitely can't fold <em>any</em> function that had a closed term extracted, as that leads to a unique global mutable variable the linker definitely can't fold away. What I don't know is whether this would improve with <a href=\"https://github.com/leanprover/lean4/issues/467\">https://github.com/leanprover/lean4/issues/467</a> - is the linker able to fold identical <code>.rodata</code> sections?</p>",
+        "id": 302623768,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665052581
+    },
+    {
+        "content": "<p>And the test segfaults on macOS are certainly concerning</p>",
+        "id": 302633487,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665056501
+    },
+    {
+        "content": "<p>Wow, thanks for trying that and the write up!  Very interesting numbers.</p>\n<blockquote>\n<p>A semi-conservative choice might be to use safe for linking Lean user binaries, as we don't know what else they might be statically linking against, but all for linking leanshared as we assume there's no sufficiently crazy C++ code in there</p>\n</blockquote>\n<p>That's exactly what I had in mind in the ongoing discussion above</p>\n<blockquote>\n<p>folding exported symbols in a shared library is unsafe</p>\n</blockquote>\n<p>I think this boils down to the argument about function identity</p>\n<p>I want to revisit another idea I threw out in the beginning:  What if we used weak functions <em>but</em> only named the implementation using the content addressable hash?  That way we could actually control what gets folded and would not be beholden to the linker doing a \"good job\".  It's also not going to fall afaul of any C++/linking rules.  One of the objections was the introduction of \"non-human\" understandable symbols but the Posix toolchains actually provide a capability for symbol aliases.  So, perhaps we could have two symbols: In the code we would invoke the \"named\" ones - while giving the linker the ability to fully fold the \"hashed\" weak ones.</p>",
+        "id": 302703665,
+        "sender_full_name": "Tom",
+        "timestamp": 1665077045
+    },
+    {
+        "content": "<p>Sounds interesting, can we do that in C?</p>",
+        "id": 302712502,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665079905
+    },
+    {
+        "content": "<p>I'm not sure anymore if the symbol name is a big issue - we most often see them in stack traces, in which case any kind of folding will basically show a random representative. So as long as the specialized function itself is still included in the symbol name, it's probably fine.</p>",
+        "id": 302713389,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665080181
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Weak.20symbols/near/302712502\">said</a>:</p>\n<blockquote>\n<p>Sounds interesting, can we do that in C?</p>\n</blockquote>\n<p>Yes, to the best of my knowledge:  <a href=\"https://gcc.gnu.org/onlinedocs/gcc-4.7.2/gcc/Function-Attributes.html\">https://gcc.gnu.org/onlinedocs/gcc-4.7.2/gcc/Function-Attributes.html</a><br>\nI can't link directly to the section but it's the first one on the page.</p>",
+        "id": 302763048,
+        "sender_full_name": "Tom",
+        "timestamp": 1665102089
+    },
+    {
+        "content": "<p>Ok this is what I get</p>\n<p>main.c</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"kn\">include</span> <span class=\"bp\">&lt;</span><span class=\"n\">stdio.h</span><span class=\"bp\">&gt;</span>\n<span class=\"bp\">#</span><span class=\"kn\">include</span> <span class=\"bp\">&lt;</span><span class=\"n\">stdlib.h</span><span class=\"bp\">&gt;</span>\n\n<span class=\"bp\">//</span> <span class=\"n\">sha256</span> <span class=\"n\">of</span> <span class=\"s2\">\"my function\"</span>\n<span class=\"n\">char</span> <span class=\"n\">const</span> <span class=\"bp\">*</span><span class=\"n\">f_12350a3b39aaba8c7514ea42a83129d968ecec3aedd9fe8590cf7b820b9242b8</span><span class=\"o\">()</span> <span class=\"n\">__attribute__</span><span class=\"o\">((</span><span class=\"n\">weak</span><span class=\"o\">))</span><span class=\"bp\">;</span>\n\n<span class=\"n\">char</span> <span class=\"n\">const</span> <span class=\"bp\">*</span><span class=\"n\">f_12350a3b39aaba8c7514ea42a83129d968ecec3aedd9fe8590cf7b820b9242b8</span><span class=\"o\">()</span>\n<span class=\"o\">{</span>\n    <span class=\"n\">char</span> <span class=\"n\">const</span> <span class=\"bp\">*</span><span class=\"n\">res</span> <span class=\"bp\">=</span> <span class=\"s2\">\"Hello world\"</span><span class=\"bp\">;</span>\n    <span class=\"n\">abort</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n    <span class=\"n\">return</span> <span class=\"n\">res</span><span class=\"bp\">;</span>\n<span class=\"o\">}</span>\n\n<span class=\"n\">char</span> <span class=\"n\">const</span> <span class=\"bp\">*</span><span class=\"n\">greeting</span><span class=\"o\">()</span> <span class=\"n\">__attribute__</span><span class=\"o\">((</span><span class=\"n\">weak</span><span class=\"o\">,</span> <span class=\"n\">alias</span><span class=\"o\">(</span><span class=\"s2\">\"f_12350a3b39aaba8c7514ea42a83129d968ecec3aedd9fe8590cf7b820b9242b8\"</span><span class=\"o\">)))</span><span class=\"bp\">;</span>\n\n<span class=\"n\">int</span> <span class=\"n\">main</span><span class=\"o\">()</span>\n<span class=\"o\">{</span>\n    <span class=\"n\">printf</span><span class=\"o\">(</span><span class=\"s2\">\"%s</span><span class=\"se\">\\n</span><span class=\"s2\">\"</span><span class=\"o\">,</span> <span class=\"n\">greeting</span><span class=\"o\">())</span><span class=\"bp\">;</span>\n<span class=\"o\">}</span>\n</code></pre></div>\n<p><code>gcc main.c</code></p>",
+        "id": 302763148,
+        "sender_full_name": "Tom",
+        "timestamp": 1665102146
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">➜</span>   <span class=\"n\">nm</span> <span class=\"bp\">-</span><span class=\"n\">C</span> <span class=\"n\">a.out</span> <span class=\"bp\">|</span> <span class=\"n\">grep</span> <span class=\"bp\">-</span><span class=\"n\">E</span> <span class=\"s2\">\"greeting|f_\"</span>\n<span class=\"mi\">0000000000001169</span> <span class=\"n\">W</span> <span class=\"n\">f_12350a3b39aaba8c7514ea42a83129d968ecec3aedd9fe8590cf7b820b9242b8</span>\n<span class=\"mi\">0000000000001169</span> <span class=\"n\">W</span> <span class=\"n\">greeting</span>\n</code></pre></div>\n<p>Both weak, same address, so it's a valid alias.</p>",
+        "id": 302763200,
+        "sender_full_name": "Tom",
+        "timestamp": 1665102203
+    },
+    {
+        "content": "<p>BUT when I run it in gdb, this is what I see after <code>abort</code> gets called</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">(</span><span class=\"n\">gdb</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n<span class=\"bp\">#</span><span class=\"mi\">0</span>  <span class=\"n\">__pthread_kill_implementation</span> <span class=\"o\">(</span><span class=\"n\">no_tid</span><span class=\"bp\">=</span><span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"n\">signo</span><span class=\"bp\">=</span><span class=\"mi\">6</span><span class=\"o\">,</span> <span class=\"n\">threadid</span><span class=\"bp\">=</span><span class=\"mi\">140737351509824</span><span class=\"o\">)</span> <span class=\"n\">at</span> <span class=\"bp\">./</span><span class=\"n\">nptl</span><span class=\"bp\">/</span><span class=\"n\">pthread_kill.c</span><span class=\"o\">:</span><span class=\"mi\">44</span>\n<span class=\"bp\">#</span><span class=\"mi\">1</span>  <span class=\"n\">__pthread_kill_internal</span> <span class=\"o\">(</span><span class=\"n\">signo</span><span class=\"bp\">=</span><span class=\"mi\">6</span><span class=\"o\">,</span> <span class=\"n\">threadid</span><span class=\"bp\">=</span><span class=\"mi\">140737351509824</span><span class=\"o\">)</span> <span class=\"n\">at</span> <span class=\"bp\">./</span><span class=\"n\">nptl</span><span class=\"bp\">/</span><span class=\"n\">pthread_kill.c</span><span class=\"o\">:</span><span class=\"mi\">78</span>\n<span class=\"bp\">#</span><span class=\"mi\">2</span>  <span class=\"n\">__GI___pthread_kill</span> <span class=\"o\">(</span><span class=\"n\">threadid</span><span class=\"bp\">=</span><span class=\"mi\">140737351509824</span><span class=\"o\">,</span> <span class=\"n\">signo</span><span class=\"bp\">=</span><span class=\"n\">signo</span><span class=\"bp\">@</span><span class=\"n\">entry</span><span class=\"bp\">=</span><span class=\"mi\">6</span><span class=\"o\">)</span> <span class=\"n\">at</span> <span class=\"bp\">./</span><span class=\"n\">nptl</span><span class=\"bp\">/</span><span class=\"n\">pthread_kill.c</span><span class=\"o\">:</span><span class=\"mi\">89</span>\n<span class=\"bp\">#</span><span class=\"mi\">3</span>  <span class=\"mi\">0x00007ffff7dc3476</span> <span class=\"k\">in</span> <span class=\"n\">__GI_raise</span> <span class=\"o\">(</span><span class=\"n\">sig</span><span class=\"bp\">=</span><span class=\"n\">sig</span><span class=\"bp\">@</span><span class=\"n\">entry</span><span class=\"bp\">=</span><span class=\"mi\">6</span><span class=\"o\">)</span> <span class=\"n\">at</span> <span class=\"bp\">../</span><span class=\"n\">sysdeps</span><span class=\"bp\">/</span><span class=\"n\">posix</span><span class=\"bp\">/</span><span class=\"n\">raise.c</span><span class=\"o\">:</span><span class=\"mi\">26</span>\n<span class=\"bp\">#</span><span class=\"mi\">4</span>  <span class=\"mi\">0x00007ffff7da97f3</span> <span class=\"k\">in</span> <span class=\"n\">__GI_abort</span> <span class=\"o\">()</span> <span class=\"n\">at</span> <span class=\"bp\">./</span><span class=\"n\">stdlib</span><span class=\"bp\">/</span><span class=\"n\">abort.c</span><span class=\"o\">:</span><span class=\"mi\">79</span>\n<span class=\"bp\">**#</span><span class=\"mi\">5</span>  <span class=\"mi\">0x0000555555555185</span> <span class=\"k\">in</span> <span class=\"n\">greeting</span> <span class=\"o\">()</span><span class=\"bp\">**</span>\n<span class=\"bp\">#</span><span class=\"mi\">6</span>  <span class=\"mi\">0x0000555555555197</span> <span class=\"k\">in</span> <span class=\"n\">main</span> <span class=\"o\">()</span>\n</code></pre></div>\n<p>Note it has the aliased name, not the hash.</p>",
+        "id": 302763295,
+        "sender_full_name": "Tom",
+        "timestamp": 1665102266
+    },
+    {
+        "content": "<p>Note I compiled this as C (as per your question); in C++ it would be necessary to mark the hashed function as <code>extern \"C\"</code> because the alias is to the (mangled) symbol</p>",
+        "id": 302763690,
+        "sender_full_name": "Tom",
+        "timestamp": 1665102589
+    },
+    {
+        "content": "<p>Nice, looks good. So can we rely on gdb/backtrace()/... showing the alias symbol name instead of the original? And folding of weak symbols still works I assume?</p>",
+        "id": 302800014,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665130479
+    },
+    {
+        "content": "<blockquote>\n<p>Just adding -fdata-section -ffunction-sections -Wl,--gc-sections reduces tests/compiler binaries by 37% on average, so we should just make it the default immediately imo. No effect on Lean itself as explained above.</p>\n</blockquote>\n<p>done: <a href=\"https://github.com/leanprover/lean4/pull/1700\">https://github.com/leanprover/lean4/pull/1700</a></p>",
+        "id": 302861046,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665152024
+    },
+    {
+        "content": "<p>For the record, at the end of today's meeting we decided that while these experiments were extremely informative, especially for any future work in this direction, at this point we want to keep the deduplication in the compiler, not move it to the linker. We can revisit the topic when it seems likely that we would save more time from improved separate compilation than we lose on redundant compilation.</p>",
+        "id": 302921400,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665171061
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"515083\">@Tom</span> You had more remarks in the chat that we didn't manage to get back to in the meeting, do you want to continue the discussion here so it doesn't get lost? I think you mentioned the \"key\" that we would use for deduplication. My assumption was that we would keep the current key, which <a href=\"https://github.com/leanprover/lean4/blob/e338d9879a21a5043a5e4fc012abb38550171c2a/src/Lean/Compiler/Specialize.lean#L92\">is</a> the full application of the specialized function (just possibly hashed) regardless of where deduplication happens.</p>",
+        "id": 302922131,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665171372
+    },
+    {
+        "content": "<p>Ah, as also mentioned in Leo's first message above</p>",
+        "id": 302922214,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665171428
+    },
+    {
+        "content": "<p>Hi <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> ,</p>\n<p>Thanks for the follow up.  I am happy to leave things as they are for now; the weak symbol project seemed like a good place for me because it would allow me to contribute (and learn more about LCNF e.g. to generate the hashes).  However, if the current decision is to move on, I am not married to it and I don't think I'll forget what we've discussed here.  So, it's really up to you and the other more experienced devs here to help set the direction because I don't know enough yet to be able to decide one way or another.</p>\n<p>It seems some of the discussion around separate compilation and modules is related - and quite interesting -  so perhaps this will come up again sooner rather than later.  It might be interesting to look at the C++ module system design because I see a lot similarities coming up so the experience and practical aspects may be enlightening  :  Separate compilation vs graph-based dependencies; specializations/weak symbols and templates being defined and exported by modules etc. etc.</p>\n<p>If you're interested in carrying on, or finishing off some of the details, LMK.  In the meantime, I'm happy to move on.  I have plenty to occupy myself with in terms of simultaneously trying to learn the language, the compiler internals etc etc.  If something comes to mind, please don't hesitate to reach out.</p>\n<p>Tom</p>",
+        "id": 302953198,
+        "sender_full_name": "Tom",
+        "timestamp": 1665189578
+    },
+    {
+        "content": "<blockquote>\n<p>Ah, as also mentioned in Leo's first message above</p>\n</blockquote>\n<p>I'm not sure which one you're referring to, sorry</p>",
+        "id": 302953282,
+        "sender_full_name": "Tom",
+        "timestamp": 1665189617
+    },
+    {
+        "content": "<p>Ah, I just meant this part:<br>\n<span class=\"user-mention silent\" data-user-id=\"112857\">Leonardo de Moura</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Weak.20symbols/near/301347757\">said</a>:</p>\n<blockquote>\n<p>Recall that each code specialization in Lean is uniquely identified by a <code>Expr</code> that does not contain free variables. We will use the hashcode to name the new function produced by our code specializer. </p>\n</blockquote>",
+        "id": 302981105,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665217366
+    },
+    {
+        "content": "<p>Leo has now reimplemented cross-module specialization reuse in the new compiler: <a href=\"https://github.com/leanprover/lean4/commit/9eb641e7da4145c0f5fc14390e0222f255e2b659\">https://github.com/leanprover/lean4/commit/9eb641e7da4145c0f5fc14390e0222f255e2b659</a></p>",
+        "id": 302981140,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665217394
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"515083\">@Tom</span> I haven't looked at C++ modules at all yet (except for a few dunks on it on Twitter I believe...), do you know of a good write-up of it regarding separate compilations?</p>",
+        "id": 302981372,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1665217516
+    }
+]

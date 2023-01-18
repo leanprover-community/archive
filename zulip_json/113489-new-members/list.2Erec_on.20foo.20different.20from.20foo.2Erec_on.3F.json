@@ -1,0 +1,32 @@
+[
+    {
+        "content": "<p>The following gives me a type error:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">lookup</span> <span class=\"o\">(</span><span class=\"n\">env</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"o\">(</span><span class=\"n\">ℕ</span> <span class=\"bp\">×</span> <span class=\"n\">ℕ</span><span class=\"o\">))</span> <span class=\"o\">(</span><span class=\"n\">var_num</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">):</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span>\n  <span class=\"n\">env.rec_on</span>\n    <span class=\"mi\">99</span>\n    <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">var_value</span> <span class=\"n\">tail</span> <span class=\"n\">tail_val</span><span class=\"o\">,</span> <span class=\"n\">cond</span> <span class=\"n\">tt</span> <span class=\"mi\">23</span> <span class=\"n\">tail_val</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>But if I replace <code>env.rec_on</code> with <code>list.rec_on env</code> everything is happy.  I thought these were the same?  What's the difference?</p>",
+        "id": 291723196,
+        "sender_full_name": "Martin C. Martin",
+        "timestamp": 1659453286
+    },
+    {
+        "content": "<p>Dot notation changes the elaboration order, and the resulting order probably doesn't work for recursors due to some higher order unification issue</p>",
+        "id": 291724860,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1659453967
+    },
+    {
+        "content": "<p>I spent a few minutes trying to figure out what the elaborator is doing differently, but I only got as far as seeing that dot notation doesn't immediately call <code>visit_elim_app</code>, which is what elaborates things that have the <code>elab_as_eliminator</code> attribute.</p>\n<p>You can help it out with a type hint:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">lookup</span> <span class=\"o\">(</span><span class=\"n\">env</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"o\">(</span><span class=\"n\">ℕ</span> <span class=\"bp\">×</span> <span class=\"n\">ℕ</span><span class=\"o\">))</span> <span class=\"o\">(</span><span class=\"n\">var_num</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">):</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span>\n  <span class=\"n\">env.rec_on</span>\n    <span class=\"mi\">99</span>\n    <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">var_value</span> <span class=\"n\">tail</span> <span class=\"o\">(</span><span class=\"n\">tail_val</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">),</span> <span class=\"n\">cond</span> <span class=\"n\">tt</span> <span class=\"mi\">23</span> <span class=\"n\">tail_val</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>But I'd recommend that you use the equation compiler:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">lookup</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"o\">(</span><span class=\"n\">ℕ</span> <span class=\"bp\">×</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">ℕ</span> <span class=\"bp\">→</span> <span class=\"n\">ℕ</span>\n<span class=\"bp\">|</span> <span class=\"o\">[]</span> <span class=\"n\">_</span> <span class=\"o\">:=</span> <span class=\"mi\">99</span>\n<span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"n\">var_value</span> <span class=\"o\">::</span> <span class=\"n\">tail</span><span class=\"o\">)</span> <span class=\"n\">var_num</span> <span class=\"o\">:=</span> <span class=\"n\">cond</span> <span class=\"n\">tt</span> <span class=\"mi\">23</span> <span class=\"o\">(</span><span class=\"n\">lookup</span> <span class=\"n\">tail</span> <span class=\"n\">var_num</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 291726613,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1659454699
+    },
+    {
+        "content": "<p>Thanks.  One confusing thing was that, VS Code was telling me that <code>tail_val</code> was already of type \\N, but it seems the actual Lean environment was following different rules and came to a different conclusion.</p>\n<p>I'm on to chapter 8 of TPiL now, so starting to learn about the equation compiler.  Thanks again for all your help.</p>",
+        "id": 291728610,
+        "sender_full_name": "Martin C. Martin",
+        "timestamp": 1659455434
+    },
+    {
+        "content": "<p>It might eventually come to that conclusion, but it appears that while it is elaborating <code>cond</code> it has the type <code>?m_1 tail</code>, where <code>?m_1</code> is a metavariable that hasn't been filled in by the <code>elab_as_eliminator</code> procedure yet.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"mi\">9</span><span class=\"o\">:</span><span class=\"mi\">33</span><span class=\"o\">:</span> <span class=\"n\">type</span> <span class=\"n\">mismatch</span> <span class=\"n\">at</span> <span class=\"n\">application</span>\n  <span class=\"n\">cond</span> <span class=\"n\">tt</span> <span class=\"mi\">23</span> <span class=\"n\">tail_val</span>\n<span class=\"n\">term</span>\n  <span class=\"n\">tail_val</span>\n<span class=\"n\">has</span> <span class=\"n\">type</span>\n  <span class=\"bp\">?</span><span class=\"n\">m_1</span> <span class=\"n\">tail</span>\n<span class=\"n\">but</span> <span class=\"n\">is</span> <span class=\"n\">expected</span> <span class=\"n\">to</span> <span class=\"k\">have</span> <span class=\"n\">type</span>\n  <span class=\"bp\">?</span><span class=\"n\">m_1</span> <span class=\"o\">(</span><span class=\"n\">var_value</span> <span class=\"o\">::</span> <span class=\"n\">tail</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 291730920,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1659456381
+    }
+]

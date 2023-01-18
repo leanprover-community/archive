@@ -1,0 +1,74 @@
+[
+    {
+        "content": "<p>tl;dr: how do I design an instance such that <code>foo ((x : A) : B) ↔ foo (@coe_trans X A B ... x)</code> and both are seen by typeclass search?</p>\n<p>For <code>flt_regular</code>, we made a typeclass <code>ne_zero</code> to carry around the statement of something not being zero in a field/etc. This is usually most helpful when casting to fields. However, in <code>flt-regular</code>, we deal with pnats, and so therefore we often state results with <code>[ne_zero ((n : ℕ) : K)]</code>. However, this is overly verbose, and it would be nice to deal with purely the <code>coe_trans</code>: we attmepted to do this in PR <a href=\"https://github.com/leanprover-community/mathlib/pull/11715\">#11715</a>, and it worked fine on the material in mathlib. However, _everything_ in <code>flt-regular</code> broke, so I'm currently reverting the changes in <a href=\"https://github.com/leanprover-community/mathlib/pull/11760\">#11760</a>. (I will test this again with <code>flt-regular</code> before merging so that there is no fiasco this time!)</p>\n<p>However, it would be nice to not have to write this sort of double coercions. So I was hoping there was some magic that I could write to make these instance results work. I tried reversing the instances from what is currently there, and this almost works, but instead of looking for <code>ne_zero (n : ℕ)</code> en-route to <code>ne_zero ((n : ℕ) : K)</code>, it ends up looking for <code>ne_zero (coe_b n)</code>. I don't know what <code>coe_b</code> is, and the source didn't prove much more enlightening (<a href=\"https://leanprover-community.github.io/mathlib_docs/find/coe_b\">docs#coe_b</a>) - it is defeq but not synctactically equal to <code>↑n</code>, so typeclass search gets stuck and doesn't look further (or maybe it does? the upshot is that the relevant instances are not found). Maybe making it <code>reducible</code> would help here, but I feel like I'm missing the big-picture point - what _is_ <code>coe_b</code>? Why does it hurt us in this way? (<a href=\"https://github.com/leanprover-community/mathlib/commit/bba2d7e4bc9d3297d838c66b55a1a602708a451f\">see this commit for the issues in trying to use this</a>). Obviously we can't create a loop, so we have to choose one way... how do we tell the TC system that these are equivalent?</p>\n<p>I wrote a <a href=\"#narrow/stream/304774-FLT-regular/topic/hn.20.3A.20.28.E2.86.91n.20.3A.20_.29.20.E2.89.A0.200/near/270135189\">long writeup</a> about this issue on the <code>flt_regular</code> stream, see there for more details.</p>\n<p>cc: <span class=\"user-mention\" data-user-id=\"130384\">@Riccardo Brasca</span></p>",
+        "id": 270234494,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1643730980
+    },
+    {
+        "content": "<p>The quick answer is: in Lean 3 you cannot have an instance <code>A → B</code> and an instance <code>B → A</code> at the same time. In Lean 4 this is possible, provided the instance created by going <code>A → B → A</code> is syntactically exactly equal to the original instance.</p>",
+        "id": 270236426,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643731604
+    },
+    {
+        "content": "<p>that's exciting for lean4! so the only real solution is to keep the double-coes?</p>",
+        "id": 270236657,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1643731668
+    },
+    {
+        "content": "<p>A solution is to split <code>A</code> into two copies, and only add the implications <code>A → B</code> and <code>B → A'</code>, consistently having <code>A</code> as return value and and taking an <code>A'</code> as parameter.</p>",
+        "id": 270236854,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643731706
+    },
+    {
+        "content": "<blockquote>\n<p>instead of looking for <code>ne_zero (n : ℕ)</code> en-route to <code>ne_zero ((n : ℕ) : K)</code></p>\n</blockquote>\n<p>should the first be <code>ne_zero (n : K)</code>?</p>",
+        "id": 270237267,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643731851
+    },
+    {
+        "content": "<p>I suspect there's no technical reason to use <code>coe_b</code> over writing out <code>has_coe.coe</code>. Have you already tried <code>local attribute [reducible] coe_b</code> at the place you got the errors?</p>",
+        "id": 270238107,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643732194
+    },
+    {
+        "content": "<p>Do I understand correctly that you want the following to work (<code>cyclotomic/basic.lean:337</code>):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"sd\">/-- If `is_cyclotomic_extension {n} K L` and `ne_zero (n : K)`, then `L` is the splitting</span>\n<span class=\"sd\">field of `cyclotomic n K`. -/</span>\n<span class=\"kd\">lemma</span> <span class=\"n\">splitting_field_cyclotomic</span> <span class=\"o\">:</span> <span class=\"n\">is_splitting_field</span> <span class=\"n\">K</span> <span class=\"n\">L</span> <span class=\"o\">(</span><span class=\"n\">cyclotomic</span> <span class=\"n\">n</span> <span class=\"n\">K</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n<span class=\"o\">{</span> <span class=\"n\">splits</span> <span class=\"o\">:=</span> <span class=\"n\">splits_cyclotomic</span> <span class=\"n\">n</span> <span class=\"o\">{</span><span class=\"n\">n</span><span class=\"o\">}</span> <span class=\"n\">K</span> <span class=\"n\">L</span> <span class=\"o\">(</span><span class=\"n\">mem_singleton</span> <span class=\"n\">n</span><span class=\"o\">),</span>\n  <span class=\"n\">adjoin_roots</span> <span class=\"o\">:=</span>\n  <span class=\"kd\">begin</span>\n    <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"bp\">←</span> <span class=\"o\">((</span><span class=\"n\">iff_adjoin_eq_top</span> <span class=\"o\">{</span><span class=\"n\">n</span><span class=\"o\">}</span> <span class=\"n\">K</span> <span class=\"n\">L</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"mi\">1</span> <span class=\"n\">infer_instance</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"mi\">2</span><span class=\"o\">],</span>\n    <span class=\"n\">letI</span> <span class=\"o\">:=</span> <span class=\"n\">classical.dec_eq</span> <span class=\"n\">L</span><span class=\"o\">,</span>\n    <span class=\"n\">obtain</span> <span class=\"o\">⟨</span><span class=\"n\">ζ</span><span class=\"o\">,</span> <span class=\"n\">hζ</span><span class=\"o\">⟩</span> <span class=\"o\">:=</span> <span class=\"bp\">@</span><span class=\"n\">is_cyclotomic_extension.exists_root</span> <span class=\"o\">{</span><span class=\"n\">n</span><span class=\"o\">}</span> <span class=\"n\">K</span> <span class=\"n\">L</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"n\">mem_singleton</span> <span class=\"n\">n</span><span class=\"o\">),</span>\n    <span class=\"n\">haveI</span> <span class=\"o\">:</span> <span class=\"n\">ne_zero</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">L</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">ne_zero.nat_of_injective</span> <span class=\"o\">(</span><span class=\"n\">algebra_map</span> <span class=\"n\">K</span> <span class=\"n\">L</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">injective</span><span class=\"o\">,</span>\n    <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">aeval_def</span><span class=\"o\">,</span> <span class=\"n\">eval₂_eq_eval_map</span><span class=\"o\">,</span> <span class=\"n\">map_cyclotomic</span><span class=\"o\">,</span> <span class=\"bp\">←</span> <span class=\"n\">is_root.def</span><span class=\"o\">,</span> <span class=\"n\">is_root_cyclotomic_iff</span><span class=\"o\">]</span> <span class=\"n\">at</span> <span class=\"n\">hζ</span><span class=\"o\">,</span>\n    <span class=\"n\">refine</span> <span class=\"n\">adjoin_roots_cyclotomic_eq_adjoin_nth_roots</span> <span class=\"n\">n</span> <span class=\"n\">hζ</span>\n  <span class=\"kd\">end</span> <span class=\"o\">}</span>\n</code></pre></div>",
+        "id": 270240749,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643733107
+    },
+    {
+        "content": "<p>sorry, I just had some internet issues. yes, exactly, this is what we would like to work</p>",
+        "id": 270241351,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1643733318
+    },
+    {
+        "content": "<p>I think it's best to keep using the double coercions in your parameters, for two reasons: <code>simp</code>-normal form is to have multiple coercions, so it's likely local variables already have this form. Moreover, in this case it's common to have terms of the form <code>ne_zero (coe n : K)</code> where <code>n</code> is a natural number (not a pnat), so we should try to arrange our instances so that this applies easily.</p>",
+        "id": 270245236,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643734567
+    },
+    {
+        "content": "<p>So make <code>ne_zero.coe_trans</code> the instance and <code>ne_zero.trans</code> a lemma.</p>",
+        "id": 270245487,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643734651
+    },
+    {
+        "content": "<p>I just removed them entirely; I'll try that but still using <code>↑↑n</code> in most places. I'm also hoping to introduce some random arrow as the specific coe from ℕ+ to ℕ (in a locale), so that at least it's easier to type.</p>",
+        "id": 270245810,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1643734763
+    },
+    {
+        "content": "<p>Thanks so much for the advice!</p>",
+        "id": 270245847,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1643734774
+    }
+]

@@ -1,0 +1,56 @@
+[
+    {
+        "content": "<p>If I have a function <code>Expr -&gt; MetaM (Expr × Expr)</code> that turns an expression to an another expression and also provide a proof that they are equal. How do I turn this into a tactic that rewrites the goal?</p>\n<p>Also, what if I have only <code>Expr -&gt; MetaM Expr</code> but can also generate tactic proof of that the output is equal to the input. How can I make a tactic to rewrite the goal?</p>\n<p>I had a rough idea how to do it in lean3 but in lean4 I'm stomped.</p>",
+        "id": 254567770,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1632416077
+    },
+    {
+        "content": "<p>First use that function in a function <code>MVarId -&gt; MetaM MVarId</code> which returns a new <code>MVar</code> with the new goal, assigns the input <code>MVar</code> with the result of substituting with the equality and assigning the substituted <code>MVar</code> with the new <code>MVar</code>.<br>\nThen you need to define a <code>Tactic</code> which calls that function and sets the main goal to its output.</p>",
+        "id": 254572405,
+        "sender_full_name": "Jakob von Raumer",
+        "timestamp": 1632417853
+    },
+    {
+        "content": "<p>Thanks! It pointed me to the right direction.</p>\n<p>Actually, the function more or less exists already <code>Lean.Meta.replaceTargetEq</code> :)</p>\n<p>I still need to figure out what is the best way to create the equality proof(its <code>Expr</code> representation) if I know the tactic proof for it.</p>",
+        "id": 254586444,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1632423498
+    },
+    {
+        "content": "<p>There are some examples in the current version of mathlib4's normNum, particularly here. <a href=\"https://github.com/leanprover-community/mathlib4/blob/7ac569847b94980d3d668ae6079131f5cd2fe559/Mathlib/Tactic/NormNum.lean#L104\">https://github.com/leanprover-community/mathlib4/blob/7ac569847b94980d3d668ae6079131f5cd2fe559/Mathlib/Tactic/NormNum.lean#L104</a></p>",
+        "id": 254588000,
+        "sender_full_name": "Chris B",
+        "timestamp": 1632424075
+    },
+    {
+        "content": "<p>I think, I'm on the right track, but running into problems with universes(something I do not really understand)</p>\n<p>I'm trying to write a simple tactic that replaces the current goal <code>X</code> with two new goals <code>X = id X</code> and <code>id X</code>. The first goal <code>X = id X</code> should be solvable by <code>simp</code> but I'm getting an error <code>incorrect number of universe levels id</code></p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">import</span> <span class=\"n\">Lean.Meta.Basic</span>\n<span class=\"kn\">import</span> <span class=\"n\">Lean.Elab.Tactic.Basic</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean.Meta</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean.Elab.Tactic</span>\n\n<span class=\"n\">syntax</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">mytactic</span><span class=\"o\">)</span> <span class=\"s2\">\"mytactic\"</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">mytacticCore</span> <span class=\"o\">(</span><span class=\"n\">mvarId</span> <span class=\"o\">:</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"n\">withMVarContext</span> <span class=\"n\">mvarId</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">tag</span>      <span class=\"bp\">←</span> <span class=\"n\">getMVarTag</span> <span class=\"n\">mvarId</span>\n    <span class=\"k\">let</span> <span class=\"n\">target</span>   <span class=\"bp\">←</span> <span class=\"n\">getMVarType</span> <span class=\"n\">mvarId</span>\n    <span class=\"k\">let</span> <span class=\"n\">u</span>        <span class=\"bp\">←</span> <span class=\"n\">getLevel</span> <span class=\"n\">target</span>\n    <span class=\"k\">let</span> <span class=\"n\">targetNew</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">`</span><span class=\"n\">id</span><span class=\"o\">)</span> <span class=\"n\">target</span><span class=\"o\">)</span>\n    <span class=\"k\">let</span> <span class=\"n\">mvarNew</span>  <span class=\"bp\">←</span> <span class=\"n\">mkFreshExprSyntheticOpaqueMVar</span> <span class=\"n\">targetNew</span> <span class=\"n\">tag</span>\n    <span class=\"k\">let</span> <span class=\"n\">eq</span>       <span class=\"bp\">←</span> <span class=\"n\">mkEq</span> <span class=\"n\">target</span> <span class=\"n\">targetNew</span>\n    <span class=\"k\">let</span> <span class=\"n\">eqMvar</span>  <span class=\"bp\">←</span> <span class=\"n\">mkFreshExprSyntheticOpaqueMVar</span> <span class=\"n\">eq</span> <span class=\"n\">tag</span>\n    <span class=\"k\">let</span> <span class=\"n\">val</span>  <span class=\"o\">:=</span> <span class=\"n\">mkAppN</span> <span class=\"o\">(</span><span class=\"n\">Lean.mkConst</span> <span class=\"bp\">`</span><span class=\"n\">Eq.mpr</span> <span class=\"o\">[</span><span class=\"n\">u</span><span class=\"o\">])</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">target</span><span class=\"o\">,</span> <span class=\"n\">targetNew</span><span class=\"o\">,</span> <span class=\"n\">eqMvar</span><span class=\"o\">,</span> <span class=\"n\">mvarNew</span><span class=\"o\">]</span>\n    <span class=\"n\">assignExprMVar</span> <span class=\"n\">mvarId</span> <span class=\"n\">val</span>\n    <span class=\"n\">return</span> <span class=\"o\">[</span><span class=\"n\">eqMvar.mvarId</span><span class=\"bp\">!</span><span class=\"o\">,</span> <span class=\"n\">mvarNew.mvarId</span><span class=\"bp\">!</span><span class=\"o\">]</span>\n\n\n<span class=\"kd\">@[tactic mytactic]</span> <span class=\"kd\">def</span> <span class=\"n\">tacticMytactic</span> <span class=\"o\">:</span> <span class=\"n\">Tactic</span>\n<span class=\"bp\">|</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n          <span class=\"k\">let</span> <span class=\"n\">mainGoal</span> <span class=\"bp\">←</span> <span class=\"n\">getMainGoal</span>\n          <span class=\"k\">let</span> <span class=\"n\">todos</span> <span class=\"bp\">←</span> <span class=\"n\">mytacticCore</span> <span class=\"n\">mainGoal</span>\n          <span class=\"n\">setGoals</span> <span class=\"n\">todos</span>\n          <span class=\"n\">pure</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">theorem</span> <span class=\"n\">test</span> <span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">X</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">id</span> <span class=\"n\">x</span> <span class=\"bp\">=</span> <span class=\"n\">x</span> <span class=\"o\">:=</span>\n  <span class=\"kd\">by</span>\n    <span class=\"n\">mytactic</span>\n    <span class=\"n\">simp</span>\n</code></pre></div>",
+        "id": 254596750,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1632427770
+    },
+    {
+        "content": "<p>id needs a universe. Without looking too careully at it I would assume you can just use <code>u</code> here:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">let</span> <span class=\"n\">targetNew</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">`</span><span class=\"n\">id</span> <span class=\"o\">[</span><span class=\"n\">u</span><span class=\"o\">])</span> <span class=\"n\">target</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 254600905,
+        "sender_full_name": "Chris B",
+        "timestamp": 1632429386
+    },
+    {
+        "content": "<p>If you print a declaration and it has a little <code>.{u}</code> or something else tacked onto the end, that means it takes one or more (one in this case) universe parameters in this context.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#print</span> <span class=\"n\">id</span>\n<span class=\"c1\">-- def id.{u} : {α : Sort u} → α → α := ..</span>\n</code></pre></div>",
+        "id": 254601403,
+        "sender_full_name": "Chris B",
+        "timestamp": 1632429591
+    },
+    {
+        "content": "<p>Thanks! Makes sense. I just recalled from \"Lean Together 2021: Metaprogramming in Lean 4\" that there is <code>mkAppM</code> that deals will all of this for me. So switching two lines to:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>    <span class=\"k\">let</span> <span class=\"n\">targetNew</span> <span class=\"bp\">←</span> <span class=\"n\">mkAppM</span> <span class=\"bp\">`</span><span class=\"n\">id</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">target</span><span class=\"o\">]</span>\n    <span class=\"k\">let</span> <span class=\"n\">val</span>  <span class=\"bp\">←</span> <span class=\"n\">mkAppM</span> <span class=\"bp\">`</span><span class=\"n\">Eq.mpr</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">eqMvar</span><span class=\"o\">,</span> <span class=\"n\">mvarNew</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>Makes it work and I do not have to deal with universes and implicit arguments.</p>",
+        "id": 254604488,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1632430819
+    },
+    {
+        "content": "<p>Nice, that does seem handy.</p>",
+        "id": 254609915,
+        "sender_full_name": "Chris B",
+        "timestamp": 1632433266
+    }
+]

@@ -1,0 +1,566 @@
+[
+    {
+        "content": "<p>As a hobby project, I would like to do some scientific/numerical computing in Lean. The main lure of Lean for me is the ability to formalize the mathematics behind these computations and hopefully use it to transform the code either for optimization or differentiation. (One motivating example is C++ library Eigen for linear algebra, that builds expressions involving matrices and vectors. Then at compile time it finds optimal strategy how to evaluate. )</p>\n<p>However as an interpreted language, it would be too slow for numerical computing. Thus I'm thinking of writing a specialized compiler to speed up inner most loops of those computations that would not box types but keep them inlined as much as possible.</p>\n<p>I do not attempt to create a compiler for arbitrary Lean code, but maybe I would just restrict to only a handful of types and compile non-dependent functions.</p>\n<p>My hope is to inline types like: </p>\n<p>- <code>Float × Float</code> to <code>std::pair&lt;double, double&gt;</code> <br>\n   - <code>Array (Float × Float)</code> to <code>std::vector&lt;std::pair&lt;double, double&gt;&gt;</code> (std::vector is probably not a smart choice, but something like it with areference counter)<br>\n   - <code>Float^n</code> to <code>std::array&lt;double, n&gt;</code><br>\ni.e. mainly any fixed size vectors and matrices can be inlined/unboxed and arrays of these types will store them inline/unboxed.</p>\n<p>Is this a good idea to attempt? Can I use the Lean.Compile.IR module in Lean for this? Or do I have to write my own? Any suggestions where should I start?</p>",
+        "id": 253789085,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631904356
+    },
+    {
+        "content": "<blockquote>\n<p>However as an interpreted language, it would be too slow for numerical computing.</p>\n</blockquote>\n<p>Nit: Lean 4 is not (exclusively or primarily) an interpreted language</p>",
+        "id": 253791609,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631905414
+    },
+    {
+        "content": "<p>You will have a lot of trouble with that <code>Float^n</code> example because <code>n</code> is not normally a compile time constant in lean</p>",
+        "id": 253791866,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631905509
+    },
+    {
+        "content": "<p>in fact there isn't even really a concept of compile time constants in the lean language so that kind of transformation will not be easy</p>",
+        "id": 253791940,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631905542
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253791609\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>However as an interpreted language, it would be too slow for numerical computing.</p>\n</blockquote>\n<p>Nit: Lean 4 is not (exclusively or primarily) an interpreted language</p>\n</blockquote>\n<p>I would like to more strongly emphasis this point. Lean 4 is, for the perspective relevant to this question, a compiled language. Furthermore, Lean 4 is FAST. In fact, it is faster than many other functional programming languages and can be even be faster than other compiled languages in some cases. After all, a compiled Lean program is just a compiled  C program with some, usually negligible,  initialization . </p>\n<p>To give an example, Lake (a build program for Lean written in Lean) is actually faster than using Make (a C program) for the same task.</p>",
+        "id": 253805413,
+        "sender_full_name": "Mac",
+        "timestamp": 1631911731
+    },
+    {
+        "content": "<p>I think the aspect relevant to this question is that while lean is compiled, it has a (mostly) uniform data representation, which might incur performance costs in very high performance numerical computing applications. I'm not sure lean is ready to target that space, but it seems feasible to progressively expand the set of representations the compiler can handle</p>",
+        "id": 253805646,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631911864
+    },
+    {
+        "content": "<p>Yeah, I was about to say: if you are doing certain kinds of numerical computing, you may be looking to do some GPU accelerated things or use SIMD vectors. In which case,  Lean does not yet support such things.</p>",
+        "id": 253805731,
+        "sender_full_name": "Mac",
+        "timestamp": 1631911918
+    },
+    {
+        "content": "<p>However,  <span class=\"user-mention\" data-user-id=\"346070\">@Tomas Skrivan</span> , your post seems to suggest you want to map Lean objects to C++ data structures like <code>std::pair</code>, <code>std::vector</code>, or <code>std::array</code>, which are no more efficient than their Lean equivalents.</p>",
+        "id": 253805983,
+        "sender_full_name": "Mac",
+        "timestamp": 1631912016
+    },
+    {
+        "content": "<p>In fact, the mappings you gave are more-or-less how those Lean types are defined (just in C rather than C++ terms).</p>",
+        "id": 253806337,
+        "sender_full_name": "Mac",
+        "timestamp": 1631912186
+    },
+    {
+        "content": "<p>Ok, fair point that about Lean and being interpreted language, well I do not even know formal definition of what interpreted language is :) Anyway, it is more or less irrelevant to what I'm asking. </p>\n<p>Well one simple example of application I want to do is a simulation of particles. For this you need have an array of particles position, <code>Array (Float × Float × Float)</code>, and at every time step you need to update these positions. I want really fast <code>Array.map</code> function that updates all particles. </p>\n<p>Let's have a look at operations on <code>Float × Float</code> and what Lean actually compiles to.</p>\n<p>Two simple functions, create a pair from two numbers and add two pairs together.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[inline, export vec2_mk]</span>\n<span class=\"kd\">def</span> <span class=\"n\">vec2_mk</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Float</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Float</span> <span class=\"bp\">×</span> <span class=\"n\">Float</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">b</span><span class=\"o\">)</span>\n\n<span class=\"kd\">@[inline, export vec2_add]</span>\n<span class=\"kd\">def</span> <span class=\"n\">vec2_add</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Float</span> <span class=\"bp\">×</span> <span class=\"n\">Float</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Float</span> <span class=\"bp\">×</span> <span class=\"n\">Float</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">a.1</span> <span class=\"bp\">+</span> <span class=\"n\">b.1</span><span class=\"o\">,</span> <span class=\"n\">a.2</span> <span class=\"bp\">+</span> <span class=\"n\">b.2</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>The compiled code for <code>vec2_mk</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"n\">lean_object</span><span class=\"bp\">*</span> <span class=\"n\">vec2_mk</span><span class=\"o\">(</span><span class=\"n\">double</span> <span class=\"n\">x_1</span><span class=\"o\">,</span> <span class=\"n\">double</span> <span class=\"n\">x_2</span><span class=\"o\">)</span> <span class=\"o\">{</span>\n  <span class=\"n\">_start</span><span class=\"o\">:</span>\n    <span class=\"o\">{</span>\n      <span class=\"n\">lean_object</span><span class=\"bp\">*</span> <span class=\"n\">x_3</span><span class=\"bp\">;</span> <span class=\"n\">lean_object</span><span class=\"bp\">*</span> <span class=\"n\">x_4</span><span class=\"bp\">;</span> <span class=\"n\">lean_object</span><span class=\"bp\">*</span> <span class=\"n\">x_5</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_3</span> <span class=\"bp\">=</span> <span class=\"n\">lean_box_float</span><span class=\"o\">(</span><span class=\"n\">x_1</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_4</span> <span class=\"bp\">=</span> <span class=\"n\">lean_box_float</span><span class=\"o\">(</span><span class=\"n\">x_2</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_5</span> <span class=\"bp\">=</span> <span class=\"n\">lean_alloc_ctor</span><span class=\"o\">(</span><span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">2</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">lean_ctor_set</span><span class=\"o\">(</span><span class=\"n\">x_5</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"n\">x_3</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">lean_ctor_set</span><span class=\"o\">(</span><span class=\"n\">x_5</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">x_4</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">return</span> <span class=\"n\">x_5</span><span class=\"bp\">;</span>\n    <span class=\"o\">}</span>\n  <span class=\"o\">}</span>\n</code></pre></div>\n<p>Both <code> lean_box_float</code> and <code>lean_alloc_ctor</code> allocate memory on the heap. So if you have a <code>Array (Float × Float)</code> you do not have a contiguous block of <code>2*sizeof(double)*array_length</code> bytes but you have an array of pointers pointing all around the heap to pairs of doubles. (it is actually even worse, those doubles inside of a pair are boxed)</p>\n<p>For numerical computing it is absolutely crucial to have data in a contiguous block of memory, as you need to utilize memory cache as much as possible. Quite often, you preload parts of a data from the heap to stack in a predictable manner and then you access it in what ever order you need.</p>\n<p>The compile code for <code>vec2_add</code></p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"n\">lean_object</span><span class=\"bp\">*</span> <span class=\"n\">vec2_add</span><span class=\"o\">(</span><span class=\"n\">lean_object</span><span class=\"bp\">*</span> <span class=\"n\">x_1</span><span class=\"o\">,</span> <span class=\"n\">lean_object</span><span class=\"bp\">*</span> <span class=\"n\">x_2</span><span class=\"o\">)</span> <span class=\"o\">{</span>\n  <span class=\"n\">_start</span><span class=\"o\">:</span>\n    <span class=\"o\">{</span>\n      <span class=\"n\">lean_object</span><span class=\"bp\">*</span> <span class=\"n\">x_3</span><span class=\"bp\">;</span> <span class=\"n\">lean_object</span><span class=\"bp\">*</span> <span class=\"n\">x_4</span><span class=\"bp\">;</span> <span class=\"n\">double</span> <span class=\"n\">x_5</span><span class=\"bp\">;</span> <span class=\"n\">double</span> <span class=\"n\">x_6</span><span class=\"bp\">;</span> <span class=\"n\">double</span> <span class=\"n\">x_7</span><span class=\"bp\">;</span> <span class=\"n\">lean_object</span><span class=\"bp\">*</span> <span class=\"n\">x_8</span><span class=\"bp\">;</span> <span class=\"n\">lean_object</span><span class=\"bp\">*</span> <span class=\"n\">x_9</span><span class=\"bp\">;</span> <span class=\"n\">double</span> <span class=\"n\">x_10</span><span class=\"bp\">;</span> <span class=\"n\">double</span> <span class=\"n\">x_11</span><span class=\"bp\">;</span> <span class=\"n\">double</span> <span class=\"n\">x_12</span><span class=\"bp\">;</span> <span class=\"n\">lean_object</span><span class=\"bp\">*</span> <span class=\"n\">x_13</span><span class=\"bp\">;</span> <span class=\"n\">lean_object</span><span class=\"bp\">*</span> <span class=\"n\">x_14</span><span class=\"bp\">;</span> <span class=\"n\">lean_object</span><span class=\"bp\">*</span> <span class=\"n\">x_15</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_3</span> <span class=\"bp\">=</span> <span class=\"n\">lean_ctor_get</span><span class=\"o\">(</span><span class=\"n\">x_1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">lean_inc</span><span class=\"o\">(</span><span class=\"n\">x_3</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_4</span> <span class=\"bp\">=</span> <span class=\"n\">lean_ctor_get</span><span class=\"o\">(</span><span class=\"n\">x_2</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">lean_inc</span><span class=\"o\">(</span><span class=\"n\">x_4</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_5</span> <span class=\"bp\">=</span> <span class=\"n\">lean_unbox_float</span><span class=\"o\">(</span><span class=\"n\">x_3</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">lean_dec</span><span class=\"o\">(</span><span class=\"n\">x_3</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_6</span> <span class=\"bp\">=</span> <span class=\"n\">lean_unbox_float</span><span class=\"o\">(</span><span class=\"n\">x_4</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">lean_dec</span><span class=\"o\">(</span><span class=\"n\">x_4</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_7</span> <span class=\"bp\">=</span> <span class=\"n\">x_5</span> <span class=\"bp\">+</span> <span class=\"n\">x_6</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_8</span> <span class=\"bp\">=</span> <span class=\"n\">lean_ctor_get</span><span class=\"o\">(</span><span class=\"n\">x_1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">lean_inc</span><span class=\"o\">(</span><span class=\"n\">x_8</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">lean_dec</span><span class=\"o\">(</span><span class=\"n\">x_1</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_9</span> <span class=\"bp\">=</span> <span class=\"n\">lean_ctor_get</span><span class=\"o\">(</span><span class=\"n\">x_2</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">lean_inc</span><span class=\"o\">(</span><span class=\"n\">x_9</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">lean_dec</span><span class=\"o\">(</span><span class=\"n\">x_2</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_10</span> <span class=\"bp\">=</span> <span class=\"n\">lean_unbox_float</span><span class=\"o\">(</span><span class=\"n\">x_8</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">lean_dec</span><span class=\"o\">(</span><span class=\"n\">x_8</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_11</span> <span class=\"bp\">=</span> <span class=\"n\">lean_unbox_float</span><span class=\"o\">(</span><span class=\"n\">x_9</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">lean_dec</span><span class=\"o\">(</span><span class=\"n\">x_9</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_12</span> <span class=\"bp\">=</span> <span class=\"n\">x_10</span> <span class=\"bp\">+</span> <span class=\"n\">x_11</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_13</span> <span class=\"bp\">=</span> <span class=\"n\">lean_box_float</span><span class=\"o\">(</span><span class=\"n\">x_7</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_14</span> <span class=\"bp\">=</span> <span class=\"n\">lean_box_float</span><span class=\"o\">(</span><span class=\"n\">x_12</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">x_15</span> <span class=\"bp\">=</span> <span class=\"n\">lean_alloc_ctor</span><span class=\"o\">(</span><span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">2</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">lean_ctor_set</span><span class=\"o\">(</span><span class=\"n\">x_15</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"n\">x_13</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">lean_ctor_set</span><span class=\"o\">(</span><span class=\"n\">x_15</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">x_14</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n      <span class=\"n\">return</span> <span class=\"n\">x_15</span><span class=\"bp\">;</span>\n    <span class=\"o\">}</span>\n  <span class=\"o\">}</span>\n</code></pre></div>\n<p>You have to first unbox all those floats, then you can add them and box them again. With all this you are touching heap and that is not acceptable for numerical computing.</p>\n<p>I want these functions to compile to:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">pair</span><span class=\"bp\">&lt;</span><span class=\"n\">double</span><span class=\"o\">,</span> <span class=\"n\">double</span><span class=\"bp\">&gt;</span> <span class=\"n\">vec2_mk</span><span class=\"o\">(</span><span class=\"n\">double</span> <span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">double</span> <span class=\"n\">b</span><span class=\"o\">)</span>\n<span class=\"o\">{</span>\n   <span class=\"n\">return</span> <span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">pair</span><span class=\"o\">{</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">b</span><span class=\"o\">}</span><span class=\"bp\">;</span>\n<span class=\"o\">}</span>\n\n<span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">pair</span><span class=\"bp\">&lt;</span><span class=\"n\">double</span><span class=\"o\">,</span> <span class=\"n\">double</span><span class=\"bp\">&gt;</span> <span class=\"n\">vec2_add</span><span class=\"o\">(</span><span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">pair</span><span class=\"bp\">&lt;</span><span class=\"n\">double</span><span class=\"o\">,</span> <span class=\"n\">double</span><span class=\"bp\">&gt;</span> <span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">pair</span><span class=\"bp\">&lt;</span><span class=\"n\">double</span><span class=\"o\">,</span> <span class=\"n\">double</span><span class=\"bp\">&gt;</span> <span class=\"n\">b</span><span class=\"o\">)</span>\n<span class=\"o\">{</span>\n   <span class=\"n\">return</span> <span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">pair</span><span class=\"o\">{</span><span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">get</span><span class=\"bp\">&lt;</span><span class=\"mi\">0</span><span class=\"bp\">&gt;</span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"bp\">+</span> <span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">get</span><span class=\"bp\">&lt;</span><span class=\"mi\">0</span><span class=\"bp\">&gt;</span><span class=\"o\">(</span><span class=\"n\">b</span><span class=\"o\">),</span> <span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">get</span><span class=\"bp\">&lt;</span><span class=\"mi\">1</span><span class=\"bp\">&gt;</span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"bp\">+</span> <span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">get</span><span class=\"bp\">&lt;</span><span class=\"mi\">1</span><span class=\"bp\">&gt;</span><span class=\"o\">(</span><span class=\"n\">b</span><span class=\"o\">)}</span><span class=\"bp\">;</span>\n<span class=\"o\">}</span>\n</code></pre></div>\n<p>Actually, when you write a function <code>Float → Float</code> then it gets compiled nicely. An example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[inline, export foo]</span>\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Float</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Float</span> <span class=\"o\">:=</span> <span class=\"o\">((</span><span class=\"n\">Float.sin</span> <span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"bp\">+</span> <span class=\"o\">(</span><span class=\"n\">Float.cos</span> <span class=\"n\">b</span><span class=\"o\">))</span> <span class=\"bp\">/</span> <span class=\"o\">(</span><span class=\"n\">Float.exp</span> <span class=\"n\">a</span><span class=\"o\">)</span>\n\n<span class=\"n\">double</span> <span class=\"n\">foo</span><span class=\"o\">(</span><span class=\"n\">double</span> <span class=\"n\">x_1</span><span class=\"o\">,</span> <span class=\"n\">double</span> <span class=\"n\">x_2</span><span class=\"o\">)</span> <span class=\"o\">{</span>\n<span class=\"n\">_start</span><span class=\"o\">:</span>\n<span class=\"o\">{</span>\n<span class=\"n\">double</span> <span class=\"n\">x_3</span><span class=\"bp\">;</span> <span class=\"n\">double</span> <span class=\"n\">x_4</span><span class=\"bp\">;</span> <span class=\"n\">double</span> <span class=\"n\">x_5</span><span class=\"bp\">;</span> <span class=\"n\">double</span> <span class=\"n\">x_6</span><span class=\"bp\">;</span> <span class=\"n\">double</span> <span class=\"n\">x_7</span><span class=\"bp\">;</span>\n<span class=\"n\">x_3</span> <span class=\"bp\">=</span> <span class=\"n\">sin</span><span class=\"o\">(</span><span class=\"n\">x_1</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n<span class=\"n\">x_4</span> <span class=\"bp\">=</span> <span class=\"n\">cos</span><span class=\"o\">(</span><span class=\"n\">x_2</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n<span class=\"n\">x_5</span> <span class=\"bp\">=</span> <span class=\"n\">x_3</span> <span class=\"bp\">+</span> <span class=\"n\">x_4</span><span class=\"bp\">;</span>\n<span class=\"n\">x_6</span> <span class=\"bp\">=</span> <span class=\"n\">exp</span><span class=\"o\">(</span><span class=\"n\">x_1</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n<span class=\"n\">x_7</span> <span class=\"bp\">=</span> <span class=\"n\">x_5</span> <span class=\"bp\">/</span> <span class=\"n\">x_6</span><span class=\"bp\">;</span>\n<span class=\"n\">return</span> <span class=\"n\">x_7</span><span class=\"bp\">;</span>\n<span class=\"o\">}</span>\n<span class=\"o\">}</span>\n</code></pre></div>\n<p>Concerning <code>Array T</code>, there is a specialized implementation for <code>Array UInt8 ~ lean_sarray_object</code> and <code>Array Char ~ lean_string_object</code>. For every other type <code>T</code>, elements in the array are boxed. However, there is <code>FloatArray</code> that is an array of floats that are not boxed! Maybe I can get inspired by it and implement other arrays I need.</p>",
+        "id": 253810841,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631914497
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253791866\">said</a>:</p>\n<blockquote>\n<p>You will have a lot of trouble with that <code>Float^n</code> example because <code>n</code> is not normally a compile time constant in lean</p>\n</blockquote>\n<p>Yes this will be definitely a problem. But I can simply do <code>#eval</code> on an variable and see it it can be evaluated or not. Example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">m</span> <span class=\"o\">:=</span> <span class=\"mi\">2</span>\n<span class=\"k\">#eval</span> <span class=\"n\">m</span> <span class=\"c1\">-- 2</span>\n\n<span class=\"kd\">variable</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span>\n<span class=\"k\">#eval</span> <span class=\"n\">n</span> <span class=\"c1\">-- Error: (kernel) declaration has free variable `_eval`</span>\n</code></pre></div>\n<p>Thus I might compile <code>Float^n</code> only if <code>#eval n</code> succeeds and use the value to turn it into <code>std::array&lt;double, n&gt;</code>.</p>",
+        "id": 253811551,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631914979
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"346070\">@Tomas Skrivan</span> You can get better code if you don't use polymorphic structures. Example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">FloatVec2</span> <span class=\"n\">where</span>\n  <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Float</span>\n  <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Float</span>\n\n<span class=\"kd\">@[inline, export vec2_mk]</span>\n<span class=\"kd\">def</span> <span class=\"n\">vec2_mk</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Float</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">FloatVec2</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">b</span> <span class=\"o\">}</span>\n\n<span class=\"kd\">@[inline, export vec2_add]</span>\n<span class=\"kd\">def</span> <span class=\"n\">vec2_add</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">FloatVec2</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">FloatVec2</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">a.1</span> <span class=\"bp\">+</span> <span class=\"n\">b.1</span><span class=\"o\">,</span> <span class=\"n\">b</span> <span class=\"o\">:=</span> <span class=\"n\">a.2</span> <span class=\"bp\">+</span> <span class=\"n\">b.2</span> <span class=\"o\">}</span>\n</code></pre></div>\n<p>We also have <code>FloatArray</code>. Which is an array of unboxed float values. However, the library for <code>FloatArray</code> is currently very small since nobody is using this kind of array.</p>",
+        "id": 253811983,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1631915241
+    },
+    {
+        "content": "<p>Nice, this is probably because there is <code>IRType.struct</code> right? Maybe I can create <code>FloatVec2Array</code>, <code>FloatVec3Array</code> ... and if functions like <code>get</code> and <code>set</code> access element and component at the same time, I do not have to touch the heap.</p>",
+        "id": 253813012,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631915903
+    },
+    {
+        "content": "<p>How far is lean from being able to do ad hoc monomorphization by using a macro to stamp out these array types and their libraries?</p>",
+        "id": 253813915,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631916381
+    },
+    {
+        "content": "<p>My guess is that full C++/Rust style monomorphization will be out of scope for a long time</p>",
+        "id": 253814023,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631916455
+    },
+    {
+        "content": "<p>Uniform data representation (aka pointers everywhere) is a necessity for languages that don't use monomorphization; just adding a bunch of additional data representations like <code>FloatVec2Array</code> without libraries and with an additional maintenance burden doesn't sound like a good idea</p>",
+        "id": 253814269,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631916601
+    },
+    {
+        "content": "<p>Makes sense. One thing I'm thinking of is implementing a small compiler with monomorphization(didn't know the term before) that is able to compile certain subset of Lean expressions and types. This would be used mainly for tight loops or when writing kernels for GPU.</p>",
+        "id": 253815021,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631916986
+    },
+    {
+        "content": "<p>I think that writing your own compiler for this would be much more difficult than modifying / extending the lean compiler. Compilers have a lot of back end stuff that you would get for free if you modify an existing compiler.</p>",
+        "id": 253816253,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631917745
+    },
+    {
+        "content": "<p>Well, that's not to say that the \"extension\" isn't just a way to hook up more low level semi-compiled lean expressions to the C output, and your actual compiler produces the semi-compiled lean expressions</p>",
+        "id": 253816308,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631917794
+    },
+    {
+        "content": "<p>You might already have all the tools you need with enough calls to <code>extern</code> functions</p>",
+        "id": 253816419,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631917860
+    },
+    {
+        "content": "<p>But if your compiler produces an infinite family of different ABI types, like <code>array&lt;double, n&gt;</code> or <code>FloatVecNArray</code> (for many values of <code>n</code>), then I don't see how <code>lean.h</code> is supposed to support that</p>",
+        "id": 253816591,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631917996
+    },
+    {
+        "content": "<p>I would expect that for each type you would have to also supply conversion to/from <code>lean_object</code> such those two types of codes can communicate.</p>",
+        "id": 253816716,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631918082
+    },
+    {
+        "content": "<p>Put another way, I think the first thing to figure out is how to write lean code that has the performance characteristics you want, even if the code looks really ugly or low level. Then your compiler can be made to produce that ugly code from a more high level description</p>",
+        "id": 253816755,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631918122
+    },
+    {
+        "content": "<p>Where would your types be defined?</p>",
+        "id": 253816777,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631918149
+    },
+    {
+        "content": "<p>AFAIK lean code never defines new types, all types used in generated code are defined in <code>lean.h</code></p>",
+        "id": 253816860,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631918208
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253814023\">said</a>:</p>\n<blockquote>\n<p>My guess is that full C++/Rust style monomorphization will be out of scope for a long time</p>\n</blockquote>\n<p>If you are talking about C++ templates (or Rust macros) -- they are both literally just macros. You could do everything they do (and more) with a macro In Lean.</p>",
+        "id": 253818095,
+        "sender_full_name": "Mac",
+        "timestamp": 1631919172
+    },
+    {
+        "content": "<p>I was thinking not about rust macros, but rather rust generics</p>",
+        "id": 253818138,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631919227
+    },
+    {
+        "content": "<p>rust macros are like lean macros, but rust generics are a whole type system thing that interfaces with the code generator</p>",
+        "id": 253818221,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631919274
+    },
+    {
+        "content": "<p>you would be hard pressed to do all that with a macro</p>",
+        "id": 253818232,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631919291
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253816777\">said</a>:</p>\n<blockquote>\n<p>Where would your types be defined?</p>\n</blockquote>\n<p>My initial attempt is along these lines:</p>\n<p>Define a C++ equivalent for each type and function:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">CppType</span> <span class=\"o\">(</span><span class=\"n\">X</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"o\">(</span> <span class=\"n\">typename</span> <span class=\"o\">:</span> <span class=\"n\">string</span> <span class=\"o\">)</span>\n\n<span class=\"c1\">-- define type for Prod</span>\n<span class=\"kd\">instance</span> <span class=\"n\">std_pair.CppType</span> <span class=\"o\">(</span><span class=\"n\">A</span> <span class=\"n\">B</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">CppType</span> <span class=\"n\">A</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">CppType</span> <span class=\"n\">B</span><span class=\"o\">]</span> <span class=\"o\">:</span> <span class=\"n\">CppType</span> <span class=\"o\">(</span><span class=\"n\">A</span><span class=\"bp\">×</span><span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n<span class=\"o\">{</span>\n  <span class=\"n\">typename</span> <span class=\"o\">:=</span> <span class=\"s2\">\"std::pair&lt;\"</span> <span class=\"bp\">++</span> <span class=\"n\">CppType.typename</span> <span class=\"n\">A</span> <span class=\"bp\">++</span> <span class=\"s2\">\", \"</span> <span class=\"bp\">++</span> <span class=\"n\">CppType.typename</span> <span class=\"n\">B</span> <span class=\"bp\">++</span> <span class=\"s2\">\"&gt;\"</span>\n<span class=\"o\">}</span>\n\n<span class=\"kd\">class</span> <span class=\"n\">CppImpl</span> <span class=\"o\">{</span><span class=\"n\">X</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">X</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">impl</span> <span class=\"o\">:</span> <span class=\"n\">string</span> <span class=\"o\">}</span>\n\n<span class=\"c1\">--- Define functions for Prod</span>\n<span class=\"kd\">variable</span> <span class=\"o\">{</span><span class=\"n\">A</span> <span class=\"n\">B</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">CppType</span> <span class=\"n\">A</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">CppType</span> <span class=\"n\">B</span><span class=\"o\">]</span>\n<span class=\"kd\">instance</span>  <span class=\"o\">:</span> <span class=\"n\">CppImpl</span> <span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">Prod.mk</span> <span class=\"n\">A</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">impl</span> <span class=\"o\">:=</span> <span class=\"s2\">\"std::make_pair\"</span> <span class=\"o\">}</span>\n<span class=\"kd\">instance</span>  <span class=\"o\">:</span> <span class=\"n\">CppImpl</span> <span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">Prod.fst</span> <span class=\"n\">A</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">impl</span> <span class=\"o\">:=</span> <span class=\"s2\">\"std::get&lt;0&gt;\"</span> <span class=\"o\">}</span>\n<span class=\"kd\">instance</span>  <span class=\"o\">:</span> <span class=\"n\">CppImpl</span> <span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">Prod.snd</span> <span class=\"n\">A</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">impl</span> <span class=\"o\">:=</span> <span class=\"s2\">\"std::get&lt;1&gt;\"</span> <span class=\"o\">}</span>\n</code></pre></div>\n<p>Once you define all the types you want to use and their functions, we can proceed with compiling an expression:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">pair_mk</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Float</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Float</span> <span class=\"bp\">×</span> <span class=\"n\">Float</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">a</span><span class=\"o\">,</span><span class=\"n\">b</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">compile</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">expr</span> <span class=\"bp\">←</span> <span class=\"n\">whnf</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">`</span><span class=\"n\">pair_mk</span><span class=\"o\">)</span>\n    <span class=\"bp\">...</span> <span class=\"n\">Now</span> <span class=\"n\">you</span> <span class=\"n\">can</span> <span class=\"n\">traverse</span> <span class=\"n\">the</span> <span class=\"n\">expression</span> <span class=\"n\">and</span> <span class=\"n\">generate</span> <span class=\"n\">C</span><span class=\"bp\">++</span> <span class=\"n\">code</span> <span class=\"kd\">by</span> <span class=\"n\">gluing</span> <span class=\"n\">expression's</span> <span class=\"n\">c</span><span class=\"bp\">++</span> <span class=\"n\">implementations.</span> <span class=\"bp\">...</span>\n</code></pre></div>\n<p>This way I can generate some C++ code(still not working properly). I have no clue how to link it with the rest of the lean code.</p>\n<p>The nice thing with this approach is that the C++ compiler will handle monomorphization for me.</p>",
+        "id": 253818269,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631919331
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253818221\">said</a>:</p>\n<blockquote>\n<p>rust macros are like lean macros, but rust generics are a whole type system thing that interfaces with the code generator</p>\n</blockquote>\n<p>Hobbes is an interesting example of a Haskell inspired language that does monomorphization for typeclasses <a href=\"https://github.com/morganstanley/hobbes\">https://github.com/morganstanley/hobbes</a>, is that what you mean?</p>",
+        "id": 253818286,
+        "sender_full_name": "Christian Pehle",
+        "timestamp": 1631919346
+    },
+    {
+        "content": "<p>Note that lean already has some monomorphization in the form of \"specialization\" of functions to certain types and typeclass instances, which sounds similar to hobbes</p>",
+        "id": 253818375,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631919400
+    },
+    {
+        "content": "<p>but this is only an optimization, it doesn't (isn't supposed to) change observable behavior and it is not mandatory like C++/Rust monomorphization</p>",
+        "id": 253818416,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631919440
+    },
+    {
+        "content": "<p>Yes, I think what is mostly missing is unboxed structs and possibly some more base types like Float32.</p>",
+        "id": 253818435,
+        "sender_full_name": "Christian Pehle",
+        "timestamp": 1631919461
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253818095\">said</a>:</p>\n<blockquote>\n<p>If you are talking about C++ templates (or Rust macros) -- they are both literally just macros. You could do everything they do (and more) with a macro In Lean.</p>\n</blockquote>\n<p>Just for fun, I wrote an example of how one could do <code>def</code> templates in Lean:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean.Parser</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Parser</span> <span class=\"n\">Command</span>\n<span class=\"kn\">open</span> <span class=\"n\">Term</span> <span class=\"kn\">hiding</span> <span class=\"n\">ident</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">declBinder</span> <span class=\"o\">:=</span>\n  <span class=\"n\">simpleBinderWithoutType</span> <span class=\"bp\">&lt;|&gt;</span> <span class=\"n\">bracketedBinder</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">declBinders</span> <span class=\"o\">:=</span>\n  <span class=\"n\">many</span> <span class=\"o\">(</span><span class=\"n\">ppSpace</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"n\">declBinder</span><span class=\"o\">)</span>\n\n<span class=\"kd\">@[commandParser]</span>\n<span class=\"kd\">def</span> <span class=\"n\">templateDefDecl</span> <span class=\"o\">:=</span> <span class=\"n\">leading_parser</span>\n  <span class=\"s2\">\"template \"</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"n\">many1</span> <span class=\"n\">Command.macroArg</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"s2\">\" def \"</span> <span class=\"bp\">&gt;&gt;</span>\n  <span class=\"n\">incQuotDepth</span> <span class=\"o\">(</span><span class=\"n\">ident</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"n\">declBinders</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"o\">(</span><span class=\"s2\">\" := \"</span> <span class=\"bp\">&lt;|&gt;</span> <span class=\"s2\">\" where \"</span><span class=\"o\">)</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"n\">termParser</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">identAsStrLit</span> <span class=\"o\">(</span><span class=\"n\">id</span> <span class=\"o\">:</span> <span class=\"n\">Syntax</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Syntax</span> <span class=\"o\">:=</span>\n  <span class=\"n\">Syntax.mkStrLit</span> <span class=\"o\">(</span><span class=\"n\">info</span> <span class=\"o\">:=</span> <span class=\"n\">SourceInfo.fromRef</span> <span class=\"n\">id</span><span class=\"o\">)</span> <span class=\"bp\">&lt;|</span>\n    <span class=\"n\">id.getId.toString</span> <span class=\"o\">(</span><span class=\"n\">escape</span> <span class=\"o\">:=</span> <span class=\"n\">false</span><span class=\"o\">)</span>\n\n<span class=\"kd\">@[macro templateDefDecl]</span>\n<span class=\"kd\">def</span> <span class=\"n\">expandTemplateDefDecl</span> <span class=\"o\">:</span> <span class=\"n\">Macro</span>\n<span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">template</span> <span class=\"bp\">$</span><span class=\"n\">args</span><span class=\"bp\">*</span> <span class=\"kd\">def</span> <span class=\"bp\">$</span><span class=\"n\">id</span> <span class=\"bp\">$</span><span class=\"n\">bs</span><span class=\"bp\">*</span> <span class=\"o\">:=</span> <span class=\"bp\">$</span><span class=\"n\">x</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"k\">let</span> <span class=\"n\">sym</span> <span class=\"o\">:=</span> <span class=\"n\">identAsStrLit</span> <span class=\"n\">id</span>\n  <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">macro</span> <span class=\"bp\">$</span><span class=\"n\">sym</span><span class=\"o\">:</span><span class=\"n\">strLit</span> <span class=\"s2\">\"[\"</span> <span class=\"bp\">$</span><span class=\"n\">args</span><span class=\"bp\">*</span> <span class=\"s2\">\"]\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"bp\">$</span><span class=\"o\">[</span><span class=\"bp\">$</span><span class=\"n\">bs</span><span class=\"o\">]</span><span class=\"bp\">*</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">$</span><span class=\"n\">x</span><span class=\"o\">))</span>\n<span class=\"bp\">|</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Macro.throwUnsupported</span>\n\n<span class=\"n\">template</span> <span class=\"n\">t</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"kd\">def</span> <span class=\"n\">add</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"bp\">$</span><span class=\"n\">t</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">a</span> <span class=\"bp\">+</span> <span class=\"n\">b</span>\n<span class=\"k\">#check</span> <span class=\"n\">add</span><span class=\"o\">[</span><span class=\"n\">UInt64</span><span class=\"o\">]</span> <span class=\"mi\">2</span> <span class=\"mi\">3</span> <span class=\"c1\">-- (fun a b =&gt; a + b) 2 3 : UInt64</span>\n<span class=\"k\">#eval</span> <span class=\"n\">add</span><span class=\"o\">[</span><span class=\"n\">UInt64</span><span class=\"o\">]</span> <span class=\"mi\">2</span> <span class=\"mi\">3</span> <span class=\"c1\">-- 5</span>\n</code></pre></div>",
+        "id": 253820792,
+        "sender_full_name": "Mac",
+        "timestamp": 1631921359
+    },
+    {
+        "content": "<p>oh boy, I can't wait for SFINAE</p>",
+        "id": 253821239,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631921652
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"130511\">Christian Pehle</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253818435\">said</a>:</p>\n<blockquote>\n<p>Yes, I think what is mostly missing is unboxed structs and possibly some more base types like Float32.</p>\n</blockquote>\n<p>Also, Lean already has unboxed doubles (that's what <code>Float</code> is) why do you particularly need an unboxed <code>float</code>?</p>",
+        "id": 253821647,
+        "sender_full_name": "Mac",
+        "timestamp": 1631922012
+    },
+    {
+        "content": "<p>Why not? Lots of calculations don't need high precision floating point and would rather get the boost in throughput</p>",
+        "id": 253821708,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631922083
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> most systems are now 64-bit, thus 64-bit floating pointing arithmetic is just as fast (or faster) than 32-bit.</p>",
+        "id": 253821774,
+        "sender_full_name": "Mac",
+        "timestamp": 1631922139
+    },
+    {
+        "content": "<p>Also using <code>float</code> halfs the memory required compared to <code>double</code>.</p>",
+        "id": 253821790,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631922165
+    },
+    {
+        "content": "<p>SIMD float instructions are 2x faster on 32 bit</p>",
+        "id": 253821791,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631922167
+    },
+    {
+        "content": "<p>even if lean doesn't directly support SIMD, if the codegen is good enough you might be able to get autovectorization from the C compiler</p>",
+        "id": 253821814,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631922207
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> yes, the key part there being SIMD instructions which require SIMD vectors which is whole different can of worms.</p>",
+        "id": 253821821,
+        "sender_full_name": "Mac",
+        "timestamp": 1631922213
+    },
+    {
+        "content": "<p>for instance, if you have a tight loop that doubles every element in a <code>FloatArray</code>, there is a high probability that will get autovectorized, and then you will be able to consume 2x more floats than doubles</p>",
+        "id": 253821910,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631922285
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253821814\">said</a>:</p>\n<blockquote>\n<p>even if lean doesn't directly support SIMD, if the codegen is good enough you might be able to get autovectorization from the C compiler</p>\n</blockquote>\n<p>Recently I was inspecting some generated assembly of C++ code I wrote. It had bunch of for loops <code>for(int i=0;i&lt;4;i++)</code> and I got vectorization automatically.</p>",
+        "id": 253821912,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631922289
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253821814\">said</a>:</p>\n<blockquote>\n<p>even if lean doesn't directly support SIMD, if the codegen is good enough you might be able to get autovectorization from the C compiler</p>\n</blockquote>\n<p>iirc, auto-vectorization of floating point values is not on by default in most C compilers as that is another very different can of worms (as floating point rounding non-determinism then enters the picture).</p>",
+        "id": 253821963,
+        "sender_full_name": "Mac",
+        "timestamp": 1631922349
+    },
+    {
+        "content": "<p>however, I have never dug to deep into that ara, so I may be completely wrong there.</p>",
+        "id": 253822077,
+        "sender_full_name": "Mac",
+        "timestamp": 1631922462
+    },
+    {
+        "content": "<p><a href=\"https://www.godbolt.org/z/WGeqG835v\">https://www.godbolt.org/z/WGeqG835v</a> seems to show that with a standard looking C++ loop you get autovectorization at <code>-O3</code></p>",
+        "id": 253822274,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631922626
+    },
+    {
+        "content": "<p><a href=\"https://www.godbolt.org/z/49EczhxET\">https://www.godbolt.org/z/49EczhxET</a> &lt;- also in C</p>",
+        "id": 253822465,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631922833
+    },
+    {
+        "content": "<p>it is not clear whether an idiomatic lean loop will lower quite so beneficially as these C/C++ examples though. The most likely barrier to autovectorization of lean code is that all the jumps and function calls will not be inlined or inlined too late for the autovectorization recognizer to work</p>",
+        "id": 253822566,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631922937
+    },
+    {
+        "content": "<p>Welp, guess I was wrong. The fact that high optimization levels default to fast math surprises me.</p>",
+        "id": 253822575,
+        "sender_full_name": "Mac",
+        "timestamp": 1631922950
+    },
+    {
+        "content": "<p>well, they say that -O3 is living on the wrong side of the guard rail</p>",
+        "id": 253822685,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631923041
+    },
+    {
+        "content": "<p>the purpose of undefined behaviour is to basically enable these optimisations ;).</p>",
+        "id": 253822697,
+        "sender_full_name": "Christian Pehle",
+        "timestamp": 1631923060
+    },
+    {
+        "content": "<p><a href=\"https://godbolt.org/z/6vedK7WG3\">https://godbolt.org/z/6vedK7WG3</a></p>",
+        "id": 253822765,
+        "sender_full_name": "Christian Pehle",
+        "timestamp": 1631923094
+    },
+    {
+        "content": "<p>I don't think there are any fast-math style reassociations going on here though <span class=\"user-mention\" data-user-id=\"315577\">@Mac</span></p>",
+        "id": 253822810,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631923152
+    },
+    {
+        "content": "<p>Ah, now that I think about it,  I may have been confusing <code>a * b + c</code> (add/mul or mul/add or whatever it is) with vectors.</p>",
+        "id": 253822816,
+        "sender_full_name": "Mac",
+        "timestamp": 1631923157
+    },
+    {
+        "content": "<p>doing 8 adds in parallel is still IEEE conforming</p>",
+        "id": 253822835,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631923176
+    },
+    {
+        "content": "<p>anyway, I think this is the main reason people care about <code>float</code> these days. The memory savings is nice but the double throughput is huge</p>",
+        "id": 253822995,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631923281
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> yep, that makes sense -- I was just under very mistaken assumptions.</p>",
+        "id": 253823020,
+        "sender_full_name": "Mac",
+        "timestamp": 1631923318
+    },
+    {
+        "content": "<p>plus some double ops are actually slower</p>",
+        "id": 253823067,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631923329
+    },
+    {
+        "content": "<p>I think having a <code>Float32</code> and <code>Float64</code> split in Lean would be great.</p>",
+        "id": 253823080,
+        "sender_full_name": "Mac",
+        "timestamp": 1631923346
+    },
+    {
+        "content": "<p>Though I think Lean tends to avoid floating point numbers as they are very difficult to reason about, which was Lean's original goal.</p>",
+        "id": 253823145,
+        "sender_full_name": "Mac",
+        "timestamp": 1631923425
+    },
+    {
+        "content": "<p>Indeed. I think <code>Float32</code> isn't any worse than <code>Float64</code> , but they are both pretty horrific for formal verification purposes</p>",
+        "id": 253823206,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631923466
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253822816\">said</a>:</p>\n<blockquote>\n<p>Ah, now that I think about it,  I may have been confusing <code>a * b + c</code> (add/mul or mul/add or whatever it is) with vectors.</p>\n</blockquote>\n<p><a href=\"https://godbolt.org/z/Txee8dGe1\">https://godbolt.org/z/Txee8dGe1</a> it does that too automatically.</p>",
+        "id": 253823212,
+        "sender_full_name": "Christian Pehle",
+        "timestamp": 1631923472
+    },
+    {
+        "content": "<p><del>@<strong>Christian Pehle</strong> Sorry, no, I meant the single add-mul or mul-add instruction (or something like that --  I can't remember which it  was) not subsequent adds and muls on vectors.</del> Scratch that, I am blind -- that is what is doing. <span aria-label=\"rolling on the floor laughing\" class=\"emoji emoji-1f923\" role=\"img\" title=\"rolling on the floor laughing\">:rolling_on_the_floor_laughing:</span></p>\n<p>However, note it does not do that on plain <code>-O3</code>, but only with the necessary flag (which is what I was originally talking about).</p>",
+        "id": 253823293,
+        "sender_full_name": "Mac",
+        "timestamp": 1631923554
+    },
+    {
+        "content": "<p>In particular <span class=\"user-mention\" data-user-id=\"346070\">@Tomas Skrivan</span> , you should consider carefully whether you will actually get something that you can prove properties about at the end of all this. You might end up in no better position than if you had just written the code in C++, if everything is just axiomatized / opaque</p>",
+        "id": 253823348,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631923578
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"130511\">@Christian Pehle</span> You did pass <code>-mfma</code> though, is that like a baby fast-math?</p>",
+        "id": 253823441,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631923679
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253823293\">said</a>:</p>\n<blockquote>\n<p><del>@<strong>Christian Pehle</strong> Sorry, no, I meant the single add-mul or mul-add instruction (or something like that --  I can't remember which it  was) not subsequent adds and muls on vectors.</del> Scratch that, I am blind -- that is what is doing. <span aria-label=\"rolling on the floor laughing\" class=\"emoji emoji-1f923\" role=\"img\" title=\"rolling on the floor laughing\">:rolling_on_the_floor_laughing:</span></p>\n<p>However, note it does not do that on plain <code>-O3</code>, but only with the necessary flag (which is what I was originally talking about).</p>\n</blockquote>\n<p>Ah yeah but that only depends on the architecture that the compiler assumes by default. If you use a gcc compiled to the target architecture it will do that on <code>-O3</code> automatically (<a href=\"https://godbolt.org/z/3rKTaE74c\">https://godbolt.org/z/3rKTaE74c</a>)</p>",
+        "id": 253823655,
+        "sender_full_name": "Christian Pehle",
+        "timestamp": 1631923904
+    },
+    {
+        "content": "<p><a href=\"https://stackoverflow.com/a/15933677/890016\">https://stackoverflow.com/a/15933677/890016</a> says:</p>\n<blockquote>\n<p>The IEEE and C standards allow this when <code>#pragma STDC FP_CONTRACT ON</code> is in effect, and compilers are allowed to have it ON by default (but not all do). Gcc contracts into FMA by default (with the default <code>-std=gnu*</code>, but not <code>-std=c*</code>, e.g. <code>-std=c++14</code>). For Clang, it's only enabled with <code>-ffp-contract=fast</code>.</p>\n</blockquote>",
+        "id": 253823731,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631923972
+    },
+    {
+        "content": "<p>Sorry about derailing the discussion with my optimization confusions. Back on topic:</p>\n<p><span class=\"user-mention silent\" data-user-id=\"346070\">Tomas Skrivan</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253818269\">said</a>:</p>\n<blockquote>\n<p>My initial attempt is along these lines:</p>\n<p>Define a C++ equivalent for each type and function:</p>\n<p>[...]</p>\n<p>This way I can generate some C++ code(still not working properly). I have no clue how to link it with the rest of the lean code.</p>\n<p>The nice thing with this approach is that the C++ compiler will handle monomorphization for me.</p>\n</blockquote>\n<p>First, you should note that Lean outputs C, not C++. In fact, there is currently a big effort to drop C++ support entirely from Lean's compiler toolchain. Second, you can take a look at <a href=\"https://github.com/leanprover/lean4/blob/3d0967f75b725ed377504a0ff5e7a8a8726f5e1f/src/Lean/Compiler/IR/EmitC.lean\"><code>EmitC.lean</code></a> to see how Lean currently goes about emitting C code.</p>",
+        "id": 253823763,
+        "sender_full_name": "Mac",
+        "timestamp": 1631924035
+    },
+    {
+        "content": "<p>You could probably generate some cpp code and extern link to it from the lean-C code</p>",
+        "id": 253823861,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631924117
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253823861\">said</a>:</p>\n<blockquote>\n<p>You could probably generate some cpp code and extern link to it from the lean-C code</p>\n</blockquote>\n<p>Yes that is exactly what I'm thinking of doing. Maybe I just generate the C++ code and use only that in my final application without involving Lean's C code entirely.</p>",
+        "id": 253824336,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631924558
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253823348\">said</a>:</p>\n<blockquote>\n<p>In particular <span class=\"user-mention silent\" data-user-id=\"346070\">Tomas Skrivan</span> , you should consider carefully whether you will actually get something that you can prove properties about at the end of all this. You might end up in no better position than if you had just written the code in C++, if everything is just axiomatized / opaque</p>\n</blockquote>\n<p>Well I'm will assume that I'm working with reals and hope for the best when actually running with floats. My main interest is to transform the code while respecting the mathematics. For example, I want to turn <code>(A*B)*v</code> to <code>A*(B*v)</code> to save computation for A,B matrices and v vector. On the level of floats <code>(A*B)*v</code>  is not equal to <code>A*(B*v)</code>, but I do not really care about that too much as long as I do not get some catastrophic rounding errors.<br>\nDoing these kind of optimizations in C++ is done with expression templates, for example the linear algebra library Eigen. I would like to take it a step further and do not only linear algebra but also calculus, differentiation etc. For a long time, I was trying doing it in C++, even switched to D for better templates. Now, I'm trying to do it in Lean and just generate the final C++ code. </p>\n<p>One of my goals is to have code for finite elements where I can simply define energy as:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">energy</span> <span class=\"o\">(</span><span class=\"n\">u</span> <span class=\"o\">:</span> <span class=\"bp\">Ω</span> <span class=\"bp\">→</span> <span class=\"n\">ℝ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ℝ</span> <span class=\"o\">:=</span> <span class=\"bp\">∫</span> <span class=\"bp\">∥∇</span><span class=\"n\">u</span><span class=\"bp\">∥²</span> <span class=\"n\">dx</span>\n</code></pre></div>\n<p>That I can differentiate w.r.t. to <code>u</code>, assemble a finite dimensional system and find a minimizer.</p>",
+        "id": 253824651,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631924919
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253823731\">said</a>:</p>\n<blockquote>\n<p><a href=\"https://stackoverflow.com/a/15933677/890016\">https://stackoverflow.com/a/15933677/890016</a> says:</p>\n<blockquote>\n<p>The IEEE and C standards allow this when <code>#pragma STDC FP_CONTRACT ON</code> is in effect, and compilers are allowed to have it ON by default (but not all do). Gcc contracts into FMA by default (with the default <code>-std=gnu*</code>, but not <code>-std=c*</code>, e.g. <code>-std=c++14</code>). For Clang, it's only enabled with <code>-ffp-contract=fast</code>.</p>\n</blockquote>\n</blockquote>\n<p>Note that this is for C (as can be seen here: <a href=\"https://godbolt.org/z/vrYzh39xn\">https://godbolt.org/z/vrYzh39xn</a>). On C++ (which <span class=\"user-mention\" data-user-id=\"130511\">@Christian Pehle</span>  was using) it will fuse mul and add (as can be seen here: <a href=\"https://godbolt.org/z/sEf33fccc\">https://godbolt.org/z/sEf33fccc</a>).</p>",
+        "id": 253824748,
+        "sender_full_name": "Mac",
+        "timestamp": 1631925032
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"346070\">Tomas Skrivan</span> <a href=\"#narrow/stream/270676-lean4/topic/Fast.20inline.20compiler.20for.20numerical.20computing/near/253824651\">said</a>:</p>\n<blockquote>\n<p>Well I'm will assume that I'm working with reals and hope for the best when actually running with floats. </p>\n</blockquote>\n<p>Unless I am mistaken (which given my current track record in this tread is completely possible), this is not how Lean works. You cannot reason between types like this in Lean.</p>",
+        "id": 253824949,
+        "sender_full_name": "Mac",
+        "timestamp": 1631925244
+    },
+    {
+        "content": "<p>Also, generally mathematical reasoning in Lean is non-computable so that is another hurdle with such an approach.</p>",
+        "id": 253824988,
+        "sender_full_name": "Mac",
+        "timestamp": 1631925303
+    },
+    {
+        "content": "<p>I just define an opaque type Real, define bunch of axioms defining them and when compiling Real will be turned to Float.</p>",
+        "id": 253825014,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631925350
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>,  could that have soundness problems, because it feels like it could?</p>",
+        "id": 253825085,
+        "sender_full_name": "Mac",
+        "timestamp": 1631925423
+    },
+    {
+        "content": "<p>Oh yes</p>",
+        "id": 253825104,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631925453
+    },
+    {
+        "content": "<p>well I suppose it depends on the axioms but if you assume anything that isn't true about floats (and there are a lot of those) then you are on a very short path to unsoundness</p>",
+        "id": 253825171,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631925506
+    },
+    {
+        "content": "<p>But I'm not going to prove anything about what the program is actually doing in finite precision. I will be proving only what the program is doing in the idealized scenario of infinite precision.</p>",
+        "id": 253825267,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631925606
+    },
+    {
+        "content": "<p>Actually I should reword that: As long as the axioms are consistent with each other (for example, they match what the real numbers do) then you won't be able to prove <code>False</code> in lean; but if they are not consistent with what floats do then you can get programs that don't compute what they are supposed to, and type violations and crashes (possibly including C UB)</p>",
+        "id": 253825283,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631925632
+    },
+    {
+        "content": "<p>Yes, I'm aware of that.</p>",
+        "id": 253825314,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631925679
+    },
+    {
+        "content": "<p>in other words, you proved the correctness of a program that wasn't the one you ran</p>",
+        "id": 253825330,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631925706
+    },
+    {
+        "content": "<p>yes I know :)</p>",
+        "id": 253825338,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631925718
+    },
+    {
+        "content": "<p>My goal is not so much to prove correctness, but to optimize/transform/differentiate the code I write based on the underlining mathematics.</p>",
+        "id": 253825431,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631925790
+    },
+    {
+        "content": "<p>Remind me why you can't do that in C++?</p>",
+        "id": 253825446,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631925808
+    },
+    {
+        "content": "<p>I mean \"Lean is nicer to work in\" is a valid answer</p>",
+        "id": 253825536,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631925889
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>  You'd have to do both separately, which I imagine would be a bit of a  hassle. By doing both in Lean, you get a cheap representation of what the code you wrote was without have to remodel it in whatever proof system you are using.</p>",
+        "id": 253825558,
+        "sender_full_name": "Mac",
+        "timestamp": 1631925916
+    },
+    {
+        "content": "<p>To do differentiation, I need to work with some kind of  expressions. Sure, I can implement my own system in C++ but lean does that for me already. Furthermore, differentiation is hard. I do not want to constrain myself to purely smooth functions or convex or what ever subset of functions.</p>",
+        "id": 253825650,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631926001
+    },
+    {
+        "content": "<p>don't compilers have push button differentiation engines these days? Like <a href=\"https://enzyme.mit.edu/\">enzyme</a></p>",
+        "id": 253825732,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631926083
+    },
+    {
+        "content": "<p>Like many differentiation packages just ignore that |x| is not differentiable at 0. Also I'm aware of only one language that can differentiate w.r.t. to a function.</p>",
+        "id": 253825784,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1631926122
+    },
+    {
+        "content": "<p>in practice this is still an active area of research. there are a lot of tradeoffs and especially when it comes to optimisation in systems of ODEs and PDEs there are few/any compiler based approaches</p>",
+        "id": 253825822,
+        "sender_full_name": "Christian Pehle",
+        "timestamp": 1631926185
+    },
+    {
+        "content": "<p>zygotę and Julia come close.</p>",
+        "id": 253825877,
+        "sender_full_name": "Christian Pehle",
+        "timestamp": 1631926212
+    }
+]

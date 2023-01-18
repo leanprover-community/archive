@@ -1,0 +1,80 @@
+[
+    {
+        "content": "<p>What I'm really trying to do is rewrite the following code to be error tolerant. Some strings in my input will fail to parse and currently if any string fails to parse the whole tactic fails.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">system.io</span>\n<span class=\"kn\">import</span> <span class=\"n\">data.list</span>\n<span class=\"kn\">import</span> <span class=\"n\">all</span>\n\n<span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">parse_texpr_with_univs</span> <span class=\"o\">(</span><span class=\"n\">univs</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"n\">string</span><span class=\"o\">):</span> <span class=\"n\">lean.parser</span> <span class=\"n\">pexpr</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"c1\">-- add all universe names in the list as universe levels</span>\n  <span class=\"n\">univs.mmap</span> <span class=\"bp\">$</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">s</span><span class=\"o\">,</span> <span class=\"n\">lean.parser.add_local_level</span> <span class=\"n\">s</span><span class=\"o\">),</span>\n  <span class=\"c1\">-- parse the buffer as a pexpr</span>\n  <span class=\"n\">interactive.types.texpr</span>\n\n<span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">parse_string</span> <span class=\"o\">(</span><span class=\"n\">univs</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"n\">string</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">proof</span> <span class=\"o\">:</span> <span class=\"n\">string</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">pexpr</span> <span class=\"o\">:=</span> <span class=\"n\">lean.parser.run_with_input</span> <span class=\"o\">(</span><span class=\"n\">parse_texpr_with_univs</span> <span class=\"n\">univs</span><span class=\"o\">)</span> <span class=\"n\">proof</span>\n\n<span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">process</span> <span class=\"o\">(</span><span class=\"n\">proofs</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"n\">string</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span> <span class=\"o\">{</span>\n    <span class=\"k\">let</span> <span class=\"n\">univs</span> <span class=\"o\">:=</span> <span class=\"o\">[</span><span class=\"s2\">\"u_1001\"</span><span class=\"o\">,</span> <span class=\"s2\">\"u_1002\"</span><span class=\"o\">,</span> <span class=\"s2\">\"u_1003\"</span><span class=\"o\">,</span> <span class=\"s2\">\"u_1004\"</span><span class=\"o\">,</span> <span class=\"s2\">\"u_1005\"</span><span class=\"o\">,</span> <span class=\"s2\">\"u_1006\"</span><span class=\"o\">],</span>\n    <span class=\"n\">pexprs</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">proofs.traverse</span> <span class=\"o\">(</span><span class=\"n\">parse_string</span> <span class=\"n\">univs</span><span class=\"o\">),</span>\n    <span class=\"n\">exprs</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">pexprs.traverse</span> <span class=\"n\">tactic.to_expr</span><span class=\"o\">,</span>\n    <span class=\"n\">theorems</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">exprs.traverse</span> <span class=\"n\">tactic.infer_type</span><span class=\"o\">,</span>\n    <span class=\"n\">tactic.trace</span> <span class=\"n\">theorems.length</span><span class=\"o\">,</span>\n    <span class=\"n\">tactic.trace</span> <span class=\"n\">theorems</span>\n  <span class=\"o\">}</span>\n\n<span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">io</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span> <span class=\"o\">{</span>\n    <span class=\"k\">let</span> <span class=\"n\">proofs</span> <span class=\"o\">:=</span>\n    <span class=\"o\">[</span><span class=\"s2\">\"this one should fail\"</span><span class=\"o\">,</span>\n    <span class=\"s2\">\"λ {α : Sort u_1001} {β : Sort u_1002} {f : α → β} {g : β → α} (h : @function.right_inverse.{u_1002 u_1001} β α f g),</span>\n<span class=\"s2\">    @funext.{u_1001 u_1001} α (λ (x : α), α) (@function.comp.{u_1001 u_1002 u_1001} α β α g f) (@id.{u_1001} α) h\"</span><span class=\"o\">],</span>\n    <span class=\"n\">io.run_tactic</span> <span class=\"bp\">$</span> <span class=\"n\">process</span> <span class=\"n\">proofs</span>\n<span class=\"o\">}</span>\n</code></pre></div>\n<p>An idea I came up with was to rewrite traverse to take a second function that filters out strings that don't parse. </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">traverse'</span> <span class=\"o\">{</span><span class=\"n\">F</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">v</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">applicative</span> <span class=\"n\">F</span><span class=\"o\">]</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">F</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">g</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">F</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">bool</span><span class=\"o\">):</span>\n  <span class=\"n\">list</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">F</span> <span class=\"o\">(</span><span class=\"n\">list</span> <span class=\"n\">β</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"o\">[]</span> <span class=\"o\">:=</span> <span class=\"n\">pure</span> <span class=\"o\">[]</span>\n<span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">::</span> <span class=\"n\">xs</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">if</span> <span class=\"n\">g</span> <span class=\"n\">f</span> <span class=\"n\">x</span> <span class=\"k\">then</span> <span class=\"n\">list.cons</span> <span class=\"bp\">&lt;$&gt;</span> <span class=\"n\">f</span> <span class=\"n\">x</span> <span class=\"bp\">&lt;*&gt;</span> <span class=\"n\">traverse'</span> <span class=\"n\">xs</span> <span class=\"k\">else</span> <span class=\"n\">traverse'</span> <span class=\"n\">xs</span>\n</code></pre></div>\n<p>Hence why I'm trying to write that function <code>can_parse</code> above.  However, I suspect there is a better way...</p>",
+        "id": 235584166,
+        "sender_full_name": "Joe Palermo",
+        "timestamp": 1619039956
+    },
+    {
+        "content": "<p>Well, the tactic monad is more than maybe, so I guess having a tactic success checker would be complicated (I am not sure if Lean can be \"hacked\" to do that).</p>",
+        "id": 235584980,
+        "sender_full_name": "Miroslav Olšák",
+        "timestamp": 1619040316
+    },
+    {
+        "content": "<p>On the other hand, if you just want to filter out errors, you don't need purely functional code, do you?</p>",
+        "id": 235585428,
+        "sender_full_name": "Miroslav Olšák",
+        "timestamp": 1619040527
+    },
+    {
+        "content": "<p>Is this what you essentially want?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">mmap_valid</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">tactic</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">l</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"o\">(</span><span class=\"n\">list</span> <span class=\"n\">β</span><span class=\"o\">)</span>\n<span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">res</span> <span class=\"bp\">←</span> <span class=\"n\">list.mmap</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"o\">(</span><span class=\"k\">do</span> <span class=\"n\">y</span> <span class=\"bp\">←</span> <span class=\"n\">f</span> <span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"n\">some</span> <span class=\"n\">y</span><span class=\"o\">))</span> <span class=\"bp\">&lt;|&gt;</span> <span class=\"n\">return</span> <span class=\"n\">none</span><span class=\"o\">)</span> <span class=\"n\">l</span><span class=\"o\">,</span>\n  <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"n\">list.filter_map</span> <span class=\"n\">id</span> <span class=\"n\">res</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 235588146,
+        "sender_full_name": "Miroslav Olšák",
+        "timestamp": 1619041859
+    },
+    {
+        "content": "<p>That should be a function which works like <code>list.mmap</code>, never fails, and skips elements on which <code>f</code> fails.</p>",
+        "id": 235588994,
+        "sender_full_name": "Miroslav Olšák",
+        "timestamp": 1619042304
+    },
+    {
+        "content": "<p>By the way, the same written with monadic symbols instead of <code>do</code>.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">mmap_valid</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">tactic</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">l</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"o\">(</span><span class=\"n\">list</span> <span class=\"n\">β</span><span class=\"o\">)</span>\n<span class=\"o\">:=</span> <span class=\"n\">list.filter_map</span> <span class=\"n\">id</span> <span class=\"bp\">&lt;$&gt;</span> <span class=\"n\">list.mmap</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"o\">(</span><span class=\"n\">some</span> <span class=\"bp\">&lt;$&gt;</span> <span class=\"n\">f</span> <span class=\"n\">x</span><span class=\"o\">)</span> <span class=\"bp\">&lt;|&gt;</span> <span class=\"n\">return</span> <span class=\"n\">none</span><span class=\"o\">)</span> <span class=\"n\">l</span>\n</code></pre></div>",
+        "id": 235589739,
+        "sender_full_name": "Miroslav Olšák",
+        "timestamp": 1619042658
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"133339\">@Miroslav Olšák</span> That's exactly what I needed. Thanks!</p>",
+        "id": 235604905,
+        "sender_full_name": "Joe Palermo",
+        "timestamp": 1619053051
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib_docs/find/tactic.successes\">docs#tactic.successes</a></p>",
+        "id": 235605300,
+        "sender_full_name": "Yakov Pechersky",
+        "timestamp": 1619053386
+    },
+    {
+        "content": "<p>or <a href=\"https://leanprover-community.github.io/mathlib_docs/find/try_all\">docs#try_all</a> depending on if you need to keep or reset the state</p>",
+        "id": 235605347,
+        "sender_full_name": "Yakov Pechersky",
+        "timestamp": 1619053418
+    },
+    {
+        "content": "<p>This is for interactive tactics, might work for you still</p>",
+        "id": 235605402,
+        "sender_full_name": "Yakov Pechersky",
+        "timestamp": 1619053451
+    },
+    {
+        "content": "<p>And of course, <a href=\"https://leanprover-community.github.io/mathlib_docs/find/tactic.try\">docs#tactic.try</a> and <a href=\"https://leanprover-community.github.io/mathlib_docs/find/tactic.try_core\">docs#tactic.try_core</a></p>",
+        "id": 235605423,
+        "sender_full_name": "Yakov Pechersky",
+        "timestamp": 1619053495
+    },
+    {
+        "content": "<p><span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span> I expected there would be library functions for this, I just don't know how to search for them.</p>",
+        "id": 235638548,
+        "sender_full_name": "Miroslav Olšák",
+        "timestamp": 1619079910
+    },
+    {
+        "content": "<p><a class=\"stream\" data-stream-id=\"217875\" href=\"/#narrow/stream/217875-Is-there-code-for-X.3F\">#Is there code for X?</a> + well-chosen thread title</p>",
+        "id": 235638619,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1619079950
+    }
+]

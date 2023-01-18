@@ -1,0 +1,206 @@
+[
+    {
+        "content": "<p>Is there a way to print all syntax extensions supported by a given category parser? Something like lean 3's <code>#print notation</code> to show all expr notations, but for the <code>attr</code>, <code>term</code>, <code>command</code>, <code>tactic</code> categories instead</p>",
+        "id": 245246575,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625694364
+    },
+    {
+        "content": "<p>What information about the category's parsers do you want to print?</p>",
+        "id": 245249945,
+        "sender_full_name": "Mac",
+        "timestamp": 1625696510
+    },
+    {
+        "content": "<p>What parsers exist?</p>",
+        "id": 245250426,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625696866
+    },
+    {
+        "content": "<p>Something analogous to a reconstructed <code>syntax</code> command would be great</p>",
+        "id": 245250479,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625696887
+    },
+    {
+        "content": "<p>also what elaborators are attached to the notation, if possible, although that's probably a separate issue</p>",
+        "id": 245250523,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625696945
+    },
+    {
+        "content": "<p>but it would be super helpful to be able to <code>#print #print</code> and find out where the <code>#print</code> syntax/elab are defined, independently of server support for this via go to definition, as well as <code>#print category term</code> to see all declared term parsers. But I'm mainly interested in the backend information rather than the presentation right now</p>",
+        "id": 245250744,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625697104
+    },
+    {
+        "content": "<p>Looking at the parser code, I think this might be impossible without additional information gathering on the part of the parser infrastructure. Parsers are eagerly turned into <code>ParserFn</code> when they are stuck into the parse tables, and the only data collection that is supported is <code>collectTokens</code> and <code>collectKinds</code>, which helps a bit (you can look at the syntax kinds to figure out what parser is getting called) but it's not enough to reconstruct a <code>syntax</code> invocation unless you just try probing the <code>ParserFn</code> which doesn't sound like much fun</p>",
+        "id": 245251359,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625697584
+    },
+    {
+        "content": "<p>Yeah, that was why I was asking, the parser functions for a given syntax can be arbitrary and no information is recorded about the syntax kinds it produces or the strings it parses outside of the tokens that compose it (with the most significant piece being its first token).</p>",
+        "id": 245251826,
+        "sender_full_name": "Mac",
+        "timestamp": 1625697896
+    },
+    {
+        "content": "<p>You can, however, do something like the following to inspect what information there is though:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Parser</span> <span class=\"n\">Elab</span> <span class=\"n\">Command</span>\n\n<span class=\"n\">syntax</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">inspectCatCmd</span><span class=\"o\">)</span> <span class=\"s2\">\"#inspect_cat \"</span> <span class=\"n\">ident</span> <span class=\"o\">:</span> <span class=\"n\">command</span>\n\n<span class=\"kd\">@[commandElab inspectCatCmd]</span>\n<span class=\"kd\">def</span> <span class=\"n\">elabInspectCat</span> <span class=\"o\">:</span> <span class=\"n\">CommandElab</span>\n<span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">#</span><span class=\"n\">inspect_cat</span><span class=\"bp\">%$</span><span class=\"n\">kw</span> <span class=\"bp\">$</span><span class=\"n\">catId</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">catName</span> <span class=\"o\">:=</span> <span class=\"n\">catId.getId</span>\n  <span class=\"k\">let</span> <span class=\"n\">cats</span> <span class=\"o\">:=</span> <span class=\"n\">parserExtension.getState</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getEnv</span><span class=\"o\">)</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">categories</span>\n  <span class=\"k\">match</span> <span class=\"n\">cats.find</span><span class=\"bp\">?</span> <span class=\"n\">catName</span> <span class=\"k\">with</span>\n  <span class=\"bp\">|</span> <span class=\"n\">some</span> <span class=\"n\">cat</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">logInfoAt</span> <span class=\"n\">kw</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">repr</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">cat.tables.leadingTable.toList.map</span> <span class=\"o\">(</span><span class=\"bp\">·.</span><span class=\"mi\">1</span><span class=\"o\">)</span>\n  <span class=\"bp\">|</span> <span class=\"n\">none</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">logErrorAt</span> <span class=\"n\">catId</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"unknown category `{catName}`\"</span>\n<span class=\"bp\">|</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">throwUnsupportedSyntax</span>\n\n<span class=\"n\">declare_syntax_cat</span> <span class=\"n\">myCat</span>\n<span class=\"n\">syntax</span> <span class=\"n\">strLit</span> <span class=\"o\">:</span> <span class=\"n\">myCat</span>\n\n<span class=\"bp\">#</span><span class=\"n\">inspect_cat</span> <span class=\"n\">myCat</span> <span class=\"c1\">-- [`strLit, `«$»]</span>\n<span class=\"bp\">#</span><span class=\"n\">inspect_cat</span> <span class=\"n\">foo</span>   <span class=\"c1\">-- unknown category `foo`</span>\n</code></pre></div>\n<p>The above code creates a command that logs the category's known leading token kinds (and could be modified to print other information).</p>",
+        "id": 245252137,
+        "sender_full_name": "Mac",
+        "timestamp": 1625698088
+    },
+    {
+        "content": "<p>For posterity, here's a utility that dumps all syntax node kinds, organized by category and leading token/precedence:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Lean.Parser</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">show</span> <span class=\"n\">CoreM</span> <span class=\"n\">Unit</span> <span class=\"k\">from</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">env</span> <span class=\"bp\">←</span> <span class=\"n\">getEnv</span>\n  <span class=\"k\">let</span> <span class=\"n\">c</span> <span class=\"o\">:=</span> <span class=\"n\">mkParserContext</span> <span class=\"o\">(</span><span class=\"n\">mkInputContext</span> <span class=\"s2\">\"\"</span> <span class=\"s2\">\"\"</span><span class=\"o\">)</span> <span class=\"o\">{</span> <span class=\"n\">env</span> <span class=\"o\">:=</span> <span class=\"n\">env</span><span class=\"o\">,</span> <span class=\"n\">options</span> <span class=\"o\">:=</span> <span class=\"o\">{}</span> <span class=\"o\">}</span>\n  <span class=\"k\">let</span> <span class=\"n\">cats</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">parserExtension.getState</span> <span class=\"n\">c.env</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">categories</span>\n  <span class=\"n\">cats.forM</span> <span class=\"k\">fun</span> <span class=\"n\">name</span> <span class=\"n\">cat</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"---------------- category '{name}'\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">tables</span> <span class=\"o\">:=</span> <span class=\"n\">cat.tables</span>\n    <span class=\"k\">let</span> <span class=\"n\">forTables</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Bool</span> <span class=\"bp\">→</span> <span class=\"n\">Option</span> <span class=\"n\">Name</span> <span class=\"bp\">→</span> <span class=\"n\">Parser</span> <span class=\"bp\">×</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">CoreM</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">CoreM</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n      <span class=\"n\">tables.leadingParsers.forM</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">true</span> <span class=\"n\">none</span><span class=\"o\">)</span>\n      <span class=\"n\">tables.leadingTable.forM</span> <span class=\"k\">fun</span> <span class=\"n\">n</span> <span class=\"n\">l</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">l.forM</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">true</span> <span class=\"n\">n</span><span class=\"o\">)</span>\n      <span class=\"n\">tables.trailingParsers.forM</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">false</span> <span class=\"n\">none</span><span class=\"o\">)</span>\n      <span class=\"n\">tables.trailingTable.forM</span> <span class=\"k\">fun</span> <span class=\"n\">n</span> <span class=\"n\">l</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">l.forM</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">false</span> <span class=\"n\">n</span><span class=\"o\">)</span>\n    <span class=\"n\">forTables</span> <span class=\"k\">fun</span> <span class=\"n\">lead</span> <span class=\"n\">n</span> <span class=\"o\">(</span><span class=\"n\">p</span><span class=\"o\">,</span> <span class=\"n\">prio</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n      <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"-- {if lead then \"</span><span class=\"n\">leading</span><span class=\"s2\">\" else \"</span><span class=\"n\">trailing</span><span class=\"s2\">\"}: {n.getD `none} at {prio}\"</span>\n      <span class=\"k\">let</span> <span class=\"n\">kinds</span> <span class=\"o\">:=</span> <span class=\"n\">p.info.collectKinds</span> <span class=\"o\">{}</span>\n      <span class=\"k\">let</span> <span class=\"n\">map</span> <span class=\"o\">:=</span> <span class=\"n\">kinds.foldl</span> <span class=\"o\">(</span><span class=\"n\">init</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[])</span> <span class=\"k\">fun</span> <span class=\"n\">map</span> <span class=\"n\">k</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">map.push</span> <span class=\"n\">k</span>\n      <span class=\"k\">let</span> <span class=\"n\">map</span> <span class=\"o\">:=</span> <span class=\"n\">map.insertionSort</span> <span class=\"n\">Name.lt</span>\n      <span class=\"n\">for</span> <span class=\"n\">k</span> <span class=\"k\">in</span> <span class=\"n\">map</span> <span class=\"k\">do</span>\n        <span class=\"k\">if</span> <span class=\"o\">(</span><span class=\"n\">env.find</span><span class=\"bp\">?</span> <span class=\"n\">k</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">isSome</span> <span class=\"k\">then</span>\n          <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"#print {k}\"</span>\n        <span class=\"k\">else</span>\n          <span class=\"k\">let</span> <span class=\"n\">k2</span> <span class=\"o\">:=</span> <span class=\"k\">if</span> <span class=\"k\">let</span> <span class=\"n\">Name.str</span> <span class=\"n\">k</span> <span class=\"s2\">\"antiquot\"</span> <span class=\"n\">_</span> <span class=\"o\">:=</span> <span class=\"n\">k</span> <span class=\"k\">then</span> <span class=\"n\">k</span> <span class=\"k\">else</span> <span class=\"n\">k</span>\n          <span class=\"k\">if</span> <span class=\"o\">(</span><span class=\"n\">env.find</span><span class=\"bp\">?</span> <span class=\"n\">k2</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">isSome</span> <span class=\"k\">then</span>\n            <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"#print {k2} -- .antiquot\"</span>\n      <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"\"</span>\n    <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"\"</span>\n</code></pre></div>\n<p>Incidentally, it outputs a file containing thousands of <code>#print</code> commands, which made me notice that the current behavior of <code>#print</code> seems to be quadratic in something, because it slows down pretty quickly and it looks like it might take a very long time to get to the end</p>",
+        "id": 245255416,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625700633
+    },
+    {
+        "content": "<p>Seems fine on the cmdline? I'm afraid to open it in an editor.</p>",
+        "id": 245279018,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1625728272
+    },
+    {
+        "content": "<p>The <code>#eval</code> that produces the script is itself very fast, but if you copy the output into a lean file the <code>#print</code> statements take progressively longer to check. By the time there are 400 of them it's taking more than a second per <code>#print</code>, which seems very suspicious. I know that vscode isn't the culprit because it will be updating diagnostics all the while - they tend to flicker due to server response time when the number of diagnostics gets into the thousands but it's still responsive</p>",
+        "id": 245288392,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625735028
+    },
+    {
+        "content": "<p>Emacs/flycheck starts shutting down at around 200 messages, haha. Since it's fast on the cmdline, it is probably the server's fault.</p>",
+        "id": 245288669,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1625735190
+    },
+    {
+        "content": "<p>It seems like the server wants to update the client after every command, which probably leads to the quadratic behavior since it has to send (and re-layout?) all previous messages each time</p>",
+        "id": 245288923,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625735404
+    },
+    {
+        "content": "<p>Oh yes, that is certainly quadratic</p>",
+        "id": 245288994,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1625735448
+    },
+    {
+        "content": "<p>in this case it would be advantageous for the server to back off and not update as frequently, which is probably easier to implement than making the diagnostic marshalling asynchronous</p>",
+        "id": 245289050,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625735506
+    },
+    {
+        "content": "<p>Now that Gabriel has separated file progress notifications from diagnostics, that does sound like a good idea</p>",
+        "id": 245289200,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1625735610
+    },
+    {
+        "content": "<p>Well, not sure. As soon as a single #print command + diagnostics publishing is as slow as the back off, you would be back at the current performance. I'm not sure this is a use case we need to support, or at least it's one that LSP makes very hard to properly support.</p>",
+        "id": 245289856,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1625736082
+    },
+    {
+        "content": "<p>The approach I would take is something like: progress reporting is not allowed to take more than X% of total run time. If it gets above that, start reporting less often</p>",
+        "id": 245290034,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625736212
+    },
+    {
+        "content": "<p>there are ways to approximate that without doing detailed profiling all the time</p>",
+        "id": 245290107,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625736247
+    },
+    {
+        "content": "<p>Actually, one very easy metric is that you shouldn't send a progress update if the last progress update was less than X ms ago (not counting the time to send the progress report itself). That is, lean should always get a large enough time slice, to avoid a situation like this one where the commands are super fast but the mandatory progress reports between each one are slow</p>",
+        "id": 245290310,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625736423
+    },
+    {
+        "content": "<p>This is the reason why in Lean 3 diagnostic messages are sent using a timer (i.e., every 100ms).</p>",
+        "id": 245290333,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1625736447
+    },
+    {
+        "content": "<p>Does it really make sense to look at such monster files in the editor? Does VSCode scale to thousands of messages?</p>",
+        "id": 245290558,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1625736602
+    },
+    {
+        "content": "<p>the file I was looking at was about 8000 lines of <code>#print</code> statements. There are mathlib files larger than that</p>",
+        "id": 245290749,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625736720
+    },
+    {
+        "content": "<p><del>8000 messages shouldn't really be an issue (if updates are infrequent enough).</del></p>",
+        "id": 245290964,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1625736858
+    },
+    {
+        "content": "<p>Looks like vscode performance regressed quite a bit.  They apparently cap the number of diagnostics at 1000 now.  Infoview is still peachy though.</p>",
+        "id": 245291379,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1625737159
+    },
+    {
+        "content": "<p>(could we possibly only add diagnostics to whatever's visible?) Is that info available?</p>",
+        "id": 245291540,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1625737292
+    },
+    {
+        "content": "<p>That might be a workaround in case there's too many diagnostics.  We could also cap the diagnostics to 1k/file in vscode.  The infoview can still show all diagnostics.</p>",
+        "id": 245291791,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1625737503
+    },
+    {
+        "content": "<p>Ideally, this would be fixed in vscode though.  I just tried with neovim and Lean 3, and it displays 10k diagnostics just fine.</p>",
+        "id": 245291839,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1625737552
+    },
+    {
+        "content": "<p>hmm, it looks like at least for some api's you get the view port info: <a href=\"https://code.visualstudio.com/updates/v1_54\">https://code.visualstudio.com/updates/v1_54</a></p>",
+        "id": 245292093,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1625737715
+    },
+    {
+        "content": "<p>and as for doing it in vscode, it's still a bad idea to do the computation for 10k things if you only ever show 20 on the screen.</p>",
+        "id": 245292126,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1625737747
+    },
+    {
+        "content": "<p>well you can still see them on the minimap / gutter</p>",
+        "id": 245292254,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625737842
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/270676-lean4/topic/Querying.20category.20parsers/near/245290333\">said</a>:</p>\n<blockquote>\n<p>This is the reason why in Lean 3 diagnostic messages are sent using a timer (i.e., every 100ms).</p>\n</blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"235513\">Daniel Fabian</span> <a href=\"#narrow/stream/270676-lean4/topic/Querying.20category.20parsers/near/245291540\">said</a>:</p>\n<blockquote>\n<p>(could we possibly only add diagnostics to whatever's visible?) Is that info available?</p>\n</blockquote>\n<p>This can be useful for other reasons. I've observed noticeable slowdown in just a 100x line file when editing, for example, macros in the same file. The server re-computes the entire file one each partial edit, thus often resulting in half-edited macro being processed. This breaks the rest of the file thereby producing tons of errors. This happens multiple times per second and results in input lag while editing the macro in VS Code. I definitely think some level of processing delay for the rest of the file would be desirable. For my case, I know there is the 'elaboration delay' setting, but the problem isn't really elaborating the code under the cursor (which I do want fast feedback for) -- it is the fact that it also re-elaborates the rest of the file each edit that causes problems.</p>",
+        "id": 245323491,
+        "sender_full_name": "Mac",
+        "timestamp": 1625755576
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Querying.20category.20parsers/near/245292254\">said</a>:</p>\n<blockquote>\n<p>well you can still see them on the minimap / gutter</p>\n</blockquote>\n<p>While this is certainly nice, I think elaboration of the file outside the input view should be done lazily. That is, when, by some heuristic, the server has free time to spare . For example, when there is more than enough free processing power and the server is not currently being requested to do something else.</p>",
+        "id": 245323938,
+        "sender_full_name": "Mac",
+        "timestamp": 1625755762
+    }
+]

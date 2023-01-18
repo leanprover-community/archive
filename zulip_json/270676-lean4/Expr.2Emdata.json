@@ -1,0 +1,44 @@
+[
+    {
+        "content": "<p>Can someone explain what Expr.mdata is for?  Here's a silly example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">elab</span> <span class=\"s2\">\"traceGoal\"</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">g</span> <span class=\"bp\">←</span> <span class=\"n\">getMainTarget</span>\n  <span class=\"n\">dbg_trace</span> <span class=\"n\">g</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">p</span> <span class=\"n\">q</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">p</span> <span class=\"bp\">∧</span> <span class=\"n\">q</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">p</span> <span class=\"bp\">→</span> <span class=\"n\">q</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">traceGoal</span>\n  <span class=\"k\">have</span> <span class=\"n\">h2</span> <span class=\"o\">:</span> <span class=\"n\">q</span> <span class=\"o\">:=</span> <span class=\"n\">h.right</span>\n  <span class=\"n\">traceGoal</span>\n</code></pre></div>\n<p>The two calls to <code>traceGoal</code> reveal that initially, the goal is <code>_uniq.45324 -&gt; _uniq.45325</code>, but after the use of <code>have</code> it is <code>[mdata noImplicitLambda:1 _uniq.45324 -&gt; _uniq.45325]</code>.  What happened?</p>\n<p>The reason for my interest is that I want to write tactics that decide what to do based on the form of the goal.  If the goal has the form <code>Expr.mdata m e d</code>, then I guess I need to look inside <code>e</code> to see what the form of the goal is.  It is easy enough to do that using something like this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">stripMData</span> <span class=\"o\">(</span><span class=\"n\">e</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span> <span class=\"o\">:=</span>\n  <span class=\"k\">match</span> <span class=\"n\">e</span> <span class=\"k\">with</span>\n    <span class=\"bp\">|</span> <span class=\"n\">Expr.mdata</span> <span class=\"n\">_</span> <span class=\"n\">e</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">stripMData</span> <span class=\"n\">e</span>\n    <span class=\"bp\">|</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">e</span>\n</code></pre></div>\n<p>But is that a good idea?  If I remove all of the mdata to get at the underlying expression, am I going to get myself in trouble somehow?  I'm reluctant to throw away the mdata without knowing what it is.</p>",
+        "id": 287193661,
+        "sender_full_name": "Dan Velleman",
+        "timestamp": 1655992537
+    },
+    {
+        "content": "<p>I'm not sure what mdata is, but have you had a look at <code>whnf</code>? It stands for weak head normal form and if you want to match on expressions you probably want to normalise them first. I suspect <code>whnf</code> might get rid of the mdata for you.</p>",
+        "id": 287214170,
+        "sender_full_name": "Alex Keizer",
+        "timestamp": 1656001264
+    },
+    {
+        "content": "<p>If <code>whnf</code> doesn't do it, there is also <code>Expr.consumeMData</code>.</p>",
+        "id": 287214528,
+        "sender_full_name": "Alexander Bentkamp",
+        "timestamp": 1656001415
+    },
+    {
+        "content": "<p><code>mdata</code> is a mechanism for attaching arbitrary metadata to expressions. It's used for a number of things (e.g. better pretty-printing if I recall correctly), but it should never be semantically relevant, so you can remove it if you need to. If you construct an expression that's derived from an existing expression, it may be nice to preserve <code>mdata</code>, but my impression is that Lean itself doesn't do this consistently.</p>",
+        "id": 287216529,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1656002206
+    },
+    {
+        "content": "<p>I'm still unclear on when it is necessary to call consumeMData.  For example, here's the definition of Expr.getAppFn:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">getAppFn</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">Expr</span>\n  <span class=\"bp\">|</span> <span class=\"n\">app</span> <span class=\"n\">f</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">getAppFn</span> <span class=\"n\">f</span>\n  <span class=\"bp\">|</span> <span class=\"n\">e</span>             <span class=\"bp\">=&gt;</span> <span class=\"n\">e</span>\n</code></pre></div>\n<p>Why isn't it:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">getAppFn</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">Expr</span>\n  <span class=\"bp\">|</span> <span class=\"n\">app</span> <span class=\"n\">f</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">getAppFn</span> <span class=\"o\">(</span><span class=\"n\">consumeMData</span> <span class=\"n\">f</span><span class=\"o\">)</span>\n  <span class=\"bp\">|</span> <span class=\"n\">e</span>            <span class=\"bp\">=&gt;</span> <span class=\"n\">e</span>\n</code></pre></div>\n<p>How do we know <code>f</code> doesn't have mdata associated with it?</p>",
+        "id": 293619420,
+        "sender_full_name": "Dan Velleman",
+        "timestamp": 1660596869
+    },
+    {
+        "content": "<p>I agree that your definition would likely be better for most purposes. Maybe the Lean devs would even consider this a bug, or maybe they use this function in ways that are supposed to be sensitive to mdata. Other functions have primed versions which ignore mdata, e.g. <a href=\"https://leanprover-community.github.io/mathlib4_docs/Lean/Expr.html#Lean.Expr.isAppOfArity'\">isAppOfArity'</a>.</p>",
+        "id": 293662007,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1660631669
+    },
+    {
+        "content": "<p>Maybe we need a \"what are mdata used for\" document, because these are quite mysterious (and also very well hidden).  Some prominent applications:</p>\n<ol>\n<li><code>show X from y</code> is encoded as <code>.mdata (KVMap.empty.setBool `let_fun true) (.app (.lam _ X (.var 0) y)</code>.  Here mdata is used to create a \"custom expression constructor\", if you will.</li>\n<li>Tags like <code>noindex</code> or <code>@&amp;</code> are stored as annotations.</li>\n<li>You can annotate an expression with pretty-printing options using mdata.  Check out <code>Expr.setPPExplicit</code> and co.</li>\n</ol>\n<p>My general feeling is: only strip mdata if you're beta-reducing as well.</p>",
+        "id": 293666083,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1660634394
+    }
+]

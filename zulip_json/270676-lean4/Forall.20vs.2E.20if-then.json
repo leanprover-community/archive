@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>Consider this example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">),</span> <span class=\"bp\">¬</span> <span class=\"bp\">∃</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"n\">n</span><span class=\"o\">),</span> <span class=\"n\">x</span> <span class=\"bp\">≠</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n</code></pre></div>\n<p>In the tactic state, the goal is shown as <code>ℕ → ¬∃ x, x ≠ x</code>.  I have said before that I don't really like the algorithm that is used to distinguish between \"forall\" and \"if-then,\" but in this case I'm really puzzled.  I assumed that what was being used was <code>Lean.Expr.isArrow</code>, which checks to see if the body of the <code>forallE</code> has loose bound variables.  Well, in this case the body <em>does</em> have a loose bound variable, namely the reference to <code>n</code> in <code>Fin n</code>.  So why is this displayed using an arrow rather than a universal quantifier?</p>",
+        "id": 299317772,
+        "sender_full_name": "Dan Velleman",
+        "timestamp": 1663419207
+    },
+    {
+        "content": "<p>This is actually a pretty-printing bug... <code>→</code> is always non-dependent, while the specific <code>∀</code> here is dependent.</p>",
+        "id": 299321022,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1663421042
+    },
+    {
+        "content": "<p>Please file an issue.</p>",
+        "id": 299321200,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1663421112
+    },
+    {
+        "content": "<p>The following would be a valid use of <code>→</code> by the pretty-printer though:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#check</span> <span class=\"bp\">∀</span> <span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">,</span> <span class=\"bp\">¬∃</span> <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">,</span> <span class=\"n\">x</span> <span class=\"bp\">≠</span> <span class=\"n\">x</span>\n</code></pre></div>",
+        "id": 299321211,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1663421116
+    },
+    {
+        "content": "<p>Ultimately this boils down to the underlying type theory; both implication and forall are represented as <code>Expr.forallE</code>.  So the pretty-printer needs to make a choice whether to show the <code>.forallE</code> as an implication or a forall.</p>",
+        "id": 299321477,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1663421174
+    },
+    {
+        "content": "<p>OK, I'll file an issue.<br>\nYes, I understand that implication and forall are both represented as <code>forallE</code>.  In my opinion, the pretty-printer algorithm should be changed.  For an expression <code>forallE name type body binderinfo</code> that has type <code>Prop</code>, I think that if the type of <code>type</code> is not <code>Prop</code> then, even if <code>body</code> has no loose bvars, the expression should be displayed with a universal quantifier.  In logic, it is not uncommon to have \"vacuous quantifiers\" like <code>∀ x : Nat, p</code>.  I understand that, to Lean, this is the same as <code>Nat → p</code>, but that's not how any mathematician would write it.  For expressions of other types, the current algorithm makes sense.  But if an expression has type <code>Prop</code>, then in my opinion it should be displayed so that it looks like a proposition.  And that means the arrow should mean \"implies\", and therefore it should only be used if what's on the left is a proposition.</p>",
+        "id": 299334205,
+        "sender_full_name": "Dan Velleman",
+        "timestamp": 1663427612
+    },
+    {
+        "content": "<p>+1 for \"Nat -&gt; p looks weird to mathematicians\"</p>",
+        "id": 299345153,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1663434464
+    },
+    {
+        "content": "<p>On the other hand, it would be a bit weird to have a nat and then a prop which didn't depend on it ...</p>",
+        "id": 299345241,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1663434507
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110038\">@Kevin Buzzard</span> Sometimes these non-dependent foralls arise incidentally to rewrites (for example, if you have <code>∀ (n : ℕ), 1 ≤ f n</code> and make use of <code>∀ (n : ℕ), f n = 37</code>). I imagine you've had students become confused when their foralls turn into functions. There at least have been occasional questions on <a class=\"stream\" data-stream-id=\"113489\" href=\"/#narrow/stream/113489-new-members\">#new members</a> about this.</p>",
+        "id": 299348921,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1663437171
+    },
+    {
+        "content": "<p>I agree with <span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> that non-dependent foralls arise naturally in math.  They also arise in formal logic.  For example, there is a rule of logic that says that forall distributes over and:  <code>∀ x, P ∧ Q</code> is equivalent to <code>(∀ x, P) ∧ (∀ x, Q)</code>.  One would want to be able to apply this rule even in cases in which <code>P</code> is a statement about <code>x</code> but <code>Q</code> doesn't mention <code>x</code>. It would certainly be awkward to have separate versions of the rule depending on whether both <code>P</code> and <code>Q</code> mention <code>x</code> or only one of them does.</p>\n<p>Here's a related point.  Consider this example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">p1</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">p2</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"kt\">Prop</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h1</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">,</span> <span class=\"n\">p1</span> <span class=\"n\">n</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h2</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">,</span> <span class=\"n\">p2</span> <span class=\"n\">n</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n</code></pre></div>\n<p>In the tactic state, the type of <code>h1</code> is displayed as <code>(n : ℕ) → p1 n</code>, and the type of <code>h2</code> is <code>∀ (n : ℕ), p2 n</code>.  So it appears that there is a precedent for displaying expressions of type <code>Prop</code> differently from expressions of other types.  The difference here makes sense to me: <code>h2</code> is best thought of as a universally quantified statement, but <code>h1</code> is best thought of as a function type.  I think a similar principle applies to the case of <code>∀ n : Nat, p</code>.  If <code>p</code> is a proposition, then this is best thought of as a universally quantified statement (even though <code>p</code> doesn't refer to <code>n</code>), but if <code>p</code> is not a proposition then it makes sense to think of the expression as representing the type <code>Nat → p</code>.</p>\n<p>Would there be a down side to making this change?</p>",
+        "id": 299583953,
+        "sender_full_name": "Dan Velleman",
+        "timestamp": 1663600642
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"453098\">@Dan Velleman</span> A couple days ago I experimented with making the change for Lean 3, and it was relatively straightforward. There didn't seem to be any downsides that surfaced through the test suite. (I just uploaded it: <a href=\"https://github.com/leanprover-community/lean/pull/770\">lean#770</a>, and look at in particular <code>pp_forall.lean</code> for some tests.)</p>",
+        "id": 299619378,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1663611215
+    }
+]

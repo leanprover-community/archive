@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>Adding a <a href=\"https://github.com/leanprover-community/mathlib/pull/12455/commits/37c5ab399c12e189ddcda519fdd436fe44c48bf9#diff-ffbe5854a14b658c37404c12a99ee165b66b7b144b61a2958f4a32fc1b05ed8fR438\">subsingleton instance</a> for an <code>alg_hom</code> type causes a <a href=\"https://github.com/leanprover-community/mathlib/pull/12455/commits/37c5ab399c12e189ddcda519fdd436fe44c48bf9#file-src-field_theory-is_alg_closed-basic-lean-L185\">structure definition</a> in another file to (deterministically) timeout. One field of the structure is an <code>alg_hom</code>, which probably isn't a coincidence. Replacing the instance with lemma fixed the problem. Could anyone please diagnose the problem, and is it a known problem?</p>",
+        "id": 274911157,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1646955146
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib/pull/6025\">#6025</a></p>",
+        "id": 274911202,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1646955204
+    },
+    {
+        "content": "<p>this isn't in <code>simp</code> or anything, Yaël, it's a structure declaration</p>",
+        "id": 274911509,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1646955404
+    },
+    {
+        "content": "<p>I believe it's at least related.</p>",
+        "id": 274911657,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1646955505
+    },
+    {
+        "content": "<p>This issue actually occurred after the <code>simp</code> issue was fixed in <a href=\"https://github.com/leanprover-community/lean/pull/665\">lean#665</a>. I've <a href=\"#narrow/stream/144837-PR-reviews/topic/.235672.20breaks.20timeout/near/293228091\">confirmed</a> that subsingleton instances make little difference on latest master (where they make a large difference before the fix to warrant a hack). However, the subsingleton instance introduced in <a href=\"https://github.com/leanprover-community/mathlib/pull/12455\">#12455</a> still makes the <code>subfield_with_hom</code> structure timeout (after I merged latest master).</p>\n<p>I'm not sure how to diagnose this, since <code>set_option profiler true</code> doesn't print anything for structure declaration. The following might offer some clues:</p>\n<ol>\n<li>adding <code>local attribute [-instance] is_localization.alg_hom_subsingleton</code> before the structure declaration avoids the timeout.</li>\n<li>replacing <code>structure</code> with <code>class</code> or <code>@[class] structure</code> avoids the timeout.</li>\n<li><code>noncomputable</code> and <code>noncomputable!</code> have no effect.</li>\n</ol>\n<p>So now I'm curious how subsingleton instances are used in structure declarations and how they're not used in class declarations ...</p>",
+        "id": 293309200,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1660414932
+    },
+    {
+        "content": "<p>So I searched <code>structure</code> among all options printed by <code>#help options.</code>, and discovered the trace option <code>trace.compiler.erase_trivial_structures</code>. Once I enable it, I see the trace message</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[</span><span class=\"n\">compiler.erase_trivial_structures</span><span class=\"o\">]</span>\n<span class=\"bp\">&gt;&gt;</span> <span class=\"n\">_interaction</span>\n<span class=\"n\">tactic.mk_inj_eq</span>\n</code></pre></div>\n<p>from the declaration <code>structure subfield_with_hom :=</code>, and it looks like it's the culprit, because <a href=\"https://leanprover-community.github.io/mathlib_docs/find/tactic.mk_inj_eq/src\">src#tactic.mk_inj_eq</a> uses <code>congr</code>, which is known to invoke subsingleton lemmas.</p>",
+        "id": 293337214,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1660443946
+    },
+    {
+        "content": "<p>(sorry, wrong trace option above, now corrected.)</p>\n<p>Looking at the <a href=\"https://github.com/leanprover-community/lean/blob/65ad4ffdb3abac75be748554e3cbe990fb1c6500/src/library/compiler/simp_inductive.h#L13-L18\">docstring for erase_trivial_structures</a>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Remove</span> <span class=\"n\">constructor</span><span class=\"bp\">/</span><span class=\"n\">projection</span><span class=\"bp\">/</span><span class=\"n\">cases_on</span> <span class=\"n\">applications</span> <span class=\"n\">of</span> <span class=\"n\">trivial</span> <span class=\"n\">structures.</span>\n   <span class=\"n\">We</span> <span class=\"n\">say</span> <span class=\"n\">a</span> <span class=\"kd\">structure</span> <span class=\"n\">is</span> <span class=\"n\">trivial</span> <span class=\"k\">if</span> <span class=\"n\">it</span> <span class=\"n\">has</span> <span class=\"n\">only</span> <span class=\"n\">constructor</span> <span class=\"n\">and</span>\n   <span class=\"n\">the</span> <span class=\"n\">constructor</span> <span class=\"n\">has</span> <span class=\"n\">only</span> <span class=\"n\">one</span> <span class=\"n\">relevant</span> <span class=\"n\">field.</span>\n   <span class=\"n\">In</span> <span class=\"n\">this</span> <span class=\"n\">case</span><span class=\"o\">,</span> <span class=\"n\">we</span> <span class=\"n\">use</span> <span class=\"n\">a</span> <span class=\"n\">simple</span> <span class=\"n\">optimization</span> <span class=\"n\">where</span> <span class=\"n\">we</span> <span class=\"n\">represent</span> <span class=\"n\">elements</span> <span class=\"n\">of</span> <span class=\"n\">this</span> <span class=\"kd\">inductive</span>\n   <span class=\"n\">datatype</span> <span class=\"n\">as</span> <span class=\"n\">the</span> <span class=\"n\">only</span> <span class=\"n\">relevant</span> <span class=\"n\">element.</span>\n</code></pre></div>\n<p>it's plausible that Lean would try to show the field <code>emb</code> is irrelevant in <code>structure subfield_with_hom</code> in the presence of a subsingleton instance for <code>alg_hom</code>, and times out in the process:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">subfield_with_hom</span> <span class=\"o\">:=</span>\n<span class=\"o\">(</span><span class=\"n\">carrier</span> <span class=\"o\">:</span> <span class=\"n\">subalgebra</span> <span class=\"n\">K</span> <span class=\"n\">L</span><span class=\"o\">)</span>\n<span class=\"o\">(</span><span class=\"n\">emb</span> <span class=\"o\">:</span> <span class=\"n\">carrier</span> <span class=\"bp\">→ₐ</span><span class=\"o\">[</span><span class=\"n\">K</span><span class=\"o\">]</span> <span class=\"n\">M</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 293337652,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1660444671
+    },
+    {
+        "content": "<p>By the way I'm confused by <code>We say a structure is trivial if it has only constructor</code>: does it mean if \"it has only <strong>one</strong> constructor? But doesn't all structures have only one constructor? Does it apply to inductive types other than structures?</p>",
+        "id": 293337794,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1660444848
+    },
+    {
+        "content": "<p>Yes, the logic is actually running on inductives so the \"only one constructor\" check is needed</p>",
+        "id": 293338124,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1660445317
+    },
+    {
+        "content": "<p>I'll go with the <code>local attribute [-instance]</code> solution for now and see if it builds. I hope it's not a loop in typeclass inference that caused the timeout ...</p>",
+        "id": 293338515,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1660445907
+    },
+    {
+        "content": "<p>The mathlib build succeeded, but the \"dangerous_instance\" linter isn't happy with the instance after all, probably because the submonoid M in the typeclass argument [is_localization M P] doesn't appear in the conclusion and hence become a \"metavariable\". I'd probably revert the instance to a lemma, but it's still puzzling why tactic.mk_inj_eq has issue with the instance while the rest of mathlib is OK with it ...</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c\">/-</span><span class=\"cm\"> The `dangerous_instance` linter reports: -/</span>\n<span class=\"c\">/-</span><span class=\"cm\"> DANGEROUS INSTANCES FOUND.</span>\n<span class=\"cm\">These instances are recursive, and create a new type-class problem which will have metavariables.</span>\n<span class=\"cm\">Possible solution: remove the instance attribute or make it a local instance instead.</span>\n\n<span class=\"cm\">Currently this linter does not check whether the metavariables only occur in arguments marked with `out_param`, in which case this linter gives a false positive. -/</span>\n<span class=\"c1\">-- ring_theory/localization/basic.lean</span>\n<span class=\"k\">#check</span> <span class=\"bp\">@</span><span class=\"n\">is_localization.alg_hom_subsingleton</span> <span class=\"c\">/-</span><span class=\"cm\"> The following arguments become metavariables. argument 3: (M : submonoid R) -/</span>\n</code></pre></div>",
+        "id": 293345435,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1660456644
+    }
+]

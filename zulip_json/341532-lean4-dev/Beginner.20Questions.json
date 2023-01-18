@@ -1,0 +1,92 @@
+[
+    {
+        "content": "<p>Hello, I hope this is the right place to post some beginner-level questions about the compiler. I've tried asking in #lean4 but they mostly just get buried. </p>\n<p>I was playing around with the LCNF compiler, and wondered if there is any way to run <code>Compiler.compile</code> on an input file? I want to try something like <code>Elab.runFrontend</code>, where I give the function a filename and it will parse the file and compile it for me, then return the output. I did try hacking around a bit and discovered that LCNF declarations are saved in a persistent env extension, which was really helpful, but I'm confused as to where exactly these declarations are being added to the env? It seems like they are as soon as each definition command is elaborated -- that's my best guess at least. If someone could shed some light on this, I would really appreciate it!</p>\n<p>Also, is there any way to turn off a compiler pass entirely? (Like <code>specialize</code> for example)</p>",
+        "id": 314423239,
+        "sender_full_name": "Hanting Zhang",
+        "timestamp": 1670409018
+    },
+    {
+        "content": "<blockquote>\n<p>It seems like they are as soon as each definition command is elaborated</p>\n</blockquote>\n<p>That is correct, as they might be used by a <code>#eval</code> or other metaprogram as the next command</p>",
+        "id": 314423751,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1670409183
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"355764\">Hanting Zhang</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Beginner.20Questions/near/314423239\">said</a>:</p>\n<blockquote>\n<p>Also, is there any way to turn off a compiler pass entirely? (Like <code>specialize</code> for example)</p>\n</blockquote>\n<p>That might be possible with <code>PassInstaller.replacePass</code>, though I've never used that API before</p>",
+        "id": 314424010,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1670409266
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Beginner.20Questions/near/314423751\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>It seems like they are as soon as each definition command is elaborated</p>\n</blockquote>\n<p>That is correct, as they might be used by a <code>#eval</code> or other metaprogram as the next command</p>\n</blockquote>\n<p>Is there a specific function in <code>CommandElabM</code> where this happens?</p>",
+        "id": 314424564,
+        "sender_full_name": "Hanting Zhang",
+        "timestamp": 1670409483
+    },
+    {
+        "content": "<p>I think the entry point is <code>addAndCompile</code></p>",
+        "id": 314424975,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1670409622
+    },
+    {
+        "content": "<p>at least, that's the entry point for the old compiler, presumably the new compiler runs there as well</p>",
+        "id": 314425038,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1670409644
+    },
+    {
+        "content": "<p>Ah, ok I see why this was so weird now. There's an <code>@[extern \"lean_lcnf_compile_decls\"]</code> that points to back <code>Compiler.LCNF.main</code>... thank you!</p>",
+        "id": 314425847,
+        "sender_full_name": "Hanting Zhang",
+        "timestamp": 1670409925
+    },
+    {
+        "content": "<p>Hmm, it doesn't seem like there's an easy way to turn off a compiler pass. The <code>PassManager</code> is registered as a builtin and as far as I understand these are stored to persist in memory somewhere (?) -- please correct me if I'm wrong. I guess is there any possible way to tweak builtin options before running the frontend? Could I also just recompile all of Lean 4 with that specific option deleted?</p>",
+        "id": 314428283,
+        "sender_full_name": "Hanting Zhang",
+        "timestamp": 1670410762
+    },
+    {
+        "content": "<p>looking at the code, it seems like you can set a <code>PassInstaller</code>, which is passed an array of passes and can do whatever it wants to it, not just add things but also remove them</p>",
+        "id": 314429239,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1670411057
+    },
+    {
+        "content": "<p>Look for uses of the <code>@[cpass]</code> attribute in the tests</p>",
+        "id": 314429389,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1670411104
+    },
+    {
+        "content": "<p>Ok, I see. However, all of the tests still use <code>#eval</code> in the end to check their results. Is there any way to not rely on <code>#eval</code> and run the compiler on a new file completely? Ideally something like </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">Lean.compileFrontend</span> <span class=\"o\">(</span><span class=\"n\">file</span> <span class=\"o\">:</span> <span class=\"n\">FilePath</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">passes</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Pass</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"bp\">$</span> <span class=\"n\">Array</span> <span class=\"n\">Decl</span> <span class=\"bp\">&lt;+</span> <span class=\"n\">other</span> <span class=\"n\">info</span><span class=\"bp\">&gt;</span> <span class=\"o\">:=</span>\n  <span class=\"bp\">...</span> <span class=\"bp\">&lt;</span><span class=\"n\">something</span><span class=\"bp\">?&gt;</span>\n</code></pre></div>",
+        "id": 314430427,
+        "sender_full_name": "Hanting Zhang",
+        "timestamp": 1670411456
+    },
+    {
+        "content": "<p>One issue with my approach is that everything is running in <code>MetaM</code>, <code>CoreM</code>, or <code>CompilerM</code>, which I can't reconstruct from <code>IO</code>. But I'm not sure how to deal with this, is there a better approach for what I want here?</p>",
+        "id": 314430861,
+        "sender_full_name": "Hanting Zhang",
+        "timestamp": 1670411581
+    },
+    {
+        "content": "<p>It's a bit annoying to work directly from <code>IO</code>, but you can do it, after all that's what lean itself does. You have to load an environment and work inside it using <code>withImportModules</code>. There are even some compiler tests that use this function, like <code>ctor_layout.lean</code></p>",
+        "id": 314432369,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1670412046
+    },
+    {
+        "content": "<p>You can't make a function with exactly that signature though because <code>withImportModules</code> works in a callback, and it is not safe to use any lean objects obtained from the environment after the callback terminates, so it usually has to encompass the entire program</p>",
+        "id": 314432697,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1670412156
+    },
+    {
+        "content": "<p>Ok, this looks interesting, I'll take a look. Thank you!</p>",
+        "id": 314433017,
+        "sender_full_name": "Hanting Zhang",
+        "timestamp": 1670412284
+    }
+]

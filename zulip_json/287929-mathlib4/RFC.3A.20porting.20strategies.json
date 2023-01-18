@@ -1,0 +1,254 @@
+[
+    {
+        "content": "<p>As many of you know, <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> and I have been working on automated porting tools. The two main tools are:</p>\n<ul>\n<li>binport: produces lean4 <code>.olean</code> files from lean3 <code>.tlean</code> files</li>\n<li>synport: produces lean4 <code>.lean</code> files from lean3 <code>.ast.json</code> files, that look great but will not elaborate/type-check in general</li>\n</ul>\n<p>We are starting to think about both how best to connect them and how best to structure the overall porting effort. There are many possible strategies, for example:</p>\n<ol>\n<li>\n<p>\"top-down\"</p>\n<ul>\n<li>produce <code>.olean</code> files from binport</li>\n<li>working backwards from the leaves:<ul>\n<li>produce non-working <code>.lean</code> file from synport that imports the previous binported files</li>\n<li>tweak it manually so it elaborates</li>\n<li>replace the binport <code>.olean</code> with the new <code>.lean</code> file</li>\n</ul>\n</li>\n</ul>\n</li>\n<li>\n<p>\"bottom-up\"</p>\n<ul>\n<li>start from the beginning (as in Mathlib4 repo currently)</li>\n<li>in dependency order:<ul>\n<li>produce non-working <code>.lean</code> file from synport that imports only working <code>.lean</code> files</li>\n<li>tweak it manually so it elaborates</li>\n</ul>\n</li>\n</ul>\n</li>\n<li>\n<p>\"parallel\"</p>\n<ul>\n<li>produce <code>.olean</code> files from binport</li>\n<li>stage 1: in parallel,<ul>\n<li>produce non-working <code>.lean</code> file from synport that imports the previous <em>binported</em> files</li>\n<li>tweak it manually so it elaborates</li>\n</ul>\n</li>\n<li>stage 2: in parallel,<ul>\n<li>replace the binportted <code>.oleans</code> with the working <code>.lean</code> files, and propagate the changes forward as necessary</li>\n</ul>\n</li>\n</ul>\n</li>\n<li>\n<p>\"hybrid\"</p>\n<ul>\n<li>somehow interleave manual + binport, and introduce new commands that add new rules/alignments to binport</li>\n</ul>\n</li>\n</ol>\n<p>Notes:</p>\n<ul>\n<li>\n<p>All strategies have \"-sorry\" variants, where nontrivial proofs are <code>sorry</code>ed out until the final, parallel stage. Microsoft is prepared to run <strong>a lot</strong> of proof search to fill in these gaps. It might not be all that hard, since we have the original tactic scripts and the binported kernel terms, and we can mine a lot of useful hints from both.</p>\n</li>\n<li>\n<p>There are also opportunities to use binport to help generate better <code>.lean</code> files. For example, <code>binport</code> can be used to delaborate defs/theorem statements to guarantee roundtripping. The new delaborator (<a href=\"https://github.com/leanprover/lean4/pull/575\">https://github.com/leanprover/lean4/pull/575</a>) has a very high roundtrip success rate while staying concise in general. However, this approach is complicated by the fact that the binported terms won't in general be exactly def-eq to the terms desired in the <code>.lean</code> file. Some things will delab in undesirable ways, e.g. definitions compiled by lean3's equation compiler.</p>\n</li>\n<li>\n<p>It is also not clear how to structure the repositories, and this depends on which strategy is adopted. For example, all approaches require synport to depend on binport (for resolving/translating names), automatic proof-patching must depend on <code>Mathlib/Tactic</code>, and the hybrid approach requires Mathlib4 and binport to be mutually dependent.</p>\n</li>\n<li>\n<p>We can gather more empirical information before we make any big decisions. For example, for simple binport-enhanced synport, how many squigglies are there outside of proofs? When using the binported <code>.olean</code>s, how problematic are the \"weird\" binport relics (e.g. definitions compiled with lean3's equation compiler)?</p>\n</li>\n</ul>",
+        "id": 248243223,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1628007144
+    },
+    {
+        "content": "<p>Is it possible to have an Okazaki fragments like approach, for the \"parallel\" (3) approach? That is, select landmark files as ones that are prioritized for having in <code>.lean</code> format. Those could be tactics, or highly imported files (finset, big_operators). Those are made in <code>.lean</code>, relying on imported <code>.oleans</code>. Then we work backward to port the imported <code>.oleans</code> to <code>.lean</code>.</p>\n<p>This is different than just the \"bottom-up\" approach because once we have a good baseline of tactics/notations, the second-level porting might go smoother. We'd also find corner cases sooner with this approach than a pure \"bottom-up\" approach.</p>",
+        "id": 248244820,
+        "sender_full_name": "Yakov Pechersky",
+        "timestamp": 1628007915
+    },
+    {
+        "content": "<p>Daniel, where do you see the non-trivial tactic writing happening in those scenario? I mean <code>ring</code>, <code>linarith</code>, <code>abel</code>, <code>tidy</code>, <code>norm_cast</code>...</p>",
+        "id": 248245631,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1628008357
+    },
+    {
+        "content": "<p>The top-down approach looks like it minimizes the risk of divergence. But probably we can't decide on the best strategy without trying a bit of top-down and a bit of bottom-up.</p>",
+        "id": 248245763,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1628008435
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110031\">Patrick Massot</span> <a href=\"#narrow/stream/287929-mathlib4/topic/RFC.3A.20porting.20strategies/near/248245631\">said</a>:</p>\n<blockquote>\n<p>Daniel, where do you see the non-trivial tactic writing happening in those scenario? I mean <code>ring</code>, <code>linarith</code>, <code>abel</code>, <code>tidy</code>, <code>norm_cast</code>...</p>\n</blockquote>\n<p>Most of these (or alternatives/variants) will need to be written. When their absence will become a brick wall depends on the porting strategy adopted. For example, we can squeak by without them for a while longer if we adopt a <code>sorry</code>-variant approach and worry about the proofs in a second pass.</p>",
+        "id": 248246175,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1628008614
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110031\">Patrick Massot</span> <a href=\"#narrow/stream/287929-mathlib4/topic/RFC.3A.20porting.20strategies/near/248245763\">said</a>:</p>\n<blockquote>\n<p>The top-down approach looks like it minimizes the risk of divergence. But probably we can't decide on the best strategy without trying a bit of top-down and a bit of bottom-up.</p>\n</blockquote>\n<p>Yes, I think \"top-down\" is the most incremental and the least risky. It also maintains the invariant that there is a working (if not easily refactorable) Mathlib4.</p>",
+        "id": 248246447,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1628008749
+    },
+    {
+        "content": "<blockquote>\n<p>We can gather more empirical information before we make any big decisions. For example, for simple binport-enhanced synport, how many squigglies are there outside of proofs?</p>\n</blockquote>\n<p>I think this is an important question.  Can you make a repo with the output of the \"basic\" binport-enhanced synport?</p>",
+        "id": 248246519,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1628008796
+    },
+    {
+        "content": "<p>Another big question (but maybe this was already answered and I missed that): what is the current status of the \"old structure command debate\"? Did we decide anything? What are the porting tools producing?</p>",
+        "id": 248246667,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1628008857
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110031\">Patrick Massot</span> <a href=\"#narrow/stream/287929-mathlib4/topic/RFC.3A.20porting.20strategies/near/248246667\">said</a>:</p>\n<blockquote>\n<p>Another big question (but maybe this was already answered and I missed that): what is the current status of the \"old structure command debate\"? Did we decide anything? What are the porting tools producing?</p>\n</blockquote>\n<p>Leo is investigating whether there is a sub-astronomically-complicated way of supporting efficient structure-nesting in lean4's structure command.</p>",
+        "id": 248246761,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1628008921
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110031\">Patrick Massot</span> <a href=\"#narrow/stream/287929-mathlib4/topic/RFC.3A.20porting.20strategies/near/248246667\">said</a>:</p>\n<blockquote>\n<p>What are the porting tools producing?</p>\n</blockquote>\n<p>Binport merely translates the kernel terms, which are whatever was produced by lean3. Synport is (at best) producing some kind of <code>structure</code> syntax that won't elaborate.</p>",
+        "id": 248246934,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1628009013
+    },
+    {
+        "content": "<p>We will hit that issue <em>very</em> soon, whatever the strategy.</p>",
+        "id": 248247030,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1628009067
+    },
+    {
+        "content": "<p>Ultimately all of these strategies have the same flag-day problem I think.  We can't change the parts we've already ported or this will mess up the porting tools.  No matter whether we do top-down or bottom-up, we'll need to essentially freeze mathlib3 when we seriously start the port.  (Or, phrased differently, manually port all PRs made after the flag day.)</p>",
+        "id": 248248266,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1628009679
+    },
+    {
+        "content": "<blockquote>\n<p>\"top-down\"</p>\n</blockquote>\n<p>This requires that synport correctly translates pretty much all of the mathlib stuff (and in exactly the same way that the mathlib4 tactics expect):</p>\n<ul>\n<li>locales</li>\n<li>auto-params</li>\n<li>simps</li>\n</ul>\n<p>Replacing the binported olean with the tweaked lean file almost certainly requires fixing up the reverse dependencies.  This could very well be a quadratic cost.</p>",
+        "id": 248248689,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1628009876
+    },
+    {
+        "content": "<blockquote>\n<p>\"bottom-up\"</p>\n</blockquote>\n<p>This is somewhat appealing because of the tactics.  We could first port the basic stuff, then the tactics, then the rest.  synport could then use the new oleans to delaborate the tactics proofs (in the rest part).</p>\n<p>That said, I think it is completely infeasible to write \"ABI-compatible\" Lean 4 files.  synport would most likely fail to combine the newly compiled oleans with the remaining binported oleans.</p>",
+        "id": 248249074,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1628010045
+    },
+    {
+        "content": "<blockquote>\n<p>where nontrivial proofs are sorryed out until the final, parallel stage.</p>\n</blockquote>\n<p>I think it's important that the proofs are in the ported files, even if they don't compile.  Concretely, I'd prefer a <code>sorrying (by simp)</code> over <code>sorry</code>, where <code>sorrying stx</code> elaborates to <code>sorry</code> and ignores <code>stx</code>.</p>\n<p>Manually fixing up proofs is much easier if you don't have to hunt down the original version in mathlib and copy it to mathlib4.</p>",
+        "id": 248250322,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1628010617
+    },
+    {
+        "content": "<p>What would be even greater would be to have a way to record the Lean 3 tactic state, but I don't see how to do that without having a <em>lot</em> of comments in the auto-ported code.</p>",
+        "id": 248272225,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1628020780
+    },
+    {
+        "content": "<p>If auto-generated Lean 4 source files included references to Lean 3 source locations, and it would be useful, we could probably add a (temporary, hacky) go-to-def that jumps to the right mathlib3 position.</p>",
+        "id": 248273382,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1628021270
+    },
+    {
+        "content": "<p>the ast jsons that synport makes do store all the position information, so that is probably doable</p>",
+        "id": 248277218,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1628023135
+    },
+    {
+        "content": "<p>(well, only the starts of things sadly... but that's good enough for this case)</p>",
+        "id": 248277253,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1628023149
+    },
+    {
+        "content": "<p>I'm quite in favour of <code>sorry</code>ing a lot of things and seeing how it goes from there</p>",
+        "id": 248277298,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1628023174
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/287929-mathlib4/topic/RFC.3A.20porting.20strategies/near/248248689\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>\"top-down\"</p>\n</blockquote>\n<p>This requires that synport correctly translates pretty much all of the mathlib stuff (and in exactly the same way that the mathlib4 tactics expect):</p>\n<ul>\n<li>locales</li>\n<li>auto-params</li>\n<li>simps</li>\n</ul>\n</blockquote>\n<p>We want to support all of this anyway. Tactics are being manually ported so in the same way there will be extensions to support mathlib-specific automation whether it goes via attributes or user commands.</p>\n<blockquote>\n<p>Replacing the binported olean with the tweaked lean file almost certainly requires fixing up the reverse dependencies. This could very well be a quadratic cost.</p>\n</blockquote>\n<p>We're thinking about <code>#align</code> annotations on tweaked mathlib files to keep binport from diverging too badly.</p>\n<blockquote>\n<p>Manually fixing up proofs is much easier if you don't have to hunt down the original version in mathlib and copy it to mathlib4.</p>\n</blockquote>\n<p>Currently synport will print the lean 3 declaration unmodified if it encounters a fatal error during translation of an individual command, for this exact reason. (Well, actually it prints a reconstruction of the lean 3 ast, but it has access to the original span and could go look up the actual text from the original file.)</p>",
+        "id": 248280565,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1628024581
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110031\">Patrick Massot</span> said:</p>\n<blockquote>\n<p>What would be even greater would be to have a way to record the Lean 3 tactic state, but I don't see how to do that without having a <em>lot</em> of comments in the auto-ported code.</p>\n</blockquote>\n<p>It doesn't exist yet in the current version, but this is part of our \"stage 2\" plan. It will require some additional logging in lean 3, but I don't expect it to be too bad, and then the tactic information can be used to help guide the syntax generation. Just putting the state as comments in the ported code could work but I imagine it would be more harm than good in most cases since it's so noisy, so I would try to avoid it.</p>",
+        "id": 248280588,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1628024590
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"128280\">@Wojciech Nawrocki</span> said:</p>\n<blockquote>\n<p>If auto-generated Lean 4 source files included references to Lean 3 source locations, and it would be useful, we could probably add a (temporary, hacky) go-to-def that jumps to the right mathlib3 position.</p>\n</blockquote>\n<p>That would be great, but requires some support from the server (so maybe I should ask you?). How about an attribute like <code>@[link \"mathlib/src/foo.lean\" 20 1]</code> that can be attached to a definition, such that ctrl-clicking on <code>link</code> takes you to the specified location? Then mathport could generate those on each declaration.</p>",
+        "id": 248280599,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1628024593
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/287929-mathlib4/topic/RFC.3A.20porting.20strategies/near/248280588\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110031\">Patrick Massot</span> said:</p>\n<blockquote>\n<p>What would be even greater would be to have a way to record the Lean 3 tactic state, but I don't see how to do that without having a <em>lot</em> of comments in the auto-ported code.</p>\n</blockquote>\n<p>It doesn't exist yet in the current version, but this is part of our \"stage 2\" plan. It will require some additional logging in lean 3, but I don't expect it to be too bad, and then the tactic information can be used to help guide the syntax generation. Just putting the state as comments in the ported code could work but I imagine it would be more harm than good in most cases since it's so noisy, so I would try to avoid it.</p>\n</blockquote>\n<p>what's the plan for this? would probably be nice for Alectryon, too</p>",
+        "id": 248281159,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1628024879
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/287929-mathlib4/topic/RFC.3A.20porting.20strategies/near/248280599\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"128280\">Wojciech Nawrocki</span> said:</p>\n<blockquote>\n<p>If auto-generated Lean 4 source files included references to Lean 3 source locations, and it would be useful, we could probably add a (temporary, hacky) go-to-def that jumps to the right mathlib3 position.</p>\n</blockquote>\n<p>That would be great, but requires some support from the server (so maybe I should ask you?). How about an attribute like <code>@[link \"mathlib/src/foo.lean\" 20 1]</code> that can be attached to a definition, such that ctrl-clicking on <code>link</code> takes you to the specified location? Then mathport could generate those on each declaration.</p>\n</blockquote>\n<p>Definitely possible. We currently require that declarations we jump to come from a \"real\" Lean module, but this could be (hopefully temporarily) relaxed to arbitrary files.</p>",
+        "id": 248283941,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1628026323
+    },
+    {
+        "content": "<p>The mechanism here is more like an unstructured hyperlink, like the kind you find in markdown links in comments. I don't see why there should be any connection to \"real\" lean modules, and I also don't think it needs to be a temporary thing - having generic links is useful for lots of things</p>",
+        "id": 248284815,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1628026820
+    },
+    {
+        "content": "<p>it doesn't have to be triggered by \"go to definition\" if that helps</p>",
+        "id": 248284938,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1628026912
+    },
+    {
+        "content": "<p>Oh, then in VSCode you can just put the link in a comment (say line number is 10):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- file:///path/to/file#10</span>\n</code></pre></div>\n<p>For arbitrary editors I guess we'd need server support.</p>",
+        "id": 248286163,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1628027715
+    },
+    {
+        "content": "<p>one sadness is that the links will probably be machine-specific, so they aren't likely to make it to PR'd mathlib4 files</p>",
+        "id": 248286894,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1628028202
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110031\">Patrick Massot</span> <a href=\"#narrow/stream/287929-mathlib4/topic/RFC.3A.20porting.20strategies/near/248272225\">said</a>:</p>\n<blockquote>\n<p>What would be even greater would be to have a way to record the Lean 3 tactic state, but I don't see how to do that without having a <em>lot</em> of comments in the auto-ported code.</p>\n</blockquote>\n<p>An easier solution is just to have 2 editors open: one with a compiled mathlib3 proof (so you can step through the tactic state) and one with a broken mathlib4 proof. I do that regularly for big refactors, too.</p>",
+        "id": 248287383,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1628028520
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/287929-mathlib4/topic/RFC.3A.20porting.20strategies/near/248286894\">said</a>:</p>\n<blockquote>\n<p>one sadness is that the links will probably be machine-specific, so they aren't likely to make it to PR'd mathlib4 files</p>\n</blockquote>\n<p>could/would making the paths relative help?</p>",
+        "id": 248444010,
+        "sender_full_name": "Mac",
+        "timestamp": 1628146500
+    },
+    {
+        "content": "<p>One perhaps crazy idea; what if the lean 4 code was inserted as special comments into the lean 3 code, and extracted and tested as part of the CI process. This would ensure it can't diverge from the lean 3 version, and would allow lean3 development to continue in parallel, so long as PR authors also moved around / fixed the corresponding lean 4 code. There'd still be a flag day, but on that day all that happens is the lean3 code and lean 4 comment markers are removed.</p>",
+        "id": 248445345,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1628147805
+    },
+    {
+        "content": "<p>That also has the bonus off leaving behind a useful git history for mathlib that makes tracking blames through the lean4 switch not a complete pain</p>",
+        "id": 248445960,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1628148353
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/287929-mathlib4/topic/RFC.3A.20porting.20strategies/near/248248266\">said</a>:</p>\n<blockquote>\n<p>Ultimately all of these strategies have the same flag-day problem I think.  We can't change the parts we've already ported or this will mess up the porting tools.  No matter whether we do top-down or bottom-up, we'll need to essentially freeze mathlib3 when we seriously start the port.  (Or, phrased differently, manually port all PRs made after the flag day.)</p>\n</blockquote>\n<p>Suppose we do top-down. Once doing new things in lean4 with binported oleans is almost as easy as doing new things in lean3, we could define a border: new files go in Mathlib4, old files are changed in lean3 and only when absolutely necessary. Binport would be re-run when this happens. Every successful top-down lean4 <code>.lean</code> file generated (by synport + automation + delab + humans) would shift the border.</p>",
+        "id": 248485163,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1628173916
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/287929-mathlib4/topic/RFC.3A.20porting.20strategies/near/248248689\">said</a>:</p>\n<blockquote>\n<p>Replacing the binported olean with the tweaked lean file almost certainly requires fixing up the reverse dependencies.  This could very well be a quadratic cost.</p>\n</blockquote>\n<p>I agree that this is a concern. Two thoughts:</p>\n<ul>\n<li>A lot of the 'not-necessarily-strictly-defeq' changes will probably not require any changes downstream. For example, replacing binported equation-compiler definitions/lemmas with the lean4 ones may be transparent. </li>\n<li>Perhaps this is a good argument for a sorry-staged approach, so that at least any quadratic changes do not break proofs.</li>\n</ul>",
+        "id": 248485858,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1628174198
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/287929-mathlib4/topic/RFC.3A.20porting.20strategies/near/248445345\">said</a>:</p>\n<blockquote>\n<p>would allow lean3 development to continue in parallel, so long as PR authors also moved around / fixed the corresponding lean 4 code. </p>\n</blockquote>\n<p>I think that aiming to continue parallel development of mathlib in Lean 3 is a catastrophic idea. The porting problem is already hard enough, and we will need every available quantum of energy to work on porting or cleaning up the auto-port.</p>",
+        "id": 248486568,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1628174502
+    },
+    {
+        "content": "<blockquote>\n<p>I think that aiming to continue parallel development of mathlib in Lean 3 is a catastrophic idea</p>\n</blockquote>\n<p>Isn't the alternative to throw away every open PR that exists on \"flag day\"? We certainly shouldn't encourage parallel development, but I expect there are or will be users interested in finishing up their old contributions with zero interest in helping with porting. With my suggestion, the lean 4 porters would be able to continue with their porting, and attach via automated tools a <code>@[lean4 /-\" lean4 code here \"-/]</code> attribute or similar to the definitions from new lean3 PRs whenever they feel like it.</p>",
+        "id": 248488729,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1628175277
+    },
+    {
+        "content": "<p>I honestly think we should stop reviewing PRs on flag day.</p>",
+        "id": 248490273,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1628175917
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110031\">Patrick Massot</span> <a href=\"#narrow/stream/287929-mathlib4/topic/RFC.3A.20porting.20strategies/near/248490273\">said</a>:</p>\n<blockquote>\n<p>I honestly think we should stop reviewing PRs on flag day.</p>\n</blockquote>\n<p>In the \"border\" proposal, mathlib3 would only accept PRs that (a) only touched files on the lean3 side of the border and (b) were motivated by the lean4 side, i.e. various kinds of backports.</p>",
+        "id": 248490585,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1628176037
+    },
+    {
+        "content": "<p>I agree, but I don't think this is what Eric had in mind.</p>",
+        "id": 248490907,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1628176144
+    },
+    {
+        "content": "<p>I have pretty strong feelings about this. Almost every current significant contributer to mathlib started contributing at a time when it was perfectly clear that Lean 4 was coming and that porting mathlib would be a huge task. As far as I understand we still don't have any guarantee that the easiest way won't be to redo everything from scratch (and we won't know for sure before the port is over). Almost everybody knew this (or at least should have understood this) before starting. So I think that having a total freeze time would be much <em>much</em> better than the expectation.</p>",
+        "id": 248492148,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1628176680
+    },
+    {
+        "content": "<p>I agree with Patrick here. mathlib3 is a dead-end, and its only long-term value is in helping us build mathlib4. (Well... I guess Lean4 could fail and mathematicians could conceivably keep using mathlib3, but this is a very bad outcome.)</p>\n<p>Obviously at this point we're not ready to close mathlib3 to new content PRs, nor do we even have much of an estimate of when that day might usefully come. We would probably want to do a merge sprint around the time of \"flag day\", where we stop allowing new content PRs, and then triage the existing PRs --- get everything merged that can be in reasonable time, and then close (ie abandon forever) all the remaining <code>WIP</code>, <code>help-wanted</code>, <code>please-adopt</code> etc PRs. Some of that work --- taking a hard look at the full list of PRs and saying to authors \"now or never\" --- can begin already.</p>",
+        "id": 249536149,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1629071049
+    }
+]

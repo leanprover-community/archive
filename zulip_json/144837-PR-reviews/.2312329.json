@@ -1,0 +1,128 @@
+[
+    {
+        "content": "<p>The \"export as low-level text file\" step of CI is failing on <a href=\"https://github.com/leanprover-community/mathlib/pull/12329\">#12329</a> at the moment, with:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Run</span> <span class=\"n\">lean</span> <span class=\"c1\">--recursive --export=mathlib.txt src/</span>\n<span class=\"bp\">&lt;</span><span class=\"n\">unknown</span><span class=\"bp\">&gt;</span><span class=\"o\">:</span><span class=\"mi\">1</span><span class=\"o\">:</span><span class=\"mi\">1</span><span class=\"o\">:</span> <span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">unknown</span> <span class=\"n\">declaration</span> <span class=\"bp\">'</span><span class=\"n\">_private.259063493.pseudo_metric_space.dist_nonneg''</span>\n<span class=\"n\">Error</span><span class=\"o\">:</span> <span class=\"n\">Process</span> <span class=\"n\">completed</span> <span class=\"k\">with</span> <span class=\"n\">exit</span> <span class=\"n\">code</span> <span class=\"mi\">1</span><span class=\"bp\">.</span>\n</code></pre></div>",
+        "id": 275083452,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1647071314
+    },
+    {
+        "content": "<p>There's a thread about this in the <a class=\"stream\" data-stream-id=\"113538\" href=\"/#narrow/stream/113538-CI\">#CI</a>  stream. Long story short we don't know what it is but merging master into the branch usually fixes it</p>",
+        "id": 275083728,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1647071844
+    },
+    {
+        "content": "<p>It even made it into the faq, right?</p>",
+        "id": 275086845,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1647076582
+    },
+    {
+        "content": "<p>There are two parts to this.</p>\n<p>1) The hashes used to invalidate <code>.olean</code> files seem to be transitive hashes of the source files, while private lemmas' hidden names contain \"random\" (that is, not a function of the source file) numbers (like the <code>259063493</code> above). So if you have a file <code>X.lean</code> with a private theorem whose prefixed name somehow leaks to <code>Y.olean</code>, then as soon as you delete <code>X.olean</code> you're doomed: Lean will think it's fine to use <code>Y.olean</code> because the source hashes have not changed, but it won't find the theorem anymore because a different execution will result in a different private \"namespace\" number. </p>\n<p>You can reproduce this on master: Fetch the olean cache, delete <code>src/topology/metric_space/basic.olean</code> and run <code>lean --recursive --export=mathlib.txt src/</code>. There are a number of oleans (which you can find by grepping) that reference <code>pseudo_metric_space.dist_nonneg'</code>, and Lean will happily use those oleans and fail to find the private theorem. I guess the reference leaks becuse <code>pseudo_metric_space</code> (<code>src/topology/metric_space/basic.lean</code>) is public data that references the private theorem.</p>\n<p>2) But how would you reach such a state? I don't know. In CI, <code>dc010f4</code> was fine because both oleans were generated on March 3rd. On <code>cc254c8</code>, <code>src/topology/metric_space/basic.olean</code> was regenerated on March 11th but some of the downstream files (such as <code>src/topology/metric_space/gluing.olean</code>) stayed unmodified, still referencing the \"previous\" random number. This is certainly possible (if the build was interrupted due to an error, say) but presumably some source changed to cause <code>basic.olean</code> to be rebuilt. This would get reflected in the transitive hash used in <code>gluing.olean</code>, so Lean definitely should NOT be using <code>gluing.olean</code> until it gets regenerated.  However, it kept being reused for several commits until master was merged and I have no explanation for that.</p>\n<p>(It's possible that I am overly-analyzing this and we're just getting a collision for the transitive source hash. But I am not sure how to check this.)</p>",
+        "id": 275190781,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1647228669
+    },
+    {
+        "content": "<p>I guess merging this with <a href=\"#narrow/stream/113538-CI/topic/unknown.20declaration.20.60_private.60\">https://leanprover.zulipchat.com/#narrow/stream/113538-CI/topic/unknown.20declaration.20.60_private.60</a> (the thread mentioned by Alex) would be better, sorry for splitting the discussion.</p>",
+        "id": 275191437,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1647229684
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"325367\">@Mauricio Collares</span> Wow! Thanks for debugging this!</p>",
+        "id": 275194002,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1647233650
+    },
+    {
+        "content": "<p>Unfortunately I have a case of this problem that has survived three merges with master. :-( <a href=\"https://github.com/leanprover-community/mathlib/pull/12638\">#12638</a>.</p>",
+        "id": 275199000,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1647240441
+    },
+    {
+        "content": "<p>Would it make sense to remove <code>private</code> stuff and add doc-strings to them mentioning that they are \"private\"?  After all, <code>private lemmas</code> are still valid lemmas and someone else might find them useful in a different file...</p>",
+        "id": 275203490,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1647245186
+    },
+    {
+        "content": "<p>This is the typical approach in mathlib.</p>",
+        "id": 275203524,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1647245226
+    },
+    {
+        "content": "<p>And I think this bug is a very good motivation for replace the prefix <code>private </code> by a suffix <code>_aux</code> to the name.</p>",
+        "id": 275203563,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1647245259
+    },
+    {
+        "content": "<p>Ok, thanks!  I did not know, but also did not like <code>private</code> stuff innately.</p>",
+        "id": 275203590,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1647245280
+    },
+    {
+        "content": "<p>Rebasing on master is likely to be more effective than merging</p>",
+        "id": 275209258,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1647249122
+    },
+    {
+        "content": "<blockquote>\n<p>So if you have a file X.lean with a private theorem whose prefixed name somehow leaks to Y.olean, then as soon as you delete X.olean you're doomed: Lean will think it's fine to use Y.olean because the source hashes have not changed, but it won't find the theorem anymore because a different execution will result in a different private \"namespace\" number.</p>\n</blockquote>\n<p>Thank you for debugging this <span class=\"user-mention\" data-user-id=\"325367\">@Mauricio Collares</span>!  I believe I know what's going on: Lean mixes the current file name into the hash for the private name, and this file name contains the full path to mathlib, which is going to be different on the build server and your local machine.  <a href=\"https://github.com/leanprover-community/lean/pull/699\">lean#699</a></p>",
+        "id": 275223901,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1647257958
+    },
+    {
+        "content": "<p>Did you get a repro from this <span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span> ? I tried the same idea a while back by moving folders around on my machine to change the path, but couldn't reproduce the same error that way.</p>",
+        "id": 275225520,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1647259141
+    },
+    {
+        "content": "<p>Yes, Mauricio's pointer to <code>metric_space.basic</code> made it very easy to repro.  Just insert this line after <code>dist_nonneg'</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#eval</span> <span class=\"n\">tactic.to_expr</span> <span class=\"bp\">``</span><span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">pseudo_metric_space.dist_nonneg'</span><span class=\"o\">)</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">tactic.trace</span> <span class=\"bp\">∘</span> <span class=\"n\">expr.const_name</span>\n</code></pre></div>\n<p>And then move <code>mathlib</code> to say <code>mathlib2</code>.</p>",
+        "id": 275225719,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1647259247
+    },
+    {
+        "content": "<p>Nice! Wonder why that never worked for me <span aria-label=\"joy\" class=\"emoji emoji-1f602\" role=\"img\" title=\"joy\">:joy:</span>. Either way it's great that this is fixed!</p>",
+        "id": 275227616,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1647260502
+    },
+    {
+        "content": "<p>Many thanks <span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span> for finding the root cause and for the fix!</p>\n<p>I just verified that the second part of the issue (<code>src/topology/metric_space/gluing.olean</code> not being regenerated) is just due to a hash collision. <code>gluing.lean</code> depends on <code>src/topology/metric_space/isometry.lean</code>, which gets recompiled: the transitive hash for <code>isometry.lean</code> goes from <code>67093251</code> to <code>4093625091</code>. Unfortunately, this does not cause <code>gluing.lean</code> to be recompiled because <code>hash(1854980923U, 67093251U) == hash(1854980923U, 4093625091U)</code>, <code>1854980923</code> being the combined hash of <code>gluing.lean</code> and the transitive hash of its only other dependency, <code>lean/library/init/default.lean</code>.</p>",
+        "id": 275251039,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1647271308
+    },
+    {
+        "content": "<p>Is changing the olean format to use 64-bit hashes more trouble than it's worth?</p>",
+        "id": 275253150,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1647272088
+    },
+    {
+        "content": "<p>Better late than never.  <a href=\"https://github.com/leanprover-community/lean/pull/700\">lean#700</a></p>",
+        "id": 275265028,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1647276575
+    },
+    {
+        "content": "<p>Thanks again <span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span>! Also, since <span class=\"user-mention\" data-user-id=\"485520\">@Kyle Huey</span> now seems to be here, I should also thank him for increasing the Pernosco memory limits so I could debug this there :) Figuring that the problem involved <code>gluing.lean</code> took less than five seconds, since on Pernosco you can double click on the debuggee output and go straight to the exact execution context from when that line was printed.</p>",
+        "id": 275268861,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1647278124
+    },
+    {
+        "content": "<p>5 seconds is pretty great!</p>",
+        "id": 275271024,
+        "sender_full_name": "Kyle Huey",
+        "timestamp": 1647279079
+    }
+]

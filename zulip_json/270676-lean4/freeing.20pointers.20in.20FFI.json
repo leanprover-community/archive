@@ -1,0 +1,686 @@
+[
+    {
+        "content": "<p>I'm working on bindings to SDL2 which is a rather imperative C media library.<br>\n<a href=\"https://github.com/Anderssorby/SDL.lean\">https://github.com/Anderssorby/SDL.lean</a><br>\nI'm having troubles unifying the manual memory freeing of SDL with the finalizer of Lean reference counter.<br>\nFor example manually freeing the pointed data with <code>SDL_FreeSurface</code> leads to segfault</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>    <span class=\"n\">SDL.freeSurface</span> <span class=\"n\">surf</span>\n</code></pre></div>\n<p>when lean tries to free the <code>lean_object*</code> too later. Putting the <code>SDL_FreeSurface</code> inside the lean finalizer also leads to a segfault.<br>\nDo you have any tips?</p>",
+        "id": 268005473,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642162277
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"433842\">@Anders Christiansen Sørby</span> you need to tell lean how to box/unbox objects</p>",
+        "id": 268006335,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1642162904
+    },
+    {
+        "content": "<p>Have you been able to make any of those C functions that rely on <code>lean_get_external_data</code> work?</p>",
+        "id": 268006492,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1642163023
+    },
+    {
+        "content": "<blockquote>\n<p>I'm having troubles unifying the manual memory freeing of SDL with the finalizer of Lean reference counter.</p>\n</blockquote>\n<p>Yes, that's because you're freeing it twice, once with <code>SDL_FreeSurface</code> and once with <code>free</code>.  You should remove the <code>SDL.freeSurface</code> function and call <code>SDL_FreeSurface</code> from the finalizer instead.</p>",
+        "id": 268006781,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642163203
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span> when is the finalizer called?</p>",
+        "id": 268007270,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1642163498
+    },
+    {
+        "content": "<p>Ok, that is ideal if I can avoid the manual freeing. I have been successfull with <code>lean_get_external_data</code> before</p>",
+        "id": 268007312,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642163522
+    },
+    {
+        "content": "<p>The segfault happens in <code>lean_ptr_tag</code> so I'm not sure if the finalize function has been called yet</p>",
+        "id": 268007501,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642163646
+    },
+    {
+        "content": "<p>To make it easier for me to have full control over what happens in C, I <a href=\"https://github.com/arthurpaulino/LeanMySQL/blob/33ca51ef98958f1ef58fff77a46dee602696a2b3/cpp/ffi.cpp#L17\">wrap everything inside a struct</a></p>",
+        "id": 268007977,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1642163991
+    },
+    {
+        "content": "<p>What does <code>m_tag</code> do and store btw? It isn't documented in lean.h</p>",
+        "id": 268008051,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642164021
+    },
+    {
+        "content": "<p>Hm, I already have enough structs from SDL I think.</p>",
+        "id": 268008254,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642164164
+    },
+    {
+        "content": "<blockquote>\n<p>when is the finalizer called?</p>\n</blockquote>\n<p>When the surface object is no longer referenced (i.e., the refcount reaches zero).</p>",
+        "id": 268011368,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642166031
+    },
+    {
+        "content": "<blockquote>\n<p>What does m_tag do and store btw? It isn't documented in lean.h</p>\n</blockquote>\n<p>It stores whether the object is an external/bignum/task/constructor/etc.</p>",
+        "id": 268011933,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642166334
+    },
+    {
+        "content": "<p>If <code>lean_ptr_tag</code> segfaults, then that's because you pass it a null/invalid pointer.  (Which you might have got from the Inhabited instance for Surface.)</p>",
+        "id": 268012105,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642166418
+    },
+    {
+        "content": "<p>The whole PointedType business is a giant footgun tbh.</p>",
+        "id": 268012126,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642166430
+    },
+    {
+        "content": "<p>There is a segfault after <code>lean_render_copy</code> which is void </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"mi\">155</span> <span class=\"n\">x_24</span> <span class=\"bp\">=</span> <span class=\"n\">lean_sdl_render_copy</span><span class=\"o\">(</span><span class=\"n\">x_9</span><span class=\"o\">,</span> <span class=\"n\">x_22</span><span class=\"o\">,</span> <span class=\"n\">x_23</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n<span class=\"mi\">156</span> <span class=\"n\">lean_dec</span><span class=\"o\">(</span><span class=\"n\">x_22</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n<span class=\"mi\">157</span> <span class=\"n\">lean_dec</span><span class=\"o\">(</span><span class=\"n\">x_9</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n<span class=\"mi\">158</span> <span class=\"k\">if</span> <span class=\"o\">(</span><span class=\"n\">lean_obj_tag</span><span class=\"o\">(</span><span class=\"n\">x_24</span><span class=\"o\">)</span> <span class=\"bp\">==</span> <span class=\"mi\">0</span><span class=\"o\">)</span> <span class=\"bp\">&lt;</span><span class=\"c1\">-- here</span>\n</code></pre></div>\n<p>Why does it try to read a void value? I used <code>IO Unit</code> for void, but is there an explicit way to return unit?</p>",
+        "id": 268012802,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642166796
+    },
+    {
+        "content": "<p>That's <code>IO Unit</code>, not void. <span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span></p>",
+        "id": 268012856,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642166841
+    },
+    {
+        "content": "<blockquote>\n<p>but is there an explicit way to return unit?</p>\n</blockquote>\n<p><code> io_result_mk_ok(box(0))</code></p>",
+        "id": 268012901,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642166872
+    },
+    {
+        "content": "<p>Hm, but I need to make sure Window is not finalized before the program is over. For now it seems manually calling destroyWindow makes most sense.</p>",
+        "id": 268014142,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642167513
+    },
+    {
+        "content": "<p>As long as you use <em>either</em> the finalizer <em>or</em> a manual free function, you should be fine.</p>",
+        "id": 268014240,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642167571
+    },
+    {
+        "content": "<p>Seems like this solved everything. Thanks</p>",
+        "id": 268014929,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642167892
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/270676-lean4/topic/freeing.20pointers.20in.20FFI/near/268012126\">said</a>:</p>\n<blockquote>\n<p>The whole PointedType business is a giant footgun tbh.</p>\n</blockquote>\n<p>Could you elaborate? I'm curious what problems you see and how you would address them with a different approach</p>",
+        "id": 268029394,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642174523
+    },
+    {
+        "content": "<p>The footgun is clear, I hope.  If you do <code>constant MyFfiType : PointedType</code>, then you get <code>MyFfiType.val : MyFfiType.type</code> for free.  And this is box(0) in the VM, so all your FFI functions will crash unless they handle this special case.  Even worse, you typically define <code>instance : Inhabited MyFfiType.type := ⟨MyFfiType.val⟩</code> which means that you only need an <code>[Inhabited MyFfiType.type]</code> argument to get this special value.  It's the million-dollar mistake (\"null\") all over again.</p>",
+        "id": 268030883,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642175116
+    },
+    {
+        "content": "<p>Is there some easy way I can convert an Option Data to a Data* ptr. So that none is NULL and some data is get_exteranl_data</p>",
+        "id": 268031087,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642175193
+    },
+    {
+        "content": "<p>My plan would be to replace <code>PointedType</code> with <code>{ α : Type // Nonempty α }</code>.  This doesn't give you access to any \"null\" value, but suffices for <code>constant frob : MyFfiType.type → MyFfiType.type</code>.</p>",
+        "id": 268031091,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642175194
+    },
+    {
+        "content": "<p>Well, it seems the point is that we are explicitly asking for an inhabited type here, i.e. one with a null value. Ideally we should have a way to just have <code>constant Foo : Type</code> if <code>Foo</code> does not admit a null value</p>",
+        "id": 268031847,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642175495
+    },
+    {
+        "content": "<p>The whole pattern with inhabited types seems to be that we want programmy types to have default values when possible</p>",
+        "id": 268031917,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642175522
+    },
+    {
+        "content": "<p>If you replace <code>Inhabited</code> with <code>Nonempty</code> in <code>PointedType</code>, I think you also have to replace it in the checks on <code>partial</code> and <code>constant</code></p>",
+        "id": 268032268,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642175657
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/270676-lean4/topic/freeing.20pointers.20in.20FFI/near/268030883\">said</a>:</p>\n<blockquote>\n<p>The footgun is clear, I hope.  If you do <code>constant MyFfiType : PointedType</code>, then you get <code>MyFfiType.val : MyFfiType.type</code> for free.  And this is box(0) in the VM, so all your FFI functions will crash unless they handle this special case.</p>\n</blockquote>\n<p>This seems odd to me (the part about the null value being box(0) specifically). Aren't you supposed to provide/override this function as part of the FFI implementation?</p>",
+        "id": 268032542,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642175772
+    },
+    {
+        "content": "<blockquote>\n<p>I think you also have to replace it in the checks on partial and constant</p>\n</blockquote>\n<p>Indeed, that's what I want to do.</p>",
+        "id": 268032676,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642175846
+    },
+    {
+        "content": "<blockquote>\n<p>This seems odd to me (the part about the null value being box(0) specifically).</p>\n</blockquote>\n<p><code>constant</code> only hides the implementation (i.e., you can't prove that <code>MyFfiType</code> is the default <code>PointedType</code> value).  But the implementation is still used by the VM.</p>",
+        "id": 268032818,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642175904
+    },
+    {
+        "content": "<p>Same thing if you define a natural number constant:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">constant</span> <span class=\"n\">N</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"mi\">42</span>\n<span class=\"k\">#eval</span> <span class=\"n\">N</span> <span class=\"c1\">-- 42</span>\n</code></pre></div>",
+        "id": 268032885,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642175935
+    },
+    {
+        "content": "<p>But part of the \"idiom\" here is that you are replacing this function with something else, or else there is no point in the <code>constant</code></p>",
+        "id": 268032922,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642175955
+    },
+    {
+        "content": "<p>Except that the default <code>PointedType</code> value consists of the type <code>PUnit</code> with <code>PUnit.star</code> as the value (which is represented as box(0))</p>",
+        "id": 268032961,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642175972
+    },
+    {
+        "content": "<p>a <code>constant</code> with no definition and no <code>implementedBy</code> or <code>extern</code> seems like a very weird thing to do IMO</p>",
+        "id": 268033124,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176023
+    },
+    {
+        "content": "<p>This is completely normal and idiomatic for FFI types though.</p>",
+        "id": 268033179,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642176042
+    },
+    {
+        "content": "<p>don't FFI types always <code>extern</code> the constant?</p>",
+        "id": 268033221,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176063
+    },
+    {
+        "content": "<p>Never for the type, as far as I can see. Only for the FFI functions.</p>",
+        "id": 268033234,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642176068
+    },
+    {
+        "content": "<p>...I'm very confused how anything is supposed to work then</p>",
+        "id": 268033291,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176093
+    },
+    {
+        "content": "<p>You do want to have NULL pointers in some FFI scenarios though. Like I described. How is Option represented?</p>",
+        "id": 268033313,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642176099
+    },
+    {
+        "content": "<p>Your type can explicitly do something with nulls if you want</p>",
+        "id": 268033393,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176125
+    },
+    {
+        "content": "<p>You can either put <code>Option</code> around your type, or just have an API that reflects the possibility that the type has a null value (and every function has to accommodate this)</p>",
+        "id": 268033471,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176167
+    },
+    {
+        "content": "<blockquote>\n<p>...I'm very confused how anything is supposed to work then</p>\n</blockquote>\n<p>The general idea is this (add coercions, definitions, etc. to your liking):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">constant</span> <span class=\"n\">MyType</span> <span class=\"o\">:</span> <span class=\"n\">PointedType</span>\n<span class=\"kd\">@[extern \"function1_impl\"]</span>\n<span class=\"kd\">constant</span> <span class=\"n\">function1</span> <span class=\"o\">:</span> <span class=\"n\">MyType.type</span> <span class=\"bp\">→</span> <span class=\"n\">MyType.type</span>\n<span class=\"kd\">@[extern \"function2_impl\"]</span>\n<span class=\"kd\">constant</span> <span class=\"n\">function2</span> <span class=\"o\">:</span> <span class=\"n\">MyType.type</span> <span class=\"bp\">→</span> <span class=\"n\">MyType.type</span> <span class=\"bp\">→</span> <span class=\"n\">MyType.type</span>\n</code></pre></div>",
+        "id": 268033666,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642176244
+    },
+    {
+        "content": "<p>yeah, I see a bug there if you aren't adding an <code>extern</code> on the first constant</p>",
+        "id": 268034008,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176381
+    },
+    {
+        "content": "<p>I think what you expected is this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[extern \"mk_empty_mytype\"]</span>\n<span class=\"kd\">constant</span> <span class=\"n\">MyType</span> <span class=\"o\">:</span> <span class=\"n\">PointedType</span>\n</code></pre></div>\n<p>Note that this will only work if you can actually provide a default value.  (And many FFI types don't have them.)</p>",
+        "id": 268034124,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642176436
+    },
+    {
+        "content": "<p>What I would like to write in the case of no default is:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">constant</span> <span class=\"n\">MyType</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span>\n<span class=\"kd\">@[extern \"function1_impl\"]</span>\n<span class=\"kd\">constant</span> <span class=\"n\">function1</span> <span class=\"o\">:</span> <span class=\"n\">MyType</span> <span class=\"bp\">→</span> <span class=\"n\">MyType</span>\n<span class=\"kd\">@[extern \"function2_impl\"]</span>\n<span class=\"kd\">constant</span> <span class=\"n\">function2</span> <span class=\"o\">:</span> <span class=\"n\">MyType</span> <span class=\"bp\">→</span> <span class=\"n\">MyType</span> <span class=\"bp\">→</span> <span class=\"n\">MyType</span>\n</code></pre></div>",
+        "id": 268034287,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176495
+    },
+    {
+        "content": "<p>assuming that gives an error about non-inhabited types for the latter constants, you can also write</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">constant</span> <span class=\"n\">MyType</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span>\n<span class=\"kd\">@[extern \"function1_impl\"]</span>\n<span class=\"kd\">constant</span> <span class=\"n\">function1</span> <span class=\"o\">:</span> <span class=\"n\">MyType</span> <span class=\"bp\">→</span> <span class=\"n\">MyType</span> <span class=\"o\">:=</span> <span class=\"n\">id</span>\n<span class=\"kd\">@[extern \"function2_impl\"]</span>\n<span class=\"kd\">constant</span> <span class=\"n\">function2</span> <span class=\"o\">:</span> <span class=\"n\">MyType</span> <span class=\"bp\">→</span> <span class=\"n\">MyType</span> <span class=\"bp\">→</span> <span class=\"n\">MyType</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">id</span>\n</code></pre></div>",
+        "id": 268034425,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176556
+    },
+    {
+        "content": "<p>This doesn't let you write <code>constant function3 : Nat → MyType</code> though.</p>",
+        "id": 268034510,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642176601
+    },
+    {
+        "content": "<p>True. But if your function has such an API then you can define <code>MyType.val := function3 0</code></p>",
+        "id": 268034638,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176639
+    },
+    {
+        "content": "<p>I think you have the order wrong, you'd need to write a C function <code>function3_0_impl</code> and say <code>@[extern \"function3_0_impl\"] constant MyType : PointedType</code>.</p>",
+        "id": 268034771,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642176710
+    },
+    {
+        "content": "<p>And then function3 is <em>always</em> executed on initialization, whether you want it or not.</p>",
+        "id": 268034851,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642176734
+    },
+    {
+        "content": "<p>What if the constructor is in an <code>IO</code> action? Like <code>function3 : Nat -&gt; IO MyType</code></p>",
+        "id": 268034953,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176783
+    },
+    {
+        "content": "<p>can we have a default IO action for this case?</p>",
+        "id": 268034984,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176800
+    },
+    {
+        "content": "<p>That would actually work (because <code>IO</code> happens to be inhabited), but <code>Nat → BaseIO MyType</code> runs into the same issues as <code>Nat → MyType</code>.</p>",
+        "id": 268035035,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642176822
+    },
+    {
+        "content": "<p>If the constructor is pure, then evaluating it on startup is probably fine, and if it's not then you probably have the IO situation</p>",
+        "id": 268035253,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176899
+    },
+    {
+        "content": "<p>not sure how much to worry about the <code>BaseIO</code> version</p>",
+        "id": 268035289,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176914
+    },
+    {
+        "content": "<p>what happens when a <code>BaseIO</code> computation fails?</p>",
+        "id": 268035367,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176949
+    },
+    {
+        "content": "<p>is that just undefined behavior or something?</p>",
+        "id": 268035467,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642176975
+    },
+    {
+        "content": "<p>It can only abort or exit the process, not fail in the same sense as IO.</p>",
+        "id": 268035473,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642176978
+    },
+    {
+        "content": "<p>I think the worst case scenario, if you have a complex not-necessarily-inhabited FFI type with a bunch of random functions on it, is that you put the whole API in a structure and make a constant for it. Then you have to prove that some type has a model for the whole thing, which is presumably possible unless the new type is literally inconsistent</p>",
+        "id": 268036022,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642177177
+    },
+    {
+        "content": "<blockquote>\n<p>and make a constant for it</p>\n</blockquote>\n<p>That's a moderately bad idea because you'll have indirect function calls via closures instead of direct ones.</p>",
+        "id": 268036275,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642177269
+    },
+    {
+        "content": "<p>I was hoping that would be optimized away</p>",
+        "id": 268036318,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642177291
+    },
+    {
+        "content": "<p>they should still be calls to known functions, i.e. it is optimizable</p>",
+        "id": 268036384,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642177317
+    },
+    {
+        "content": "<p>I feel like we still haven't found the best approach here for communicating an FFI interface to lean with suitable consistency checks</p>",
+        "id": 268036607,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642177424
+    },
+    {
+        "content": "<p>I'm not sure how you expect this to happen.  It's an opaque definition in C.  Lean can't see through it.  And I wouldn't count on LTO being able to see through it (the lean_apply functions are huge and unlikely to be inlined);</p>",
+        "id": 268036692,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642177454
+    },
+    {
+        "content": "<blockquote>\n<p>I feel like we still haven't found the best approach here for communicating an FFI interface to lean with suitable consistency checks</p>\n</blockquote>\n<p>What's wrong with my <code>PointedType := { α // Nonempty α }</code> proposal?  That seems like the most incremental change which still gets rid of the initialization/default value issue.</p>",
+        "id": 268036899,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642177537
+    },
+    {
+        "content": "<p>Is there some easy way to translate between lean structures and c structs with the same fields btw?</p>",
+        "id": 268037036,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642177596
+    },
+    {
+        "content": "<p>I'm thinking something like this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">struct</span> <span class=\"n\">FooApi</span> <span class=\"n\">where</span>\n  <span class=\"n\">T</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span>\n  <span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">T</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">T</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">FooModel</span> <span class=\"o\">:=</span> <span class=\"n\">empty</span>\n<span class=\"kd\">@[extern \"foo_f_impl\"]</span>\n<span class=\"kd\">def</span> <span class=\"n\">FooModel.f</span> <span class=\"o\">:</span> <span class=\"n\">FooModel</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">FooModel</span> <span class=\"o\">:=</span> <span class=\"n\">id</span>\n\n<span class=\"kd\">constant</span> <span class=\"n\">FooWitness</span> <span class=\"o\">:</span> <span class=\"n\">FooApi</span> <span class=\"o\">:=</span> <span class=\"bp\">\\&lt;</span><span class=\"n\">FooModel</span><span class=\"o\">,</span> <span class=\"n\">FooModel.f</span><span class=\"bp\">\\&gt;</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">Foo</span> <span class=\"o\">:=</span> <span class=\"n\">FooWitness.T</span>\n<span class=\"kd\">def</span> <span class=\"n\">Foo.f</span> <span class=\"o\">:</span> <span class=\"n\">Foo</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">Foo</span> <span class=\"o\">:=</span> <span class=\"n\">FooWitness.f</span>\n</code></pre></div>\n<p>The lean compiler should be able to work out that <code>Foo.f</code> is a direct call to <code>foo_f_impl</code></p>",
+        "id": 268037145,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642177649
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/270676-lean4/topic/freeing.20pointers.20in.20FFI/near/268036899\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>I feel like we still haven't found the best approach here for communicating an FFI interface to lean with suitable consistency checks</p>\n</blockquote>\n<p>What's wrong with my <code>PointedType := { α // Nonempty α }</code> proposal?  That seems like the most incremental change which still gets rid of the initialization/default value issue.</p>\n</blockquote>\n<p>I think there should be a way to mark <em>types</em> as being FFI-overridden, such that lean can give an error/warning on any function that uses the type's \"fake\" definition and is not overridden</p>",
+        "id": 268037428,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642177781
+    },
+    {
+        "content": "<p>Another alternative, similar to using <code>Nonempty</code>, is to use <code>noncomputable constant Foo : PointedType</code> to opt out of code generation for the <code>.val</code> function</p>",
+        "id": 268037856,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642177945
+    },
+    {
+        "content": "<blockquote>\n<p>I'm thinking something like this:</p>\n</blockquote>\n<p>Indeed, it's possible to \"launder\" the API in this way.  (Although <code>NonScalar</code> might be more useful than <code>Empty</code>, in general.)  The setup is pretty cumbersome though.</p>",
+        "id": 268045035,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642181139
+    },
+    {
+        "content": "<p>it does look like something that can/should be automated by a macro, especially because of the footguns</p>",
+        "id": 268045188,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642181196
+    },
+    {
+        "content": "<p>but the macro expansion should hopefully not require too much analysis to get good code, so if as you say there is an inefficiency in going via the structure then this isn't the best solution</p>",
+        "id": 268045360,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642181256
+    },
+    {
+        "content": "<p>No the \"laundering\" should be zero-cost (or at least be zero-cost after adding enough @[inline]).</p>",
+        "id": 268045487,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642181289
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">I</span> <span class=\"n\">think</span> <span class=\"n\">there</span> <span class=\"n\">should</span> <span class=\"n\">be</span> <span class=\"n\">a</span> <span class=\"n\">way</span> <span class=\"n\">to</span> <span class=\"n\">mark</span> <span class=\"bp\">*</span><span class=\"n\">types</span><span class=\"bp\">*</span> <span class=\"n\">as</span> <span class=\"n\">being</span> <span class=\"n\">FFI</span><span class=\"bp\">-</span><span class=\"n\">overridden</span><span class=\"o\">,</span> <span class=\"n\">such</span> <span class=\"n\">that</span> <span class=\"n\">lean</span> <span class=\"n\">can</span> <span class=\"n\">give</span> <span class=\"n\">an</span> <span class=\"n\">error</span><span class=\"bp\">/</span><span class=\"n\">warning</span> <span class=\"n\">on</span> <span class=\"n\">any</span> <span class=\"n\">function</span> <span class=\"n\">that</span> <span class=\"n\">uses</span> <span class=\"n\">the</span> <span class=\"n\">type's</span> <span class=\"s2\">\"fake\"</span> <span class=\"kd\">definition</span> <span class=\"n\">and</span> <span class=\"n\">is</span> <span class=\"n\">not</span> <span class=\"n\">overridden</span>\n<span class=\"bp\">````</span>\n<span class=\"n\">Doesn't</span> <span class=\"n\">having</span> <span class=\"bp\">`</span><span class=\"n\">MyType</span><span class=\"bp\">`</span> <span class=\"n\">be</span> <span class=\"n\">a</span> <span class=\"kd\">constant</span> <span class=\"o\">(</span><span class=\"n\">e.g.</span><span class=\"o\">,</span> <span class=\"bp\">`</span><span class=\"n\">const</span> <span class=\"n\">MyType</span> <span class=\"o\">:</span> <span class=\"n\">PointedType</span><span class=\"bp\">`</span><span class=\"o\">)</span> <span class=\"n\">prevent</span> <span class=\"n\">one</span> <span class=\"k\">from</span> <span class=\"n\">using</span> <span class=\"n\">the</span> <span class=\"n\">type's</span> <span class=\"n\">fake</span> <span class=\"kd\">definition</span><span class=\"bp\">?</span>\n</code></pre></div>",
+        "id": 268048585,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1642182818
+    },
+    {
+        "content": "<p>No, that only prevents lean from being able to use the definition in proofs. The compiler will see through <code>constant</code> definitions</p>",
+        "id": 268049830,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642183354
+    },
+    {
+        "content": "<p>For types, this is fine since types have no compiler content, but <code>PointedType</code> is a combination of a type and a value, so it is computationally relevant (and you can use <code>#eval MyType.val</code> to execute code producing this bad value)</p>",
+        "id": 268050143,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642183473
+    },
+    {
+        "content": "<p>I used <code>PointedType.val</code> as an intentional NULL in SDL which is a very useful option to have.</p>",
+        "id": 268053610,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642185128
+    },
+    {
+        "content": "<p>Just (a related) fyi: you should never use <code>(lean_object *) NULL</code>.  This is a special value reserved by the runtime.</p>",
+        "id": 268053880,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1642185262
+    },
+    {
+        "content": "<p>I get an error with <code>#eval MyType.val</code> due to the lack of <code>Repr</code>, but I see your point.  From some limited testing, it seems like you could mark the constant as <code>noncomputable</code> and that will prevent the evaluator from synthesizing that code.<br>\nDoes that have the semantics that you are looking for?</p>",
+        "id": 268053934,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1642185275
+    },
+    {
+        "content": "<p>Unfortnulately this wasn't as useful as I hoped. I wanted that only lean_get_external_data returned NULL</p>",
+        "id": 268062532,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642189501
+    },
+    {
+        "content": "<p>If there was some way I could destructure lean types in C I could use an option type directly perhaps.</p>",
+        "id": 268063215,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642189890
+    },
+    {
+        "content": "<p>I tried to do this to get a NULL pointer like this</p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"cm\">/*</span>\n<span class=\"cm\">SDL.SDL_Rect_NULL : Thunk SDL_Rect</span>\n<span class=\"cm\">*/</span><span class=\"w\"></span>\n<span class=\"n\">lean_obj_res</span><span class=\"w\"> </span><span class=\"nf\">lean_sdl_rect_null</span><span class=\"p\">()</span><span class=\"w\"> </span><span class=\"p\">{</span><span class=\"w\"></span>\n<span class=\"w\">  </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"n\">lean_alloc_external</span><span class=\"p\">(</span><span class=\"n\">get_sdl_rect_class</span><span class=\"p\">(),</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"n\">SDL_Rect</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"nb\">NULL</span><span class=\"p\">);</span><span class=\"w\"></span>\n<span class=\"p\">}</span><span class=\"w\"></span>\n</code></pre></div>\n<p>Which causes</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">src.c</span><span class=\"o\">:</span><span class=\"mi\">351</span><span class=\"o\">:</span><span class=\"mi\">25</span><span class=\"o\">:</span> <span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">called</span> <span class=\"n\">object</span> <span class=\"n\">type</span> <span class=\"bp\">'</span><span class=\"n\">lean_object</span> <span class=\"bp\">*'</span> <span class=\"n\">is</span> <span class=\"n\">not</span> <span class=\"n\">a</span> <span class=\"n\">function</span> <span class=\"n\">or</span> <span class=\"n\">function</span> <span class=\"n\">pointer</span>\n<span class=\"n\">SDL</span><span class=\"bp\">-</span><span class=\"n\">cc</span><span class=\"bp\">&gt;</span> <span class=\"n\">x_1</span> <span class=\"bp\">=</span> <span class=\"n\">lean_sdl_rect_null</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n</code></pre></div>",
+        "id": 268068738,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642192296
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 268071027,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1642193480
+    },
+    {
+        "content": "<p>But why are you trying to return <code>NULL</code> to Lean?</p>",
+        "id": 268073008,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1642194524
+    },
+    {
+        "content": "<p>I can't help but think there is some kind of conceptual misuse of the FFI</p>",
+        "id": 268073102,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1642194598
+    },
+    {
+        "content": "<p>Sure, there are ways to avoid using NULL which has a real meaning in the SDL API. But what would be the best way to do it? I would most want to ba able to convert an Option.none to a NULL pointer in those cases, but doing that requires destructuring the data representation of Option in C which is not so nice.</p>",
+        "id": 268076114,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642196279
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"433842\">@Anders Christiansen Sørby</span> What is the type declaration in Lean for the function that binds to <code>lean_sdl_rect_null</code>?  Is it pure or in IO?</p>",
+        "id": 268076364,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1642196415
+    },
+    {
+        "content": "<p>If it is in IO, then it should take an extra unused argument for the \"RealWorld\" argument, e.g., <code>lean_obj_res lean_sdl_rect_null(lean_object* _rw)</code>.</p>",
+        "id": 268076446,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1642196472
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"433842\">@Anders Christiansen Sørby</span> I want to apologize upfront for not being able to understand your intent in the context of your lib, but I want to express a mental model that helps me to understand the FFI. Please take it with a grain of salt, for I'm not sure if it can help you.</p>\n<p>I like to think of the FFI usage as something similar to object oriented programming. You have access to the objects and its methods, but you can't access its implementations. In this sense, any need to deal with <code>NULL</code> should be handled in C. Similarly, you don't want to be dealing with Java object pointers that point nowhere.</p>",
+        "id": 268077809,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1642197254
+    },
+    {
+        "content": "<p>Lean side</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[extern \"lean_sdl_rect_null\"]</span>\n<span class=\"kd\">def</span> <span class=\"n\">SDL_Rect_NULL</span> <span class=\"o\">:</span> <span class=\"n\">Thunk</span> <span class=\"n\">SDL_Rect</span> <span class=\"o\">:=</span> <span class=\"n\">SDL_RectP.val</span>\n</code></pre></div>",
+        "id": 268077946,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642197336
+    },
+    {
+        "content": "<p>This is probably not the ideal way to do this. But I need to represent NULL in some way since this means that the function uses a default.</p>",
+        "id": 268078137,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642197429
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">constant</span> <span class=\"n\">SDL_RectP</span> <span class=\"o\">:</span> <span class=\"n\">PointedType</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">SDL_Rect</span> <span class=\"o\">:=</span> <span class=\"n\">SDL_RectP.type</span>\n</code></pre></div>",
+        "id": 268078261,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642197488
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"433842\">Anders Christiansen Sørby</span> <a href=\"#narrow/stream/270676-lean4/topic/freeing.20pointers.20in.20FFI/near/268078137\">said</a>:</p>\n<blockquote>\n<p>This is probably not the ideal way to do this. But I need to represent NULL in some way since this means that the function uses a default.</p>\n</blockquote>\n<p>You need to pass <em>something</em> from Lean to C in a way that C understands it as <code>NULL</code>?</p>",
+        "id": 268078585,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1642197630
+    },
+    {
+        "content": "<p>Yes, or something I can translate to NULL</p>",
+        "id": 268079144,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642197877
+    },
+    {
+        "content": "<p>I'd use a struct to encapsulate that info, with a field whose value is initiated with <code>NULL</code></p>",
+        "id": 268079676,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1642198121
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"k\">typedef</span><span class=\"w\"> </span><span class=\"k\">struct</span> <span class=\"nc\">some_data</span><span class=\"w\"> </span><span class=\"p\">{</span><span class=\"w\"></span>\n<span class=\"w\">    </span><span class=\"n\">PTR_TYPE</span><span class=\"o\">*</span><span class=\"w\"> </span><span class=\"n\">ptr</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"nb\">NULL</span><span class=\"p\">;</span><span class=\"w\"></span>\n<span class=\"p\">}</span><span class=\"w\"> </span><span class=\"n\">some_data</span><span class=\"p\">;</span><span class=\"w\"></span>\n</code></pre></div>",
+        "id": 268079826,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1642198199
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"433842\">Anders Christiansen Sørby</span> <a href=\"#narrow/stream/270676-lean4/topic/freeing.20pointers.20in.20FFI/near/268068738\">said</a>:</p>\n<blockquote>\n<p>I tried to do this to get a NULL pointer like this &lt;snip&gt; Which causes</p>\n<p><div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">src.c</span><span class=\"o\">:</span><span class=\"mi\">351</span><span class=\"o\">:</span><span class=\"mi\">25</span><span class=\"o\">:</span> <span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">called</span> <span class=\"n\">object</span> <span class=\"n\">type</span> <span class=\"bp\">'</span><span class=\"n\">lean_object</span> <span class=\"bp\">*'</span> <span class=\"n\">is</span> <span class=\"n\">not</span> <span class=\"n\">a</span> <span class=\"n\">function</span> <span class=\"n\">or</span> <span class=\"n\">function</span> <span class=\"n\">pointer</span>\n<span class=\"n\">SDL</span><span class=\"bp\">-</span><span class=\"n\">cc</span><span class=\"bp\">&gt;</span> <span class=\"n\">x_1</span> <span class=\"bp\">=</span> <span class=\"n\">lean_sdl_rect_null</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n</code></pre></div><br>\n</p>\n</blockquote>\n<p>What is the code producing the latter error? it seems like you passed a <code>lean_object *</code> directly as an <code>SDL_Rect *</code> to an SDL function instead of unwrapping it like you should. Since the lean_external API accepts <code>void *</code> payloads, I suspect that using <code>NULL</code> in the way of your first code block is fine, but you are making a mistake somewhere else causing the error.</p>",
+        "id": 268079997,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642198282
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"451983\">@Arthur Paulino</span>  Sure, but I was looking for the minimal boilerplate solution.</p>",
+        "id": 268080262,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642198431
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> Hm, I thought so too, but I can't see where...</p>",
+        "id": 268080550,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642198494
+    },
+    {
+        "content": "<p>who is producing that error? What is <code>src.c</code>? I don't see it in your project</p>",
+        "id": 268080677,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1642198528
+    },
+    {
+        "content": "<p>I tested code generation and for a thunk, Lean expects it to be a constant.</p>",
+        "id": 268080691,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1642198541
+    },
+    {
+        "content": "<p>So the compiler is likely looking for a declaration such as <code>LEAN_EXPORT lean_object* lean_sdl_rect_null</code></p>",
+        "id": 268080794,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1642198592
+    },
+    {
+        "content": "<p>I found the problem. I need to use a <code>Unit -&gt; SDL_Rect</code> signature to make it behave like a function with no args</p>",
+        "id": 268080926,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642198681
+    },
+    {
+        "content": "<p><code>Unit -&gt; SDL_Rect</code> will likely make it a function that takes a single argument, but the argument can be ignored.</p>",
+        "id": 268081049,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1642198761
+    },
+    {
+        "content": "<p>I thought so, but it does not. It works with no args.</p>",
+        "id": 268081160,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642198815
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"433842\">Anders Christiansen Sørby</span> <a href=\"#narrow/stream/270676-lean4/topic/freeing.20pointers.20in.20FFI/near/268078137\">said</a>:</p>\n<blockquote>\n<p>This is probably not the ideal way to do this. But I need to represent NULL in some way since this means that the function uses a default.</p>\n</blockquote>\n<p>Why not just use <code>Option SDL_Rect</code> for functions that accept possibly NULL rect arguments?</p>",
+        "id": 268081671,
+        "sender_full_name": "Mac",
+        "timestamp": 1642199161
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"433842\">@Anders Christiansen Sørby</span> What I meant by that is that if you look in the Lean generated C code, you'll see it declares a function like <code>lean_object* lean_sdl_rect_null(lean_object*)</code>. </p>\n<p>Of course, it's fine to link that against a function definition that takes no arguments, because that's ABI compatible when you don't actually use the argument.</p>",
+        "id": 268081999,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1642199326
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> That is what I first tried, but I don't know how to unwrap an lean_object* which is an option on the C side.</p>",
+        "id": 268082441,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642199543
+    },
+    {
+        "content": "<p>Would be nice if there was such a function. <code>void *lean_option_unwrap(lean_obj_arg a)</code></p>",
+        "id": 268082533,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642199599
+    },
+    {
+        "content": "<p>Which is NULL for none and get_external_data(b) for some b</p>",
+        "id": 268082658,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642199656
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"433842\">@Anders Christiansen Sørby</span> to unwrap an <code>Option</code>, first check if it is <code>none</code> (e.g., <code>1</code>) by checking if the <code>lean_object</code> is a scalar (i.e., with <code>lean_is_scalar</code>). Otherwise, if the <code>Option</code> is instead a <code>some</code>, you can get the inner <code>lean_object</code> with <code>some_val = lean_ctor_get(opt_obj, 0)</code>.</p>",
+        "id": 268083031,
+        "sender_full_name": "Mac",
+        "timestamp": 1642199908
+    },
+    {
+        "content": "<p>Ok, thanks. That is what I've been looking for. Is this documented anywhere?</p>",
+        "id": 268083133,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642199993
+    },
+    {
+        "content": "<p>So this should do it</p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"cm\">/**</span>\n<span class=\"cm\"> * Unwrap an Option of an external object as data for some</span>\n<span class=\"cm\"> * or NULL for none. Unsafe.</span>\n<span class=\"cm\"> */</span><span class=\"w\"></span>\n<span class=\"kt\">void</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"nf\">lean_option_unwrap</span><span class=\"p\">(</span><span class=\"n\">b_lean_obj_arg</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span><span class=\"w\"></span>\n<span class=\"w\">  </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"n\">lean_is_scalar</span><span class=\"p\">(</span><span class=\"n\">a</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"o\">&amp;&amp;</span><span class=\"w\"> </span><span class=\"n\">lean_scalar_to_int</span><span class=\"p\">(</span><span class=\"n\">a</span><span class=\"p\">))</span><span class=\"w\"> </span><span class=\"p\">{</span><span class=\"w\"></span>\n<span class=\"w\">    </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"nb\">NULL</span><span class=\"p\">;</span><span class=\"w\"></span>\n<span class=\"w\">  </span><span class=\"p\">}</span><span class=\"w\"> </span><span class=\"k\">else</span><span class=\"w\"> </span><span class=\"p\">{</span><span class=\"w\"></span>\n<span class=\"w\">    </span><span class=\"n\">lean_object</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"n\">some_val</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">lean_ctor_get</span><span class=\"p\">(</span><span class=\"n\">a</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"p\">);</span><span class=\"w\"></span>\n<span class=\"w\">    </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"n\">lean_get_external_data</span><span class=\"p\">(</span><span class=\"n\">some_val</span><span class=\"p\">);</span><span class=\"w\"></span>\n<span class=\"w\">  </span><span class=\"p\">}</span><span class=\"w\"></span>\n<span class=\"p\">}</span><span class=\"w\"></span>\n</code></pre></div>",
+        "id": 268084256,
+        "sender_full_name": "Anders Christiansen Sørby",
+        "timestamp": 1642200682
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"433842\">@Anders Christiansen Sørby</span> You don't need the <code>lean_scalar_to_int</code>. You just need <code>lean_is_scalar</code>.</p>",
+        "id": 268100087,
+        "sender_full_name": "Mac",
+        "timestamp": 1642215004
+    }
+]

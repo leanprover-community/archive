@@ -1,0 +1,116 @@
+[
+    {
+        "content": "<p>I'm writing a tactic that iterates over a set of hypotheses <code>hs</code>. At each step, the tactic takes the first hypothesis out of <code>hs</code>, processes it and returns a modified <code>hs'</code> as input for the next step.</p>\n<p>This all works fine except when a processing step changes the unique names of hypotheses in the context, as all <code>revert</code>-based tactics do. This invalidates <code>hs</code>, which now contains local constants that don't exist any more. The <code>revert</code>-based tactics also don't report which unique names were changed, so I can't easily update <code>hs</code>. Is there any established way to deal with this?</p>\n<p>Until now, I've muddled through by using pretty names to identify hypotheses, making sure that they are unique and that I update <code>hs</code> whenever any of the unique names may have changed. But that's very error-prone and would be quite painful for my current application.</p>",
+        "id": 199420571,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1591044275
+    },
+    {
+        "content": "<p>I think I'm still unclear on your algorithm.  You take a hypothesis, <code>h</code>, perform some tactic with it, and then relabel the hypothesis as \"handled\", by changing the name, correct?  The issue is that some of the tactics you perform could change the hypothesis in the goal.  Without knowing more (and without being an expert on this sort of thing), I could see a few approaches:</p>\n<ul>\n<li>Gather all the hypothesis into a list, and then looping over that list, applying each to the goal using your method.  If the hypotheses in the goal change that is fine (as long as you don't need to \"handle\" any new hypotheses that arise in that loop).</li>\n<li>Using the hash of the local variable (or maybe the hash of it's type?) to keep track of the hypotheses you have processes.  Keep them in some data structure (I think Lean has red-black trees which work like immutable sets).  Then you can after each tactic application update that set to include the hypothesis you processed.</li>\n</ul>",
+        "id": 199432315,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1591051123
+    },
+    {
+        "content": "<p>I'm not a tactic writing expert, so I hope others chime in.</p>",
+        "id": 199432369,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1591051175
+    },
+    {
+        "content": "<p>For my second suggestion, I'd look into Lean's <code>expr_set</code>, although I've never used it personally.</p>",
+        "id": 199432538,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1591051299
+    },
+    {
+        "content": "<p>There is no very good solution to this in existing tactics. <code>rcases</code> has to deal with this because it has to sometimes do cases on an earlier argument that changes a later argument that must itself be cased, and lookup fails in that case. Currently I'm doing some heuristic matching using the names of the hypotheses but I would like to have something more robust here.</p>",
+        "id": 199433104,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1591051794
+    },
+    {
+        "content": "<p>Probably the most robust approach would be to modify <code>revert</code> to return a map of changed unique names that can be applied to any later data structures used in tactics (like <code>rcases</code>'s todo list)</p>",
+        "id": 199433386,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1591051948
+    },
+    {
+        "content": "<p>well, to be more precise <code>revert</code> would return a list of \"stolen\" unique names (that have now become de Bruijn variables), and the un-revert tactic (<code>intron</code>), used after whatever hypothesis tactic is done doing its thing, would take this list and zip it with the newly created local constants.</p>",
+        "id": 199433569,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1591052101
+    },
+    {
+        "content": "<p>However, this requires some changes to C++ because <code>cases_core</code> doesn't provide this level of detail IIRC</p>",
+        "id": 199433709,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1591052206
+    },
+    {
+        "content": "<p>Jason, there are solid ideas, but I don't think they'll work out:</p>\n<ul>\n<li>Even if we just loop through a list of hypotheses, any iteration of the loop can change the unique names of hypotheses we have yet to process (unless we specifically design the loop so that this can't happen). Example:</li>\n</ul>\n<div class=\"codehilite\"><pre><span></span><code><span class=\"kn\">example</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"bp\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h₁</span> <span class=\"o\">:</span> <span class=\"n\">x</span> <span class=\"bp\">=</span> <span class=\"n\">y</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h₂</span> <span class=\"o\">:</span> <span class=\"n\">y</span> <span class=\"bp\">=</span> <span class=\"n\">y</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">true</span> <span class=\"o\">:=</span>\n<span class=\"k\">begin</span>\n  <span class=\"o\">(</span><span class=\"n\">do</span> <span class=\"n\">h₁</span> <span class=\"err\">←</span> <span class=\"n\">get_local</span> <span class=\"bp\">`</span><span class=\"n\">h₁</span><span class=\"o\">,</span>\n      <span class=\"n\">h₂</span> <span class=\"err\">←</span> <span class=\"n\">get_local</span> <span class=\"bp\">`</span><span class=\"n\">h₂</span><span class=\"o\">,</span>\n      <span class=\"o\">[</span><span class=\"n\">h₁</span><span class=\"o\">,</span> <span class=\"n\">h₂</span><span class=\"o\">]</span><span class=\"bp\">.</span><span class=\"n\">mmap</span> <span class=\"n\">subst</span>\n      <span class=\"o\">)</span>\n<span class=\"kn\">end</span>\n</code></pre></div>\n\n\n<p>This will fail with \"unknown hypothesis h₂\" because after <code>subst h₁</code>, <code>h₂</code> is a different local constant with, in particular, a different unique name.</p>\n<ul>\n<li>Tracking hyps by type + pretty name would be a better heuristic than tracking them by pretty name only. Still, there's nothing stopping anyone from having two hypotheses with the same name and type in the context.</li>\n</ul>\n<p>Mario, thank you even though you're confirming my fears. ;) I was really hoping you'd come along with a workaround. I'll look into what would need to change to track this information, but that sounds like a major operation.</p>",
+        "id": 199434173,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1591052545
+    },
+    {
+        "content": "<p>There is another problem with the revert/intro approach to hypothesis tracking: It is possible that a hypothesis tactic can change the goal in more radical ways, for example if you want to <code>simp at h</code> and so you revert <code>h : true |- false</code> to <code>|- true -&gt; false</code>, and then simp is clever and simplifies the new goal to <code>false</code>, and then your <code>intron 1</code> will fail. I'm not clear on what all the tactics are doing to avoid this problem</p>",
+        "id": 199434918,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1591053258
+    },
+    {
+        "content": "<p>We are sort of working on the assumption that the hypothesis tactic doesn't mangle the pis that have been introduced in the goal. If they get reordered or simplified to something other than a pi then it will be very hard to maintain identity of hypotheses across this point</p>",
+        "id": 199435049,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1591053410
+    },
+    {
+        "content": "<p>Seems like <code>simp at</code> sidesteps this problem by not doing the revert/intro dance. Instead, the primitive <code>simplify</code> takes an expression and returns a simplified expression along with a proof that they're equal. Unfortunately, these are then fed into <code>replace_hyp</code>, which again messes up the unique names.</p>\n<p>In general, I feel like it's okay to demand that the tactic between a <code>revert</code> and an <code>intron</code> doesn't change the number/order of binders -- this seems like it could usually be arranged.</p>",
+        "id": 199435778,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1591054163
+    },
+    {
+        "content": "<p>(Note to self: The sketched design where <code>revert</code> returns a list of unique names and <code>intron</code> takes that list again is unsafe in that it allows us to get different hyps with the same unique name. I imagine Lean wouldn't be too happy about that. However, we could have a safer primitive, <code>reverting</code>, which acts as a bracketing operator. That's also less powerful, though.)</p>",
+        "id": 199436193,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1591054550
+    },
+    {
+        "content": "<p>Note that it is impossible to not mess up unique names here. A hypothesis with a given unique name can only have one type. If you are replacing it with a different hypothesis, it has to have a different unique name, and similarly for any dependent hypotheses. For unaffected (non-dependent) hypotheses coming after the one being rewritten, it is possible to avoid changing their unique names by not reverting them, and I think usually <code>revert</code> only reverts the minimum number of hypotheses necessary. But this does result in reordering of hypotheses.</p>",
+        "id": 199436659,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1591055053
+    },
+    {
+        "content": "<blockquote>\n<p>The sketched design where revert returns a list of unique names and intron takes that list again is unsafe in that it allows us to get different hyps with the same unique name.</p>\n</blockquote>\n<p>My suggestion was that <code>revert</code> returns a list like <code>[h1, h2, h3]</code> with unique names of now reverted hypotheses, and <code>intron</code> would take this list as input and produce the list/map <code>[(h1, h1'), (h2, h2'), (h3, h3')]</code> containing the newly allocated unique names for the introduced variables. It would not reuse the old unique name as that could things to break (I'm not exactly sure what, though)</p>",
+        "id": 199436796,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1591055229
+    },
+    {
+        "content": "<p>I see. If the unique names are tied to types, we obviously can't hope to keep them stable. Carrying around a map of renamings then does seem like the next best thing. For <code>revert</code>/<code>intro</code>, I believe this could already be implemented in user space. Any primitives that operate on hypotheses would have to be modified to return such a map, as you say. And then this map would have to be passed around and updated by everything. (That sounds like it might be a job for a wrapper monad.)</p>",
+        "id": 199437214,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1591055726
+    },
+    {
+        "content": "<p>I was rather thinking that the map would be applied to any continuation data used by the tactic (like the remainder of hypotheses being processed) and discarded, rather than building up a collection of renaming substitutions that itself requires maintenance and filters all future tactic calls to things like <code>get_local</code></p>",
+        "id": 199440447,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1591059392
+    },
+    {
+        "content": "<p>if the continuation data is buried in the call stack then this is more complicated, but I think you can still return a name update map that is the composition of all name updates that have happened so far so that you can apply it to any local data. (That said this is basically a wrapper monad.) If you have an explicit continuation then you don't need to do this.</p>",
+        "id": 199440699,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1591059677
+    },
+    {
+        "content": "<p>Fair. I meant that any tactics built on revert/intro or similar tricks would have to pass on the renaming map. This would require a fairly large number of 'plumbing' changes.</p>\n<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> Does Lean 4 have any facility along these lines that we could copy to minimise divergence?</p>",
+        "id": 199443407,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1591063207
+    }
+]

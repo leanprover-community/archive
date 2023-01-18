@@ -1,0 +1,116 @@
+[
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>, could I ask your advice on how I might achieve what I was asking about in <a href=\"https://github.com/leanprover/lean4/pull/1743\">lean4#1743</a>, without needing changes to Lean 4?</p>\n<p>I have a collection of simp lemmas, each with side-conditions, and I would like to simplify by them, only applying each lemma if its side condition can be discharged (e.g. by <code>decide</code>), and I would like to proceed even if the <code>Expr.acLt</code> term order would usually reject the rewrite.</p>\n<p>So far I am only thinking of dreadful hacks. (e.g. tweak the lemmas by adding superfluous extra parameters so that <code>simp</code> doesn't classify them as <code>perm</code> lemmas).</p>\n<p>As reasonable answer is, of course: \"Please don't try this, it sounds like a bad idea.\"</p>",
+        "id": 304585304,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1666052154
+    },
+    {
+        "content": "<p>I would just take that part into my own hands, by adding a <code>pre :=</code> tactic which rewrites with your lemma to the <code>Simp.Methods</code></p>",
+        "id": 304585722,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666052388
+    },
+    {
+        "content": "<p>Is this actually used in mathlib, or do we want this for exciting new stuff?</p>",
+        "id": 304585820,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1666052428
+    },
+    {
+        "content": "<p>As I said briefly during the meeting, the idea is to try implementing something like <code>abel</code> in two phases:</p>\n<ul>\n<li>a tactic that abstract atoms, e.g. replacing <code>a + 2 • b - a + b</code> with <code>let L := [a, b]; let f i := L.get! i; f 0 + 2 • f 1 - f 0 + f 1</code></li>\n<li>then do all the proofs with the simplifier, using side conditions on indices appearing in <code>f i</code> to get the term order correct.</li>\n</ul>",
+        "id": 304586010,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1666052531
+    },
+    {
+        "content": "<p>So <span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span>, this is for \"exciting new stuff\" (or rather, an alternative implementation of a tactic that needs porting).</p>\n<p>When I look at tactics like <code>abel</code> (or <code>ring</code> for that matter), it makes me wish that we were doing less manual proof construction, and more letting tools like <code>simp</code> handle it for us.</p>\n<p>This approach would only require constructing a proof for the \"abstract atoms\" step.</p>",
+        "id": 304586120,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1666052630
+    },
+    {
+        "content": "<p>I would rather have those tactics be as efficient as possible. They are used a lot, including as components of other tactics, so they should try not to do unnecessary things</p>",
+        "id": 304586470,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666052856
+    },
+    {
+        "content": "<p>Okay, so it seems like the possibilities would be:</p>\n<ul>\n<li>Be able to disable the term order checking in <code>Simp</code> (probably not acceptable for Lean 4)</li>\n<li>Be able to pass a custom term order into <code>Simp</code> (probably not acceptable)</li>\n<li>Manage <code>Simp</code> more manually, by doing the rewriting myself in <code>pre := </code> with a custom tactic.</li>\n<li>Obfuscate the lemmas so that <code>simp</code> doesn't treat them as <code>perm</code> lemmas.</li>\n</ul>",
+        "id": 304586561,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1666052902
+    },
+    {
+        "content": "<p>Is it clearly less efficient to do it this way, though?</p>",
+        "id": 304586584,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1666052923
+    },
+    {
+        "content": "<p>the additional let bindings and list construction is clearly unnecessary</p>",
+        "id": 304586621,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666052950
+    },
+    {
+        "content": "<p>Okay, true.</p>",
+        "id": 304586628,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1666052957
+    },
+    {
+        "content": "<p>also <code>simp</code> likes to unfold those</p>",
+        "id": 304586640,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666052968
+    },
+    {
+        "content": "<p>but it seems like the abstraction step is pretty cheap, hopefully just linear in the expression, and so insignificant compared to the term reordering proof.</p>",
+        "id": 304586736,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1666053010
+    },
+    {
+        "content": "<p>I'm not even sure why you need to use indices here, why doesn't the regular term order work?</p>",
+        "id": 304586742,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666053016
+    },
+    {
+        "content": "<p>I guess I haven't tried explicitly, but as you pointed out in the meeting the signs are probably trouble.</p>",
+        "id": 304586869,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1666053114
+    },
+    {
+        "content": "<p>I would go for an encoding more like <code>have x := a; have y := b; x + 2 • y - x + y</code> here</p>",
+        "id": 304586922,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666053124
+    },
+    {
+        "content": "<p>Really what I had in mind was <code>f 37 2</code>, which means \"37 times the 2nd atom\"</p>",
+        "id": 304586960,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1666053158
+    },
+    {
+        "content": "<p>so you can absorb any signs into an argument to <code>f</code>, where it can't interfere with the term order.</p>",
+        "id": 304586982,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1666053178
+    },
+    {
+        "content": "<p>well the + and - here can be a tactic-specific operator, I think <code>abel</code> uses some kind of additive version of <code>horner</code> IIRC</p>",
+        "id": 304587043,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666053226
+    },
+    {
+        "content": "<p>but every time I think about the most optimal way to combine all these pluses and minuses I end up with a pretty specific solution that uses custom data structures like insertion into a <code>RBMap ExprId Int</code> with proofs</p>",
+        "id": 304587348,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666053397
+    }
+]

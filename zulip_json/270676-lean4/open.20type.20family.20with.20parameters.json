@@ -1,0 +1,242 @@
+[
+    {
+        "content": "<p>I'd like to build an open type family using an inductive type. Essentially, the user should be able to add types through a <code>generic</code> interface:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">inductive</span> <span class=\"n\">MyType</span> <span class=\"o\">:=</span>\n  <span class=\"bp\">|</span> <span class=\"n\">myInt</span>\n  <span class=\"bp\">|</span> <span class=\"n\">generic</span> <span class=\"o\">(</span><span class=\"n\">α</span><span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"bp\">...</span> <span class=\"c1\">-- parameters as needed</span>\n</code></pre></div>\n<p>I hope to satisfy the following requirements:</p>\n<ul>\n<li>Each new declared type need to have a provably unique string identifier (so that generic types can be compared for equality)</li>\n<li>The generic types need to allow parameters (so we can add eg. lists) and might live in different universes</li>\n</ul>\n<p>The most natural option is to use a typeclass, which takes care of parameters and universes. However, I don't know if it's possible to restrict typeclass instances in a way that guarantees uniqueness (not to mention expressing it in a proof).</p>\n<p>Another option is to make a global registry and add to it with a custom command (which is fine for my application). However, each generic type depends on two universe levels (one for its parameters and one for the type itself) and I don't know how to represent the registry in a way that allows different universes to be mixed.</p>\n<p>Any insight or suggestion on how to tackle this would be much appreciated.<br>\nCc <span class=\"user-mention\" data-user-id=\"130575\">@Siddharth Bhat</span></p>",
+        "id": 282225167,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652435569
+    },
+    {
+        "content": "<p>What do you want to do with the provable uniqueness? Proving the strings different is easy but using this to deduce something about the types is hard</p>",
+        "id": 282225621,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652435871
+    },
+    {
+        "content": "<p>I would be inclined to do this at the meta-level, i.e. have a declaration in a given namespace for the type family, with the name of the declaration being the provably unique thing</p>",
+        "id": 282225738,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652435927
+    },
+    {
+        "content": "<p>Also there is an obvious problem with having <code>MyType</code> contain all of these types, since it would have to live in an arbitrarily large universe in order to encompass types of large universes that have yet to be defined</p>",
+        "id": 282226016,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652436060
+    },
+    {
+        "content": "<p>In the end I'd like to have <code>DecidableEq</code> on <code>MyType</code>; my expectation is that having equal names implies having equal custom types. (The name would be part of the data as well, so different names means different types.) I tend to think of the type family as a dictionary [name → generic type definition], hence the intuition.</p>",
+        "id": 282226037,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652436075
+    },
+    {
+        "content": "<p>what if you put <code>Nat -&gt; Nat</code> as one of the generic types? How do you still maintain <code>DecidableEq</code>?</p>",
+        "id": 282226229,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652436207
+    },
+    {
+        "content": "<p>If <code>MyType</code> is just the \"key\" part, then it's just <code>Name</code> or an inductive containing it so <code>DecidableEq</code> is easy, but the hard part is the <code>name -&gt; generic type definition</code> part, depending on what you mean by \"generic type definition\". What is the type of that function?</p>",
+        "id": 282226466,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652436345
+    },
+    {
+        "content": "<p>You would declare it with a fixed type name (eg. <code>\"nat_nat\"</code>) that would be attached to the <code>generic</code> constructor, so <code>DecidableEq</code> of two <code>generic</code>s would compare the names. That would be correct because each name could only be tied to a single custom type.</p>\n<p>As for the function that queries the instances, I have tried both typeclass resolution and using a manually-defined dictionary. I'm having trouble allowing parameters in both, though I'm sure some of it is just me not being smart enough.</p>\n<p>You're definitely right about the universes. Given the use case we can assume everything lives under a fixed constant universe, eg. <code>Type 20</code>.</p>",
+        "id": 282226714,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652436506
+    },
+    {
+        "content": "<p>If we ignore the multiple universes thing and just suppose we want a map like </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">MyTypeFamily</span> <span class=\"o\">:</span> <span class=\"n\">Name</span> <span class=\"bp\">-&gt;</span> <span class=\"kt\">Type</span>\n<span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"n\">Nat</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Nat</span>\n<span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"n\">Int</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Int</span>\n<span class=\"bp\">|</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">TBD</span><span class=\"bp\">??</span>\n</code></pre></div>\n<p>then I think the most reasonable encoding is as a <em>constraint</em> on possible satisfying functions:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">MyTypeFamily</span> <span class=\"o\">(</span><span class=\"n\">F</span> <span class=\"o\">:</span> <span class=\"n\">Name</span> <span class=\"bp\">-&gt;</span> <span class=\"kt\">Type</span><span class=\"o\">)</span>\n  <span class=\"n\">Nat</span> <span class=\"o\">:</span> <span class=\"n\">F</span> <span class=\"bp\">`</span><span class=\"n\">Nat</span> <span class=\"bp\">=</span> <span class=\"n\">Nat</span>\n  <span class=\"n\">Int</span> <span class=\"o\">:</span> <span class=\"n\">F</span> <span class=\"bp\">`</span><span class=\"n\">Int</span> <span class=\"bp\">=</span> <span class=\"n\">Int</span>\n</code></pre></div>\n<p>which you can <code>extends</code> to add more constraints later</p>",
+        "id": 282226778,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652436574
+    },
+    {
+        "content": "<p>But I have to say this problem skirts uncomfortably close to \"fundamentally impossible\"</p>",
+        "id": 282226937,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652436716
+    },
+    {
+        "content": "<p>I'm not exactly sure what you are expecting when you talk about parameters. Do you have an example?</p>",
+        "id": 282227155,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652436848
+    },
+    {
+        "content": "<p>Yeah, it doesn't feel quite right. Initially I just though of it as \"use a typeclass that gives the required information\" but the equality test makes it much more difficult.</p>\n<p>I'm now wondering if I could forsake <code>DecidableEq</code> and use some non-proven boolean equality in my theory, as then I can meta-assume that there is only once occurrence of each name and never have to prove it.</p>",
+        "id": 282227221,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652436905
+    },
+    {
+        "content": "<p>For parameters, I have a multi-dimensional vector type, which depends on a list of dimensions and a base type. The vector is only fully-specified when both of these parameters are applied, so whatever data I attach to <code>generic</code> would need to be parameterized (which typeclass instances do just fine).</p>\n<p>Also, the base type is almost always going to be a <code>MyType</code>, and the universe bumps only in very rare cases, which is why it's fine if the whole scheme is typed in a fixed universe and doesn't go arbitrarily high.</p>",
+        "id": 282227559,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652437127
+    },
+    {
+        "content": "<p>Could you explain the application a bit more? This seems like an <a href=\"https://en.wikipedia.org/wiki/XY_problem\">#xy</a> problem</p>",
+        "id": 282227839,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652437337
+    },
+    {
+        "content": "<blockquote>\n<p>Also, the base type is almost always going to be a MyType, and the universe bumps only in very rare cases, which is why it's fine if the whole scheme is typed in a fixed universe and doesn't go arbitrarily high.</p>\n</blockquote>\n<p>Umm.. that's going to be a problem because <code>MyType</code> (the containing type) will need to have a larger universe than <code>MyType</code> (the data)</p>",
+        "id": 282227932,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652437413
+    },
+    {
+        "content": "<p>Sure! I'm modeling language semantics. The language I'm targeting allows new types to be defined; this happens through the interpreter's C++ interface so there is no predefined framework (like structures/inductives/etc in Lean), instead the new types can be any C++ class with some interface.</p>\n<p>My goal is to define <code>MyType</code> in a way that reflects this behavior; instead of implementing a C++ class with some interface you would supply a Lean type with a typeclass instance (or something similar).</p>\n<p>Restricting what can be defined to fit a clean formal definition in Lean is fine, but one of the things I have to support is that new types can quantify on other types, like vectors of integers.</p>\n<blockquote>\n<p>Umm.. that's going to be a problem because MyType (the containing type) will need to have a larger universe than MyType (the data)</p>\n</blockquote>\n<p>You're right again, that would bump the universe as well. The current formalism I have has an explicit <code>vector</code> type that doesn't quantify, which I why I mixed it up. I do believe this is fine if <code>MyType</code> is universe polymorphic, though.</p>",
+        "id": 282228657,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652438012
+    },
+    {
+        "content": "<p>the latter issue is more than just a universe bump, it needs a universe satisfying <code>u &lt; u</code></p>",
+        "id": 282228772,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652438088
+    },
+    {
+        "content": "<p>I think you should have a <code>generic</code> type constructor that encodes the rules for new types into a single \"closed\" inductive. For example for a lean-like language I would define the mu-operator and its constructors and recursors, and then something like <code>inductive Nat</code> compiles to <code>def Nat := mu `Nat (\\lam X, 1 + X)</code></p>",
+        "id": 282229142,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652438387
+    },
+    {
+        "content": "<p>in other words, it is not <code>generic (A : Type)</code> with no constraints on <code>A</code>, it is more like <code>generic (A : TypeSpec) (p : A.args MyType)</code> where <code>TypeSpec</code> is a declaration not depending on <code>MyType</code> which specifies the grammar of new type specifications in the target language and <code>TypeSpec.args</code> gives the arguments to that type (with <code>MyType</code> passed as argument because it can't directly refer to <code>MyType</code>)</p>",
+        "id": 282229491,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652438641
+    },
+    {
+        "content": "<p>There will probably be complications, it depends on what <code>TypeSpec</code> looks like</p>",
+        "id": 282229570,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652438680
+    },
+    {
+        "content": "<p>Maybe I'm misunderstanding the universe problem. In the typeclass version, we only register the instantiated type so it works just fine:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">MyTypeIntf</span> <span class=\"o\">(</span><span class=\"n\">α</span><span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n  <span class=\"n\">default_value</span><span class=\"o\">:</span> <span class=\"n\">α</span>\n\n<span class=\"kd\">inductive</span> <span class=\"n\">MyType</span> <span class=\"o\">:=</span>\n  <span class=\"bp\">|</span> <span class=\"n\">int</span>\n  <span class=\"bp\">|</span> <span class=\"n\">generic</span> <span class=\"o\">(</span><span class=\"n\">α</span><span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">MyTypeIntf</span> <span class=\"n\">α</span><span class=\"o\">]</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">MyType.vector</span> <span class=\"o\">(</span><span class=\"n\">τ</span><span class=\"o\">:</span> <span class=\"n\">MyType</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n  <span class=\"n\">length</span><span class=\"o\">:</span> <span class=\"n\">Nat</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">{</span><span class=\"n\">τ</span><span class=\"o\">}:</span> <span class=\"n\">MyTypeIntf</span> <span class=\"o\">(</span><span class=\"n\">MyType.vector</span> <span class=\"n\">τ</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n  <span class=\"n\">default_value</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">length</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span> <span class=\"o\">}</span>\n\n<span class=\"k\">#check</span> <span class=\"n\">MyType.generic</span> <span class=\"o\">(</span><span class=\"n\">MyType.vector</span> <span class=\"n\">MyType.int</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 282229766,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652438855
+    },
+    {
+        "content": "<p>Oh, I thought <code>MyType</code> was data-carrying</p>",
+        "id": 282229942,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652438991
+    },
+    {
+        "content": "<p>Well, no actually there is still a problem. How do you have a vector of <code>MyType</code>s?</p>",
+        "id": 282230115,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652439100
+    },
+    {
+        "content": "<p>You don't; the language doesn't have polymorphism, only type constructors. Looking back I definitely said \"quantify\" quite liberally. <span aria-label=\"sweat smile\" class=\"emoji emoji-1f605\" role=\"img\" title=\"sweat smile\">:sweat_smile:</span></p>",
+        "id": 282230481,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652439342
+    },
+    {
+        "content": "<p>Oh I was thinking this is like a Python-style type system with an \"any\" type</p>",
+        "id": 282230556,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652439380
+    },
+    {
+        "content": "<p>In that case, remind me why you need <code>MyType</code> at all? Or type comparisons for that matter</p>",
+        "id": 282230713,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652439486
+    },
+    {
+        "content": "<p>Fortunately not. The example above would be sufficient  for the whole system if not for the fact that it doesn't name the types or provide any sort of equality</p>",
+        "id": 282230714,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652439487
+    },
+    {
+        "content": "<p>For program analysis, I want to eg. check whether two variables are defined to be of the same type.</p>",
+        "id": 282230794,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652439551
+    },
+    {
+        "content": "<p>can you implement those at the meta-level?</p>",
+        "id": 282230832,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652439580
+    },
+    {
+        "content": "<p>This language seems to be at around the same level as lean in consistency strength so it's going to be tricky to implement meta-level operations at the object level</p>",
+        "id": 282230957,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652439624
+    },
+    {
+        "content": "<p>like if you have functions like <code>Nat -&gt; Nat</code> \"in\" your system, then you can't analyze the contents of these functions at the object level in any way other than by calling them</p>",
+        "id": 282231078,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652439713
+    },
+    {
+        "content": "<p>you would need to get the meta-level <code>Expr</code> corresponding to the function to take a peek at the variable declarations inside</p>",
+        "id": 282231192,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652439782
+    },
+    {
+        "content": "<p>Well I do have some sort of injectivity; custom types are only equal if they come from the same definition with the same parameters. And we can assume that all parameters have decidable equality. Hence the scheme with the name to identify each custom type</p>",
+        "id": 282231201,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652439791
+    },
+    {
+        "content": "<p>If you set aside the data part, it shouldn't be too hard to get a (nonrecursive) type with decidable equality which represents your type tag grammar</p>",
+        "id": 282231332,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652439882
+    },
+    {
+        "content": "<p>actually I guess it can be recursive</p>",
+        "id": 282231374,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652439916
+    },
+    {
+        "content": "<p>something like</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">inductive</span> <span class=\"n\">TypeTag</span>\n<span class=\"bp\">|</span> <span class=\"n\">app</span> <span class=\"o\">:</span> <span class=\"n\">Name</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">List</span> <span class=\"n\">TypeTag</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">TypeTag</span>\n</code></pre></div>\n<p>maybe there are some primitives in there but that's the main part</p>",
+        "id": 282231468,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1652439964
+    },
+    {
+        "content": "<p>Right. I'll go back and experiment a little more, so I can understand/explore these ideas.</p>",
+        "id": 282231563,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652440065
+    },
+    {
+        "content": "<p>Thank you very much for your feedback, this is extremely useful <span aria-label=\"grinning\" class=\"emoji emoji-1f600\" role=\"img\" title=\"grinning\">:grinning:</span></p>",
+        "id": 282231641,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652440105
+    },
+    {
+        "content": "<p>We also considered a related problem of having provably-unique identifiers with <span class=\"user-mention\" data-user-id=\"372804\">@Marcus Rossel</span>. We were thinking of <a href=\"https://github.com/marcusrossel/reactor-model/blob/e5ff24ef75b96a607a9c36f7a6f88b14ca1adba6/src/ReactorModel/Execution/Context.lean#L30\">just assuming</a> the existence of a function that would give us such names, but we didn't quite figure that out. I know (or rather, suppose) you're both trying to model more or less the same thing here, so probably the same solution would work for both.</p>",
+        "id": 282262476,
+        "sender_full_name": "Andrés Goens",
+        "timestamp": 1652455374
+    },
+    {
+        "content": "<p>I stumbled upon this while searching for something else today and felt it might be worthwhile to note that Lake now has its own approach to open type families in Lean: <a href=\"https://github.com/leanprover/lake/blob/b651e87444265cc698ee33eb0a379ac0a38562d5/Lake/Util/Family.lean\">Lake.Util.Family</a>. Its a little hacky and has the potential for some unsafe typing, but I think it  works decently for software.</p>",
+        "id": 288859417,
+        "sender_full_name": "Mac",
+        "timestamp": 1657224718
+    }
+]

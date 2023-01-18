@@ -1,0 +1,248 @@
+[
+    {
+        "content": "<p><code>@[to_additive]</code> doesn't work well with fixed types, like <code>nat</code>, <code>real</code>, <code>ennreal</code>, ...  <br>\nThis is described in issue <a href=\"https://github.com/leanprover-community/mathlib/issues/4210\">#4210</a>, but here is a quick example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">lemma</span> <span class=\"n\">prod_flip</span> <span class=\"o\">{</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span> <span class=\"bp\">→</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"o\">:</span>\n   <span class=\"bp\">∏</span> <span class=\"n\">r</span> <span class=\"k\">in</span> <span class=\"n\">range</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">),</span> <span class=\"n\">f</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">-</span> <span class=\"n\">r</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"bp\">∏</span> <span class=\"n\">k</span> <span class=\"k\">in</span> <span class=\"n\">range</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">),</span> <span class=\"n\">f</span> <span class=\"n\">k</span>\n</code></pre></div>\n<p>If you try to <code>@[to_additive]</code> this, it tries to replace the <code>(1 : nat)</code> into <code>(0 : nat)</code>: definitely not intended.</p>\n<p>In <a href=\"https://github.com/leanprover-community/mathlib/issues/7792\">#7792</a> I'm trying to fix it. First I used the following heuristic:</p>\n<blockquote>\n<p>Only replace a multiplicative constant (like <code>has_mul.mul</code>) by its additive version if its first argument doesn't contain any unapplied \"constants\" (definitions, inductives, etc.)</p>\n</blockquote>\n<p>The first argument is (usually) the type with the multiplicative structure, so if that contains <code>nat</code>, <code>real</code>, ..., we don't additivize it, and same if we work on <code>ℕ × ℕ</code>. We do want to allow constants applied to arguments, like <code>prod A B</code>, <code>monoid_hom A B</code>, etc.</p>\n<p>After some testing, I needed to relax this a little further. Some types, like <code>Monoid</code> have an additive counterpart (<code>AddMonoid</code>), and <code>@[to_additive]</code> works fine for them. So I relaxed the rule to</p>\n<blockquote>\n<p>Only replace a multiplicative constant by its additive version if its first argument doesn't contain any unapplied constants that don't have the <code>@[to_additive]</code> attribute.</p>\n</blockquote>\n<p>This works well for 90%+ of the library. I could fix a couple of workarounds we used, where we didn't use <code>@[to_additive]</code> on lemmas (like <code>prod_flip</code> above).</p>\n<p>However, I'm running into issues in <code>geometry.manifold.algebra.smooth_functions</code>. The reason is that here we're working addition and multiplication on <code>C^∞⟮I, N; I', G⟯</code>. The problem is that this <code>∞</code> lives in <code>with_top nat</code>, which means that the type we're working with involves <code>nat</code>. This means that the heuristic in this PR fails, but the old version did work.</p>\n<p>Now I can think of two solutions:</p>\n<ul>\n<li>Try to find a better heuristic that covers this case correctly</li>\n<li>Give options to <code>@[to_additive]</code> that tell it which heuristic to use (like <code>@[to_additive!]</code>).</li>\n</ul>\n<p>I'm leaning towards the second option, since I don't think we can find a heuristic that covers all cases. <br>\nThoughts?</p>",
+        "id": 241314348,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1622665309
+    },
+    {
+        "content": "<p>My far more limited experience with to_additive makes me want to agree with you that it will be hard to find a heuristic that covers all cases.</p>",
+        "id": 241316572,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1622666375
+    },
+    {
+        "content": "<p>Could we instead mark exactly which types to additivize with <code>M : add_target Type</code> where add_target is just <code>id</code>?</p>",
+        "id": 241321396,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1622668808
+    },
+    {
+        "content": "<p>Interesting, but there might be some issues with that suggestion...<br>\nWhere do you propose to stick these <code>add_target</code>? For <code>prod_flip</code>, does <code>β</code> have type <code>add_target Type</code>?<br>\nIf I have a lemma that uses multiplication on <code>α × β</code>, how does <code>add_target</code> tell us whether I need to turn this into addition?<br>\nAlso, inferring types of subterms in the middle of an <code>@[to_additive]</code> could be tricky...</p>",
+        "id": 241322874,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1622669659
+    },
+    {
+        "content": "<p>I do not know a better heuristic, but I also ran into a similar problem recently.  It is analogous to Floris' example above: to keep all the examples in the same place, this is what it was.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">algebra.group.defs</span>\n\n<span class=\"kd\">variables</span> <span class=\"o\">{</span><span class=\"n\">β</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">mul_one_class</span> <span class=\"n\">β</span><span class=\"o\">]</span>\n\n<span class=\"kd\">@[to_additive]</span>\n<span class=\"kd\">lemma</span> <span class=\"n\">npow_rec_one</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">npow_rec</span> <span class=\"mi\">2</span> <span class=\"n\">a</span> <span class=\"bp\">=</span> <span class=\"n\">a</span> <span class=\"bp\">*</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">congr_arg</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"n\">mul_one</span> <span class=\"n\">_</span><span class=\"o\">)</span>\n<span class=\"c1\">-- red squiggle under 2:</span>\n<span class=\"c\">/-</span><span class=\"cm\"> type mismatch at application</span>\n<span class=\"cm\">  0</span>\n<span class=\"cm\">term</span>\n<span class=\"cm\">  nat.has_one</span>\n<span class=\"cm\">has type</span>\n<span class=\"cm\">  has_one ℕ</span>\n<span class=\"cm\">but is expected to have type</span>\n<span class=\"cm\">  has_zero ℕ</span>\n<span class=\"cm\">-/</span>\n</code></pre></div>",
+        "id": 241352446,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1622701454
+    },
+    {
+        "content": "<p>What about an attribute <code>always_do_to_additive_</code> that we would put on types such as <code>C^∞⟮I, N; I', G⟯</code>, and saying: when there is this attribute, <code>to_additive</code> should not bother checking the type for something like <code>nat</code> inside, and just do its thing?</p>",
+        "id": 241355886,
+        "sender_full_name": "Sebastien Gouezel",
+        "timestamp": 1622704805
+    },
+    {
+        "content": "<p>The heuristic would become:</p>\n<blockquote>\n<p>Only replace a multiplicative constant by its additive version if its first argument is a type with the <code>always_do_to_additive</code> attribute, or doesn't contain any unapplied constants that don't have the @[to_additive] attribute.</p>\n</blockquote>",
+        "id": 241356087,
+        "sender_full_name": "Sebastien Gouezel",
+        "timestamp": 1622704952
+    },
+    {
+        "content": "<p>I see that you've already implemented the <code>to_additive!</code> version in <a href=\"https://github.com/leanprover-community/mathlib/issues/7792\">#7792</a>, and that it works fine. So please ignore my comment, your solution is perfect!</p>",
+        "id": 241357777,
+        "sender_full_name": "Sebastien Gouezel",
+        "timestamp": 1622706255
+    },
+    {
+        "content": "<p>what does the <code>!</code> mean?</p>",
+        "id": 241357838,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622706320
+    },
+    {
+        "content": "<p>It means \"try to be clever\" (i.e., notice when some things should not be additivized, like <code>1 : ℕ</code>).</p>",
+        "id": 241358079,
+        "sender_full_name": "Sebastien Gouezel",
+        "timestamp": 1622706510
+    },
+    {
+        "content": "<p>I think it's insufficiently obvious, and some explicit option name is worth the extra typing here.</p>",
+        "id": 241358149,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1622706558
+    },
+    {
+        "content": "<p>I think it should be the default if at all possible</p>",
+        "id": 241358445,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622706772
+    },
+    {
+        "content": "<p>I guess it's an option because it sometimes does the wrong thing?</p>",
+        "id": 241358479,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622706804
+    },
+    {
+        "content": "<p>I don't really understand <span class=\"user-mention\" data-user-id=\"111080\">@Floris van Doorn</span>'s problem example</p>",
+        "id": 241358603,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622706879
+    },
+    {
+        "content": "<p>I'm not yet sure if what I'm doing in <a href=\"https://github.com/leanprover-community/mathlib/issues/7792\">#7792</a> is good yet, since now the \"dumb\" option is the default one. I actually like <span class=\"user-mention\" data-user-id=\"110050\">@Sebastien Gouezel</span> 's suggestion quite well, and might make that the default one (and the \"dumb\" option as a fallback).</p>",
+        "id": 241359063,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1622707234
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> In the PR if <code>@[to_additive]</code> sees something like <code>@has_mul.mul A _ x y</code> then it looks whether <code>A</code> contains any occurrence of <code>nat</code> (or another fixed type), and if so, it will not replace the <code>mul</code> by <code>add</code>. This heuristic works well almost everywhere, except when <code>A</code> is <code>C^∞⟮I, N; I', G⟯</code>, because there is a <code>nat</code> hidden in there, but we still want to turn the <code>mul</code> into the <code>add</code>.</p>",
+        "id": 241359260,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1622707373
+    },
+    {
+        "content": "<p>Oh, we <em>want</em> that to go from mul to add?</p>",
+        "id": 241359317,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622707439
+    },
+    {
+        "content": "<p>Surely we can't just deal with the add and mul structures on that type in the same way</p>",
+        "id": 241359393,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622707477
+    },
+    {
+        "content": "<p>yes: <a href=\"https://leanprover-community.github.io/mathlib_docs/find/smooth_map.has_mul/src\">src#smooth_map.has_mul</a></p>",
+        "id": 241359398,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1622707481
+    },
+    {
+        "content": "<p>I think we can, it's the same as <code>prod</code>, just more complicated. And it has an additional argument  that happens to contain <code>nat</code>.</p>",
+        "id": 241359477,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1622707546
+    },
+    {
+        "content": "<p>You have Lie groups for which the notation is multiplicative, and other Lie groups (vector spaces, or tori) for which the notation is additive. And you want <code>to_additive</code> to work in this context.</p>",
+        "id": 241359480,
+        "sender_full_name": "Sebastien Gouezel",
+        "timestamp": 1622707547
+    },
+    {
+        "content": "<p>I would like to have some annotation that says that the <code>∞</code> argument in <code>C^∞⟮I, N; I', G⟯</code> is a \"fixed parameter\" and to_additive should not dig into it, but I suspect that might not be enough</p>",
+        "id": 241359588,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622707615
+    },
+    {
+        "content": "<p>since it will also get involved in theorems</p>",
+        "id": 241359621,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622707647
+    },
+    {
+        "content": "<p>I think, for the heuristic as described, it would suffice for the \"first argument\" to be modifiable to \"argument n\" where n is specified by the constant. That way we can just set it for this C function</p>",
+        "id": 241359889,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622707854
+    },
+    {
+        "content": "<p>That sounds like a more refined version of Sebastien's proposal: instead of always accepting <code>C^∞⟮I, N; I', G⟯</code> we will just look in some (but not other) arguments. <br>\nAnd yeah, you may be right that we need to tag a whole bunch of definitions (and lemmas?) with this information...</p>",
+        "id": 241359921,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1622707883
+    },
+    {
+        "content": "<p>If it defaults to argument 1, it sounds like this example is the only one that needs tagging</p>",
+        "id": 241359957,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622707915
+    },
+    {
+        "content": "<p>since all the lemmas are explicitly about C infinity, they don't have a fixed parameter in the first position</p>",
+        "id": 241360054,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622707965
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/to_additive.20and.20fixed.20types/near/241359889\">said</a>:</p>\n<blockquote>\n<p>I think, for the heuristic as described, it would suffice for the \"first argument\" to be modifiable to \"argument n\" where n is specified by the constant. That way we can just set it for this C function</p>\n</blockquote>\n<p>I don't see what you mean:<br>\nWe have <code>@has_mul.mul (C^∞⟮I, N; I', G⟯) _ x y</code>, and so we look into the first argument of <code>has_mul.mul</code> whether it contains <code>nat</code> anywhere. This is the type <code>C^∞⟮I, N; I', G⟯</code>. We don't look at argument numbers within this type (currently).</p>",
+        "id": 241360127,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1622708028
+    },
+    {
+        "content": "<p>I see. In that case, I think C needs an annotation that says \"please don't look into argument 1 when asking whether there are constants in applications of me\"</p>",
+        "id": 241360803,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622708449
+    },
+    {
+        "content": "<p>I think this best matches the use case here, where we want to treat <code>C^∞</code> as a sort of composite constructor no different than <code>prod</code></p>",
+        "id": 241360884,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622708517
+    },
+    {
+        "content": "<p>A more challenging task for <code>to_additive</code> might be <code>add_monoid_algebra</code> vs <code>monoid_algebra</code>, where only one of the two type-arguments is additive-ized</p>",
+        "id": 241361477,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1622708954
+    },
+    {
+        "content": "<p>I think the same mechanism would work there</p>",
+        "id": 241361750,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1622709163
+    },
+    {
+        "content": "<p>Ok, I implemented Mario's suggestion in <a href=\"https://github.com/leanprover-community/mathlib/issues/7792\">#7792</a> and it works well.</p>",
+        "id": 242300375,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1623386156
+    },
+    {
+        "content": "<p><code>to_additive</code> tries turning <code>σ⁻¹</code> into <code>-σ</code> where <code>σ : equiv.perm ι</code>. Any chance we might extend your fix, <span class=\"user-mention\" data-user-id=\"111080\">@Floris van Doorn</span> ?</p>",
+        "id": 268239237,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1642407482
+    },
+    {
+        "content": "<p>Can you post/link some examples of multiplicative declarations involving <code>perm</code> that you want to be additivized?<br>\nAre there <em>any</em> multiplicative operations on <code>perm</code> that can be additivized? (I guess not.)</p>\n<p>If the rule is \"treat <code>perm</code> like <code>ℕ</code> or <code>ℝ</code> and never additivize operations on this type, then this is easy to support.</p>",
+        "id": 268262624,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1642421680
+    },
+    {
+        "content": "<p><code>equiv.perm.prod_comp</code> in <a href=\"https://github.com/leanprover-community/mathlib/pull/11344\">#11344</a></p>",
+        "id": 268265258,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1642423357
+    },
+    {
+        "content": "<p>I guess an informal rule of thumb would be \"if multiplication is not commutative in general, mathematicians are unlikely to want to additivise it\", but this might not be helpful here.</p>",
+        "id": 268268266,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1642425093
+    },
+    {
+        "content": "<p><code>to_additive</code> troubles again, but this time with <code>ℕ</code> <span aria-label=\"fear\" class=\"emoji emoji-1f628\" role=\"img\" title=\"fear\">:fear:</span></p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">order.filter.pointwise</span>\n\n<span class=\"c1\">-- just to avoid the `ℕ`-action diamond, unrelated to the present problem</span>\n<span class=\"kn\">local</span> <span class=\"kn\">attribute</span> <span class=\"o\">[</span><span class=\"bp\">-</span><span class=\"kd\">instance</span><span class=\"o\">]</span> <span class=\"n\">filter.has_scalar_filter</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">filter</span>\n<span class=\"kd\">variables</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span>\n\n<span class=\"c1\">-- works fine</span>\n<span class=\"kd\">lemma</span> <span class=\"n\">nsmul_top'</span> <span class=\"o\">[</span><span class=\"n\">add_monoid</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">{</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">},</span> <span class=\"n\">n</span> <span class=\"bp\">≠</span> <span class=\"mi\">0</span> <span class=\"bp\">→</span> <span class=\"n\">n</span> <span class=\"bp\">•</span> <span class=\"o\">(</span><span class=\"bp\">⊤</span> <span class=\"o\">:</span> <span class=\"n\">filter</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"bp\">⊤</span>\n<span class=\"bp\">|</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">h</span><span class=\"o\">,</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"n\">rfl</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">elim</span>\n<span class=\"bp\">|</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">one_nsmul</span> <span class=\"o\">(</span><span class=\"bp\">⊤</span> <span class=\"o\">:</span> <span class=\"n\">filter</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"kd\">by</span> <span class=\"o\">{</span> <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">succ_nsmul</span><span class=\"o\">,</span> <span class=\"n\">nsmul_top</span> <span class=\"n\">n.succ_ne_zero</span><span class=\"o\">,</span> <span class=\"n\">top_add_top</span><span class=\"o\">]</span> <span class=\"o\">}</span>\n\n<span class=\"c1\">-- works fine</span>\n<span class=\"kd\">lemma</span> <span class=\"n\">top_pow'</span> <span class=\"o\">[</span><span class=\"n\">monoid</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">{</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">},</span> <span class=\"n\">n</span> <span class=\"bp\">≠</span> <span class=\"mi\">0</span> <span class=\"bp\">→</span> <span class=\"o\">(</span><span class=\"bp\">⊤</span> <span class=\"o\">:</span> <span class=\"n\">filter</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"bp\">^</span> <span class=\"n\">n</span> <span class=\"bp\">=</span> <span class=\"bp\">⊤</span>\n<span class=\"bp\">|</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">h</span><span class=\"o\">,</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"n\">rfl</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">elim</span>\n<span class=\"bp\">|</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">pow_one</span> <span class=\"n\">_</span>\n<span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"kd\">by</span> <span class=\"o\">{</span> <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">pow_succ</span><span class=\"o\">,</span> <span class=\"n\">top_pow</span> <span class=\"n\">n.succ_ne_zero</span><span class=\"o\">,</span> <span class=\"n\">top_mul_top</span><span class=\"o\">]</span> <span class=\"o\">}</span>\n\n<span class=\"c1\">-- `to_additive` tries to additize `ℕ`</span>\n<span class=\"c\">/-</span><span class=\"cm\"></span>\n<span class=\"cm\">type mismatch at application</span>\n<span class=\"cm\">  0</span>\n<span class=\"cm\">term</span>\n<span class=\"cm\">  .nat.has_one</span>\n<span class=\"cm\">has type</span>\n<span class=\"cm\">  has_one ℕ</span>\n<span class=\"cm\">but is expected to have type</span>\n<span class=\"cm\">  has_zero .ℕ</span>\n<span class=\"cm\">-/</span>\n<span class=\"kd\">@[to_additive nsmul_top'']</span> <span class=\"kd\">lemma</span> <span class=\"n\">top_pow''</span> <span class=\"o\">[</span><span class=\"n\">monoid</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">{</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">},</span> <span class=\"n\">n</span> <span class=\"bp\">≠</span> <span class=\"mi\">0</span> <span class=\"bp\">→</span> <span class=\"o\">(</span><span class=\"bp\">⊤</span> <span class=\"o\">:</span> <span class=\"n\">filter</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"bp\">^</span> <span class=\"n\">n</span> <span class=\"bp\">=</span> <span class=\"bp\">⊤</span>\n<span class=\"bp\">|</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">h</span><span class=\"o\">,</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"n\">rfl</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">elim</span>\n<span class=\"bp\">|</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">pow_one</span> <span class=\"n\">_</span>\n<span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"kd\">by</span> <span class=\"o\">{</span> <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">pow_succ</span><span class=\"o\">,</span> <span class=\"n\">top_pow</span> <span class=\"n\">n.succ_ne_zero</span><span class=\"o\">,</span> <span class=\"n\">top_mul_top</span><span class=\"o\">]</span> <span class=\"o\">}</span>\n\n<span class=\"kd\">end</span> <span class=\"n\">filter</span>\n</code></pre></div>",
+        "id": 280922087,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1651519965
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"111080\">@Floris van Doorn</span> <a href=\"#narrow/stream/113488-general/topic/to_additive.20and.20fixed.20types/near/268262624\">said</a>:</p>\n<blockquote>\n<p>If the rule is \"treat <code>perm</code> like <code>ℕ</code> or <code>ℝ</code> and never additivize operations on this type\", then this is easy to support.</p>\n</blockquote>\n<p>Did you ever implement this in the end, Floris?</p>",
+        "id": 280922810,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1651520306
+    },
+    {
+        "content": "<p>No, I didn't implement that, and probably it's better to implement it directly in the Lean 4 version of to_additive.</p>",
+        "id": 280930480,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1651523900
+    },
+    {
+        "content": "<p>Your new error probably has something to do with some annotations the equation compiler is adding that interferes with the heuristics of <code>to_additive</code>.</p>",
+        "id": 280932400,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1651524839
+    }
+]

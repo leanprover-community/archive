@@ -1,0 +1,74 @@
+[
+    {
+        "content": "<p>I'm autogenerating bindings for libclang and ran into a performance cliff for elaboration of inductive types: Elaboration of a inductive datatype with ~150 constructors takes &gt; 30 seconds. The CXCursorKind enum of libclang has 271 entries alone. Is that a known problem?</p>",
+        "id": 252096799,
+        "sender_full_name": "Christian Pehle",
+        "timestamp": 1630870379
+    },
+    {
+        "content": "<p>Try with <code>set_option genInjectivity false</code></p>",
+        "id": 252100808,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1630874732
+    },
+    {
+        "content": "<p>I added the command <code>enum</code> for declaring big enumeration types. It is just a macro based on <code>Fin</code>.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">enum</span> <span class=\"n\">Foo</span> <span class=\"n\">where</span>\n  <span class=\"bp\">|</span> <span class=\"n\">a</span> <span class=\"bp\">|</span> <span class=\"n\">b</span> <span class=\"bp\">|</span> <span class=\"n\">c</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Foo</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span>\n  <span class=\"bp\">|</span> <span class=\"n\">Foo.a</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">10</span>\n  <span class=\"bp\">|</span> <span class=\"n\">Foo.b</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">20</span>\n  <span class=\"bp\">|</span> <span class=\"n\">Foo.c</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">35</span>\n\n<span class=\"k\">#check</span> <span class=\"n\">Foo.a</span> <span class=\"bp\">==</span> <span class=\"n\">Foo.b</span> <span class=\"c1\">-- false</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">Foo.b</span> <span class=\"c1\">-- Foo.b</span>\n</code></pre></div>\n<p><code>Foo</code> in the example above is defined as</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">Foo</span> <span class=\"n\">when</span>\n  <span class=\"n\">val</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"mi\">3</span>\n</code></pre></div>\n<p><span class=\"user-mention\" data-user-id=\"130511\">@Christian Pehle</span> Your example with 271 entries can be elaborated in 0.3s on my machine. Most of the time is spent on the <code>Repr</code> instance that is automatically generated. I am currently generating it eagerly because <code>deriving instance Repr for Foo</code> would generate an instance that produces values such as <code>{ val := 0 }</code> instead of <code>Foo.a</code>.</p>",
+        "id": 252111386,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1630887036
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> since <code>enum</code> is a wrapper around <code>Fin</code>, doesn't that mean the resulting type is no longer unboxed?</p>",
+        "id": 252113341,
+        "sender_full_name": "Mac",
+        "timestamp": 1630889385
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"130511\">@Christian Pehle</span>  this may  be important to your use case, as you may no longer be able to directly pass the <code>enum</code> type directly to the Clang bindings (if you were doing so).</p>",
+        "id": 252113562,
+        "sender_full_name": "Mac",
+        "timestamp": 1630889626
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span>  Yes, the compiler currently compiles <code>Fin n</code> as <code>Nat</code> even when <code>n</code> is known at compilation time and small. However, this is not an obstacle for invoking the clang API. <span class=\"user-mention\" data-user-id=\"130511\">@Christian Pehle</span>  can use <code>lean_unbox</code> to convert the enum into a C scalar value.</p>",
+        "id": 252113846,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1630889921
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span>  true! Just wanted to point out that potential pitfall for <span class=\"user-mention\" data-user-id=\"130511\">@Christian Pehle</span>.</p>",
+        "id": 252114200,
+        "sender_full_name": "Mac",
+        "timestamp": 1630890249
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> If this becomes too annoying in practice, I can modify the <code>enum</code> macro, and use</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">Foo</span> <span class=\"n\">when</span>\n  <span class=\"n\">val</span> <span class=\"o\">:</span> <span class=\"n\">UInt32</span>\n  <span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">val</span> <span class=\"bp\">&lt;</span> <span class=\"mi\">3</span>\n</code></pre></div>",
+        "id": 252114401,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1630890510
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> I wonder if such an approach would also allow for the numeric mapping to be specified in the the <code>enum</code>. A lot of enums in C/C++ libraries have specific encodings for their enum fields (e.g., <code>CallingConv</code> in LLVM), which would be nice to reflect in Lean.  That was a key feature of the <a href=\"https://github.com/tydeu/lean4-papyrus/blob/master/Papyrus/IR/CallingConvention.lean\"><code>enum</code> macro</a> I had previously written for Papyrus (though that one was not type safe).</p>",
+        "id": 252115611,
+        "sender_full_name": "Mac",
+        "timestamp": 1630892069
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> It seems your macro doesn't cover exhaustiveness. That is, it will fail at</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">enum</span> <span class=\"n\">Foo</span> <span class=\"n\">where</span>\n  <span class=\"bp\">|</span> <span class=\"n\">a</span> <span class=\"bp\">|</span> <span class=\"n\">b</span> <span class=\"bp\">|</span> <span class=\"n\">c</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Foo</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span>\n  <span class=\"bp\">|</span> <span class=\"n\">Foo.a</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">10</span>\n  <span class=\"bp\">|</span> <span class=\"n\">Foo.b</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">20</span>\n  <span class=\"bp\">|</span> <span class=\"n\">Foo.c</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">35</span>\n</code></pre></div>\n<p>It is feasible to extend your macro to support exhaustiveness, but this is the kind of work I am not looking forward to. For example, a big disjuction would be too inefficient. I think your macro is useful for interfacing with C APIs, we could call it <code>c-enum</code> or something like that.</p>",
+        "id": 252118954,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1630895570
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span>  yeah, that was sort of what I was alluding to when I said the macro was \"not type safe\".  And, admittedly, making it support exhaustivity was something I was not looking forward to either <span aria-label=\"laughing\" class=\"emoji emoji-1f606\" role=\"img\" title=\"laughing\">:laughing:</span>. </p>\n<p>In fact, it is why I have only used it for <code>CallingConvention</code> and not many of the other LLVM enums with explicit values  (e.g., <a href=\"https://github.com/tydeu/lean4-papyrus/blob/9db28867f476c78024f4858753b37d53cb5a4432/Papyrus/ExecutionEngineRef.lean#L7-L48\"><code>EngineKind</code></a>), because unlike them, <code>CallingConvention</code> is not actually an exhaustive enum in LLVM (extensions can define their own additional calling conventions within its range). Thus, in the particular case if <code>CallingConvetion</code>, the lack of exhaustivity was a feature not a bug.</p>",
+        "id": 252119847,
+        "sender_full_name": "Mac",
+        "timestamp": 1630896476
+    },
+    {
+        "content": "<p>This is great <span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span>! For automatic code generation the use of Nat is not much of a problem, I think. It might make sense to let the user optionally decide the encoding type and even values of the enum alternatives, just like in C++. Together with the unbox trivial unparameterised structure feature this would eliminate some of the boilerplate on the C++ side. (Edit: I just saw that this is what <span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> has done).</p>",
+        "id": 252150256,
+        "sender_full_name": "Christian Pehle",
+        "timestamp": 1630920707
+    }
+]
