@@ -1,0 +1,50 @@
+[
+    {
+        "content": "<h1>Progress notification server protocol extension proposal (Pre-RFC)</h1>\n<h2>Introduction</h2>\n<p>The Lean 3 extensions for Emacs and VS Code feature a progress indicator that shows which parts of a file are still being processed by Lean---the \"orange bars\".  This feature is useful because it allows you to tell at a glance whether a definition was accepted without error or is still being elaborated.</p>\n<p>In Lean 4, the only progress information available from the server are diagnostics with the message \"processing...\" (meaning that everything coming after the diagnostic is still being processed).  The extension for VS Code parses these messages heuristically and displays orange bars based on these diagnostics.</p>\n<p>However, these diagnostics have several shortcomings.</p>\n<ul>\n<li>\n<p>First of all, parsing the message string is clearly fragile.  Any error with the message \"processing...\" will also cause a progress bar to appear.</p>\n</li>\n<li>\n<p>There are also other diagnostic messages which indicate that the server is busy: for example the stderr output of <code>leanpkg print-paths</code>.  These are not captured by the string comparison.</p>\n</li>\n<li>\n<p>The last point is partly an issue with the current implementation.  The \"processing...\" diagnostics are printed too late, only after a command has been elaborated.  This makes it often impossible to tell whether Lean is busy or not.</p>\n</li>\n</ul>\n<h2>Proposal</h2>\n<p>We introduce a new notification, <code>$/lean/fileProgress</code>, containing the ranges that are still being processed.  This notification should be sent by the server <em>before</em> processing is started.</p>\n<div class=\"codehilite\" data-code-language=\"TypeScript\"><pre><span></span><code><span class=\"kd\">interface</span> <span class=\"nx\">LeanFileProgressProcessingInfo</span> <span class=\"p\">{</span>\n  <span class=\"cm\">/** Range which is still being processed */</span>\n  <span class=\"nx\">range</span>: <span class=\"kt\">Range</span><span class=\"p\">;</span>\n\n  <span class=\"c1\">// Further fields may be added in the future.</span>\n<span class=\"p\">}</span>\n\n<span class=\"kd\">interface</span> <span class=\"nx\">LeanFileProgressParams</span> <span class=\"p\">{</span>\n  <span class=\"cm\">/** The text document to which this progress notification applies. */</span>\n  <span class=\"nx\">textDocument</span>: <span class=\"kt\">TextDocumentIdentifier</span><span class=\"p\">;</span>\n\n  <span class=\"cm\">/**</span>\n<span class=\"cm\">   * Array containing the parts of the file which are still being processed.</span>\n<span class=\"cm\">   * The array should be empty if and only if the server is finished processing.</span>\n<span class=\"cm\">   */</span>\n  <span class=\"nx\">processing</span>: <span class=\"kt\">LeanFileProgressProcessingInfo</span><span class=\"p\">[];</span>\n<span class=\"p\">}</span>\n</code></pre></div>\n<p>The <code>processing</code> field is an array to allow for future extensibility.  At the moment, it will contain either zero or one elements: zero if the server is finished, and one if it is busy.</p>\n<p>The \"processing...\" diagnostic should no longer be sent.  Stderr output from <code>leanpkg print-paths</code> would still appear as a diagnostic.</p>\n<h2>Alternatives</h2>\n<ul>\n<li>\n<p>Send the \"processing...\" diagnostic earlier and also while <code>leanpkg print-paths</code> is being run.  Continue parsing the diagnostics and accept false positive with certain error messages.</p>\n</li>\n<li>\n<p>Add an additional non-standard data field to the diagnostics, which indicates that these are progress indicators.</p>\n</li>\n<li>\n<p>Send a combined notification for all files, instead of separately.</p>\n</li>\n</ul>",
+        "id": 240627752,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1622218976
+    },
+    {
+        "content": "<p>SGTM</p>",
+        "id": 240633151,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1622221647
+    },
+    {
+        "content": "<p>Maybe naive, but there's a <a href=\"https://microsoft.github.io/language-server-protocol/specifications/specification-3-16/#progress\">relatively new progress feature</a> in LSP. Not sure how VScode displays it.</p>",
+        "id": 241802060,
+        "sender_full_name": "Simon Cruanes",
+        "timestamp": 1623082828
+    },
+    {
+        "content": "<p>I've also seen this part of the specification.  However I can't even remotely figure out what it's supposed to do from the specification.  After studying the vscode-languageserver-node implementation, I believe it is used to show progress bars (\"in a generic fashion\"??).</p>\n<p>Our use case does not seem to be covered by this notification.  We want to annotate ranges in a file, not show a progress bar (which the vscode client would show, by interpreting the generic progress info as percentages).</p>",
+        "id": 241806879,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1623084905
+    },
+    {
+        "content": "<p>I vaguely remember that we would've liked to use the LSP progress feature for requests (specifically: partial result progress), but VSCode did not support it and <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> had to hack around it. A quick search through vscode-languageserver-node shows that there seems to be no usage of partial result progress in the client folder. There's also an issue: <a href=\"https://github.com/microsoft/vscode/issues/105870\">https://github.com/microsoft/vscode/issues/105870</a></p>",
+        "id": 241809883,
+        "sender_full_name": "Marc Huisinga",
+        "timestamp": 1623086113
+    },
+    {
+        "content": "<p>I think it does support \"Work Done Progress\" (which is used only to display a loading bar or something similar) but as Gabriel says that isn't sufficient for the progress that we'd like in Lean.</p>",
+        "id": 241810550,
+        "sender_full_name": "Marc Huisinga",
+        "timestamp": 1623086413
+    },
+    {
+        "content": "<p>Ok, that makes sense indeed. I think diagnostics can be abused by sending them many times with changes (like, after parsing, put \"processing\" on all definitions, and replace them with actual results or remove them as you go), but it's a hack.</p>",
+        "id": 241823761,
+        "sender_full_name": "Simon Cruanes",
+        "timestamp": 1623092276
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"132878\">Simon Cruanes</span> <a href=\"#narrow/stream/270676-lean4/topic/Progress.20notification.20server.20protocol.20extension.20p.2E.20.28Pre-RFC.29/near/241823761\">said</a>:</p>\n<blockquote>\n<p>I think diagnostics can be abused by sending them many times with changes</p>\n</blockquote>\n<p>This is indeed how we used to do it, I've listed a few reasons in the initial post detailing where this falls short.</p>",
+        "id": 241826135,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1623093222
+    }
+]

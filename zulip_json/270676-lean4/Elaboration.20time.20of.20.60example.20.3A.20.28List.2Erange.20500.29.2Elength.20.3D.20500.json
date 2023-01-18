@@ -1,0 +1,98 @@
+[
+    {
+        "content": "<p>After Mario showed me how to time elaboration in Lean4, I did a quick experiment with apparently worrying results.</p>\n<p>I timed (run <code>elabCmd</code> 10 times, averaging the results) <code>example : (List.range 500).length = 500 := rfl</code>for various values of <code>n = 500</code>, and obtained:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">|</span> <span class=\"n\">n</span>    <span class=\"bp\">|</span> <span class=\"n\">ms</span>\n<span class=\"c1\">------------</span>\n<span class=\"bp\">|</span> <span class=\"mi\">100</span>  <span class=\"bp\">|</span> <span class=\"mi\">67</span>\n<span class=\"bp\">|</span> <span class=\"mi\">200</span>  <span class=\"bp\">|</span> <span class=\"mi\">357</span>\n<span class=\"bp\">|</span> <span class=\"mi\">300</span>  <span class=\"bp\">|</span> <span class=\"mi\">1062</span>\n<span class=\"bp\">|</span> <span class=\"mi\">400</span>  <span class=\"bp\">|</span> <span class=\"mi\">2171</span>\n<span class=\"bp\">|</span> <span class=\"mi\">500</span>  <span class=\"bp\">|</span> <span class=\"mi\">2686</span>\n<span class=\"bp\">|</span> <span class=\"mi\">600</span>  <span class=\"bp\">|</span> <span class=\"mi\">4985</span>\n<span class=\"bp\">|</span> <span class=\"mi\">700</span>  <span class=\"bp\">|</span> <span class=\"mi\">7642</span>\n<span class=\"bp\">|</span> <span class=\"mi\">800</span>  <span class=\"bp\">|</span> <span class=\"mi\">11261</span>\n<span class=\"bp\">|</span> <span class=\"mi\">900</span>  <span class=\"bp\">|</span> <span class=\"mi\">15855</span>\n<span class=\"bp\">|</span> <span class=\"mi\">1000</span> <span class=\"bp\">|</span> <span class=\"mi\">21477</span>\n</code></pre></div>\n<p>Notice this is clearly super-linear (roughly cubic). (Below <code>n=100</code> it is quite close to linear, however.)</p>\n<p>In Lean3, this remains linear up to <code>n=4000</code>, where it is only taking 2400ms. (Shortly after this we start blowing the stack.)</p>\n<p>When I mentioned this earlier  @Mac said:</p>\n<blockquote>\n<p>I suspect this probably has to do with memory concerns (like locality of reference and allocations/deallocations) in iterating through the list.</p>\n</blockquote>\n<p>I appreciate this is a very artificial example: <code>rfl</code> is a terrible proof here. But given how much slower this is than Lean3, do we need to worry about what's going on in this example? We do lots of terrible-proofs-by-rfl in mathlib3...</p>",
+        "id": 249799172,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1629251397
+    },
+    {
+        "content": "<p>Have you looked into how <code>range</code> and <code>length</code> are defined? I'm pretty sure they do not use the same definitions as lean 3</p>",
+        "id": 249799639,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1629251977
+    },
+    {
+        "content": "<p>it would be good to see whether the numbers change if you use the lean 3 definition of range and length</p>",
+        "id": 249799649,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1629251997
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> This is worth investigating. I don't have cycles to investigate right now. <br>\nIf you still get a big discrepancy when using the same definitions in Lean 3 and 4, could you please add an issue on GitHub?</p>",
+        "id": 249799781,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1629252069
+    },
+    {
+        "content": "<p>Okay, it's just the definitions... Replacing <code>length</code> with</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">List.length'</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span>\n  <span class=\"bp\">|</span> <span class=\"n\">nil</span>  <span class=\"bp\">=&gt;</span> <span class=\"mi\">0</span>\n  <span class=\"bp\">|</span> <span class=\"n\">cons</span> <span class=\"n\">a</span> <span class=\"n\">as</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Nat.succ</span> <span class=\"o\">(</span><span class=\"n\">as.length'</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>means it runs in linear time, and indeed slightly faster (~ 2/3) than Lean3.</p>\n<p>(<code>List.range</code> is the same in Lean3 and Lean4.)</p>",
+        "id": 249800156,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1629252484
+    },
+    {
+        "content": "<p>Curiously, backporting the \"slow\" definition from Lean4 to Lean3, Lean3 is still linear.</p>",
+        "id": 249800403,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1629252841
+    },
+    {
+        "content": "<p>(but slower by a factor of about ~2 relative to the fast definition)</p>",
+        "id": 249800449,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1629252876
+    },
+    {
+        "content": "<p>so there is still perhaps something to worry about.</p>",
+        "id": 249800456,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1629252893
+    },
+    {
+        "content": "<p>I think this is a reasonable argument in favor of using <code>implementedBy</code> for <code>List.length</code> so that the compiler can make use of the tail recursive definition and the kernel can use the naive recursive definition</p>",
+        "id": 249801102,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1629253728
+    },
+    {
+        "content": "<p>Have you tried <code>#eval</code> with both versions? My guess is that <code>List.length</code> outperforms <code>List.length'</code> in the VM and in compiled code</p>",
+        "id": 249801129,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1629253796
+    },
+    {
+        "content": "<p>It looks like our good friend the depth/weight-aware expression hashing.</p>",
+        "id": 249801279,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1629253936
+    },
+    {
+        "content": "<p>I haven't heard this story</p>",
+        "id": 249801294,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1629253964
+    },
+    {
+        "content": "<p>Lean4 doesn't do this yet: <a href=\"https://github.com/leanprover/lean/blob/master/src/kernel/expr.cpp#L222-L223\">https://github.com/leanprover/lean/blob/master/src/kernel/expr.cpp#L222-L223</a> I don't know Leo's current thoughts, but last we spoke about it he was considering using a few bits of the <code>Expr.Data</code> for it.</p>",
+        "id": 249801367,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1629254060
+    },
+    {
+        "content": "<p>working it out on paper it seems like linear time should still be possible even with the tail recursive length function, although the intermediate terms get big</p>",
+        "id": 249801398,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1629254126
+    },
+    {
+        "content": "<p>This hash issue tends to arise when there are terms that look like <code>f (f (f (f (f (f ...)))))</code> (in this case <code>Nat.succ</code>). With bad luck, most terms will end up in a single hash bucket unless you hash the depth at every application.</p>",
+        "id": 249801583,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1629254354
+    },
+    {
+        "content": "<p>When using <code>#eval</code>, the tail-recursive version <code>length</code> is about twice as fast as the \"naive\" <code>length'</code>, at least as far out as <code>n = 10000</code>. After that, the naive one blows up, while the tail-recursive one continues happily (and linearly) up to about <code>n=2^28</code>.</p>",
+        "id": 249802549,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1629255753
+    }
+]

@@ -1,0 +1,194 @@
+[
+    {
+        "content": "<p>Is this supposed to work?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">open</span> <span class=\"n\">lean</span> <span class=\"n\">lean.parser</span>\n\n<span class=\"kd\">reserve</span> <span class=\"kd\">notation</span> <span class=\"bp\">`</span><span class=\"n\">a</span><span class=\"bp\">`</span>\n<span class=\"kd\">reserve</span> <span class=\"kd\">notation</span> <span class=\"bp\">`</span><span class=\"n\">b</span><span class=\"bp\">`</span>\n<span class=\"kd\">reserve</span> <span class=\"kd\">notation</span> <span class=\"bp\">`</span><span class=\"n\">c</span><span class=\"bp\">`</span>\n<span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">the_parser</span> <span class=\"o\">:</span> <span class=\"n\">parser</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span>\n<span class=\"o\">((</span><span class=\"k\">do</span> <span class=\"n\">tk</span> <span class=\"s2\">\"a\"</span><span class=\"o\">,</span> <span class=\"n\">tk</span> <span class=\"s2\">\"c\"</span><span class=\"o\">,</span> <span class=\"n\">pure</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">&lt;|&gt;</span> <span class=\"o\">(</span><span class=\"k\">do</span> <span class=\"n\">tk</span> <span class=\"s2\">\"a\"</span><span class=\"o\">,</span> <span class=\"n\">tk</span> <span class=\"s2\">\"b\"</span><span class=\"o\">,</span> <span class=\"n\">pure</span> <span class=\"mi\">2</span><span class=\"o\">))</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">do</span>\n  <span class=\"n\">x</span> <span class=\"bp\">←</span> <span class=\"n\">parser.run_with_input</span> <span class=\"n\">the_parser</span> <span class=\"s2\">\"a c\"</span><span class=\"o\">,</span>\n  <span class=\"n\">tactic.trace</span> <span class=\"n\">x</span>  <span class=\"c1\">-- 1</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">do</span>\n  <span class=\"n\">x</span> <span class=\"bp\">←</span> <span class=\"n\">parser.run_with_input</span> <span class=\"n\">the_parser</span> <span class=\"s2\">\"a b\"</span><span class=\"o\">,</span> <span class=\"c1\">-- error: c expected</span>\n  <span class=\"n\">tactic.trace</span> <span class=\"n\">x</span>\n</code></pre></div>\n<p>It seems like <a href=\"https://leanprover-community.github.io/mathlib_docs/find/lean.parser.parser_orelse\">docs#lean.parser.parser_orelse</a> doesn't actually behave how I would expect an <code>orelse</code> to behave</p>",
+        "id": 285659057,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1654858248
+    },
+    {
+        "content": "<p>It's pretty common in a parser combinator library for <code>&lt;|&gt;</code> not to backtrack out of a branch that has made some progress, so that you have to write something like <code>try (do tk \"a\", tk \"c\", pure 1) &lt;|&gt; (do tk \"a\", tk \"b\", pure 2)</code> if you want to allow it to</p>",
+        "id": 285660435,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1654859120
+    },
+    {
+        "content": "<p>But we don't have a parser try, right?</p>",
+        "id": 285660614,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1654859249
+    },
+    {
+        "content": "<p>Also, in the tactic monad <code>&lt;|&gt;</code> <em>does</em> backtrack (<a href=\"https://leanprover-community.github.io/mathlib_docs/find/interaction_monad_orelse/src\">src#interaction_monad_orelse</a>)</p>",
+        "id": 285660759,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1654859333
+    },
+    {
+        "content": "<p>Attempting to use <code>interaction_monad_orelse</code> for <code>parser</code> fails, I guess because <code>parser</code> is (needlessly?) impure</p>",
+        "id": 285660953,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1654859471
+    },
+    {
+        "content": "<p>I am very far from my comfort zone, but this works:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">the_parser1</span> <span class=\"o\">:</span> <span class=\"n\">parser</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span>\n<span class=\"k\">do</span> <span class=\"n\">tk</span> <span class=\"s2\">\"a\"</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"k\">do</span> <span class=\"n\">tk</span> <span class=\"s2\">\"c\"</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"n\">pure</span> <span class=\"mi\">1</span> <span class=\"bp\">&lt;|&gt;</span> <span class=\"k\">do</span> <span class=\"n\">tk</span> <span class=\"s2\">\"b\"</span><span class=\"o\">,</span> <span class=\"n\">pure</span> <span class=\"mi\">2</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">do</span>\n  <span class=\"n\">x</span> <span class=\"bp\">←</span> <span class=\"n\">parser.run_with_input</span> <span class=\"n\">the_parser1</span> <span class=\"s2\">\"a c\"</span><span class=\"o\">,</span>\n  <span class=\"n\">tactic.trace</span> <span class=\"n\">x</span>  <span class=\"c1\">-- 1</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">do</span>\n  <span class=\"n\">x</span> <span class=\"bp\">←</span> <span class=\"n\">parser.run_with_input</span> <span class=\"n\">the_parser1</span> <span class=\"s2\">\"a b\"</span><span class=\"o\">,</span>\n  <span class=\"n\">tactic.trace</span> <span class=\"n\">x</span> <span class=\"c1\">-- 2</span>\n</code></pre></div>\n<p>Does this suggest that the parser backtracks \"a little\"?</p>",
+        "id": 285661285,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1654859715
+    },
+    {
+        "content": "<p>There's no backtracking there as the parser makes no progress</p>",
+        "id": 285661324,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1654859751
+    },
+    {
+        "content": "<p>Ah, I see!  Thanks!</p>",
+        "id": 285661402,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1654859790
+    },
+    {
+        "content": "<p>You can probably just copy the implementation of <a href=\"https://hackage.haskell.org/package/parsec-3.1.15.1/docs/src/Text.Parsec.Prim.html#try\">https://hackage.haskell.org/package/parsec-3.1.15.1/docs/src/Text.Parsec.Prim.html#try</a></p>",
+        "id": 285661456,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1654859847
+    },
+    {
+        "content": "<p>I'm pretty sure you can't because <code>parser_state</code> is lying and there is state stored elsewhere</p>",
+        "id": 285661530,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1654859891
+    },
+    {
+        "content": "<p>Which means that backtracking the state doesn't actually work</p>",
+        "id": 285661550,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1654859909
+    },
+    {
+        "content": "<p>Maybe another very superficial observation that suggests that this does not work is that the parentheses in the definition of <code>the_parser</code> are optional.  There seems to be no record of which sequence of commands is executed first...</p>",
+        "id": 285661631,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1654860002
+    },
+    {
+        "content": "<p>i.e.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">the_parser</span> <span class=\"o\">:</span> <span class=\"n\">parser</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span>\n<span class=\"k\">do</span> <span class=\"n\">tk</span> <span class=\"s2\">\"a\"</span><span class=\"o\">,</span> <span class=\"n\">tk</span> <span class=\"s2\">\"c\"</span><span class=\"o\">,</span> <span class=\"n\">pure</span> <span class=\"mi\">1</span> <span class=\"bp\">&lt;|&gt;</span> <span class=\"k\">do</span> <span class=\"n\">tk</span> <span class=\"s2\">\"a\"</span><span class=\"o\">,</span> <span class=\"n\">tk</span> <span class=\"s2\">\"b\"</span><span class=\"o\">,</span> <span class=\"n\">pure</span> <span class=\"mi\">2</span>\n</code></pre></div>\n<p>\"works\" just as well.</p>",
+        "id": 285661724,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1654860040
+    },
+    {
+        "content": "<p>Oh I was looking at the thing actually called <code>parser</code>.</p>",
+        "id": 285661762,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1654860074
+    },
+    {
+        "content": "<p>I'm also not sure what the real question is--is it \"do we want <code>&lt;|&gt;</code> to work like this\" or \"how do I implement <code>try</code>\" or \"how do I implement some other parser Y\"</p>",
+        "id": 285661988,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1654860236
+    },
+    {
+        "content": "<p>It's \"how do I implement <code>try</code>\"</p>",
+        "id": 285662042,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1654860249
+    },
+    {
+        "content": "<p>And I think the answer is \"edit the C++ to expose <code>parser::backtracking_scope</code>\" (<a href=\"https://github.com/leanprover-community/lean/blob/848cddb3efb06cdcc53dc46c3784c04a0d49fc8a/src/frontends/lean/parser.cpp#L2138\">https://github.com/leanprover-community/lean/blob/848cddb3efb06cdcc53dc46c3784c04a0d49fc8a/src/frontends/lean/parser.cpp#L2138</a>)</p>",
+        "id": 285662057,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1654860268
+    },
+    {
+        "content": "<p>Can I ask if this is related to the <code>alternative</code> instance on <code>lean.parser</code> (that seems to exist)?  Is that what should take care of backtracking and isn't?</p>",
+        "id": 285662444,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1654860555
+    },
+    {
+        "content": "<p>Yes, that's what this question is about</p>",
+        "id": 285662470,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1654860572
+    },
+    {
+        "content": "<p>It's implemented in terms of <a href=\"https://leanprover-community.github.io/mathlib_docs/find/lean.parser.parser_or_else\">docs#lean.parser.parser_or_else</a> which I link in my first message</p>",
+        "id": 285662513,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1654860601
+    },
+    {
+        "content": "<p>Ok, thanks for confirming!  A few days ago, I would not even have been able to formulate a coherent thought about this, but I am happy to see that I understand more now!</p>",
+        "id": 285662596,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1654860642
+    },
+    {
+        "content": "<p>OK I understand the problem now. Normally one would attempt to avoid <code>try</code> by left-factoring the parser (or if necessary, by redefining the grammar).</p>",
+        "id": 285663397,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1654861188
+    },
+    {
+        "content": "<p>Yes, lean 3 is fundamentally incapable of backtracking due to its implementation. It has one token lookahead and that's it</p>",
+        "id": 285663402,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1654861193
+    },
+    {
+        "content": "<p>the monad tricks don't work because it's actually mutable state in the background</p>",
+        "id": 285663501,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1654861228
+    },
+    {
+        "content": "<p>Do you thinking the <code>backtracking_scope</code> API could resolve that Mario?</p>",
+        "id": 285663542,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1654861271
+    },
+    {
+        "content": "<p>I don't know much about it, is it currently used to implement something?</p>",
+        "id": 285663594,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1654861319
+    },
+    {
+        "content": "<p>personally I don't think it is worth it at this stage. Lean 4 has a fully backtracking parser</p>",
+        "id": 285663701,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1654861368
+    },
+    {
+        "content": "<p>and there are usually hacks you can do to avoid needing lots of lookahead by postprocessing the parser results</p>",
+        "id": 285663757,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1654861408
+    },
+    {
+        "content": "<p>like your example can trivially be factored to do <code>tk \"a\"</code> first</p>",
+        "id": 285663782,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1654861428
+    },
+    {
+        "content": "<p>Looking at <code>backtracking_scope</code>, it seems not to be used much, and the issue that introduced it - <a href=\"https://github.com/leanprover/lean/pull/1745\">leanprover/lean#1745</a> - does not seem to be handling any kind of general backtracking system but rather a way to do error recovery after parsing a missing expression. But I think the main reason it is not suitable here is that <code>backtracking_scope</code> stores a single backtrack position in the parser state, which means it does not work in nested situations, it can't support the full scope of a parsec style <code>try</code> combinator</p>",
+        "id": 285664833,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1654862108
+    },
+    {
+        "content": "<p>Ouch, I'd hoped that something with RAII semantics would be reentrant. You're right then that there's no point trying  to use that</p>",
+        "id": 285665871,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1654862657
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/239415-metaprogramming-.2F-tactics/topic/Backtracking.20parsers/near/285663757\">said</a>:</p>\n<blockquote>\n<p>and there are usually hacks you can do to avoid needing lots of lookahead by postprocessing the parser results</p>\n</blockquote>\n<p>This is what I ended up doing in the end</p>",
+        "id": 285674272,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1654867271
+    }
+]

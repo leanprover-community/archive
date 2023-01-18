@@ -1,0 +1,116 @@
+[
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span><span class=\"kn\">import</span> <span class=\"n\">tactic</span><span class=\"bp\">.</span><span class=\"n\">suggest</span>\n<span class=\"kn\">open</span> <span class=\"n\">tactic</span>\n\n<span class=\"bp\">@</span><span class=\"o\">[</span><span class=\"n\">priority</span> <span class=\"mi\">2000</span><span class=\"o\">]</span>\n<span class=\"n\">meta</span> <span class=\"kn\">instance</span> <span class=\"o\">:</span> <span class=\"n\">interactive</span><span class=\"bp\">.</span><span class=\"n\">executor</span> <span class=\"n\">tactic</span> <span class=\"o\">:=</span>\n<span class=\"o\">{</span> <span class=\"n\">config_type</span> <span class=\"o\">:=</span> <span class=\"n\">unit</span><span class=\"o\">,</span>\n  <span class=\"n\">inhabited</span> <span class=\"o\">:=</span> <span class=\"bp\">⟨</span><span class=\"o\">()</span><span class=\"bp\">⟩</span><span class=\"o\">,</span>\n  <span class=\"n\">execute_with</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"bp\">_</span> <span class=\"n\">t</span><span class=\"o\">,</span> <span class=\"n\">t</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"o\">(</span><span class=\"n\">done</span> <span class=\"bp\">&lt;|&gt;</span> <span class=\"n\">lock_tactic_state</span> <span class=\"o\">(</span><span class=\"n\">try</span> <span class=\"o\">((</span><span class=\"n\">target</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">is_prop</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">guardb</span><span class=\"o\">)</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"bp\">`</span><span class=\"o\">[</span><span class=\"n\">library_search</span><span class=\"o\">])))</span> <span class=\"o\">}</span>\n\n<span class=\"kn\">example</span> <span class=\"o\">:</span> <span class=\"mi\">0</span> <span class=\"bp\">&lt;</span> <span class=\"mi\">1</span> <span class=\"bp\">∧</span> <span class=\"mi\">1</span> <span class=\"bp\">&lt;</span> <span class=\"mi\">2</span> <span class=\"o\">:=</span>\n<span class=\"k\">begin</span>\n  <span class=\"n\">split</span><span class=\"o\">,</span>\n<span class=\"kn\">end</span>\n</pre></div>\n\n\n<p>and follow the prompts. :-)</p>",
+        "id": 194659058,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1587379925
+    },
+    {
+        "content": "<p>heh, next thing you know <code>begin end</code> is going to call <code>obviously</code></p>",
+        "id": 194659272,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587380108
+    },
+    {
+        "content": "<p>I would really like to get the blue underline on the <code>end</code>, rather than on the <code>example</code>.</p>",
+        "id": 194659334,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1587380157
+    },
+    {
+        "content": "<p>Is there some way to do this? I've never understood how error messages get located.</p>",
+        "id": 194659420,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1587380184
+    },
+    {
+        "content": "<p>I don't know the whole story, but I do know that when you write a tactic proof in <code>begin end</code>, this gets compiled down to a term of type <code>tactic unit</code>, where instead of the regular bind, <code>tactic.istep</code> is used, which is magically provided a location argument from the parser</p>",
+        "id": 194659524,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587380274
+    },
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span><span class=\"bp\">#</span><span class=\"kn\">check</span> <span class=\"bp\">`</span><span class=\"o\">[</span><span class=\"n\">intro</span><span class=\"o\">,</span> <span class=\"n\">simp</span><span class=\"o\">]</span>\n<span class=\"c1\">-- has_bind.seq (tactic.save_info {line := 1, column := 9}) (tactic.step (tactic.interactive.intro none)) &gt;&gt;</span>\n<span class=\"c1\">--   has_bind.seq (tactic.save_info {line := 1, column := 16})</span>\n<span class=\"c1\">--     (tactic.step (tactic.interactive.simp none ff list.nil list.nil (interactive.loc.ns [none]))) :</span>\n<span class=\"c1\">--   tactic unit</span>\n</pre></div>",
+        "id": 194659679,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587380372
+    },
+    {
+        "content": "<p>I'm not sure how to show the produced tactic in a <code>begin end</code> block but it uses <code>istep</code> instead of <code>step</code>, and you can see bits of this in error messages</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"bp\">#</span><span class=\"kn\">check</span> <span class=\"k\">by</span> <span class=\"n\">nat</span>\n<span class=\"c1\">-- type mismatch at application</span>\n<span class=\"c1\">--   tactic.istep 2 10 2 10 ℕ</span>\n<span class=\"c1\">-- term</span>\n<span class=\"c1\">--   ℕ</span>\n<span class=\"c1\">-- has type</span>\n<span class=\"c1\">--   Type : Type 1</span>\n<span class=\"c1\">-- but is expected to have type</span>\n<span class=\"c1\">--   tactic ?m_1 : Type ?</span>\n</pre></div>",
+        "id": 194659957,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587380598
+    },
+    {
+        "content": "<p><code>istep</code> calls the magic function <code>scope_trace</code></p>\n<div class=\"codehilite\"><pre><span></span><span class=\"c\">/-</span><span class=\"cm\">- This function has a native implementation that displays in the given position all trace messages used in f.</span>\n<span class=\"cm\">   The arguments line and col are filled by the elaborator. -/</span>\n<span class=\"n\">def</span> <span class=\"n\">scope_trace</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">}</span> <span class=\"o\">{</span><span class=\"n\">line</span> <span class=\"n\">col</span><span class=\"o\">:</span> <span class=\"n\">nat</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">thunk</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"o\">:=</span>\n<span class=\"n\">f</span> <span class=\"o\">()</span>\n</pre></div>\n\n\n<p>which allows you to control where <code>trace</code> and <code>tactic.trace</code> print their output</p>",
+        "id": 194660138,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587380750
+    },
+    {
+        "content": "<p>That said, this doesn't answer the question of how to locate the <code>end</code>. It's quite possible that this information is never exposed to lean, and I don't know if the tactic scripts that <code>begin end</code> blocks produce have a terminating <code>pos</code> argument</p>",
+        "id": 194660584,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587381103
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> Wow, that's cool!<br>\nIf you open the <code>Problems</code> tab in VScode (below the editor window), you can see the suggestions. (Independent of current cursor position.) That's nice. But the \"Try this\" functionality is broken, alas.</p>",
+        "id": 194660591,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1587381113
+    },
+    {
+        "content": "<p>The \"Try this\" functionality would potentially be fixable: by emitting slightly different text we could trigger the VS Code extension to do the replacement somewhere different.</p>",
+        "id": 194663265,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1587383089
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"123965\">@Bryan Gin-ge Chen</span>, did you write the code in the VSCode extension that does \"Try this:\" substitution?</p>",
+        "id": 194668836,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1587386573
+    },
+    {
+        "content": "<p>I'm wondering how hard it would be to check if the location of the \"Try this:\" trace message was on the <code>theorem</code> or <code>def</code> keyword at the beginning of the declaration (rather than on a tactic invocation), and if so, insert the \"Try this:\" hint at the end of the first failing <code>begin ... end</code> block in that declaration.</p>",
+        "id": 194669003,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1587386655
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> <span class=\"user-mention\" data-user-id=\"129120\">@Alexander Bentkamp</span> wrote that code actually.</p>",
+        "id": 194688409,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1587395421
+    },
+    {
+        "content": "<p>What you describe sounds possible, but I think it'd be better to control the position that the message is emitted from within Lean. <span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span> and <span class=\"user-mention\" data-user-id=\"110026\">@Simon Hudon</span> mentioned a related needed change to Lean in <a href=\"https://github.com/leanprover-community/mathlib/issues/2267\" title=\"https://github.com/leanprover-community/mathlib/issues/2267\">#2267</a>.</p>",
+        "id": 194689174,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1587395716
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110111\">@Keeley Hoek</span>, do you know how hard it would be for an <code>executor</code> to gain access to the locations (in the sense of <code>pos</code>) of the <code>begin</code> and <code>end</code> tokens, so that trace messages could be located on them?</p>",
+        "id": 194745546,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1587425346
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span> hmm, is this stuff relevant to you? ^</p>",
+        "id": 194746281,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1587426061
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110032\">@Reid Barton</span> I'm interested in the \"Try this\" stuff.  If one ever gets AI for lean working, then \"Try this\" will be the way to have the found proof or tactics suggested to the user.</p>\n<p>If you are asking about tracing, then I don't know the answer off hand, but I am interested in seeing the answer.  I'm experimenting with various ways to get information out of lean, and and this is one of the ways.</p>",
+        "id": 194747850,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1587427515
+    },
+    {
+        "content": "<p>That's not hard I think, but I've never written code which does that<br>\nIf I remember I'll take a look!</p>\n<p>I really want my \"interactive edit notification\" thing to go in anyway, so I'll do it then</p>",
+        "id": 194756547,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1587437688
+    }
+]
