@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>I'm having trouble constructing <code>congr_arg</code> expressions, where the function superficially looks like a dependent function, but after some definitionally unfolding you can see that it isn't really.</p>",
+        "id": 130781762,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1533220654
+    },
+    {
+        "content": "<p>I've worked out how to get around this in interactive mode, but I can't do it with <code>expr</code>s.</p>",
+        "id": 130781777,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1533220671
+    },
+    {
+        "content": "<p>Here's my work so far.</p>",
+        "id": 130781780,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1533220678
+    },
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span>def F : Π n : ℕ, Type := λ n, ℕ\ndef G : Π n : ℕ, F n := λ n, begin dunfold F, exact 0 end\n\nlemma test (m n : ℕ) (w : m = n) : G n == G m :=\nbegin\n  -- This doesn&#39;t work, because `G` looks like a dependent function\n  success_if_fail {\n    have h := congr_arg G w\n  },\n  -- In fact it isn&#39;t really, and we can discover this with `dsimp`.\n  let g := G,\n  dsimp [F] at g,\n  -- Now we can use congr_arg.\n  let h := congr_arg g w,\n  dsimp [g] at h,\n  rw h,\nend\n\n-- Now I want to do this via `expr` munging:\n\nopen tactic\n\nmeta def mk_congr_arg_using_dsimp (G W : expr) (F : name) : tactic expr :=\n-- I have no idea how to achieve this: this doesn&#39;t work, but is my best guess.\ndo\n  s ← simp_lemmas.mk_default,\n  t ← infer_type G,\n  t&#39; ← s.dsimplify [F] t {fail_if_unchanged := ff},\n  trace t&#39;,\n  to_expr ```(congr_arg (%%G : %%t&#39;) %%W)\n\nlemma test2 (m n : ℕ) (w : m = n) : G n == G m :=\nbegin\n  let h := by tactic.get_local `w &gt;&gt;= λ W, mk_congr_arg_using_dsimp `(G) W `F,\n  rw h,\nend\n</pre></div>",
+        "id": 130781824,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1533220684
+    },
+    {
+        "content": "<p>If anyone could replace the definition of <code>mk_congr_arg_using_dsimp</code> so that <code>test2</code> works, that would be amazing. :-)</p>",
+        "id": 130781907,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1533220776
+    },
+    {
+        "content": "<p>A quick solution:</p>\n<div class=\"codehilite\"><pre><span></span>meta def mk_congr_arg_using_dsimp (G W : expr) (F : name) : tactic unit :=\ndo\n  eg ← to_expr ```(λ n:nat, id 0),\n  t ← infer_type G,\n  s ← simp_lemmas.mk_default,\n  t&#39; ← s.dsimplify [F] t {fail_if_unchanged := ff},\n  definev `g t&#39; eg,\n  eg ← get_local `g,\n  eeq ← to_expr ```(%%G = %%eg),\n  assert `h eeq,\n  try reflexivity\n\nlemma test2 (m n : ℕ) (w : m = n) : G n == G m :=\nbegin\n  tactic.get_local `w &gt;&gt;= λ W, mk_congr_arg_using_dsimp `(G) W `F,\n  rw h\nend\n</pre></div>",
+        "id": 130826815,
+        "sender_full_name": "Minchao Wu",
+        "timestamp": 1533287141
+    },
+    {
+        "content": "<p>The attempt is to force lean to be aware that the two types of G collapse, however <code>(%%G : %%t')</code> doesn't do the trick. This introduces an additional local hypothesis which has the non-dependent type and proves that it is just <code>G</code>.</p>",
+        "id": 130827714,
+        "sender_full_name": "Minchao Wu",
+        "timestamp": 1533288217
+    },
+    {
+        "content": "<p>Thanks <span class=\"user-mention\" data-user-id=\"110187\">@Minchao Wu</span>. In the meantime I'd come up with my own solution:</p>\n<div class=\"codehilite\"><pre><span></span>-- Sometimes `mk_congr_arg` fails, when the function is &#39;superficially dependent&#39;.\n-- This hack first dsimplifies the function before building the `congr_arg` expression.\n-- Unfortunately it creates a dummy hypothesis that I can&#39;t work out how to avoid or dispose of cleanly.\nmeta def mk_congr_arg_using_dsimp (G W : expr) (u : list name) : tactic expr :=\ndo\n  s ← simp_lemmas.mk_default,\n  t ← infer_type G,\n  t&#39; ← s.dsimplify u t {fail_if_unchanged := ff},\n  tactic.definev `_mk_congr_arg_aux t&#39; G,\n  to_expr ```(congr_arg _mk_congr_arg_aux %%W)\n</pre></div>\n\n\n<p>which is fairly similar!</p>",
+        "id": 130827909,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1533288412
+    },
+    {
+        "content": "<p>The next question is how to achieve this without making the local hypothesis, so this tactic doesn't pollute the current goal.</p>",
+        "id": 130827938,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1533288441
+    },
+    {
+        "content": "<p>Yeah I'm also wondering if there is a neater solution :)</p>",
+        "id": 130828082,
+        "sender_full_name": "Minchao Wu",
+        "timestamp": 1533288638
+    }
+]

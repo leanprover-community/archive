@@ -1,0 +1,104 @@
+[
+    {
+        "content": "<p>In another thread, on the topic of the value of large scale formalization projects like Lean's <code>mathlib</code>, <span class=\"user-mention silent\" data-user-id=\"110031\">Patrick Massot</span> <a href=\"#narrow/stream/113488-general/topic/What.20is.20the.20point.20of.20Lean's.20maths.20library.3F/near/247521726\">said</a>:</p>\n<blockquote>\n<p>also on the science-fiction side, there is still the hope to have a really nice search tool, as was envisioned in the formal abstract project or even including the dream to ask the AI for \"similar sounding\" lemmas</p>\n</blockquote>\n<p>While I agree that having a search tool over all of mathematics (or even a large chunk) is still in \"science fiction\" territory, I wonder if having such a search tool over the theorems in <code>mathlib</code> (or any similar ITP library) is well within reach.  We already have <code>library_search</code>, but of course that is is looking for an exact match (up to certain logical equivalencies).</p>",
+        "id": 247574835,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1627560923
+    },
+    {
+        "content": "<p>As far as finding an item <code>x</code> from a list of items which is most \"similar\" to an item <code>y</code>, this is a well known problem in machine learning.  The solution I'm most familiar with is that one builds an embedding function <code>f : term -&gt; R^N</code> where <code>R^N</code> is a vector space of some large-but-manageable dimension, say <code>N=128</code>.  Then the \"similarity\" of <code>x</code> and <code>y</code> is the cosine of the angle of their vectors.  The only challenge now is to build <code>f</code>.  Unfortunately, \"similarity\" of lemmas is not well defined, so one probably has to play around a bit to find a good embedding.</p>",
+        "id": 247574861,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1627560937
+    },
+    {
+        "content": "<p>In general, there are two categories of approaches to build such an embedding.  The first is to construct it by hand but in a scalable way.  The simplest would be to assign each token in the language, e.g. <code>add_group</code>, to its own dimension <code>i</code> and then let the <code>i</code>th component of the vector be the number of occurrences of that token.  There are many variations on this theme.  Since there are more tokens than dimensions, one can use hashing to assign each token to a dimension 0 to 127.  Ideas like TF-IDF take into account relative frequency of tokens.  One can consider pairs of tokens (2-grams), or (even better) groupings of tokens which take the tree structure of the formula into account (which is common in Josef Urban et al's work).  Also, it may be advantageous to break up some longer tokens.  There is a lot of work already done in all of these directions.</p>",
+        "id": 247574872,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1627560943
+    },
+    {
+        "content": "<p>On the other hand, one can train a machine learning model to learn the embedding <code>f</code>.  One takes the available data one has and devises a task which tries to take <code>x</code> and maybe some related information <code>a</code>, and then computes the solution <code>b</code> to that task.  So we have <code>g(f(x),a) = b</code>.  If <code>f</code> and <code>g</code> are neural networks (which are basically just differentiable functions), then we can use gradient descent to learn the functions <code>f</code> and <code>g</code>.  In the end we throw away <code>g</code> and we have a learned embedding <code>f</code>.  Here are some examples of ways we can learning such an embedding <code>f</code>:</p>\n<ul>\n<li>Given a theorem statement, we can try to predict it's name.  This task is part of the Lean GPT-f work, however, we don't end up with a learned embedding there since we just a autoregressive transformer which never computes an explicit embedding.</li>\n<li>Given a theorem statement, predict it's proof.</li>\n<li>Given a theorem statement, predict it's fully elaborated version.</li>\n<li>Given two theorem statements, <code>x</code> and <code>y</code>, one can ask if <code>x</code> is used as a premise in the proof of <code>y</code>.  Indeed, one could possibly even use the same embedding for <code>x</code> and <code>y</code> in the training.  This is actually a common training task in some earlier ML for TP projects, and one might already have looked into using the resulting embeddings for similar lemma search, but I'm not positive I've seen it.</li>\n<li>Given a goal <code>G</code> and a theorem <code>x</code>, one can ask if <code>x</code> is used in the proof of <code>G</code>.  The HOList project trained on exactly this sort of task and created learned vector embeddings.  I don't know if they have ever looked at those embeddings to see if they serve as a good proxy for finding similar lemmas.  <span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span>?</li>\n<li>Given two theorem statement x and y, manipulate both in various ways that preserve their semantic meaning, for example by rewriting them with various lemmas, or performing (greek-letter) reductions.  Do two chains of manipulations on x and on y, and guess which of the four results came from the same source.  This is contrastive learning, and it is a big deal right now in image processing.</li>\n<li>Etc.  (There are many other ideas in this realm.)</li>\n</ul>",
+        "id": 247574879,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1627560947
+    },
+    {
+        "content": "<p>I had a meeting with Terry Tao (maths bigshot) yesterday and he remarked that something which would be very beneficial to him personally would be semantic search for proofs. If people at the top of the maths tree are looking for this then it seems like an important endeavour</p>",
+        "id": 247673973,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1627626078
+    },
+    {
+        "content": "<p>For some of your points it's necessary to output well-typed strings. Most strings are not well-typed and don't even have balanced brackets so how would you teach your differentiable program the syntax of type theory? Do you just give zero credit for ill-typed strings?</p>",
+        "id": 247675643,
+        "sender_full_name": "Jeremy Sio",
+        "timestamp": 1627628009
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"429492\">@Jeremy Sio</span> There are a few approaches to this, but the simplest is to just input and output text, and to use an encoder-decoder architecture as follows.  The encoder takes the input string and computes a vector representation.  The decoder takes that vector and computes the output string.  The decoder is usually autoregressive in that it tries to predict the nth character (or token) using the previous n-1 characters, and during training the n-1 characters are taken to be the first n-1 characters of the correct training output. When it predicts the nth character, it actually predicts a probability distribution over all possible characters, and it is scored according to the cross entropy of its probability distribution prediction and correct character.  In the end, such language models trained this way are actually really good at outputting well-typed expressions (although in this case, we don't actually keep the decoder, since all we are interested in is the encoder.)  I'm of course simplifying and neglecting a lot of details here, but there are a lot of good resources on this topic, e.g. <a href=\"https://jalammar.github.io/visualizing-neural-machine-translation-mechanics-of-seq2seq-models-with-attention/\">https://jalammar.github.io/visualizing-neural-machine-translation-mechanics-of-seq2seq-models-with-attention/</a></p>",
+        "id": 247693340,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1627642824
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110038\">@Kevin Buzzard</span> Yes, Terry has been lamenting about this on his blog for a while.  Here for example, is a discussion of the difficulty of identifying equivalent formulas: <a href=\"https://terrytao.wordpress.com/2019/08/13/eigenvectors-from-eigenvalues/comment-page-1/#comment-528883\">https://terrytao.wordpress.com/2019/08/13/eigenvectors-from-eigenvalues/comment-page-1/#comment-528883</a>  As I see it, in theory the same setup as I described above could also work for arXiv, but with different tasks.  Some tasks can just be next word prediction, but others could be predicting subject classification, title, author, etc.  There are both advantages and disadvantages to informal math search vs formal math search.</p>",
+        "id": 247695812,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1627644666
+    },
+    {
+        "content": "<p>Informal math search advantages</p>\n<ul>\n<li>This setting has much more data.  For example, one could just train a BERT language model over arXiv (I don't know if anyone already has) and use that to get \"math embeddings\" of sentences and formulas in LaTeX arXiv papers.  One might get interesting results from that alone.  Indeed, while GPT-style models don't give embeddings, I do know they have been trained on arXiv, and sometimes they are even able to complete proofs.  (Try it yourself <a href=\"https://6b.eleuther.ai\">here</a>.  In their <a href=\"https://arankomatsuzaki.wordpress.com/2021/06/04/gpt-j/\">blog</a> they give the example of it proving that every cyclic group is Abelian.)</li>\n<li>Document retrieval, semantic search, automatic creation of knowledge databases, and other related concepts are all of interest to a wide range of natural language processing researchers who don't necessarily care about mathematics in particular.</li>\n</ul>",
+        "id": 247695822,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1627644677
+    },
+    {
+        "content": "<p>Formal math advantages</p>\n<ul>\n<li>Formal math is \"grounded\" in that the symbols already have a clear intended semantics.  This makes the data much higher quality, and allows for a greater degree of syntactic manipulations which we know preserve the semantic meaning of the formula (or at least we know they don't make true statements false).</li>\n<li>Formal math is much easier to work with programmatically.</li>\n<li>In formal math we have a lot more aligned metadata (and certainly higher quality metadata).</li>\n</ul>",
+        "id": 247695967,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1627644757
+    },
+    {
+        "content": "<p><a href=\"https://topos.site/blog/2021/07/introducing-the-mathfoldr-project/\">The MathFoldr project</a> from the Topos Institute seems relevant here, although I think it's more focused on natural language corpora than on proof assistant libraries.</p>",
+        "id": 247705937,
+        "sender_full_name": "Javier Prieto",
+        "timestamp": 1627650897
+    },
+    {
+        "content": "<p>Very interesting discussion and I'm glad to hear this would be a useful application.</p>\n<p>On a semi-related note, we did some work on informal premise selection with ProofWiki, and noticed that the trained model's embeddings tended to group \"similar\" theorems/definitions moreso than an off-the-shelf BERT model. </p>\n<p>Specifically, the model was f(theorem)*g(reference), where f() and g() are separate instances of BERT. The model was trained to predict whether the reference (i.e. premise) occurs in the proof of the theorem. We then visualize the embeddings from g().</p>\n<p>However this was a subjective/preliminary evaluation, and I think a lot more could be done with alternative objectives, more data, etc.</p>\n<p>Any thoughts on how we would evaluate a system? It seems like having an evaluation protocol in mind would be useful for developing alternatives </p>\n<p><a href=\"/user_uploads/3121/KcdUE2lKHVpJ3CeCPGq7aRRi/embeddings.png\">embeddings.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/KcdUE2lKHVpJ3CeCPGq7aRRi/embeddings.png\" title=\"embeddings.png\"><img src=\"/user_uploads/3121/KcdUE2lKHVpJ3CeCPGq7aRRi/embeddings.png\"></a></div>",
+        "id": 247740010,
+        "sender_full_name": "Sean Welleck",
+        "timestamp": 1627667076
+    },
+    {
+        "content": "<p>Both of these seem really interesting.  The MathFoldr project seems to be to capture named math concepts, like Torsion Ring from papers.</p>",
+        "id": 247757132,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1627676583
+    },
+    {
+        "content": "<p>I should also mention that I’m sure there are other projects out there that probably have thought about this more than me ten minutes of thought.  Might point is that we are right at the cusp of making some of this possible.</p>",
+        "id": 247757299,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1627676678
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"409334\">@Sean Welleck</span> that is a good question about evaluation, but it’s hard for me to think of how to auto evaluate search systems, other than to put them in front of end users.  Although, I think before that, a good first step would be to figure out what desired search terms and results would even look like.  I think Terry Tao, Patrick, Kevin, and any other potential end user might have a different idea of what they are even looking for from a system like this.  Those design requirements probably effect how the model is trained.  (Of course it goes the other way too.  Google’s Page Rank wasn’t prefect, but it was a practical algorithm on which to found a company, and only later improve upon.  If something currently works well enough to be useful, maybe it should be put out there even if it doesn’t behave exactly as desired.)</p>",
+        "id": 247765175,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1627680883
+    },
+    {
+        "content": "<blockquote>\n<p>Given a goal G and a theorem x, one can ask if x is used in the proof of G. The HOList project trained on exactly this sort of task and created learned vector embeddings. I don't know if they have ever looked at those embeddings to see if they serve as a good proxy for finding similar lemmas. @Markus Rabe?</p>\n</blockquote>\n<p><span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span> This thread sounds very interesting. I think the main question is what kind of task we have in mind (which then implicitly defines a similarity metric). I can imagine a \"similar papers\" task, or a more semantic version of Google search, or a informal&lt;-&gt;formal similarity search. Probably there are many more such tasks, and I think there is probably not one embedding space that is ideal for all of them.</p>\n<p>One thing to note is that we typically search for premises not by cosine similarity, but we have another (small) neural network trained to judge the usefulness of a premise for the current goal (given the embeddings of premise and goal). So the embeddings might not be ideal for \"similarity\" (though, again, that depends on what kind of similarity we are talking about).</p>\n<p>Zooming out: I also think that a (more) semantic search would be super useful (in and beyond math) and it is great to hear that mathematicians are thinking about this as well. Thanks for the pointers!</p>",
+        "id": 247769427,
+        "sender_full_name": "Markus Rabe",
+        "timestamp": 1627684188
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"217806\">Markus Rabe</span> <a href=\"#narrow/stream/219941-Machine-Learning.20for.20Theorem.20Proving/topic/Finding.20similar.20lemmas/near/247769427\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"115715\">Jason Rute</span> This thread sounds very interesting. I think the main question is what kind of task we have in mind (which then implicitly defines a similarity metric). I can imagine a \"similar papers\" task, or a more semantic version of Google search, or a informal&lt;-&gt;formal similarity search. Probably there are many more such tasks, and I think there is probably not one embedding space that is ideal for all of them.</p>\n</blockquote>\n<p>That is a great point.  Here are a two very similar ideas of what an end result could look like from the point of an end user (a \"user story\" in software engineering speak).  Of course there are many more points of view.</p>\n<ul>\n<li>This first example centers on usefulness inside an ITP.  An ITP user enters a statement that they think would be useful for their needs and hope it is somewhere in the library.  For example, they might enter <code>forall n m : nat, m - n + n = m</code>.  They want a similarly useful theorem.  In this example, what I gave was false, since <code>-</code> is truncated subtraction, but maybe the system will find a similar theorem for nat with all the correct side conditions, or will find the a more general version. (<del>Is truncated subtraction well-defined for monoids for example?</del> [Edit: No)  If there is nothing too close, the system will probably return other theorems about how addition and truncated subtraction interact, since that would be similarly useful.  Of course, one might just say that it is better to have the ITP find the full proof of the theorem, or suggest the next step (this avoids the XY problem), but that might be more difficult.</li>\n<li>In this second use case, the focus is finding theorems in the library, maybe to just know if a theorem has been worked on already.  A user enters a theorem that they want to know if it is already in the library.  They are happy to get back an equivalent theorem (or maybe even a stronger theorem). For example, the user enters the theorem that there are infinitely many primes.  The computer gives back an equivalent version possibly encoding \"infinitely many\" in a different way.  While all provable theorems are technically logically equivalent, I think it would be possible to still give an approximation of what a mathematician means by \"equivalent\", which is something like \"the latter follows easily from the former and vice versa\".  This could be combined with the theorem proving powers of an agent.  I could even imagine an agent returning 4 categories of theorems.  (1) Theorems which are provably equivalent to X, ranked by how confident the agent was in their equivalence.  (2) Theorems which provably imply X (e.g. some theorem about unique factor domains, or theorems about certain subsets of primes being infinite).  (2) Theorems which provably follow from X.  (4) Theorems which are similar to X and maybe in one of the other categories, but the agent can't prove it.  An agent like this could be really useful if combined with an ITP (with a large library of math), and another even larger library of theorem statements without proofs (like in the formal abstracts project).</li>\n</ul>\n<p>I think the first idea is more practical for the short term, but the second is closer to the ideal.  (Of course the ideal is that it would also search over natural language literature.)</p>",
+        "id": 247879832,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1627856214
+    }
+]

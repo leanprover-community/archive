@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>Pretty printing of the existential quantifier seems to be broken.  I wonder if it is <a href=\"https://github.com/leanprover-community/mathlib4/pull/617\">#617</a> that broke it.<br>\nConsider this example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"bp\">∃</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">),</span> <span class=\"n\">x</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n</code></pre></div>\n<p>If I don't import Mathlib, the goal is listed as <code>∃ x, x = 0</code>.  If I import Mathlib, the goal is listed as <code>Exists fun x ↦ x = 0</code>.  I'm guessing that it's the introduction of <code>↦</code> that is causing the problem.  The unexpander for <code>Exists</code> isn't expecting that symbol, so it's not working.<br>\nI don't know all of Lean + Mathlib that well, but I wonder if there are other things that were written expecting <code>=&gt;</code>, and are now broken.  (I wrote an unexpander for some notation I introduced in a project I'm working on, and that one was broken by this change as well.)</p>",
+        "id": 312726012,
+        "sender_full_name": "Dan Velleman",
+        "timestamp": 1669671513
+    },
+    {
+        "content": "<p>There are other unexpanders that expect <code>=&gt;</code> rather than <code>↦</code>, so I suspect they have the same problem, although I haven't tested them:  <code>unexpandSigma</code>, <code>unexpandPSigma</code>, <code>unexpandSubtype</code>.  I have filed an issue.<br>\nIs there anything other than unexpanders that is affected <a href=\"https://github.com/leanprover-community/mathlib/pull/617\">#617</a>?  I don't know of anything, but I hope someone more knowledgeable than me is thinking about it.</p>",
+        "id": 312887376,
+        "sender_full_name": "Dan Velleman",
+        "timestamp": 1669740942
+    },
+    {
+        "content": "<p>I saw <code>(⋅≤⋅)</code> pretty printed with <code>fun ... ↦</code></p>",
+        "id": 312892337,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1669742295
+    },
+    {
+        "content": "<p>issue: <a href=\"https://github.com/leanprover-community/mathlib4/pull/780\">mathlib4#780</a></p>",
+        "id": 312897483,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1669743708
+    },
+    {
+        "content": "<p>My understanding of delaboration is the following:</p>\n<ul>\n<li>Every basic expression type (like app, pi, lambda, etc) has its own collection of delaborators. These are (modulo monads) functions <code>Expr -&gt; Syntax</code>. Delaborators are registered using an attribute, and each delaborator gets a chance to try to process an expression before letting the next delaborator have a try.</li>\n<li>The main app delaborator also has a collection of \"unexpanders.\" These are collections of functions <code>Syntax -&gt; Syntax</code> that try to do reverse macro expansions for application syntax.</li>\n</ul>\n<p>This mapsto notation is implemented as a lambda delaborator, but things like <code>exists</code> are unexpanders for the app delaborator. The main app delaborator for an <code>exists</code> will delaborate the whole app, and then the <code>exists</code> unexpander sees the result and tries to unexpand. But this means the mapsto delaborator has processed already before the <code>exists</code> unexpander has a chance to do its work.</p>\n<p>If I understand things correctly, then this mapsto delaborator ought to be processed in a pass <em>after</em> all the unexpanders have done their work. Maybe a new kind of thing called a <code>post_unexpander</code>?</p>",
+        "id": 312899513,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1669744256
+    },
+    {
+        "content": "<p>Barring finding other fixes, it seems like the right thing to do in the short term disable <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Mathlib.Util.MapsTo.delabLam#doc\">docs4#Mathlib.Util.MapsTo.delabLam</a> (then mapsto is only accepted as notation but not pretty printed). Otherwise it seems like a lot of work to track down every place that accepts <code>=&gt;</code>...</p>",
+        "id": 312900114,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1669744441
+    },
+    {
+        "content": "<p>(pinging <span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span>)</p>",
+        "id": 312900216,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1669744464
+    },
+    {
+        "content": "<p>Could the pretty printing of <code>=&gt;</code> as <code>↦</code> be done by an unexpander for <code>fun ...</code>, rather than a delaborator?  Would one have to ensure that other unexpanders go first, so that <code>Exists</code> and others would work correctly, and then any instances of <code>fun ...</code> that have not been eliminated by other unexpanders would then be converted to <code>↦</code>?</p>",
+        "id": 312905219,
+        "sender_full_name": "Dan Velleman",
+        "timestamp": 1669745931
+    },
+    {
+        "content": "<p>No, because unexpanders are associated to the <code>app</code> delaborator, but <code>fun</code> is handled by a <code>lam</code> delaborator, since it's a lambda function and not an application.</p>",
+        "id": 312905360,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1669745977
+    },
+    {
+        "content": "<p>The unexpanders are run at the end of this <code>app</code> delaborator: <a href=\"https://github.com/leanprover/lean4/blob/cbf7da0f6ef35774407132cf8f5802daf2c9a39b/src/Lean/PrettyPrinter/Delaborator/Builtins.lean#L207\">https://github.com/leanprover/lean4/blob/cbf7da0f6ef35774407132cf8f5802daf2c9a39b/src/Lean/PrettyPrinter/Delaborator/Builtins.lean#L207</a>, and I believe that's the only place.</p>",
+        "id": 312905800,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1669746115
+    },
+    {
+        "content": "<p>This is why I said we should wait until it becomes an official part of lean 4. This stuff is all handled by the <code>unicodeSymbol</code> combinator which is used for things like <code>→</code>/<code>-&gt;</code></p>",
+        "id": 312935720,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1669755080
+    }
+]

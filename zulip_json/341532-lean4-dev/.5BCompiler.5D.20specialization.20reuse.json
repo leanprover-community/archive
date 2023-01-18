@@ -1,0 +1,56 @@
+[
+    {
+        "content": "<p>The current/old code generator reuses code specializations performed in different compilation units. For example, suppose we have</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">f</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"hello {n}\"</span>\n</code></pre></div>\n<p>Lean reuses the specialization of <code>IO.printLn {α} [ToString α] (s : α) : IO Unit</code> for <code>String</code> produced when compiling the following instance</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">instance</span> <span class=\"o\">[</span><span class=\"n\">ToString</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">:</span> <span class=\"n\">Eval</span> <span class=\"n\">α</span> <span class=\"n\">where</span>\n  <span class=\"n\">eval</span> <span class=\"n\">a</span> <span class=\"n\">_</span> <span class=\"o\">:=</span> <span class=\"n\">IO.println</span> <span class=\"o\">(</span><span class=\"n\">toString</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">()))</span>\n</code></pre></div>\n<p>This kind of reuse reduces the size of the Lean executable, but it affects our plans for the Lean module system (cc <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span>).<br>\nShould we rely on the linker to eliminate duplicates of the same function? If yes, how expensive and robust is it?<br>\nIf it is too expensive, it would be great to perform an experiment where we disable the specialization reuse and check the size of the new Lean executable.</p>",
+        "id": 300481623,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1663992192
+    },
+    {
+        "content": "<p>C++ definitely relies on this, although IIRC the wording is pretty strict - something like you only get guaranteed deduplication if it's the same sequence of input tokens</p>",
+        "id": 300482627,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1663993337
+    },
+    {
+        "content": "<p>I believe it uses \"weak linker symbols\" where redefinitions are just silently ignored, so you have to make sure you use a good hash or something to guarantee that you use the same name iff the content is supposed to be deduplicated</p>",
+        "id": 300482682,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1663993440
+    },
+    {
+        "content": "<p>The rule you’re thinking of in C++ is the ODR - the one definition rule. </p>\n<p>Weak symbols are correct on Linux/posix; on Windows it’s comdat.  However, there are some differences eg when dealing with SOs/DLLs. </p>\n<p>Finally, regarding the symbol uniqueness: eg Unison effectively uses a SHA of the AST… that may work for weak symbols.   However, the downside would be that you couldn’t replace a symbol with a different one/different implementation (eg for LD_PRELOAD) unless the ASTs match, which would defeat the purpose of that system.</p>",
+        "id": 300503183,
+        "sender_full_name": "Tom",
+        "timestamp": 1664009026
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/.5BCompiler.5D.20specialization.20reuse/near/300482682\">said</a>:</p>\n<blockquote>\n<p>I believe it uses \"weak linker symbols\" where redefinitions are just silently ignored, so you have to make sure you use a good hash or something to guarantee that you use the same name iff the content is supposed to be deduplicated</p>\n</blockquote>\n<p>Great. <br>\nEach specialization is uniquely identified by a closed expression. The compilation unit cache is defined as</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">abbrev</span> <span class=\"n\">Cache</span> <span class=\"o\">:=</span> <span class=\"n\">Std.PHashMap</span> <span class=\"n\">Expr</span> <span class=\"n\">Name</span>\n\n<span class=\"n\">builtin_initialize</span> <span class=\"n\">specCacheExt</span> <span class=\"o\">:</span> <span class=\"n\">EnvExtension</span> <span class=\"n\">Cache</span> <span class=\"bp\">←</span>\n  <span class=\"n\">registerEnvExtension</span> <span class=\"o\">(</span><span class=\"n\">pure</span> <span class=\"o\">{})</span>\n</code></pre></div>\n<p>So, we just need to compute a good hash for <code>Expr</code>.</p>",
+        "id": 300541530,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1664027787
+    },
+    {
+        "content": "<p>Which flag should we use to enable \"weak linker symbols\"?</p>",
+        "id": 300541719,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1664027900
+    },
+    {
+        "content": "<p>Apparently COMDAT is the proper solution for ELF as well: <a href=\"https://maskray.me/blog/2021-07-25-comdat-and-section-group\">https://maskray.me/blog/2021-07-25-comdat-and-section-group</a></p>\n<blockquote>\n<p>In C++, inline functions, template instantiations, and a few other things can be defined in multiple object files but need deduplication at link time. In the dark ages the functionality was implemented by weak definitions: the linker does not report duplicate definition errors and resolves the references to the first definition. The downside is that unneeded copies remained in the linked image.</p>\n</blockquote>\n<p>Unfortunately, I don't know if it can be done from inside C code.</p>",
+        "id": 300548693,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1664031601
+    },
+    {
+        "content": "<p>The syntax I have found for doing so is <code>__attribute__((weak))</code> according to <a href=\"https://www.valvers.com/open-software/gcc/weak-function-attributes/\">some sources</a> and <code>__weak</code> according to <a href=\"https://developer.arm.com/documentation/dui0491/c/Compiler-specific-Features/--weak\">others</a>. I imagine it is compiler dependent and you will need to wrap it in a macro</p>",
+        "id": 300578160,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664049349
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/.5BCompiler.5D.20specialization.20reuse/near/300548693\">said</a>:</p>\n<blockquote>\n<p>Apparently COMDAT is the proper solution for ELF as well: <a href=\"https://maskray.me/blog/2021-07-25-comdat-and-section-group\">https://maskray.me/blog/2021-07-25-comdat-and-section-group</a></p>\n<blockquote>\n<p>In C++, inline functions, template instantiations, and a few other things can be defined in multiple object files but need deduplication at link time. In the dark ages the functionality was implemented by weak definitions: the linker does not report duplicate definition errors and resolves the references to the first definition. The downside is that unneeded copies remained in the linked image.</p>\n</blockquote>\n<p>Unfortunately, I don't know if it can be done from inside C code.</p>\n</blockquote>\n<p>My understanding is that COMDAT is the name of the object file/linker section; weak is a property of the symbol.  You can nm/objdump to see symbols marked as ‘W’.</p>",
+        "id": 300590795,
+        "sender_full_name": "Tom",
+        "timestamp": 1664060255
+    }
+]

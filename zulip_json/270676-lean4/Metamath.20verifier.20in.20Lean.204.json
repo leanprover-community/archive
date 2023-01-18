@@ -1,0 +1,116 @@
+[
+    {
+        "content": "<p>This is just a little project to see how well lean can handle high performance programs. I have implemented a <a href=\"https://github.com/digama0/mm-lean4\">Metamath verifier</a>, which can verify <a href=\"http://set.mm\">set.mm</a> in 10-12 seconds, which is not bad at all considering the reference implementation in C takes 9.2 seconds. A few things I discovered while optimizing:</p>\n<ul>\n<li>You have to be very careful not to share the main data structures. I didn't find any option for debugging this, but I would just stick a <code>if (!lean_is_exclusive(x_1)) abort()</code> into the generated C file in appropriate locations and go at it with gdb. Some of the compiler passes (the <code>csimp</code> pass got me a few times) can swap the order of operations such that an unshared value becomes shared during a function call, so checking the result is important.</li>\n<li>Tail call optimization only works when a function is self-recursive. Mutually recursive tail calls are not supported, and this includes when one of the functions is a lambda inside the main function. <code>do</code> notation can introduce these lambdas so they don't need to be explicitly in the source either. The C compiler is generally bad at doing tail call optimization (not really sure why), so a failed TCO generally means that the program will crash with a stack overflow after running long enough. This is fixed by making sure that the whole state machine (at least the parts relevant to control flow) goes in one function.</li>\n<li>Lean 4 likes functions of the form <code>A -&gt; B -&gt; A</code>, that is, non-monadic state transformation functions, because it will reuse the space used to store <code>A</code>. This requires putting lots of things into the state that would normally be in the output, like error reporting via the <code>Except</code> monad. I got the idea for how to structure the program to work with this design from the lean 4 parser.</li>\n</ul>\n<p>I think the code itself is pretty nice looking and easy to write considering what it does, so kudos to the Lean 4 devs for achieving this kind of performance in a functional programming language.</p>",
+        "id": 237837021,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1620399719
+    },
+    {
+        "content": "<p>Nice work! We knew Lean 4 was fast compared to other functional languages, but a favorable comparison to C is even more heartening to see :) .</p>",
+        "id": 237839459,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1620400574
+    },
+    {
+        "content": "<p>Some minor notes:</p>\n<ul>\n<li>We have <a href=\"https://github.com/leanprover/lean4/blob/05b12e2b612c3c7d5f41d87936142c0ba31948dc/src/Init/Util.lean#L20\">dbgTraceIfShared</a> for debugging reuse</li>\n<li>For clang we could soon use <a href=\"https://clang.llvm.org/docs/AttributeReference.html#musttail\"><code>musttail</code></a> to force general TCO without implementing it ourselves</li>\n<li>Why do you need the <code>elan</code> commands when you have a pinned version in your <code>leanpkg.toml</code>?</li>\n<li>Have you tried using <a href=\"https://github.com/leanprover/lean4/blob/05b12e2b612c3c7d5f41d87936142c0ba31948dc/src/bin/leanc.in#L10\"><code>-U LEAN_MULTI_THREAD</code></a>? Though it might not make a difference because branch predictors are simply too good at their job.</li>\n</ul>",
+        "id": 237841131,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1620401129
+    },
+    {
+        "content": "<blockquote>\n<p>Why do you need the elan commands when you have a pinned version in your leanpkg.toml?</p>\n</blockquote>\n<p>I probably don't, but I'm no expert on usage. Those commands are just what I do</p>",
+        "id": 237841301,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1620401202
+    },
+    {
+        "content": "<p>How do I pass leanc flags when using <code>leanmake bin</code>?</p>",
+        "id": 237841417,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1620401255
+    },
+    {
+        "content": "<p>I've been calling leanc directly which is a bit of a drag</p>",
+        "id": 237841445,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1620401270
+    },
+    {
+        "content": "<p><code>-U LEAN_MULTI_THREAD</code> brought it from 11.5 s to 9.9 s, although the noise is also +-1 s so it's hard to tell if it is statistically significant</p>",
+        "id": 237842265,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1620401575
+    },
+    {
+        "content": "<p>Untested: <code>leanpkg build bin LEANC_OPTS+=\"-U LEAN_MULTI_THREAD\"</code></p>",
+        "id": 237842382,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1620401616
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Metamath.20verifier.20in.20Lean.204/near/237842265\">said</a>:</p>\n<blockquote>\n<p><code>-U LEAN_MULTI_THREAD</code> brought it from 11.5 s to 9.9 s, although the noise is also +-1 s so it's hard to tell if it is statistically significant</p>\n</blockquote>\n<p>That is a pretty large variance for a single-threaded program. Are you using something like <a href=\"https://github.com/sharkdp/hyperfine\">https://github.com/sharkdp/hyperfine</a>?</p>",
+        "id": 237842558,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1620401672
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Bash\"><pre><span></span><code>configuring mm-lean4 <span class=\"m\">0</span>.1\n&gt; sh -c <span class=\"s2\">\"/home/mario/.elan/toolchains/leanprover-lean4-nightly-2021-05-05/bin/leanmake\"</span> <span class=\"nv\">LEAN_OPTS</span><span class=\"o\">=</span><span class=\"s2\">\"\"</span> <span class=\"nv\">LEAN_PATH</span><span class=\"o\">=</span><span class=\"s2\">\"././build\"</span> bin <span class=\"nv\">LEANC_OPTS</span><span class=\"o\">+=</span>-U LEAN_MULTI_THREAD &gt;<span class=\"p\">&amp;</span><span class=\"m\">2</span>    <span class=\"c1\"># in directory .</span>\nmake: Nothing to be <span class=\"k\">done</span> <span class=\"k\">for</span> <span class=\"s1\">'bin'</span>.\nmake: *** No rule to make target <span class=\"s1\">'LEAN_MULTI_THREAD'</span>.  Stop.\nuncaught exception: external <span class=\"nb\">command</span> exited with status <span class=\"m\">2</span>\n</code></pre></div>",
+        "id": 237842619,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1620401701
+    },
+    {
+        "content": "<p>I hate shell escaping :)</p>",
+        "id": 237842726,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1620401740
+    },
+    {
+        "content": "<p>I guess you can try <code>leanpkg build bin 'LEANC_OPTS+=\"-U LEAN_MULTI_THREAD\"'</code>, though this should be fixed in leanpkg</p>",
+        "id": 237842843,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1620401778
+    },
+    {
+        "content": "<p>hyperfine looks pretty nice. I've been using perf and eyeball grease(?)</p>",
+        "id": 237843082,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1620401873
+    },
+    {
+        "content": "<p>hm, I think it was statistically insignificant. Without <code>-U LEAN_MULTI_THREAD</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Benchmark</span> <span class=\"bp\">#</span><span class=\"mi\">1</span><span class=\"o\">:</span> <span class=\"n\">build</span><span class=\"bp\">/</span><span class=\"n\">bin</span><span class=\"bp\">/</span><span class=\"n\">Metamath</span> <span class=\"bp\">/</span><span class=\"n\">home</span><span class=\"bp\">/</span><span class=\"n\">mario</span><span class=\"bp\">/</span><span class=\"n\">Documents</span><span class=\"bp\">/</span><span class=\"n\">metamath</span><span class=\"bp\">/</span><span class=\"n\">mm</span><span class=\"bp\">/</span><span class=\"n\">set.mm</span>\n  <span class=\"n\">Time</span> <span class=\"o\">(</span><span class=\"n\">mean</span> <span class=\"bp\">±</span> <span class=\"n\">σ</span><span class=\"o\">):</span>     <span class=\"mi\">13</span><span class=\"bp\">.</span><span class=\"mi\">251</span> <span class=\"n\">s</span> <span class=\"bp\">±</span>  <span class=\"mi\">0</span><span class=\"bp\">.</span><span class=\"mi\">627</span> <span class=\"n\">s</span>    <span class=\"o\">[</span><span class=\"n\">User</span><span class=\"o\">:</span> <span class=\"mi\">13</span><span class=\"bp\">.</span><span class=\"mi\">129</span> <span class=\"n\">s</span><span class=\"o\">,</span> <span class=\"n\">System</span><span class=\"o\">:</span> <span class=\"mi\">0</span><span class=\"bp\">.</span><span class=\"mi\">108</span> <span class=\"n\">s</span><span class=\"o\">]</span>\n  <span class=\"n\">Range</span> <span class=\"o\">(</span><span class=\"n\">min</span> <span class=\"bp\">…</span> <span class=\"n\">max</span><span class=\"o\">):</span>   <span class=\"mi\">11</span><span class=\"bp\">.</span><span class=\"mi\">547</span> <span class=\"n\">s</span> <span class=\"bp\">…</span> <span class=\"mi\">13</span><span class=\"bp\">.</span><span class=\"mi\">873</span> <span class=\"n\">s</span>    <span class=\"mi\">10</span> <span class=\"n\">runs</span>\n</code></pre></div>\n<p>with <code>-U LEAN_MULTI_THREAD</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Benchmark</span> <span class=\"bp\">#</span><span class=\"mi\">1</span><span class=\"o\">:</span> <span class=\"n\">build</span><span class=\"bp\">/</span><span class=\"n\">bin</span><span class=\"bp\">/</span><span class=\"n\">Metamath</span> <span class=\"bp\">/</span><span class=\"n\">home</span><span class=\"bp\">/</span><span class=\"n\">mario</span><span class=\"bp\">/</span><span class=\"n\">Documents</span><span class=\"bp\">/</span><span class=\"n\">metamath</span><span class=\"bp\">/</span><span class=\"n\">mm</span><span class=\"bp\">/</span><span class=\"n\">set.mm</span>\n  <span class=\"n\">Time</span> <span class=\"o\">(</span><span class=\"n\">mean</span> <span class=\"bp\">±</span> <span class=\"n\">σ</span><span class=\"o\">):</span>     <span class=\"mi\">13</span><span class=\"bp\">.</span><span class=\"mi\">330</span> <span class=\"n\">s</span> <span class=\"bp\">±</span>  <span class=\"mi\">1</span><span class=\"bp\">.</span><span class=\"mi\">512</span> <span class=\"n\">s</span>    <span class=\"o\">[</span><span class=\"n\">User</span><span class=\"o\">:</span> <span class=\"mi\">13</span><span class=\"bp\">.</span><span class=\"mi\">229</span> <span class=\"n\">s</span><span class=\"o\">,</span> <span class=\"n\">System</span><span class=\"o\">:</span> <span class=\"mi\">0</span><span class=\"bp\">.</span><span class=\"mi\">095</span> <span class=\"n\">s</span><span class=\"o\">]</span>\n  <span class=\"n\">Range</span> <span class=\"o\">(</span><span class=\"n\">min</span> <span class=\"bp\">…</span> <span class=\"n\">max</span><span class=\"o\">):</span>    <span class=\"mi\">9</span><span class=\"bp\">.</span><span class=\"mi\">615</span> <span class=\"n\">s</span> <span class=\"bp\">…</span> <span class=\"mi\">15</span><span class=\"bp\">.</span><span class=\"mi\">488</span> <span class=\"n\">s</span>    <span class=\"mi\">10</span> <span class=\"n\">runs</span>\n</code></pre></div>",
+        "id": 237843870,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1620402153
+    },
+    {
+        "content": "<p>I'm not sure why the variance is so high, it is single threaded and should be quite predictable</p>",
+        "id": 237844015,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1620402208
+    },
+    {
+        "content": "<p><code>leanpkg build bin 'LEANC_OPTS+=\"-U LEAN_MULTI_THREAD\"'</code> worked</p>",
+        "id": 237844208,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1620402276
+    },
+    {
+        "content": "<p>I was using <code>mm0-rs</code> for Language Server Protocol. Can I use this for it too?</p>",
+        "id": 237901739,
+        "sender_full_name": "Guilherme Silva",
+        "timestamp": 1620428030
+    },
+    {
+        "content": "<p>This program is a pure verifier, it doesn't support LSP in any sense. You should keep on using <code>mm0-rs</code> if you want language highlighting for metamath zero</p>",
+        "id": 237917881,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1620442002
+    },
+    {
+        "content": "<p>It may however evolve into a metamath or MM0 importer</p>",
+        "id": 237917904,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1620442052
+    }
+]

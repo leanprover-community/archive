@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>I managed to implement the tactic I was trying to implement using <span class=\"user-mention\" data-user-id=\"256311\">@Jannis Limperg</span> 's <code>Or.elim</code> suggestion, which involved creating metavariables of exactly the correct type, it was quite a long-winded way of doing it but certainly satisfied my interest in learning the DIY way of approaching it. I'm not exactly sure how to use <code>Lean.Meta.cases</code>, since it asks for an <code>FVarId</code>, but I only had the <code>Expr</code> corresponding to an <code>Or</code> hypothesis. Would I have to create the free variable to use that?</p>\n<p><span class=\"user-mention\" data-user-id=\"453098\">@Dan Velleman</span> , your approach is interesting, and definitely something worth knowing. It's a little confusing how there are so many different ways to do these things. I'm sure this is somewhat inevitable but I hope in the future once the tooling has been developed, some best practice could be laid down to make it clearer to a newbie what the most idiomatic approach is.</p>\n<p>Thanks to all of you! I'll mark this as resolved for now.</p>",
+        "id": 295038325,
+        "sender_full_name": "Alastair Horn",
+        "timestamp": 1661344810
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"274262\">Alastair Horn</span> has marked this topic as resolved.</p>",
+        "id": 295038346,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1661344815
+    },
+    {
+        "content": "<p>Nice! The direct <code>Or.elim</code> is also the most efficient solution, so that's a bonus.</p>\n<p>To get an <code>FVarId</code> for an expression, you can <code>assert</code> it as a hypothesis, then possibly <code>clear</code> it again after you're done. At least this trick is occasionally used in Lean 3.</p>",
+        "id": 295040227,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1661345509
+    },
+    {
+        "content": "<p>@Jannis Limperg, I assume you mean <code>assert</code> and then <code>intro1P</code>--as in the \"custom_have\" tactic in the online metaprogramming book.  I discovered today, by experimentation, that there are some differences between the <code>mvar</code> method and the <code>fvar</code> method.  I think the differences are caused by the fact that an <code>fvar</code> has a type but no value, whereas an <code>mvar</code>, if it has been assigned, has both a type and a value.  For my application, the <code>fvar</code> method works better--the value of the <code>mvar</code> was causing glitches that were minor but annoying, and they went away when I used an <code>fvar</code>.</p>",
+        "id": 295128454,
+        "sender_full_name": "Dan Velleman",
+        "timestamp": 1661375784
+    },
+    {
+        "content": "<p>Yes; I forgot that <code>assert</code> doesn't introduce the new hyp (although there might be a variant that does).</p>\n<p>The <code>assert</code> method and the <code>exprToTerm</code> method are internally very different, but they should both work. I suspect that any errors you're getting are due to some other fault. If you'd like to share your code, I can take a closer look.</p>",
+        "id": 295188557,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1661418746
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"256311\">@Jannis Limperg</span> :  Here's what I was doing:  I had two expressions <code>e1</code> and <code>e2</code>, and I wanted to replace <code>e1</code> with <code>e2</code> in either a hypothesis or the goal.  My method was to produce a proof of <code>e1 ↔ e2</code> and pass that proof to the <code>rewrite</code> tactic.  When I created a <code>fvar</code> of type <code>e1 ↔ e2</code> (using <code>assert</code> and <code>intro1P</code>) and passed that to <code>rewrite</code>, it worked fine.  When I created a <code>mvar</code> (using <code>exprToTerm</code>), <code>rewrite</code> looked at the proof that was the value of the <code>mvar</code>, not the type of the mvar.  It interpreted it as a proof of <code>e1 ↔ e2'</code>, for some expression <code>e2'</code> that was definitionally equivalent to <code>e2</code>, and so <code>e1</code> got replaced with <code>e2'</code>--not wrong, but not exactly what I wanted.</p>\n<p>If you want more detail:  I was trying to change <code>¬ ∃ n, p n</code> to <code>∀ n, ¬ p n</code>.  When I used a <code>fvar</code>, it worked exactly as I wanted.  When I used a <code>mvar</code>, <code>¬ ∃ n, p n</code> got changed to <code>∀ x, ¬ p x</code>.</p>",
+        "id": 295251848,
+        "sender_full_name": "Dan Velleman",
+        "timestamp": 1661440394
+    },
+    {
+        "content": "<p>Hehe, okay, that's a good one. You might have been able to make the mvar solution work by adding some sort of type ascription to <code>exprToTerm</code>, forcing <code>rewrite</code> to use the type exactly as written. But I don't like this <code>exprToTerm</code> business that much anyway, so I don't mind if it leads to weird issues. <span aria-label=\"grinning face with smiling eyes\" class=\"emoji emoji-1f601\" role=\"img\" title=\"grinning face with smiling eyes\">:grinning_face_with_smiling_eyes:</span></p>",
+        "id": 295253951,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1661441041
+    },
+    {
+        "content": "<p>I was thinking the <code>exprToTerm</code> solution was more efficient--<code>assert</code> and <code>intro1P</code> together introduce two new mvars, as well as doing all kinds of other stuff; <code>exprToTerm</code> does a lot less work, and there's no need to clear an <code>fvar</code> at the end.  But based on my experience, the <code>fvar</code> solution seems more reliable.</p>\n<p>I wonder if the \"type ascription\" you refer to is what's going on here:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"sd\">/--</span>\n<span class=\"sd\">  Convert the given goal `Ctx | target` into `Ctx |- targetNew`. It assumes the goals are definitionally equal.</span>\n<span class=\"sd\">  We use the proof term</span>\n<span class=\"sd\">  ```</span>\n<span class=\"sd\">  @id target mvarNew</span>\n<span class=\"sd\">  ```</span>\n<span class=\"sd\">  to create a checkpoint. -/</span>\n<span class=\"kd\">def</span> <span class=\"n\">_root_.Lean.MVarId.replaceTargetDefEq</span> <span class=\"o\">(</span><span class=\"n\">mvarId</span> <span class=\"o\">:</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">targetNew</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"n\">MVarId</span> <span class=\"o\">:=</span>\n  <span class=\"n\">mvarId.withContext</span> <span class=\"k\">do</span>\n    <span class=\"n\">mvarId.checkNotAssigned</span> <span class=\"bp\">`</span><span class=\"n\">change</span>\n    <span class=\"k\">let</span> <span class=\"n\">target</span>  <span class=\"bp\">←</span> <span class=\"n\">mvarId.getType</span>\n    <span class=\"k\">if</span> <span class=\"n\">target</span> <span class=\"bp\">==</span> <span class=\"n\">targetNew</span> <span class=\"k\">then</span>\n      <span class=\"n\">return</span> <span class=\"n\">mvarId</span>\n    <span class=\"k\">else</span>\n      <span class=\"k\">let</span> <span class=\"n\">tag</span>     <span class=\"bp\">←</span> <span class=\"n\">mvarId.getTag</span>\n      <span class=\"k\">let</span> <span class=\"n\">mvarNew</span> <span class=\"bp\">←</span> <span class=\"n\">mkFreshExprSyntheticOpaqueMVar</span> <span class=\"n\">targetNew</span> <span class=\"n\">tag</span>\n      <span class=\"k\">let</span> <span class=\"n\">newVal</span>  <span class=\"bp\">←</span> <span class=\"n\">mkExpectedTypeHint</span> <span class=\"n\">mvarNew</span> <span class=\"n\">target</span>\n      <span class=\"n\">mvarId.assign</span> <span class=\"n\">newVal</span>\n      <span class=\"n\">return</span> <span class=\"n\">mvarNew.mvarId</span><span class=\"bp\">!</span>\n</code></pre></div>\n<p>The value assigned to <code>mvarId</code> near the end is not <code>mvarNew</code>, but rather <code>@id target mvarNew</code>.  Is the purpose of that to produce an expression whose type will be <code>target</code>, even though the type of <code>mvarNew</code> is <code>targetNew</code> (which is definitionally equal)?</p>",
+        "id": 295282996,
+        "sender_full_name": "Dan Velleman",
+        "timestamp": 1661450710
+    },
+    {
+        "content": "<p>Yup, that explains it.  In <code>exprToTerm</code>, if I change <code>Lean.MVarId.assign mv.mvarId! val</code> to <code>Lean.MVarId.assign mv.mvarId! (← Lean.Meta.mkExpectedTypeHint val type)</code>, the problem goes away.</p>",
+        "id": 295285706,
+        "sender_full_name": "Dan Velleman",
+        "timestamp": 1661451576
+    },
+    {
+        "content": "<p>Nice!</p>\n<p>The <code>exprToTerm</code> method is almost certainly less efficient. It constructs a <code>Syntax</code> object which then gets interpreted by <code>evalTactic</code>, which dynamically dispatches to the elaborator for <code>rewrite</code>, which ultimately calls the implementation of <code>rewrite</code>. The fvar method, on the other hand, just statically calls the implementation of <code>rewrite</code>. Creating and assigning metavariables boils down to some lookups and inserts into persistent hashmaps, the cost of which should be negligible in comparison.</p>\n<p>Of course, neither method should take any noticable amount of time if you only execute it once.</p>",
+        "id": 295382685,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1661505604
+    },
+    {
+        "content": "<p>I was using <code>evalTactic</code> for both the <code>mvar</code> method and the <code>fvar</code> method, passing it a term referring to either the <code>mvar</code> or the <code>fvar</code>.  So, if I understand what you're saying, there's probably not much difference in efficiency, and anyway neither method will take a noticeable amount of time.  Perhaps the most important difference is that the <code>fvar</code> method seems more reliable.</p>",
+        "id": 295512917,
+        "sender_full_name": "Dan Velleman",
+        "timestamp": 1661548089
+    }
+]

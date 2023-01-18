@@ -1,0 +1,722 @@
+[
+    {
+        "content": "<p>Wow, I just discovered you can do this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">Jobs</span> <span class=\"n\">where</span>\n   <span class=\"n\">processed</span> <span class=\"o\">:</span> <span class=\"n\">IO.Ref</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">process</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">):</span> <span class=\"n\">ReaderT</span> <span class=\"n\">Jobs</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"n\">jobs.processed.modify</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">name</span> <span class=\"o\">::</span> <span class=\"n\">s</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">test</span> <span class=\"o\">(</span><span class=\"n\">jobs</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"n\">Jobs</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">for</span> <span class=\"n\">job</span> <span class=\"k\">in</span> <span class=\"n\">jobs</span> <span class=\"k\">do</span>\n    <span class=\"n\">process</span> <span class=\"n\">job</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">(</span><span class=\"n\">args</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">):</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">processedRef</span> <span class=\"bp\">←</span> <span class=\"n\">IO.mkRef</span> <span class=\"o\">([])</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"o\">:</span> <span class=\"n\">Jobs</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">processed</span> <span class=\"o\">:=</span> <span class=\"n\">processedRef</span><span class=\"o\">}</span>\n  <span class=\"n\">test</span> <span class=\"n\">args</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">run</span> <span class=\"n\">jobs</span>\n  <span class=\"k\">let</span> <span class=\"n\">result</span> <span class=\"bp\">←</span> <span class=\"n\">jobs.processed.get</span>\n  <span class=\"n\">IO.println</span> <span class=\"n\">result</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">main</span> <span class=\"o\">[</span><span class=\"s2\">\"apple\"</span><span class=\"o\">,</span> <span class=\"s2\">\"banana\"</span><span class=\"o\">,</span> <span class=\"s2\">\"orange\"</span><span class=\"o\">]</span> <span class=\"c1\">--[orange, banana, apple]</span>\n</code></pre></div>\n<p>Looking at the comments on <code>lean_st_ref_get</code> it appears this is also thread safe which is cool.  I assume this should be documented in <a href=\"https://leanprover.github.io/lean4/doc/monads/intro.html\">Monads</a> somewhere?  I tried to rewrite my sample above using the lower level <code>ST.Ref</code> primitives but got stuck.  Does anyone know how to do that?</p>",
+        "id": 300904532,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664228675
+    },
+    {
+        "content": "<p>A similar trick you may or may not be aware of is the <code>StateRefT</code> monad transformer, which has the appearance and semantics of <code>StateT</code> but is actually a <code>ReaderT (ST.Ref _)</code> under the hood</p>",
+        "id": 300906667,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664229651
+    },
+    {
+        "content": "<p>It's generally preferred whenever you are doing mostly linear updates to a data structure, since the use of mutable references makes it easier to ensure that you are doing efficient destructive updates and you aren't persisting the old state (unless you want to)</p>",
+        "id": 300906850,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664229730
+    },
+    {
+        "content": "<p>Here's a version of your program in ST:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">Jobs</span> <span class=\"o\">(</span><span class=\"n\">ω</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n   <span class=\"n\">processed</span> <span class=\"o\">:</span> <span class=\"n\">ST.Ref</span> <span class=\"n\">ω</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">process</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"o\">(</span><span class=\"n\">Jobs</span> <span class=\"n\">ω</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">ST</span> <span class=\"n\">ω</span><span class=\"o\">)</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"n\">jobs.processed.modify</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">name</span> <span class=\"o\">::</span> <span class=\"n\">s</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">test</span> <span class=\"o\">(</span><span class=\"n\">jobs</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"o\">(</span><span class=\"n\">Jobs</span> <span class=\"n\">ω</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">ST</span> <span class=\"n\">ω</span><span class=\"o\">)</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">for</span> <span class=\"n\">job</span> <span class=\"k\">in</span> <span class=\"n\">jobs</span> <span class=\"k\">do</span>\n    <span class=\"n\">process</span> <span class=\"n\">job</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">args</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span> <span class=\"o\">:=</span>\n  <span class=\"n\">runST</span> <span class=\"k\">fun</span> <span class=\"n\">ω</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">processedRef</span> <span class=\"bp\">←</span> <span class=\"n\">ST.mkRef</span> <span class=\"o\">([])</span>\n    <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"o\">:</span> <span class=\"n\">Jobs</span> <span class=\"n\">ω</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">processed</span> <span class=\"o\">:=</span> <span class=\"n\">processedRef</span><span class=\"o\">}</span>\n    <span class=\"n\">test</span> <span class=\"n\">args</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">run</span> <span class=\"n\">jobs</span>\n    <span class=\"k\">let</span> <span class=\"n\">result</span> <span class=\"bp\">←</span> <span class=\"n\">jobs.processed.get</span>\n    <span class=\"n\">pure</span> <span class=\"n\">result</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">foo</span> <span class=\"o\">[</span><span class=\"s2\">\"apple\"</span><span class=\"o\">,</span> <span class=\"s2\">\"banana\"</span><span class=\"o\">,</span> <span class=\"s2\">\"orange\"</span><span class=\"o\">]</span> <span class=\"c1\">--[orange, banana, apple]</span>\n</code></pre></div>",
+        "id": 300907243,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664229948
+    },
+    {
+        "content": "<p>Cool, thanks, also unfortunately \"goto definition\" doesn't work on StateRefT, and find all returns a very long list, do you happen to know where it is defined?</p>",
+        "id": 300907796,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664230273
+    },
+    {
+        "content": "<p><code>StateRefT</code>  is actually a macro made to look like a regular definition, in order to hide the infectious <code>ω</code> type argument. The actual definition is <code>StateRefT'</code></p>",
+        "id": 300908609,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664230732
+    },
+    {
+        "content": "<p>Here's a version using <code>StateRefT</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">process</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">StateRefT</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">ST</span> <span class=\"n\">ω</span><span class=\"o\">)</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">modify</span> <span class=\"k\">fun</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">name</span> <span class=\"o\">::</span> <span class=\"n\">s</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">test</span> <span class=\"o\">(</span><span class=\"n\">jobs</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">StateRefT</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">ST</span> <span class=\"n\">ω</span><span class=\"o\">)</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">for</span> <span class=\"n\">job</span> <span class=\"k\">in</span> <span class=\"n\">jobs</span> <span class=\"k\">do</span>\n    <span class=\"n\">process</span> <span class=\"n\">job</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">args</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span> <span class=\"o\">:=</span>\n  <span class=\"n\">runST</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">result</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">test</span> <span class=\"n\">args</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">run</span> <span class=\"o\">([])</span>\n    <span class=\"n\">pure</span> <span class=\"n\">result</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">foo</span> <span class=\"o\">[</span><span class=\"s2\">\"apple\"</span><span class=\"o\">,</span> <span class=\"s2\">\"banana\"</span><span class=\"o\">,</span> <span class=\"s2\">\"orange\"</span><span class=\"o\">]</span> <span class=\"c1\">--[orange, banana, apple]</span>\n</code></pre></div>",
+        "id": 300909203,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664231054
+    },
+    {
+        "content": "<p>ah, but in that StateRefT version you have a direct \"modify\" method so it's looking more like a StateM monad at that point, the previous one is  more interesting to me because the functions are all ReaderT, but one of them reaches in and modifies an ST.Ref structure field... which almost seems to break the promise that ReaderT is readonly...</p>",
+        "id": 300909538,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664231279
+    },
+    {
+        "content": "<p>The way you should think about it is that an <code>IO.Ref</code> is like a pointer, and the pointer doesn't change even though the data behind it does. So the <code>Ref</code> can be a regular immutable value stored in a function parameter or in the reader context, and all the mutation goes via the impure <code>IO.Ref.get</code> and <code>IO.Ref.set</code> functions. <code>ST ω</code> is just a way of doing the same thing as <code>IO</code> but with a \"local heap\" identified by <code>ω</code>, and with a safe <code>runST</code> function for running an <code>ST</code> computation in pure code.</p>",
+        "id": 300909612,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664231307
+    },
+    {
+        "content": "<p>last question, what is <code>ST</code> short for in namespace ST ? Can you write paragraph that motivates ST ?  Specifically, how is it different from breaking your context into 2 structs so you can use <code>ReaderT ReadOnlyContext  (StateT ReadWriteContext) ...</code> ? Is this ST.Ref in a readonly context achieving something you can't do that way?  For example, the Lean LSP server uses one of these for the RBMap that stores FileWorker objects, in the ServerContext where the ServerM monad is <code>ReaderT ServerContext IO</code>.  Could this have been done using  <code>ReaderT ServerContext  (StateT FileWorkerMap) ...</code> ?  So is ST just a shortcut for lazy people? :-) Or does this somehow also make updating the RBMap more efficient somehow?</p>",
+        "id": 300913956,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664233994
+    },
+    {
+        "content": "<p>By the way, in case you were missing the context, <code>ST</code> is an innovation from haskell. If you search for <code>runST</code> online you will probably find some discussions about it</p>",
+        "id": 300914925,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664234634
+    },
+    {
+        "content": "<p>The whole design and most of the names are lifted straight from there</p>",
+        "id": 300914985,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664234657
+    },
+    {
+        "content": "<p>ST is short for \"state\" I guess</p>",
+        "id": 300915004,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664234672
+    },
+    {
+        "content": "<p>I'm not even sure it's all that great a fit for lean. The trick with using type variables for \"branding\" local heaps is foreign to lean (and not even relevant since the compiler doesn't take advantage of it), and the things <code>ST</code> does are pretty close to provably impossible within the lean logic</p>",
+        "id": 300915537,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664235043
+    },
+    {
+        "content": "<p>Oh, <a href=\"https://wiki.haskell.org/Monad/ST\">https://wiki.haskell.org/Monad/ST</a> - it is \"strict Sate Threads\", so there is a real connection to multithreading... which leads to <a href=\"https://www.microsoft.com/en-us/research/publication/lazy-functional-state-threads/\">https://www.microsoft.com/en-us/research/publication/lazy-functional-state-threads/</a> yummy.</p>",
+        "id": 300916234,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664235456
+    },
+    {
+        "content": "<p>I guess the idea is that ST values can be mutated thread-unsafely because the data is constrained to live on one thread?</p>",
+        "id": 300916526,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664235602
+    },
+    {
+        "content": "<p>I can't imagine that really working out in lean</p>",
+        "id": 300916606,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664235634
+    },
+    {
+        "content": "<p>oh, maybe it's short for Single Threaded</p>",
+        "id": 300917090,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664235931
+    },
+    {
+        "content": "<p>It looks like <a href=\"https://github.com/leanprover/lean4/blob/master/src/runtime/io.cpp#L734\">lean_st_ref_get</a> is trying to do some thread safe stuff...</p>",
+        "id": 300917102,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664235944
+    },
+    {
+        "content": "<p>yeah, in lean they are definitely just the same thing as IO refs</p>",
+        "id": 300917169,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664235975
+    },
+    {
+        "content": "<p>in fact, <code>IO.Ref</code> is just a wrapper around <code>ST.Ref</code>, <code>ST.Ref.get</code> and <code>IO.Ref.get</code> are the same function</p>",
+        "id": 300917345,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664236102
+    },
+    {
+        "content": "<p>Trying to run each \"process\" job in a separate Task, but I get back an empty processed list, what am I doing wrong? (I wish we had tasks.waitAll)</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">Jobs</span> <span class=\"o\">(</span><span class=\"n\">ω</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n   <span class=\"n\">processed</span> <span class=\"o\">:</span> <span class=\"n\">ST.Ref</span> <span class=\"n\">ω</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">process</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"o\">(</span><span class=\"n\">Jobs</span> <span class=\"n\">ω</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">ST</span> <span class=\"n\">ω</span><span class=\"o\">)</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"n\">jobs.processed.modify</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">name</span> <span class=\"o\">::</span> <span class=\"n\">s</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">processTasks</span> <span class=\"o\">(</span><span class=\"n\">args</span><span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"o\">(</span><span class=\"n\">Jobs</span> <span class=\"n\">ω</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">ST</span> <span class=\"n\">ω</span><span class=\"o\">)</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"k\">let</span> <span class=\"n\">tasks</span> <span class=\"o\">:=</span> <span class=\"n\">args.map</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Task.spawn</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">dbgSleep</span> <span class=\"mi\">1000</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">process</span> <span class=\"n\">s</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">run</span> <span class=\"n\">jobs</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">result</span> <span class=\"o\">:=</span> <span class=\"n\">tasks.map</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">s.get</span><span class=\"o\">)</span>\n  <span class=\"n\">return</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">args</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span> <span class=\"o\">:=</span>\n  <span class=\"n\">runST</span> <span class=\"k\">fun</span> <span class=\"n\">ω</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">processedRef</span> <span class=\"bp\">←</span> <span class=\"n\">ST.mkRef</span> <span class=\"o\">([])</span>\n    <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"o\">:</span> <span class=\"n\">Jobs</span> <span class=\"n\">ω</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">processed</span> <span class=\"o\">:=</span> <span class=\"n\">processedRef</span><span class=\"o\">}</span>\n    <span class=\"n\">processTasks</span> <span class=\"n\">args</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">run</span> <span class=\"n\">jobs</span>\n    <span class=\"k\">let</span> <span class=\"n\">result</span> <span class=\"bp\">←</span> <span class=\"n\">jobs.processed.get</span>\n    <span class=\"n\">return</span> <span class=\"n\">result</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">foo</span> <span class=\"o\">[</span><span class=\"s2\">\"apple\"</span><span class=\"o\">,</span> <span class=\"s2\">\"banana\"</span><span class=\"o\">,</span> <span class=\"s2\">\"orange\"</span><span class=\"o\">]</span> <span class=\"c1\">--[] ???</span>\n</code></pre></div>",
+        "id": 300922049,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664239497
+    },
+    {
+        "content": "<p>and is there an easier way? Does lean have a <a href=\"https://dotnettutorials.net/lesson/parallel-foreach-method-csharp/\">parallel.foreach</a>  ?</p>",
+        "id": 300922161,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664239572
+    },
+    {
+        "content": "<p>You never ran the ST actions</p>",
+        "id": 300923059,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664240477
+    },
+    {
+        "content": "<p>Are you getting an unused variable result on the <code>let result :=</code> line? It should have been a red flag</p>",
+        "id": 300923077,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664240504
+    },
+    {
+        "content": "<p>So <code>process s |&gt;.run jobs</code> doesn't run it?</p>",
+        "id": 300923209,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664240639
+    },
+    {
+        "content": "<p>What you did in processTasks is to create a <code>List (Task (ST ω Unit))</code> consisting of tasks that will resolve to an ST action after 1 second, then mapping <code>Task.get</code> on them to get a <code>List (ST ω Unit)</code> (note that at this point none of these ST actions have run yet). The list is then dropped, and lean being a functional language sees that all the work is pointless and (correctly) optimizes the whole function to <code>pure ()</code></p>",
+        "id": 300923266,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664240666
+    },
+    {
+        "content": "<p>It runs the <code>ReaderT</code> wrapper, which means that it accepts the <code>Jobs</code> reference and resolves to an action in the base monad, here <code>ST</code></p>",
+        "id": 300923322,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664240737
+    },
+    {
+        "content": "<p>you still have to run the <code>ST</code> action</p>",
+        "id": 300923325,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664240744
+    },
+    {
+        "content": "<p>And you can't, this is the whole point of the \"single threaded\" business for the ST monad</p>",
+        "id": 300923391,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664240781
+    },
+    {
+        "content": "<p>You would have to be in the original <code>runST</code> invocation (that is, the main thread) in order to run it</p>",
+        "id": 300923408,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664240815
+    },
+    {
+        "content": "<p>inside your task you are computing a pure function so you don't have access to any state to mutate</p>",
+        "id": 300923444,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664240860
+    },
+    {
+        "content": "<p>What you actually want is to create an <em>impure</em> task, using the confusingly-located <code>BaseIO.asTask</code> function</p>",
+        "id": 300923509,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664240893
+    },
+    {
+        "content": "<p>and you need to use IO refs instead of ST refs and do everything in IO</p>",
+        "id": 300923523,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664240923
+    },
+    {
+        "content": "<p>this is obviously not a pure computation since you are deliberately trying to race threads to get the values out in a random order, which is not allowed for pure functions</p>",
+        "id": 300923665,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664241015
+    },
+    {
+        "content": "<p>Here's the corrected version:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">Jobs</span> <span class=\"n\">where</span>\n   <span class=\"n\">processed</span> <span class=\"o\">:</span> <span class=\"n\">IO.Ref</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">process</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"n\">Jobs</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"n\">jobs.processed.modify</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">name</span> <span class=\"o\">::</span> <span class=\"n\">s</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">processTasks</span> <span class=\"o\">(</span><span class=\"n\">args</span><span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"n\">Jobs</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"k\">let</span> <span class=\"n\">tasks</span> <span class=\"bp\">←</span> <span class=\"n\">args.mapM</span> <span class=\"k\">fun</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">IO.asTask</span> <span class=\"k\">do</span>\n    <span class=\"n\">IO.sleep</span> <span class=\"mi\">1000</span>\n    <span class=\"n\">process</span> <span class=\"n\">s</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">run</span> <span class=\"n\">jobs</span>\n  <span class=\"n\">for</span> <span class=\"n\">task</span> <span class=\"k\">in</span> <span class=\"n\">tasks</span> <span class=\"k\">do</span>\n    <span class=\"n\">ofExcept</span> <span class=\"n\">task.get</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">args</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">processedRef</span> <span class=\"bp\">←</span> <span class=\"n\">IO.mkRef</span> <span class=\"o\">([])</span>\n    <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"o\">:</span> <span class=\"n\">Jobs</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">processed</span> <span class=\"o\">:=</span> <span class=\"n\">processedRef</span><span class=\"o\">}</span>\n    <span class=\"n\">processTasks</span> <span class=\"n\">args</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">run</span> <span class=\"n\">jobs</span>\n    <span class=\"n\">jobs.processed.get</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">foo</span> <span class=\"o\">[</span><span class=\"s2\">\"apple\"</span><span class=\"o\">,</span> <span class=\"s2\">\"banana\"</span><span class=\"o\">,</span> <span class=\"s2\">\"orange\"</span><span class=\"o\">]</span> <span class=\"c1\">--[\"banana\", \"orange\", \"apple\"]</span>\n                                        <span class=\"c1\">--[\"banana\", \"apple\", \"orange\"]</span>\n                                        <span class=\"c1\">--[\"orange\", \"banana\", \"apple\"]</span>\n</code></pre></div>",
+        "id": 300923977,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664241320
+    },
+    {
+        "content": "<p>one thing to note about this example: it is important that we \"use\" the result of the tasks, here by matching on all of them with <code>ofExcept</code>, because if we don't the compiler is still permitted to drop the threads early or never start them</p>",
+        "id": 300924172,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664241514
+    },
+    {
+        "content": "<p>Thanks, I guess this means the <code>processed.modify</code> is actually thread safe, and ST is not about \"thread local storage\"...</p>",
+        "id": 300924231,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664241580
+    },
+    {
+        "content": "<p>well note that it's not ST any more</p>",
+        "id": 300924238,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664241598
+    },
+    {
+        "content": "<p>There isn't an ST version of this example</p>",
+        "id": 300924352,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664241658
+    },
+    {
+        "content": "<p>because there is no <code>ST.asTask</code></p>",
+        "id": 300924382,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664241674
+    },
+    {
+        "content": "<p>but yes, IO refs are thread safe</p>",
+        "id": 300924476,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664241734
+    },
+    {
+        "content": "<p>(and ST refs as well, since they are currently not distinguished from IO refs, although haskell makes a distinction and maybe lean will in the future)</p>",
+        "id": 300924492,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664241766
+    },
+    {
+        "content": "<p>Just about everything in lean is thread safe. It's pretty hard to guarantee that some data is not concurrently accessible except the refcount = 1 trick lean uses for destructive update</p>",
+        "id": 300924613,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664241870
+    },
+    {
+        "content": "<p>Very instructional, thanks!  we should also write a chapter in the reference manual about Tasks.  <a href=\"https://leanprover.github.io/lean4/doc/task.html?highlight=Task#task\">This chapter</a> is just a bit too cryptic :-).   Is there a \"parallel.foreach\" in lean that will do task creation for each item in the enumeration and gathering of results for me?</p>",
+        "id": 300924661,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664241949
+    },
+    {
+        "content": "<p>that's the <code>.map Task.get</code> trick from before</p>",
+        "id": 300924713,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664241973
+    },
+    {
+        "content": "<p>It wouldn't be too hard to make a macro that does it, I think</p>",
+        "id": 300924763,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664242047
+    },
+    {
+        "content": "<p>Yea, I'd want processTasks to collapse down to a single line like <code>Parallel.foreach args (λ _ =&gt; process s |&gt;.run jobs)</code> and this would return the gathered results (or throw).  I realize the results in this case are not interesting, but assuming we were not playing with IO.ref state in this example and process returned a String, then parallel.foreach would return List String. See the <a href=\"https://learn.microsoft.com/en-us/archive/blogs/dsyme/async-and-parallel-design-patterns-in-f-reporting-progress-with-events-plus-twitter-sample\">F# version</a>, they call it <code>Async.Parallel</code>...</p>\n<p>Do we have a naming convention for \"async\" methods that return a Task? Like in this version?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">Jobs</span> <span class=\"n\">where</span>\n   <span class=\"n\">processed</span> <span class=\"o\">:</span> <span class=\"n\">IO.Ref</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">asyncProcess</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"n\">Jobs</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Task</span> <span class=\"o\">(</span><span class=\"n\">Except</span> <span class=\"n\">IO.Error</span> <span class=\"n\">Unit</span><span class=\"o\">))</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"n\">IO.asTask</span> <span class=\"k\">do</span>\n    <span class=\"n\">IO.sleep</span> <span class=\"mi\">500</span>\n    <span class=\"n\">jobs.processed.modify</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">name</span> <span class=\"o\">::</span> <span class=\"n\">s</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">processTasks</span> <span class=\"o\">(</span><span class=\"n\">args</span><span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"n\">Jobs</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"k\">let</span> <span class=\"n\">tasks</span> <span class=\"bp\">←</span> <span class=\"n\">args.mapM</span> <span class=\"k\">fun</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">asyncProcess</span> <span class=\"n\">s</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">run</span> <span class=\"n\">jobs</span>\n  <span class=\"n\">for</span> <span class=\"n\">task</span> <span class=\"k\">in</span> <span class=\"n\">tasks</span> <span class=\"k\">do</span>\n    <span class=\"n\">ofExcept</span> <span class=\"n\">task.get</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">args</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">processedRef</span> <span class=\"bp\">←</span> <span class=\"n\">IO.mkRef</span> <span class=\"o\">[]</span>\n    <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"o\">:</span> <span class=\"n\">Jobs</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">processed</span> <span class=\"o\">:=</span> <span class=\"n\">processedRef</span><span class=\"o\">}</span>\n    <span class=\"n\">processTasks</span> <span class=\"n\">args</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">run</span> <span class=\"n\">jobs</span>\n    <span class=\"n\">jobs.processed.get</span>\n</code></pre></div>",
+        "id": 300925573,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664242573
+    },
+    {
+        "content": "<p>Actually, I started looking at this but I don't think it makes sense. What monad would it live in? What would you even be able to do in the body of the loop?</p>",
+        "id": 300925922,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664242885
+    },
+    {
+        "content": "<p>For loops structurally don't return a value, but if you don't return a value from a task it's completely useless</p>",
+        "id": 300926001,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664242954
+    },
+    {
+        "content": "<p>Maybe you should show something a little less like a toy example</p>",
+        "id": 300926022,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664242992
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">parForIn</span> <span class=\"o\">[</span><span class=\"n\">ForIn</span> <span class=\"n\">IO</span> <span class=\"n\">σ</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">xs</span> <span class=\"o\">:</span> <span class=\"n\">σ</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">IO</span> <span class=\"n\">PUnit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">PUnit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">tasks</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n  <span class=\"n\">for</span> <span class=\"n\">x</span> <span class=\"k\">in</span> <span class=\"n\">xs</span> <span class=\"k\">do</span>\n    <span class=\"n\">tasks</span> <span class=\"o\">:=</span> <span class=\"n\">tasks.push</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">IO.asTask</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">x</span><span class=\"o\">))</span>\n  <span class=\"n\">tasks.forM</span> <span class=\"o\">(</span><span class=\"n\">ofExcept</span> <span class=\"bp\">·.</span><span class=\"n\">get</span><span class=\"o\">)</span>\n\n<span class=\"n\">syntax</span> <span class=\"s2\">\"parallel \"</span> <span class=\"s2\">\"for \"</span> <span class=\"n\">ident</span> <span class=\"s2\">\" in \"</span> <span class=\"n\">termBeforeDo</span> <span class=\"s2\">\" do \"</span> <span class=\"n\">doSeq</span> <span class=\"o\">:</span> <span class=\"n\">doElem</span>\n<span class=\"n\">macro_rules</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">doElem</span><span class=\"bp\">|</span> <span class=\"n\">parallel</span> <span class=\"n\">for</span> <span class=\"bp\">$</span><span class=\"n\">x</span> <span class=\"k\">in</span> <span class=\"bp\">$</span><span class=\"n\">xs</span> <span class=\"k\">do</span> <span class=\"bp\">$</span><span class=\"n\">seq</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">doElem</span><span class=\"bp\">|</span> <span class=\"n\">parForIn</span> <span class=\"bp\">$</span><span class=\"n\">xs</span> <span class=\"k\">fun</span> <span class=\"bp\">$</span><span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span> <span class=\"bp\">$</span><span class=\"n\">seq</span><span class=\"o\">)</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">Jobs</span> <span class=\"n\">where</span>\n   <span class=\"n\">processed</span> <span class=\"o\">:</span> <span class=\"n\">IO.Ref</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">asyncProcess</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"n\">Jobs</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Task</span> <span class=\"o\">(</span><span class=\"n\">Except</span> <span class=\"n\">IO.Error</span> <span class=\"n\">Unit</span><span class=\"o\">))</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"n\">IO.asTask</span> <span class=\"k\">do</span>\n    <span class=\"n\">IO.sleep</span> <span class=\"mi\">500</span>\n    <span class=\"n\">jobs.processed.modify</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">name</span> <span class=\"o\">::</span> <span class=\"n\">s</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">processTasks</span> <span class=\"o\">(</span><span class=\"n\">args</span><span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"n\">Jobs</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"k\">let</span> <span class=\"n\">tasks</span> <span class=\"bp\">←</span> <span class=\"n\">args.mapM</span> <span class=\"k\">fun</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">asyncProcess</span> <span class=\"n\">s</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">run</span> <span class=\"n\">jobs</span>\n  <span class=\"n\">for</span> <span class=\"n\">task</span> <span class=\"k\">in</span> <span class=\"n\">tasks</span> <span class=\"k\">do</span>\n    <span class=\"n\">ofExcept</span> <span class=\"n\">task.get</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">args</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">processedRef</span> <span class=\"bp\">←</span> <span class=\"n\">IO.mkRef</span> <span class=\"o\">[]</span>\n    <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"o\">:</span> <span class=\"n\">Jobs</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">processed</span> <span class=\"o\">:=</span> <span class=\"n\">processedRef</span><span class=\"o\">}</span>\n    <span class=\"n\">parallel</span> <span class=\"n\">for</span> <span class=\"n\">name</span> <span class=\"k\">in</span> <span class=\"n\">args</span> <span class=\"k\">do</span>\n      <span class=\"n\">IO.sleep</span> <span class=\"mi\">500</span>\n      <span class=\"n\">jobs.processed.modify</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">name</span> <span class=\"o\">::</span> <span class=\"n\">s</span><span class=\"o\">)</span>\n    <span class=\"n\">jobs.processed.get</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">foo</span> <span class=\"o\">[</span><span class=\"s2\">\"apple\"</span><span class=\"o\">,</span> <span class=\"s2\">\"banana\"</span><span class=\"o\">,</span> <span class=\"s2\">\"orange\"</span><span class=\"o\">]</span> <span class=\"c1\">--[\"banana\", \"orange\", \"apple\"]</span>\n</code></pre></div>",
+        "id": 300926788,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664243823
+    },
+    {
+        "content": "<p>Perhaps I don't understand your comment, but I found the <a href=\"https://learn.microsoft.com/en-us/dotnet/standard/parallel-programming/task-parallel-library-tpl\">parallel task library</a> in .NET to be extremely useful, and powerful, since you can customize every aspect of task scheduling, prioritization and so on.  And it works really well with LINQ so you each task can pull async data from SQL, or HTTP or files, and transform the data, which you can then gather up and send along to a client.  Even the Lean LSP could use this and process all dependent files in a project when we add proper LSP project support.  But if lean Monads make it hard to type the result of a parallel operation over monadic functions then I guess this is a big strike against Monads, so it would be good to figure out how to solve that...</p>",
+        "id": 300926799,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664243846
+    },
+    {
+        "content": "<p>You need to learn to think more functionally about things. Most of these things are approached from a completely different angle. It's not that you can't do them, but rather putting them in imperative clothes isn't always a useful thing to do</p>",
+        "id": 300926896,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664243949
+    },
+    {
+        "content": "<p>Lake is highly parallel and also highly functional, and the server is too</p>",
+        "id": 300926911,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664243986
+    },
+    {
+        "content": "<p>Ok, but I need to utilize all 24 cores on my CPU, how does Lean help me do that?  Are you saying the right answer is IO.Process.spawn (like lake), and not Task.spawn?</p>",
+        "id": 300926997,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664244043
+    },
+    {
+        "content": "<p>Does <code>IO.asTask</code> not work?</p>",
+        "id": 300927037,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244066
+    },
+    {
+        "content": "<p>Or <code>Task.spawn</code> for pure functions</p>",
+        "id": 300927049,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244083
+    },
+    {
+        "content": "<p>It's true that lean's support for threading primitives is pretty bare (see <a href=\"https://github.com/leanprover/lean4/pull/1280\">lean4#1280</a>), but for this particular task <code>Task</code> seems to be the right tool for the job</p>",
+        "id": 300927142,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244143
+    },
+    {
+        "content": "<p>It is the minimum viable product yes.  Just doesn't have all the bells and whistles I'm used to having.</p>",
+        "id": 300927206,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664244228
+    },
+    {
+        "content": "<p>sure, but you haven't even asked for anything that needs the bells and whistles</p>",
+        "id": 300927263,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244259
+    },
+    {
+        "content": "<p>When I saw AsyncList in the Lean LSP Server I'm like why isn't this easier to do and generally available outside the Server implementation?</p>",
+        "id": 300927270,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664244265
+    },
+    {
+        "content": "<p>I'm a believer in doing something 3 times before making a premature abstraction for it</p>",
+        "id": 300927301,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244304
+    },
+    {
+        "content": "<p>every application has slightly different requirements, and you shouldn't make the library version until you have a reasonable grasp on what those requirements are</p>",
+        "id": 300927345,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244351
+    },
+    {
+        "content": "<p>I like where <a href=\"https://github.com/leanprover/lean4/issues/1280\">https://github.com/leanprover/lean4/issues/1280</a> is going, I am also a huge fan of <a href=\"https://devblogs.microsoft.com/dotnet/an-introduction-to-system-threading-channels/\">channels</a> as a way to coordinate across tasks - I think a channel would make the FileWorker management MUCH easier.</p>",
+        "id": 300927415,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664244396
+    },
+    {
+        "content": "<p>For instance, <code>AsyncList</code> corresponds to a lazy list, in which the tail of the list can be delayed and in a thunk. That's different from your application above, where you want all the results to be run in parallel</p>",
+        "id": 300927455,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244477
+    },
+    {
+        "content": "<p>if <code>AsyncList</code> was the library abstraction, it wouldn't be appropriate for your use case</p>",
+        "id": 300927510,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244499
+    },
+    {
+        "content": "<p>just because it's got <code>Async</code> and <code>List</code> in the name doesn't mean that tells the whole story</p>",
+        "id": 300927522,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244517
+    },
+    {
+        "content": "<p>I agree it is <strong>very</strong> hard to design a really great framework.  Often times frameworks just add more layers of \"inefficiency\" that add up to big performance problems.  But Lean has some new things to offer in that regard with metaprogramming, one could think about a self assembling framework that provides only what a given user needs, and optimized for that usage scenario.  Could be very interesting.</p>",
+        "id": 300927528,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664244527
+    },
+    {
+        "content": "<p>Okay, but again you have to start with the task at hand</p>",
+        "id": 300927544,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244550
+    },
+    {
+        "content": "<p>and work backward to the best way to support that</p>",
+        "id": 300927557,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244570
+    },
+    {
+        "content": "<p>I don't think we have a very clear idea at all of what a library abstraction in this space would actually <em>be</em>, besides what <code>Task</code> already is</p>",
+        "id": 300927631,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244621
+    },
+    {
+        "content": "<p>(Since you mentioned it: you can set thread priorities in <code>Task</code> primitives BTW.)</p>",
+        "id": 300927647,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244651
+    },
+    {
+        "content": "<p>There's a many very well designed parallel libraries to learn from including C++, .NET, Java, Rust,  so I don't think you need to start from first principles and ask each user \"what are you trying to do\".  If you approach it that way you won't have something great for another 10 years.</p>",
+        "id": 300927683,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664244688
+    },
+    {
+        "content": "<p>also LINQ is just functional style programming for C#</p>",
+        "id": 300927693,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244699
+    },
+    {
+        "content": "<p>No you really do have to design it afresh. Most imperative designs don't work at all in functional languages, or need to be rephrased such that they would hardly be recognizable by the end</p>",
+        "id": 300927806,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244817
+    },
+    {
+        "content": "<p>You just named a bunch of imperative languages</p>",
+        "id": 300927812,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244834
+    },
+    {
+        "content": "<p>Yes which is why I love it so much :-)  I was one the incubation team that developed <code>X#</code> which lead to <a href=\"https://www.microsoft.com/en-us/research/project/comega/\">c-omega</a> which was the precursor to LINQ.  We showed the C# team how to do it :-)</p>",
+        "id": 300927864,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664244848
+    },
+    {
+        "content": "<p>Well F# seems to have bolted onto .NET parallel library somehow... but I've never used it so I don't know how good it is.</p>",
+        "id": 300927875,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664244869
+    },
+    {
+        "content": "<p>anyway this doesn't seem to be an actually actionable suggestion. Do you want to suggest something more concrete?</p>",
+        "id": 300927884,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244891
+    },
+    {
+        "content": "<p>Or better yet, <a href=\"https://en.wikipedia.org/wiki/XY_problem\">#xy</a> the problem since the tools to do what you want are already available, once you figure them out</p>",
+        "id": 300927924,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664244943
+    },
+    {
+        "content": "<p>Nope just a question for now, and I like your \"parallel for\" macro.  Thanks for all your help.  Getting back to the question about <code>ST</code> I'll assume it means single threaded, and that when we used it in the parallel test, the modify method worked reliably because it was protecting the update to the <code>ST.Ref List String</code> ensuring that each update was serialized...</p>",
+        "id": 300928502,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664245645
+    },
+    {
+        "content": "<p>Here's a better test and it passes as expected:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">Jobs</span> <span class=\"n\">where</span>\n   <span class=\"n\">processed</span> <span class=\"o\">:</span> <span class=\"n\">IO.Ref</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">asyncProcess</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"n\">Jobs</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Task</span> <span class=\"o\">(</span><span class=\"n\">Except</span> <span class=\"n\">IO.Error</span> <span class=\"n\">Unit</span><span class=\"o\">))</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"n\">IO.asTask</span> <span class=\"k\">do</span>\n    <span class=\"n\">IO.sleep</span> <span class=\"mi\">1</span>\n    <span class=\"n\">jobs.processed.modify</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">name</span> <span class=\"o\">::</span> <span class=\"n\">s</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">processTasks</span> <span class=\"o\">(</span><span class=\"n\">args</span><span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"n\">Jobs</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"k\">let</span> <span class=\"n\">tasks</span> <span class=\"bp\">←</span> <span class=\"n\">args.mapM</span> <span class=\"k\">fun</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">asyncProcess</span> <span class=\"n\">s</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">run</span> <span class=\"n\">jobs</span>\n  <span class=\"n\">for</span> <span class=\"n\">task</span> <span class=\"k\">in</span> <span class=\"n\">tasks</span> <span class=\"k\">do</span>\n    <span class=\"n\">ofExcept</span> <span class=\"n\">task.get</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">args</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">processedRef</span> <span class=\"bp\">←</span> <span class=\"n\">IO.mkRef</span> <span class=\"o\">[]</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"o\">:</span> <span class=\"n\">Jobs</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">processed</span> <span class=\"o\">:=</span> <span class=\"n\">processedRef</span><span class=\"o\">}</span>\n  <span class=\"n\">processTasks</span> <span class=\"n\">args</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">run</span> <span class=\"n\">jobs</span>\n  <span class=\"n\">jobs.processed.get</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">test</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">max</span> <span class=\"o\">:=</span> <span class=\"mi\">10000</span>\n  <span class=\"k\">let</span> <span class=\"n\">x</span> <span class=\"bp\">←</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">List.range</span> <span class=\"n\">max</span><span class=\"o\">)</span>\n\n  <span class=\"k\">let</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">x.toArray.qsort</span> <span class=\"o\">(</span><span class=\"bp\">·&lt;·</span><span class=\"o\">)</span>\n\n  <span class=\"n\">for</span> <span class=\"n\">expected</span> <span class=\"k\">in</span> <span class=\"n\">List.range</span> <span class=\"n\">max</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">actual</span> <span class=\"o\">:=</span> <span class=\"n\">a</span><span class=\"o\">[</span><span class=\"n\">expected</span><span class=\"o\">]</span><span class=\"bp\">!</span>\n    <span class=\"k\">if</span> <span class=\"n\">actual</span> <span class=\"bp\">≠</span> <span class=\"n\">expected</span> <span class=\"k\">then</span>\n      <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"unexpected {actual} instead of {expected}\"</span>\n\n  <span class=\"n\">IO.println</span> <span class=\"s2\">\"ok\"</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">test</span>\n</code></pre></div>",
+        "id": 300929487,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664246703
+    },
+    {
+        "content": "<p>But getting back to my original question, how is this IO.Ref any better than using StateT like this?  I assume it is simply that we don't have to create a new <code>structure Jobs</code> container each time we update the state?  So is that all it is really for then, this minor efficiency improvement? If the StateT was on <code>List Nat</code> then even that difference goes away?  But perhaps if we have a sparse collection of randomly updatable objects then an ST.Ref for each one of those would be a win...?  Am I missing something?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">Jobs</span> <span class=\"n\">where</span>\n   <span class=\"n\">processed</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">Nat</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">asyncProcess</span> <span class=\"o\">(</span><span class=\"n\">i</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">StateT</span> <span class=\"n\">Jobs</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Task</span> <span class=\"o\">(</span><span class=\"n\">Except</span> <span class=\"n\">IO.Error</span> <span class=\"n\">Unit</span><span class=\"o\">))</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">modify</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">processed</span> <span class=\"o\">:=</span> <span class=\"n\">i</span> <span class=\"o\">::</span> <span class=\"n\">s.processed</span> <span class=\"o\">})</span>\n  <span class=\"n\">IO.asTask</span> <span class=\"k\">do</span>\n    <span class=\"n\">IO.sleep</span> <span class=\"mi\">1</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">processTasks</span> <span class=\"o\">(</span><span class=\"n\">args</span><span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">StateT</span> <span class=\"n\">Jobs</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">tasks</span> <span class=\"bp\">←</span> <span class=\"n\">args.mapM</span> <span class=\"k\">fun</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">asyncProcess</span> <span class=\"n\">s</span>\n  <span class=\"n\">for</span> <span class=\"n\">task</span> <span class=\"k\">in</span> <span class=\"n\">tasks</span> <span class=\"k\">do</span>\n    <span class=\"n\">ofExcept</span> <span class=\"n\">task.get</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">args</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">jobs</span> <span class=\"o\">:</span> <span class=\"n\">Jobs</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">processed</span> <span class=\"o\">:=</span> <span class=\"o\">[]}</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">s</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">processTasks</span> <span class=\"n\">args</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">run</span> <span class=\"n\">jobs</span>\n  <span class=\"n\">return</span> <span class=\"n\">s.processed</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">test</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">max</span> <span class=\"o\">:=</span> <span class=\"mi\">10000</span>\n  <span class=\"k\">let</span> <span class=\"n\">x</span> <span class=\"bp\">←</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">List.range</span> <span class=\"n\">max</span><span class=\"o\">)</span>\n\n  <span class=\"k\">let</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">x.toArray.qsort</span> <span class=\"o\">(</span><span class=\"bp\">·&lt;·</span><span class=\"o\">)</span>\n\n  <span class=\"k\">if</span> <span class=\"n\">a.size</span> <span class=\"bp\">≠</span> <span class=\"n\">max</span> <span class=\"k\">then</span>\n    <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"Returned wrong length {a.size} instead of {max}\"</span>\n  <span class=\"k\">else</span>\n    <span class=\"n\">for</span> <span class=\"n\">expected</span> <span class=\"k\">in</span> <span class=\"n\">List.range</span> <span class=\"n\">max</span> <span class=\"k\">do</span>\n      <span class=\"k\">let</span> <span class=\"n\">actual</span> <span class=\"o\">:=</span> <span class=\"n\">a</span><span class=\"o\">[</span><span class=\"n\">expected</span><span class=\"o\">]</span><span class=\"bp\">!</span>\n      <span class=\"k\">if</span> <span class=\"n\">actual</span> <span class=\"bp\">≠</span> <span class=\"n\">expected</span> <span class=\"k\">then</span>\n        <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"unexpected {actual} instead of {expected}\"</span>\n\n    <span class=\"n\">IO.println</span> <span class=\"s2\">\"ok\"</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">timeit</span> <span class=\"s2\">\"running: \"</span> <span class=\"n\">test</span>  <span class=\"c1\">-- ok, running:  503ms</span>\n</code></pre></div>\n<p>StateT does this in 504ms, and the previous ST.Ref  version did it in 509ms, so essentially the same... probably a huge thread start/join overhead in this case...</p>",
+        "id": 300930510,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664247694
+    },
+    {
+        "content": "<p>Ah, but I can't move the <code>modify (λ s =&gt; { processed := i :: s.processed })</code> inside the <code>IO.asTask</code> so perhaps THAT is the reason for ST.Ref...</p>",
+        "id": 300931456,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664248523
+    },
+    {
+        "content": "<p>Regarding your test, here's a simplification which does a lot of contentious writes to a shared variable, where the modification function is slow.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#eval</span> <span class=\"k\">show</span> <span class=\"n\">IO</span> <span class=\"n\">_</span> <span class=\"k\">from</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">var</span> <span class=\"bp\">←</span> <span class=\"n\">IO.mkRef</span> <span class=\"mi\">0</span>\n  <span class=\"k\">let</span> <span class=\"n\">tasks</span> <span class=\"bp\">←</span> <span class=\"o\">(</span><span class=\"n\">List.range</span> <span class=\"mi\">50</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">mapM</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">IO.asTask</span> <span class=\"k\">do</span>\n    <span class=\"n\">for</span> <span class=\"n\">_</span> <span class=\"k\">in</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"o\">:</span><span class=\"mi\">50</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n      <span class=\"k\">let</span> <span class=\"n\">f</span> <span class=\"n\">i</span> <span class=\"o\">:=</span> <span class=\"n\">dbgSleep</span> <span class=\"mi\">1</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">i</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">)</span>\n      <span class=\"n\">var.modify</span> <span class=\"n\">f</span>\n  <span class=\"n\">tasks.forM</span> <span class=\"o\">(</span><span class=\"n\">ofExcept</span> <span class=\"bp\">·.</span><span class=\"n\">get</span><span class=\"o\">)</span>\n  <span class=\"n\">var.get</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">show</span> <span class=\"n\">IO</span> <span class=\"n\">_</span> <span class=\"k\">from</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">var</span> <span class=\"bp\">←</span> <span class=\"n\">IO.mkRef</span> <span class=\"mi\">0</span>\n  <span class=\"k\">let</span> <span class=\"n\">tasks</span> <span class=\"bp\">←</span> <span class=\"o\">(</span><span class=\"n\">List.range</span> <span class=\"mi\">50</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">mapM</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">IO.asTask</span> <span class=\"k\">do</span>\n    <span class=\"n\">for</span> <span class=\"n\">_</span> <span class=\"k\">in</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"o\">:</span><span class=\"mi\">50</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n      <span class=\"k\">let</span> <span class=\"n\">f</span> <span class=\"n\">i</span> <span class=\"o\">:=</span> <span class=\"n\">dbgSleep</span> <span class=\"mi\">1</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">i</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">)</span>\n      <span class=\"n\">var.set</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">var.get</span><span class=\"o\">))</span>\n  <span class=\"n\">tasks.forM</span> <span class=\"o\">(</span><span class=\"n\">ofExcept</span> <span class=\"bp\">·.</span><span class=\"n\">get</span><span class=\"o\">)</span>\n  <span class=\"n\">var.get</span>\n</code></pre></div>\n<p>The first test is fairly slow and also gets the right answer (<code>50*50 = 2500</code>), while the second test is fast and also wrong (I get almost exactly <code>400 = 50*8</code> which again reveals the concurrency). This is demonstrating something that probably should have been in the docs: <code>Ref.modify</code> atomically performs the modification by taking a lock on the ref, so all the writes are serialized. In the second example we use <code>get</code> and <code>set</code> separately and lots of increments are lost due to concurrent modification.</p>",
+        "id": 300932023,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664249054
+    },
+    {
+        "content": "<p>yes separate get and set is rife with problems.  One needs an atomic update, sounds like modify is exactly that.  Note that in <a href=\"https://www.microsoft.com/en-us/research/publication/lazy-functional-state-threads/\">Simon's paper</a> they say that \"ST\" stands for \"State Transformer\".</p>",
+        "id": 300932335,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664249396
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"434989\">Chris Lovett</span> <a href=\"#narrow/stream/270676-lean4/topic/modifiable.20state.20inside.20a.20ReaderM.20struct/near/300930510\">said</a>:</p>\n<blockquote>\n<p>But getting back to my original question, how is this IO.Ref any better than using StateT like this?  I assume it is simply that we don't have to create a new <code>structure Jobs</code> container each time we update the state?  So is that all it is really for then, this minor efficiency improvement? If the StateT was on <code>List Nat</code> then even that difference goes away?  But perhaps if we have a sparse collection of randomly updatable objects then an ST.Ref for each one of those would be a win...?  Am I missing something?</p>\n</blockquote>\n<p>The differences are washed out even more than you might expect because lean performs destructive updates when you use a variable linearly (that is, you don't keep multiple references to the state, which could require persisting old values). So in many tests like this you will see almost zero difference between using mutation and using <code>StateT</code> which does functional-but-in-place mutation of a value.</p>\n<p>However, the FBIP optimization is brittle and also comes with some overheads of its own, depending on how you write it. For example <code>StateM s a</code> is a wrapper for a function <code>s -&gt; a × s</code>, which means that every call to a <code>StateM</code> function has to allocate a pair and then destruct it. The compiler can often optimize these away but it's not really zero cost. With \"true mutation\" you don't have to put the <code>s</code> in an extra box (although there is a very similar overhead to this in using <code>IO</code> because of the error checking, although there is work being done on the compiler to make IO zero cost in more cases).</p>\n<p>It's not a clear win in either direction. Choose the form that fits your design the best.</p>",
+        "id": 300932475,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664249503
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"434989\">Chris Lovett</span> <a href=\"#narrow/stream/270676-lean4/topic/modifiable.20state.20inside.20a.20ReaderM.20struct/near/300932335\">said</a>:</p>\n<blockquote>\n<p>yes separate get and set is rife with problems.  One needs an atomic update, sounds like modify is exactly that.  Note that in <a href=\"https://www.microsoft.com/en-us/research/publication/lazy-functional-state-threads/\">Simon's paper</a> they say that \"ST\" stands for \"State Transformer\".</p>\n</blockquote>\n<p>yikes, that makes it a bit of a nightmare to disambiguate <code>ST</code> and <code>StateT</code></p>",
+        "id": 300932557,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664249557
+    },
+    {
+        "content": "<p>Yeah, a bit of a collision in terminology with \"StateT\" being a \"Monad Transfomer with updatatable State\" and \"ST\" being an \"State Transformer Monad\"...</p>",
+        "id": 300932703,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664249703
+    },
+    {
+        "content": "<p>And yes, I did notice that <code>ExceptM</code> adds an Except wrapper even in the <code>Except.ok</code> code path, which seems not so great to me.  Most other runtimes work very hard to ensure you only pay for exception handling except in the exceptional cases where someone actually calls <code>throw</code>.  So yes, it would be very cool if we could optimize that way somehow.</p>",
+        "id": 300935004,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664252013
+    },
+    {
+        "content": "<p>Lean's <code>Except</code> is more similar to Rust's <code>Result</code> type or C error return values than traditional exception handling in the style of C++ / C# / Java which use stack unwinding and runtime type information (RTTI). That strategy has very low cost on the happy path but is super expensive if you ever use it, and many C/C++ codebases avoid it entirely.</p>",
+        "id": 300937220,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664254185
+    },
+    {
+        "content": "<p>That kind of side channel is also a really poor fit for functional languages generally. The nearest equivalent is the CPS monad, where you pass an error continuation to be called in the event of an exception. It works pretty well but it also incurs the cost of a closure allocation in the common case.</p>",
+        "id": 300937492,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664254403
+    },
+    {
+        "content": "<p>Totally agree stack unwinding is a horrible thing, even in languages that have implemented it really well.  So yeah, no free lunch without it.  I guess so long as <code>Except</code> is on the stack instead of on the heap that would help a lot.</p>",
+        "id": 300940400,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664256822
+    },
+    {
+        "content": "<p>So I put a doc together, <a href=\"https://github.com/leanprover/lean4/pull/1653\">https://github.com/leanprover/lean4/pull/1653</a>, waddaya think?</p>",
+        "id": 300940415,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664256838
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"434989\">@Chris Lovett</span> Added some review comments. There is another thing about ST that I did not mention, but is a pretty important difference from <code>StateT</code>: The <code>ST</code> monad allows you to create references of <em>arbitrary</em> types, you don't have to determine all the state you are going to carry in advance at the call to <code>StateT.run</code>. You can see this in the type of <code>ST</code>: although it has this mysterious <code>ω</code> parameter, what it doesn't have is the state type like <code>StateT</code> would.</p>",
+        "id": 301064876,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664298679
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">ref</span> <span class=\"o\">:</span> <span class=\"n\">ST.Ref</span> <span class=\"n\">ω</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">bar</span> <span class=\"o\">:</span> <span class=\"n\">ST</span> <span class=\"n\">ω</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ST</span> <span class=\"n\">ω</span> <span class=\"o\">(</span><span class=\"n\">Nat</span> <span class=\"bp\">×</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">x</span> <span class=\"bp\">←</span> <span class=\"n\">ref.get</span>\n  <span class=\"n\">bar</span>\n  <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"bp\">←</span> <span class=\"n\">ref.get</span><span class=\"o\">)</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">runST</span> <span class=\"k\">fun</span> <span class=\"n\">ω</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">ST.Ref</span> <span class=\"n\">ω</span> <span class=\"n\">Nat</span> <span class=\"bp\">←</span> <span class=\"n\">ST.mkRef</span> <span class=\"mi\">0</span>\n  <span class=\"k\">let</span> <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">ST.Ref</span> <span class=\"n\">ω</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">ST.mkRef</span> <span class=\"o\">[]</span>\n  <span class=\"k\">let</span> <span class=\"n\">z</span> <span class=\"bp\">←</span> <span class=\"n\">foo</span> <span class=\"n\">x</span> <span class=\"k\">do</span>\n    <span class=\"n\">x.modify</span> <span class=\"o\">(</span><span class=\"bp\">·+</span><span class=\"mi\">1</span><span class=\"o\">)</span>\n    <span class=\"n\">y.modify</span> <span class=\"o\">(</span><span class=\"mi\">3</span><span class=\"o\">::</span><span class=\"bp\">·</span><span class=\"o\">)</span>\n  <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">x.get</span><span class=\"o\">,</span> <span class=\"bp\">←</span> <span class=\"n\">y.get</span><span class=\"o\">,</span> <span class=\"n\">z</span><span class=\"o\">)</span> <span class=\"c1\">-- (1, [3], 0, 1)</span>\n</code></pre></div>",
+        "id": 301064997,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664298715
+    },
+    {
+        "content": "<p>Here's an example that highlights some of this. The <code>foo</code> function reads a <code>Nat</code> reference, then runs an arbitrary function <code>bar</code>, then reads the reference again. It has no idea how much state is actually in the monad, whether there are any other references and what types they are. In the main function, we call <code>foo</code> where there are two references, one of type <code>Nat</code> and one of type <code>List Nat</code>, and modify both of them in <code>bar</code>, so <code>foo</code> can see the state change to <code>x</code> but the change to <code>y</code> also happened. You can't do this sort of thing using <code>StateT</code> without a lot of contortion.</p>",
+        "id": 301065540,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664298866
+    },
+    {
+        "content": "<p>Interesting, looking at your doc feedback, where you want to simplify everything and remove all mention of ReaderM and so on seems like it no longer fits in the monads chapter.  So I'm wondering if we need a separate page someplace that talks about \"references\" independently from monads (I think your simpler example that has nothing to do with monads really, except that it is running in an IO monad).  Then perhaps my mentioning of ST.Ref in the Monads chapter could happen in ReaderM just as a side note, and we could put another mention in the documentation on <code>let mut</code> because an IO.Ref also gets around the limitations of let mut in a multithreading app.  But the above information then makes me think we do still need an ST monad specific page in the monads chapter that contains this kind of info... more on \"ST\" properties so it is not just about \"ST.Ref\"?</p>",
+        "id": 301115923,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664312132
+    },
+    {
+        "content": "<p>I would start by presenting the type signatures of the <code>ST.Ref</code> functions and <code>runST</code>, then explain <code>runST</code> a bit because it's weird, then give a motivating example and contrast with StateT. It's certainly most relevant to the monads chapter because it's a specific tool in monadic programming</p>",
+        "id": 301116280,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664312282
+    },
+    {
+        "content": "<p>It should be put in a place where we can have some reasonable expectation that the reader can understand how monad type signatures work and what <code>do</code> notation does at least at a basic level, meaning it has to come in or after the monads chapter</p>",
+        "id": 301116647,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664312423
+    },
+    {
+        "content": "<p>it's a more advanced topic to be sure though</p>",
+        "id": 301116684,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664312438
+    },
+    {
+        "content": "<p>Ok, I think I will move the \"ST\" page so it comes after \"Transformers\" then I can also show StateRefT, and call it more of an advanced topic and I will start by presenting ST, ST.Ref and runST in a simpler example and I will rename it \"ST References\" since ST and ST.Ref are inseparable.</p>\n<p>But I have a quick question, when I look at <a href=\"https://github.com/leanprover/lean4/blob/master/src/Lean/Meta/Tactic/Cleanup.lean\">https://github.com/leanprover/lean4/blob/master/src/Lean/Meta/Tactic/Cleanup.lean</a> it uses <code>StateRefT</code> in a bunch of local functions and if I change all those to <code>StateT</code> it all compiles and works?  So why is <code>StateRefT</code> used here instead of <code>StateT</code> ?</p>",
+        "id": 301133104,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664320281
+    },
+    {
+        "content": "<p><code>StateRefT</code> is basically a wrapper around <code>ST</code> made to give it the interface of <code>StateT</code></p>",
+        "id": 301133759,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664320732
+    },
+    {
+        "content": "<p>That is, it is deliberately designed to be a drop in replacement for <code>StateT</code></p>",
+        "id": 301133788,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664320750
+    },
+    {
+        "content": "<p>Right, which explains why I could drop in StateT and everything worked, but my question is why did the author choose StateRefT in this case instead of StateT ?  Is there some functional difference that is important in this case?</p>",
+        "id": 301134020,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664320922
+    },
+    {
+        "content": "<p>Well you should check the benchmark numbers for that</p>",
+        "id": 301134113,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664320971
+    },
+    {
+        "content": "<p>There is no <em>functional</em> difference, but there could be a performance difference</p>",
+        "id": 301134139,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664320992
+    },
+    {
+        "content": "<p>Got it, is there a benchmark test for Lean.Meta already? Where do I find it and learn how to run it?</p>",
+        "id": 301134177,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664321029
+    },
+    {
+        "content": "<p><a href=\"http://speedcenter.informatik.kit.edu/velcom/home\">http://speedcenter.informatik.kit.edu/velcom/home</a></p>",
+        "id": 301134476,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664321235
+    },
+    {
+        "content": "<p>Thanks, I just found the connection in  ~/tests/bench/...</p>",
+        "id": 301135546,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664322061
+    },
+    {
+        "content": "<p>Any ideas on this error related to Lean.Data.HashMap ?<br>\n<a href=\"/user_uploads/3121/Sd-p9kPWxWYfplQLzK3i4qVD/image.png\">image.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/Sd-p9kPWxWYfplQLzK3i4qVD/image.png\" title=\"image.png\"><img src=\"/user_uploads/3121/Sd-p9kPWxWYfplQLzK3i4qVD/image.png\"></a></div>",
+        "id": 301137040,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664323174
+    },
+    {
+        "content": "<p>my branch is up to date with lean4 master...</p>",
+        "id": 301137050,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664323185
+    },
+    {
+        "content": "<p>it looks like you are using nightly lean in the error message</p>",
+        "id": 301137260,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664323314
+    },
+    {
+        "content": "<p>try <code>elan override set lean4</code> in the directory, assuming you previously set <code>elan toolchain link lean4 &lt;path/to/stage1&gt;</code></p>",
+        "id": 301137695,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664323577
+    },
+    {
+        "content": "<p>I see, yes <code>elan override set ...</code>  solved the problem.  That's not mentioned in the readme.</p>",
+        "id": 301138165,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664323882
+    },
+    {
+        "content": "<p>looks like another missing dependency also not mentioned in the readme (scipy is also missing):</p>\n<blockquote>\n<p>Benchmark 1 out of 10 to 10       [------------------------------------]    0%[17:11:44] Program block no. 0 failed: The perf tool needed for the perf stat runner isn't installed. You can install it via the linux-tools (or so) package of your distribution. If it's installed, you might by only allowed to use it with super user rights. Test a simple command like <code>perf stat /bin/echo</code> to see what you have to do if you want to use with your current rights.</p>\n</blockquote>\n<p>Doyou know the magic install command line for this?</p>",
+        "id": 301138274,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664323955
+    },
+    {
+        "content": "<p>Ubuntu says to try <code>sudo apt install linux-tools-common</code>  so I'll try it...</p>",
+        "id": 301138444,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664324065
+    },
+    {
+        "content": "<p>I have never used the benchmarking tool</p>",
+        "id": 301138539,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1664324133
+    },
+    {
+        "content": "<p>I see, well to conclude the question then I just discovered that the linux perf tool is not supported in WSL.  So that's my problem.</p>",
+        "id": 301140437,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1664325373
+    }
+]

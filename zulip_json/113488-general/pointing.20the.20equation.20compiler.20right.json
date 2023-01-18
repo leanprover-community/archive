@@ -1,0 +1,176 @@
+[
+    {
+        "content": "<p>Hi, I'm new to Lean. I'm trying to write the following, but termination checking fails for <code>weaken_term</code> in the second recursive call for <code>app</code> and the recursive call for <code>lam</code>. Each time, the reported problem is that <code>m</code> does not decrease, but that should be irrelevant because the induction is on the term. How can I give Lean this hint? Or is the Lean termination checker not sufficiently Foetus-like, so I have to do something else?</p>\n<div class=\"codehilite\"><pre><span></span>open nat\n\ninductive fin&#39; : nat → Type\n| zero {n} : fin&#39; (succ n)\n| succ {n} : fin&#39; n → fin&#39; (succ n)\nopen fin&#39;\n\ninductive dir : Type\n| syn : dir\n| chk : dir\nopen dir\n\ninductive term : nat → dir → Type\n| var {n} (i : fin&#39; n)                      : term n syn\n| app {n} (e : term n syn) (s : term n chk) : term n syn\n| lam {n} (s : term (succ n) chk)           : term n chk\nopen term\n\ndef plus : nat → nat → nat\n| zero n := n\n| (succ m) n := succ (plus m n)\n\ndef weaken_fin&#39; {n} : ∀ m, fin&#39; (plus m n) → fin&#39; (plus m (succ n))\n| zero i := succ i\n| (succ m) zero := zero\n| (succ m) (succ i) := succ (weaken_fin&#39; m i)\n\ndef weaken_term {n} : ∀ m {d}, term (plus m n) d → term (plus m (succ n)) d\n| m syn (var i) := var (weaken_fin&#39; m i)\n| m syn (app e s) := app (weaken_term m e) (weaken_term m s)\n| m chk (lam s) := lam (weaken_term (succ m) s)\n</pre></div>",
+        "id": 126495867,
+        "sender_full_name": "James Wood",
+        "timestamp": 1526212737
+    },
+    {
+        "content": "<p>It can't be done directly by induction on <code>term</code>, since you would forget the relation to m and n</p>",
+        "id": 126496313,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526213755
+    },
+    {
+        "content": "<p>Here's a way to write that you want to do induction explicitly with the equation compiler:</p>\n<div class=\"codehilite\"><pre><span></span>def weaken_term&#39; {n} : ∀ {k d}, term k d → ∀ m, plus m n = k → term (plus m (succ n)) d\n| _ syn (var i) m rfl := var (weaken_fin&#39; m i)\n| _ syn (app e s) m rfl := app (weaken_term&#39; e m rfl) (weaken_term&#39; s m rfl)\n| _ chk (lam s) m rfl := lam (weaken_term&#39; s (succ m) rfl)\n\ndef weaken_term {n} (m) {d} (s : term (plus m n) d) : term (plus m (succ n)) d :=\nweaken_term&#39; s m rfl\n</pre></div>",
+        "id": 126496355,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526213810
+    },
+    {
+        "content": "<p>Thanks! Where exactly is the relation to <code>m</code> and <code>n</code> being lost? I can't quite pick out why the term is allowed to depend on the index <code>d</code> like it does.</p>",
+        "id": 126496552,
+        "sender_full_name": "James Wood",
+        "timestamp": 1526214293
+    },
+    {
+        "content": "<p>It might help to try using the <code>induction</code> tactic to get a sense of what lean is doing under the hood</p>",
+        "id": 126496755,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526214804
+    },
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span>def weaken_term {n} : ∀ m {d}, term (plus m n) d → term (plus m (succ n)) d :=\nbegin\n  intros m d s,\n  induction s with n&#39; i n&#39; e s IH1 IH2 n&#39; s IH,\n  exact var (weaken_fin&#39; m i), --fail\nend.\n</pre></div>\n\n\n<p>Notice that you won't be able to prove the first goal because the type is <code>fin' n'</code> instead of <code>fin' (plus m n)</code>. This is where the equality assumption comes in</p>",
+        "id": 126497036,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526215543
+    },
+    {
+        "content": "<p>You can actually prove this directly in tactic mode by starting with</p>\n<div class=\"codehilite\"><pre><span></span>  intros m d s,\n  generalize h : plus m n = k,\n  induction s with n&#39; i n&#39; e s IH1 IH2 n&#39; s IH generalizing k; subst k,\n</pre></div>\n\n\n<p>which has the effect of introducing the equality before doing the induction</p>",
+        "id": 126497123,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526215703
+    },
+    {
+        "content": "<p>Can the problem be restated in terms of induction principles, rather than tactics? If so, I think I can work that out.</p>",
+        "id": 126497175,
+        "sender_full_name": "James Wood",
+        "timestamp": 1526215841
+    },
+    {
+        "content": "<p>Look at the proof produced by the naive induction tactic approach:</p>\n<div class=\"codehilite\"><pre><span></span>def weaken_term {n} : ∀ m {d}, term (plus m n) d → term (plus m (succ n)) d :=\nbegin\n  intros m d s,\n  induction s; admit\nend\nset_option pp.implicit true\n#print weaken_term\n</pre></div>\n\n\n<div class=\"codehilite\"><pre><span></span>def weaken_term : Π {n : ℕ} (m : ℕ) {d : dir}, term (plus m n) d → term (plus m (succ n)) d :=\nλ {n : ℕ} (m : ℕ) (d : dir) (s : term (plus m n) d),\n  (λ (s : term (plus m n) d),\n     @term.rec (λ (_x : ℕ) {d : dir} (s : term _x d), term (plus m (succ n)) d)\n       (λ {s_n : ℕ} (s_i : fin&#39; s_n), sorry)\n       (λ {s_n : ℕ} (s_e : term s_n syn) (s_s : term s_n chk) (s_ih_e : term (plus m (succ n)) syn)\n        (s_ih_s : term (plus m (succ n)) chk), sorry)\n       (λ {s_n : ℕ} (s_s : term (succ s_n) chk) (s_ih : term (plus m (succ n)) chk), sorry)\n       (plus m n)\n       d\n       s)\n    s\n</pre></div>",
+        "id": 126497229,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526216002
+    },
+    {
+        "content": "<p>Notice that the motive to the <code>term.rec</code> is <code>λ (_x : ℕ) {d : dir} (s : term _x d), term (plus m (succ n)) d</code></p>",
+        "id": 126497230,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526216026
+    },
+    {
+        "content": "<p>In other words, it has assumed you are trying to prove <code>def not_true {n} : ∀ m {d} k, term k d → term (plus m (succ n)) d</code></p>",
+        "id": 126497271,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526216087
+    },
+    {
+        "content": "<p>where it has \"forgotten\" that the <code>k</code> there is actually <code>plus m n</code></p>",
+        "id": 126497278,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526216116
+    },
+    {
+        "content": "<p>By the way, something seems off about your inductive:</p>\n<div class=\"codehilite\"><pre><span></span>theorem no_chk {n} : term n chk → false :=\nbegin\n  generalize h : chk = d,\n  intro s,\n  induction s generalizing h; injection h,\n  exact s_ih rfl\nend\n</pre></div>",
+        "id": 126497464,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526216573
+    },
+    {
+        "content": "<p>That's fixed now.</p>",
+        "id": 126497469,
+        "sender_full_name": "James Wood",
+        "timestamp": 1526216616
+    },
+    {
+        "content": "<blockquote>\n<p>You can actually prove this directly in tactic mode by starting with<br>\n...<br>\nwhich has the effect of introducing the equality before doing the induction</p>\n</blockquote>\n<p>I tried doing this, but I get a lot of weird-looking errors, like “vm check failed”, “invalid 'begin-end' expression, ',' expected”, and “sync”.</p>",
+        "id": 126497994,
+        "sender_full_name": "James Wood",
+        "timestamp": 1526217870
+    },
+    {
+        "content": "<p>Code (supporting definitions have changed a bit):</p>\n<div class=\"codehilite\"><pre><span></span>def weaken_term&#39; {m} : ∀ n {d}, term&#39; (m + n) d → term&#39; ((m + 1) + n) d :=\nbegin\n  intros n d t,\n  generalize h : m + n = k\n  induction t with n&#39; i n&#39; e s ihe ihs n&#39; s ih generalizing k; subst k,\n  { _ },\n  { _ },\n  { _ },\n  { _ },\n  { _ }\nend\n</pre></div>",
+        "id": 126497995,
+        "sender_full_name": "James Wood",
+        "timestamp": 1526217901
+    },
+    {
+        "content": "<p>You shouldn't use <code>{ _ }</code> as a tactic. Lean doesn't like being asked to run tactics that are not yet determined</p>",
+        "id": 126498056,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526218045
+    },
+    {
+        "content": "<p>instead you can just write <code>{ }</code></p>",
+        "id": 126498057,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526218057
+    },
+    {
+        "content": "<p>meaning \"run no tactic\", and then it will fail at the right bracket because you aren't done yet</p>",
+        "id": 126498058,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526218081
+    },
+    {
+        "content": "<p>Aah, thanks.</p>",
+        "id": 126498099,
+        "sender_full_name": "James Wood",
+        "timestamp": 1526218112
+    },
+    {
+        "content": "<p>The problem seemed to be a missing comma, so that's sorted.</p>",
+        "id": 126498100,
+        "sender_full_name": "James Wood",
+        "timestamp": 1526218132
+    },
+    {
+        "content": "<p>Is <code>_</code> the best way to leave a hole in a pattern-matching definition?</p>",
+        "id": 126498155,
+        "sender_full_name": "James Wood",
+        "timestamp": 1526218276
+    },
+    {
+        "content": "<p>Or is there some way to introduce an interactive hole?</p>",
+        "id": 126498157,
+        "sender_full_name": "James Wood",
+        "timestamp": 1526218310
+    },
+    {
+        "content": "<p>I don't quite understand what you mean</p>",
+        "id": 126498199,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526218365
+    },
+    {
+        "content": "<p>I can't think of what an interactive hole is, but <code>_</code> is useful as a wildcard in patterns</p>",
+        "id": 126498204,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526218389
+    },
+    {
+        "content": "<p>Hole à la Agda (or Idris, to some extent).</p>",
+        "id": 126498247,
+        "sender_full_name": "James Wood",
+        "timestamp": 1526218468
+    },
+    {
+        "content": "<p>Maybe it's not necessary with the way lean-mode works, though I still feels like a hack to use the “this should be inferrable by unification” thing to mean “I'm going to write something here”.</p>",
+        "id": 126498303,
+        "sender_full_name": "James Wood",
+        "timestamp": 1526218656
+    },
+    {
+        "content": "<p>Lean actually has holes in term mode, <code>{! !}</code>, but they are not well developed at all and never made it past alpha</p>",
+        "id": 126498349,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526218740
+    },
+    {
+        "content": "<p>for the most part you can use <code>begin end</code> or <code>_</code> where stuff is expected</p>",
+        "id": 126498354,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1526218791
+    }
+]

@@ -1,0 +1,92 @@
+[
+    {
+        "content": "<p>The <code>@[simps mul]</code> attribute on <a href=\"https://leanprover-community.github.io/mathlib_docs/find/direct_sum.ghas_mul.of_add_subgroups\">docs#direct_sum.ghas_mul.of_add_subgroups</a> is making the definition <em>very</em> slow; <code>profiler</code> says:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">elaboration</span> <span class=\"n\">of</span> <span class=\"n\">ghas_mul.of_add_subgroups</span> <span class=\"n\">took</span> <span class=\"mi\">184</span><span class=\"n\">ms</span>\n<span class=\"n\">type</span> <span class=\"n\">checking</span> <span class=\"n\">of</span> <span class=\"n\">ghas_mul.of_add_subgroups</span> <span class=\"n\">took</span> <span class=\"mi\">54</span><span class=\"bp\">.</span><span class=\"mi\">6</span><span class=\"n\">ms</span>\n<span class=\"n\">decl</span> <span class=\"n\">post</span><span class=\"bp\">-</span><span class=\"n\">processing</span> <span class=\"n\">of</span> <span class=\"n\">ghas_mul.of_add_subgroups</span> <span class=\"n\">took</span> <span class=\"mi\">44</span><span class=\"bp\">.</span><span class=\"mi\">3</span><span class=\"n\">s</span>\n</code></pre></div>\n<p>Is there an easy way to see what's going on here?</p>",
+        "id": 236636962,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1619684816
+    },
+    {
+        "content": "<p>Investigating this now. Running the profiler on the command</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">run_cmd</span> <span class=\"n\">tactic.try_for</span> <span class=\"mi\">100000</span> <span class=\"o\">(</span><span class=\"n\">simps_tac</span> <span class=\"bp\">``</span><span class=\"n\">ghas_mul.of_add_subgroups</span> <span class=\"o\">{</span><span class=\"n\">rhs_md</span> <span class=\"o\">:=</span> <span class=\"n\">semireducible</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"s2\">\"mul\"</span><span class=\"o\">]</span> <span class=\"n\">tt</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>does not give what I expected. Apparently 99+% of the time is spent in the tactic <a href=\"https://leanprover-community.github.io/mathlib_docs/find/tactic.mk_mapp\">docs#tactic.mk_mapp</a>. <br>\nI expect this has something to do with the fact that the right hand side of the generated lemma is still a (relatively) complicated structure. This is intended, right?</p>",
+        "id": 236884979,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1619809147
+    },
+    {
+        "content": "<p>No, I was hoping it would unfold the add_monoid_hom on the RHS</p>",
+        "id": 236888847,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1619810927
+    },
+    {
+        "content": "<p>I added manual versions of the lemmas in <a href=\"https://github.com/leanprover-community/mathlib/issues/7403\">#7403</a></p>",
+        "id": 236888924,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1619810972
+    },
+    {
+        "content": "<p>Thanks for investigating though</p>",
+        "id": 236889081,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1619811028
+    },
+    {
+        "content": "<p>I think it probably loses lots of time unifying the dependent typeclasses; indeed the <code>submodule</code> def was much faster than the subgroup one I drew attention to, presumably because it doesn't need to match indexed families of derived typeclasses</p>",
+        "id": 236889272,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1619811126
+    },
+    {
+        "content": "<p><code>@[simps mul]</code> tells <code>simps</code> to generate the lemmas by <em>only</em> applying the projection <code>mul</code>, no nested projections (in other words, not applied to <code>a</code> and <code>b</code>). <br>\nIf you just run <code>@[simps]</code> without arguments, it will generate a lemma applied to <code>a</code> and <code>b</code>, but it will also apply the coercion from subtypes. To get the lemmas you want (modulo name of the lemma), run <code>@[simps mul_apply_apply]</code>. You could consider doing that (if you don't mind that the name is uglier). These other lemmas are also generated very quickly.</p>",
+        "id": 236893565,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1619813037
+    },
+    {
+        "content": "<p>I am still investigating further. The issue is indeed related to the <code>add_comm_monoid</code> structure on <code>(carriers i)</code> and <code>(carriers i).to_add_submonoid</code>.<br>\nI can try to improve <code>simps</code> to not use <code>mk_mapp</code> there. I believe I have all the information there in the tactic, so I could just use <code>expr.app</code> manually.</p>",
+        "id": 236893810,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1619813143
+    },
+    {
+        "content": "<p>I minimized the original problem to </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">group_theory.subgroup</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">old_structure_cmd</span> <span class=\"n\">true</span>\n<span class=\"kd\">structure</span> <span class=\"n\">my_add_monoid_hom</span> <span class=\"o\">(</span><span class=\"n\">M</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">N</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">add_comm_monoid</span> <span class=\"n\">M</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">add_comm_monoid</span> <span class=\"n\">N</span><span class=\"o\">]</span> <span class=\"o\">:=</span>\n<span class=\"o\">(</span><span class=\"n\">to_fun</span> <span class=\"o\">:</span> <span class=\"n\">M</span> <span class=\"bp\">→</span> <span class=\"n\">N</span><span class=\"o\">)</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">ghas_mul</span> <span class=\"o\">(</span><span class=\"n\">A</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">add_comm_monoid</span> <span class=\"n\">A</span><span class=\"o\">]</span> <span class=\"o\">:=</span>\n<span class=\"o\">(</span><span class=\"n\">mul</span> <span class=\"o\">:</span> <span class=\"n\">my_add_monoid_hom</span> <span class=\"n\">A</span> <span class=\"n\">A</span><span class=\"o\">)</span>\n\n<span class=\"kn\">section</span> <span class=\"n\">shorthands</span>\n\n<span class=\"kd\">variables</span> <span class=\"o\">{</span><span class=\"n\">R</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span>\n\n<span class=\"kd\">@[simps mul]</span>\n<span class=\"kd\">def</span> <span class=\"n\">ghas_mul.of_add_submonoids</span> <span class=\"o\">[</span><span class=\"n\">add_comm_group</span> <span class=\"n\">R</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">carriers</span> <span class=\"o\">:</span> <span class=\"n\">add_submonoid</span> <span class=\"n\">R</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ghas_mul</span> <span class=\"n\">carriers</span> <span class=\"o\">:=</span>\n<span class=\"o\">{</span> <span class=\"n\">mul</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">to_fun</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">x</span> <span class=\"o\">}</span> <span class=\"o\">}</span>\n\n<span class=\"c1\">-- @[simps? mul {rhs_md := semireducible}]</span>\n<span class=\"kd\">def</span> <span class=\"n\">ghas_mul.of_add_subgroups</span> <span class=\"o\">[</span><span class=\"n\">add_comm_group</span> <span class=\"n\">R</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">carriers</span> <span class=\"o\">:</span> <span class=\"n\">add_subgroup</span> <span class=\"n\">R</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ghas_mul</span> <span class=\"n\">carriers</span> <span class=\"o\">:=</span>\n<span class=\"n\">ghas_mul.of_add_submonoids</span> <span class=\"n\">carriers.to_add_submonoid</span>\n</code></pre></div>",
+        "id": 236893935,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1619813192
+    },
+    {
+        "content": "<p>The slowdown of the original problem is fixed in <a href=\"https://github.com/leanprover-community/mathlib/issues/7432\">#7432</a>.<br>\nI didn't completely figure out the bottleneck, but it was easy to remove the offending <code>mk_mapp</code>.</p>",
+        "id": 236899999,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1619816101
+    },
+    {
+        "content": "<p>Perhaps we should allow the syntax <code>@[simps mul_apply_apply-&gt;mul]</code> to address the ugly name problem?</p>",
+        "id": 236906949,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1619818209
+    },
+    {
+        "content": "<p>(with a unicode arrow to match \"initialize_simps_projections\")</p>",
+        "id": 236906986,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1619818230
+    },
+    {
+        "content": "<p>You can actually already do this unformly:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">ghas_mul.simps.apply</span> <span class=\"o\">[</span><span class=\"n\">has_add</span> <span class=\"n\">ι</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"bp\">Π</span> <span class=\"n\">i</span><span class=\"o\">,</span> <span class=\"n\">add_comm_monoid</span> <span class=\"o\">(</span><span class=\"n\">A</span> <span class=\"n\">i</span><span class=\"o\">)]</span> <span class=\"o\">[</span><span class=\"n\">ghas_mul</span> <span class=\"n\">A</span><span class=\"o\">]</span> <span class=\"o\">{</span><span class=\"n\">i</span> <span class=\"n\">j</span> <span class=\"o\">:</span> <span class=\"n\">ι</span><span class=\"o\">}</span>\n  <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"n\">i</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"n\">j</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"o\">(</span><span class=\"n\">i</span> <span class=\"bp\">+</span> <span class=\"n\">j</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n<span class=\"n\">ghas_mul.mul</span> <span class=\"n\">x</span> <span class=\"n\">y</span>\n\n<span class=\"n\">initialize_simps_projections</span> <span class=\"n\">ghas_mul</span> <span class=\"o\">(</span><span class=\"n\">mul_to_fun_to_fun</span> <span class=\"bp\">→</span> <span class=\"n\">apply</span><span class=\"o\">,</span> <span class=\"bp\">-</span><span class=\"n\">mul</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>Except... that fails. These structures are definitely stress-testing <code>@[simps]</code> :)</p>",
+        "id": 236907840,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1619818759
+    },
+    {
+        "content": "<p>The syntax <code>@[simps mul_apply_apply-&gt;mul]</code> is probably also useful, and was already on the wishlist <a href=\"https://github.com/leanprover-community/mathlib/issues/5489\">#5489</a></p>",
+        "id": 236907864,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1619818793
+    },
+    {
+        "content": "<p>After <a href=\"https://github.com/leanprover-community/mathlib/issues/7433\">#7433</a> you should be able to write the following, and then <code>@[simps]</code> (or equivalently <code>@[simps mul]</code>) will generate the simp lemmas you want with the correct name.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">ghas_mul.simps.mul</span> <span class=\"o\">[</span><span class=\"n\">has_add</span> <span class=\"n\">ι</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"bp\">Π</span> <span class=\"n\">i</span><span class=\"o\">,</span> <span class=\"n\">add_comm_monoid</span> <span class=\"o\">(</span><span class=\"n\">A</span> <span class=\"n\">i</span><span class=\"o\">)]</span> <span class=\"o\">[</span><span class=\"n\">ghas_mul</span> <span class=\"n\">A</span><span class=\"o\">]</span> <span class=\"o\">{</span><span class=\"n\">i</span> <span class=\"n\">j</span> <span class=\"o\">:</span> <span class=\"n\">ι</span><span class=\"o\">}</span>\n  <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"n\">i</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"n\">j</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"o\">(</span><span class=\"n\">i</span> <span class=\"bp\">+</span> <span class=\"n\">j</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n<span class=\"n\">ghas_mul.mul</span> <span class=\"n\">x</span> <span class=\"n\">y</span>\n\n<span class=\"n\">initialize_simps_projections</span> <span class=\"n\">ghas_mul</span> <span class=\"o\">(</span><span class=\"n\">mul</span> <span class=\"bp\">→</span> <span class=\"n\">mul'</span><span class=\"o\">,</span> <span class=\"n\">mul_to_fun_to_fun</span> <span class=\"bp\">→</span> <span class=\"n\">mul</span><span class=\"o\">,</span> <span class=\"bp\">-</span><span class=\"n\">mul'</span><span class=\"o\">)</span>\n<span class=\"c1\">-- Explanation of the last line: the composite projection `mul_to_fun_to_fun` should be called `mul`. Furthermore, we don't generate simp-lemmas that just apply the single projection `mul`. We rename this single projection, because we want to call the composition of 3 projections `mul`.</span>\n</code></pre></div>",
+        "id": 236913783,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1619822805
+    }
+]

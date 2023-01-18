@@ -1,0 +1,128 @@
+[
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab.Tactic</span>\n\n<span class=\"n\">elab</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">foo</span><span class=\"o\">)</span> <span class=\"s2\">\"foo \"</span> <span class=\"n\">withArg</span><span class=\"o\">:(</span><span class=\"s2\">\" with \"</span> <span class=\"o\">(</span><span class=\"n\">colGt</span> <span class=\"n\">binderIdent</span><span class=\"o\">)</span><span class=\"bp\">+</span><span class=\"o\">)</span><span class=\"bp\">?</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"k\">do</span> <span class=\"n\">dbg_trace</span> <span class=\"n\">withArg</span>\n     <span class=\"n\">pure</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">foo</span> <span class=\"k\">with</span> <span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"n\">z</span> <span class=\"c1\">-- prints `none`</span>\n  <span class=\"n\">exact</span> <span class=\"n\">True.intro</span>\n</code></pre></div>\n<p>why does this print <code>none</code>? I expect it to print the <code>with x y z</code> syntax.</p>",
+        "id": 305434383,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1666382839
+    },
+    {
+        "content": "<p>A similar thing apparently does work for the <code>cases</code> tactic:  <a href=\"https://github.com/leanprover-community/mathlib4/blob/63a677d81af026760e1f530bb588696a123835c0/Mathlib/Tactic/Cases.lean#L93\">https://github.com/leanprover-community/mathlib4/blob/63a677d81af026760e1f530bb588696a123835c0/Mathlib/Tactic/Cases.lean#L93</a></p>",
+        "id": 305434664,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1666382931
+    },
+    {
+        "content": "<p>Aha!<br>\nJust needed more parens, seemingly:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">elab</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">foo</span><span class=\"o\">)</span> <span class=\"s2\">\"foo \"</span> <span class=\"n\">withArg</span><span class=\"o\">:((</span><span class=\"s2\">\" with \"</span> <span class=\"o\">(</span><span class=\"n\">colGt</span> <span class=\"n\">binderIdent</span><span class=\"o\">)</span><span class=\"bp\">+</span><span class=\"o\">)</span><span class=\"bp\">?</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"k\">do</span> <span class=\"n\">dbg_trace</span> <span class=\"n\">withArg</span>\n     <span class=\"n\">pure</span> <span class=\"o\">()</span>\n</code></pre></div>",
+        "id": 305434938,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1666383016
+    },
+    {
+        "content": "<p>I guess the <code>?</code> binds less tightly than I was assuming it did.</p>",
+        "id": 305435173,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1666383103
+    },
+    {
+        "content": "<p>No, the parens are not about precedence there</p>",
+        "id": 305442568,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666386236
+    },
+    {
+        "content": "<p>This looks like a bug in the macro parser (cc: <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> ): because the <code>withArg</code> nested parser has arity 2 (<code>\" with \" (colGt binderIdent)+</code>), calling <code>getOptional?</code> on it in the macro code yields <code>none</code> instead of the expected data</p>",
+        "id": 305444000,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666386925
+    },
+    {
+        "content": "<p>it's possible that the macro can't do anything about it though since ATM parser arities are not known at compile time</p>",
+        "id": 305444116,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666386991
+    },
+    {
+        "content": "<p>you should just not use <code>elab</code> for this and use a separate <code>syntax</code> / <code>elab_rules</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">syntax</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">foo</span><span class=\"o\">)</span> <span class=\"s2\">\"foo \"</span> <span class=\"o\">(</span><span class=\"s2\">\" with \"</span> <span class=\"o\">(</span><span class=\"n\">colGt</span> <span class=\"n\">binderIdent</span><span class=\"o\">)</span><span class=\"bp\">+</span><span class=\"o\">)</span><span class=\"bp\">?</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span>\n<span class=\"n\">elab_rules</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">tactic</span><span class=\"bp\">|</span> <span class=\"n\">foo</span> <span class=\"bp\">$</span><span class=\"o\">[</span><span class=\"k\">with</span> <span class=\"bp\">$</span><span class=\"n\">withArg</span><span class=\"bp\">*</span><span class=\"o\">]</span><span class=\"bp\">?</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"n\">dbg_trace</span> <span class=\"n\">withArg</span>\n</code></pre></div>",
+        "id": 305444313,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666387092
+    },
+    {
+        "content": "<p>The <code>(colGt binderIdent)+</code> -&gt; <code>$withArg*</code> part there is surprising to me. The plus turns into a star?</p>",
+        "id": 305444438,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1666387170
+    },
+    {
+        "content": "<p>yes, there is no <code>+</code> modifier in patterns</p>",
+        "id": 305444475,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666387195
+    },
+    {
+        "content": "<p>since they both bind as <code>TSyntaxArray</code></p>",
+        "id": 305444555,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666387214
+    },
+    {
+        "content": "<p>maybe we should add it just as a synonym to make things look more regular (no pun intended)</p>",
+        "id": 305444602,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666387240
+    },
+    {
+        "content": "<p>I think that might be where I got stuck when I tried to do an <code>elab_rules</code> for this earlier.</p>",
+        "id": 305444645,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1666387262
+    },
+    {
+        "content": "<p>But it makes sense now that you explained it.</p>",
+        "id": 305444663,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1666387273
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/elab.20.60foo.20with.20x.20y.60/near/305444000\">said</a>:</p>\n<blockquote>\n<p>This looks like a bug in the macro parser (cc: <span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> ): because the <code>withArg</code> nested parser has arity 2 (<code>\" with \" (colGt binderIdent)+</code>), calling <code>getOptional?</code> on it in the macro code yields <code>none</code> instead of the expected data</p>\n</blockquote>\n<p>Ah, hm, <a href=\"https://github.com/leanprover/lean4/blob/c672046767611565b84729db06a7c416625591b4/src/Lean/Elab/MacroArgUtil.lean#L39-L41\">https://github.com/leanprover/lean4/blob/c672046767611565b84729db06a7c416625591b4/src/Lean/Elab/MacroArgUtil.lean#L39-L41</a></p>",
+        "id": 305496063,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1666425633
+    },
+    {
+        "content": "<p>The intention indeed was that macro/elab should only be used for \"simple\" arguments</p>",
+        "id": 305496082,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1666425653
+    },
+    {
+        "content": "<blockquote>\n<p>we assume the user knows what they are doing</p>\n</blockquote>\n<p>famous last words</p>",
+        "id": 305496595,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666425937
+    },
+    {
+        "content": "<p>It's not really for trust in the user but for lack of better options</p>",
+        "id": 305496712,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1666425997
+    },
+    {
+        "content": "<p>I think even a panic would be better than just returning <code>none</code></p>",
+        "id": 305496735,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666426016
+    },
+    {
+        "content": "<p>with this version, you have to go debugging to figure out what's wrong</p>",
+        "id": 305496775,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1666426038
+    },
+    {
+        "content": "<p>In theory we now have all the information we need to statically check this <a href=\"https://github.com/leanprover/lean4/pull/1229\">https://github.com/leanprover/lean4/pull/1229</a></p>",
+        "id": 305500102,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1666428009
+    }
+]

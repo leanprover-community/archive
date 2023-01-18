@@ -1,0 +1,530 @@
+[
+    {
+        "content": "<p>I'm trying to return a bit to <a href=\"https://github.com/leanprover-community/leancrawler\">leancrawler</a> but it seems mathlib is now too big for my old approach of using <code>tactic.trace</code> and redirect stderr. I can reliably lockdown my computer by trying to run it on present day mathlib. So I tried to switch to <code>io.fs.put_str_ln</code> as in <a href=\"https://github.com/leanprover-community/doc-gen/blob/master/src/export_json.lean\">doc-gen</a>. But the result is randomly cut-off, even when I try to use the <a href=\"https://github.com/leanprover-community/doc-gen/blob/master/src/export_json.lean#L387\">list splitting trick</a>. I also see mysterious output to terminal where I would expect only file ouput.  <span class=\"user-mention\" data-user-id=\"110596\">@Rob Lewis</span> could you have a look?</p>",
+        "id": 210310955,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600285569
+    },
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">meta</span><span class=\"bp\">.</span><span class=\"n\">expr</span>\n<span class=\"kn\">import</span> <span class=\"n\">data</span><span class=\"bp\">.</span><span class=\"n\">list</span><span class=\"bp\">.</span><span class=\"n\">sort</span>\n\n\n<span class=\"kn\">open</span> <span class=\"n\">tactic</span> <span class=\"n\">declaration</span> <span class=\"n\">environment</span>\n\n<span class=\"c1\">-- The next instance is there to prevent PyYAML trying to be too smart</span>\n<span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">my_name_to_string</span> <span class=\"o\">:</span> <span class=\"n\">has_to_string</span> <span class=\"n\">name</span> <span class=\"o\">:=</span>\n<span class=\"bp\">⟨λ</span> <span class=\"n\">n</span><span class=\"o\">,</span> <span class=\"s2\">&quot;</span><span class=\"se\">\\&quot;</span><span class=\"s2\">&quot;</span> <span class=\"bp\">++</span> <span class=\"n\">to_string</span> <span class=\"n\">n</span> <span class=\"bp\">++</span> <span class=\"s2\">&quot;</span><span class=\"se\">\\&quot;</span><span class=\"s2\">&quot;</span><span class=\"bp\">⟩</span>\n\n<span class=\"n\">local</span> <span class=\"n\">attribute</span> <span class=\"o\">[</span><span class=\"kn\">instance</span><span class=\"o\">]</span> <span class=\"n\">my_name_to_string</span>\n\n<span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">expr</span><span class=\"bp\">.</span><span class=\"n\">get_pi_app_fn</span> <span class=\"o\">:</span> <span class=\"n\">expr</span> <span class=\"bp\">→</span> <span class=\"n\">expr</span>\n<span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"n\">expr</span><span class=\"bp\">.</span><span class=\"n\">pi</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span> <span class=\"n\">e</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">e</span><span class=\"bp\">.</span><span class=\"n\">get_pi_app_fn</span>\n<span class=\"bp\">|</span> <span class=\"n\">e</span>                 <span class=\"o\">:=</span> <span class=\"n\">e</span><span class=\"bp\">.</span><span class=\"n\">get_app_fn</span>\n\n<span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">list_items</span> <span class=\"o\">(</span><span class=\"n\">e</span> <span class=\"o\">:</span> <span class=\"n\">expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"n\">name</span> <span class=\"o\">:=</span>\n<span class=\"n\">e</span><span class=\"bp\">.</span><span class=\"n\">fold</span> <span class=\"o\">[]</span> <span class=\"err\">$</span> <span class=\"bp\">λ</span> <span class=\"n\">e</span> <span class=\"bp\">_</span> <span class=\"n\">cs</span><span class=\"o\">,</span>\n<span class=\"k\">if</span> <span class=\"n\">e</span><span class=\"bp\">.</span><span class=\"n\">is_constant</span> <span class=\"bp\">∧</span> <span class=\"bp\">¬</span> <span class=\"n\">e</span><span class=\"bp\">.</span><span class=\"n\">const_name</span> <span class=\"err\">∈</span> <span class=\"n\">cs</span>\n  <span class=\"k\">then</span> <span class=\"n\">e</span><span class=\"bp\">.</span><span class=\"n\">const_name</span> <span class=\"bp\">::</span> <span class=\"n\">cs</span>\n  <span class=\"k\">else</span> <span class=\"n\">cs</span>\n\n<span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">mnot</span> <span class=\"o\">:</span> <span class=\"n\">bool</span> <span class=\"bp\">→</span> <span class=\"n\">tactic</span> <span class=\"n\">bool</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">p</span><span class=\"o\">,</span> <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"bp\">¬</span> <span class=\"n\">p</span><span class=\"o\">)</span>\n\n<span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">pos_line</span> <span class=\"o\">(</span><span class=\"n\">p</span> <span class=\"o\">:</span> <span class=\"n\">option</span> <span class=\"n\">pos</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">string</span> <span class=\"o\">:=</span>\n<span class=\"k\">match</span> <span class=\"n\">p</span> <span class=\"k\">with</span>\n<span class=\"bp\">|</span> <span class=\"n\">some</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">to_string</span> <span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"n\">line</span>\n<span class=\"bp\">|</span> <span class=\"bp\">_</span>      <span class=\"o\">:=</span> <span class=\"s2\">&quot;&quot;</span>\n<span class=\"kn\">end</span>\n\n<span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">file_name</span> <span class=\"o\">(</span><span class=\"n\">p</span> <span class=\"o\">:</span> <span class=\"n\">option</span> <span class=\"n\">string</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">string</span> <span class=\"o\">:=</span>\n<span class=\"k\">match</span> <span class=\"n\">p</span> <span class=\"k\">with</span>\n<span class=\"bp\">|</span> <span class=\"n\">some</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">x</span>\n<span class=\"bp\">|</span> <span class=\"bp\">_</span>      <span class=\"o\">:=</span> <span class=\"s2\">&quot;Unknown file&quot;</span>\n<span class=\"kn\">end</span>\n\n<span class=\"kn\">section</span>\n\n<span class=\"kn\">structure</span> <span class=\"n\">declaration</span><span class=\"bp\">.</span><span class=\"n\">modifiers</span> <span class=\"o\">:=</span>\n<span class=\"o\">(</span><span class=\"n\">Class</span> <span class=\"o\">:=</span> <span class=\"n\">ff</span><span class=\"o\">)</span>\n<span class=\"o\">(</span><span class=\"n\">Structure</span> <span class=\"o\">:=</span> <span class=\"n\">ff</span><span class=\"o\">)</span>\n<span class=\"o\">(</span><span class=\"n\">StructureField</span> <span class=\"o\">:=</span> <span class=\"n\">ff</span><span class=\"o\">)</span>\n<span class=\"o\">(</span><span class=\"n\">Inductive</span> <span class=\"o\">:=</span> <span class=\"n\">ff</span><span class=\"o\">)</span>\n<span class=\"o\">(</span><span class=\"n\">Instance</span> <span class=\"o\">:=</span> <span class=\"n\">ff</span><span class=\"o\">)</span>\n<span class=\"o\">(</span><span class=\"n\">IsRecursor</span> <span class=\"o\">:=</span> <span class=\"n\">ff</span><span class=\"o\">)</span>\n<span class=\"o\">(</span><span class=\"n\">IsConstructor</span> <span class=\"o\">:=</span> <span class=\"n\">ff</span><span class=\"o\">)</span>\n\n<span class=\"n\">def</span> <span class=\"n\">bool</span><span class=\"bp\">.</span><span class=\"n\">to_string_python</span> <span class=\"o\">:</span> <span class=\"n\">has_to_string</span> <span class=\"n\">bool</span> <span class=\"o\">:=</span> <span class=\"bp\">⟨λ</span> <span class=\"n\">k</span><span class=\"o\">,</span> <span class=\"k\">match</span> <span class=\"n\">k</span> <span class=\"k\">with</span> <span class=\"n\">tt</span> <span class=\"o\">:=</span> <span class=\"s2\">&quot;True&quot;</span> <span class=\"bp\">|</span> <span class=\"n\">ff</span> <span class=\"o\">:=</span> <span class=\"s2\">&quot;False&quot;</span> <span class=\"kn\">end</span><span class=\"bp\">⟩</span>\n<span class=\"n\">local</span> <span class=\"n\">attribute</span> <span class=\"o\">[</span><span class=\"kn\">instance</span><span class=\"o\">]</span> <span class=\"n\">bool</span><span class=\"bp\">.</span><span class=\"n\">to_string_python</span>\n\n<span class=\"kn\">instance</span> <span class=\"o\">:</span> <span class=\"n\">has_to_string</span> <span class=\"n\">declaration</span><span class=\"bp\">.</span><span class=\"n\">modifiers</span> <span class=\"o\">:=</span> <span class=\"bp\">⟨λ</span> <span class=\"n\">m</span><span class=\"o\">,</span>\n  <span class=\"s2\">&quot;{ class: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">to_string</span> <span class=\"n\">m</span><span class=\"bp\">.</span><span class=\"n\">Class</span> <span class=\"bp\">++</span>\n  <span class=\"s2\">&quot;, structure: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">to_string</span> <span class=\"n\">m</span><span class=\"bp\">.</span><span class=\"n\">Structure</span> <span class=\"bp\">++</span>\n  <span class=\"s2\">&quot;, structure_field: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">to_string</span> <span class=\"n\">m</span><span class=\"bp\">.</span><span class=\"n\">StructureField</span> <span class=\"bp\">++</span>\n  <span class=\"s2\">&quot;, is_recursor: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">to_string</span> <span class=\"n\">m</span><span class=\"bp\">.</span><span class=\"n\">IsRecursor</span> <span class=\"bp\">++</span>\n  <span class=\"s2\">&quot;, is_constructor: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">to_string</span> <span class=\"n\">m</span><span class=\"bp\">.</span><span class=\"n\">IsConstructor</span> <span class=\"bp\">++</span>\n  <span class=\"s2\">&quot;, inductive: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">to_string</span> <span class=\"n\">m</span><span class=\"bp\">.</span><span class=\"n\">Inductive</span> <span class=\"bp\">++</span>\n  <span class=\"s2\">&quot;, instance: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">to_string</span> <span class=\"n\">m</span><span class=\"bp\">.</span><span class=\"n\">Instance</span> <span class=\"bp\">++</span> <span class=\"s2\">&quot; }&quot;</span><span class=\"bp\">⟩</span>\n\n<span class=\"kn\">open</span>  <span class=\"n\">tactic</span> <span class=\"n\">declaration</span> <span class=\"n\">environment</span>\n\n<span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">declaration</span><span class=\"bp\">.</span><span class=\"n\">get_kind_string</span> <span class=\"o\">:</span> <span class=\"n\">declaration</span> <span class=\"bp\">→</span> <span class=\"n\">string</span>\n<span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"n\">thm</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"s2\">&quot;lemma&quot;</span>\n<span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"n\">defn</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"s2\">&quot;definition&quot;</span>\n<span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"n\">cnst</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"s2\">&quot;constant&quot;</span>\n<span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"n\">ax</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span> <span class=\"bp\">_</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"s2\">&quot;axiom&quot;</span>\n\n\n<span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">environment</span><span class=\"bp\">.</span><span class=\"n\">get_modifiers</span> <span class=\"o\">(</span><span class=\"n\">env</span> <span class=\"o\">:</span> <span class=\"n\">environment</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">name</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">declaration</span><span class=\"bp\">.</span><span class=\"n\">modifiers</span> <span class=\"o\">:=</span>\n<span class=\"n\">do</span>\n  <span class=\"n\">c</span> <span class=\"err\">←</span> <span class=\"o\">(</span><span class=\"n\">has_attribute</span> <span class=\"bp\">`</span><span class=\"n\">class</span> <span class=\"n\">n</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"n\">return</span> <span class=\"n\">tt</span><span class=\"o\">)</span> <span class=\"bp\">&lt;|&gt;</span> <span class=\"n\">return</span> <span class=\"n\">ff</span><span class=\"o\">,</span>\n  <span class=\"n\">i</span> <span class=\"err\">←</span> <span class=\"o\">(</span><span class=\"n\">has_attribute</span> <span class=\"bp\">`</span><span class=\"kn\">instance</span> <span class=\"n\">n</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"n\">return</span> <span class=\"n\">tt</span><span class=\"o\">)</span> <span class=\"bp\">&lt;|&gt;</span> <span class=\"n\">return</span> <span class=\"n\">ff</span><span class=\"o\">,</span>\n  <span class=\"n\">return</span> <span class=\"o\">{</span>\n    <span class=\"n\">Class</span> <span class=\"o\">:=</span> <span class=\"n\">c</span><span class=\"o\">,</span>\n    <span class=\"n\">Structure</span> <span class=\"o\">:=</span> <span class=\"n\">env</span><span class=\"bp\">.</span><span class=\"n\">is_structure</span> <span class=\"n\">n</span><span class=\"o\">,</span>\n    <span class=\"n\">StructureField</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">env</span><span class=\"bp\">.</span><span class=\"n\">is_projection</span> <span class=\"n\">n</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">is_some</span><span class=\"o\">,</span>\n    <span class=\"n\">IsConstructor</span> <span class=\"o\">:=</span> <span class=\"n\">env</span><span class=\"bp\">.</span><span class=\"n\">is_constructor</span> <span class=\"n\">n</span><span class=\"o\">,</span>\n    <span class=\"n\">IsRecursor</span> <span class=\"o\">:=</span> <span class=\"n\">env</span><span class=\"bp\">.</span><span class=\"n\">is_recursor</span> <span class=\"n\">n</span><span class=\"o\">,</span>\n    <span class=\"n\">Inductive</span> <span class=\"o\">:=</span> <span class=\"n\">env</span><span class=\"bp\">.</span><span class=\"n\">is_ginductive</span> <span class=\"n\">n</span><span class=\"o\">,</span>\n    <span class=\"n\">Instance</span> <span class=\"o\">:=</span> <span class=\"n\">i</span> <span class=\"o\">}</span>\n<span class=\"kn\">end</span>\n\n\n\n<span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">itersplit</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"bp\">ℕ</span> <span class=\"bp\">→</span> <span class=\"n\">list</span> <span class=\"o\">(</span><span class=\"n\">list</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"n\">l</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span> <span class=\"o\">[</span><span class=\"n\">l</span><span class=\"o\">]</span>\n<span class=\"bp\">|</span> <span class=\"n\">l</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span> <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">l1</span><span class=\"o\">,</span> <span class=\"n\">l2</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">l</span><span class=\"bp\">.</span><span class=\"n\">split</span> <span class=\"k\">in</span> <span class=\"o\">[</span><span class=\"n\">l1</span><span class=\"o\">,</span> <span class=\"n\">l2</span><span class=\"o\">]</span>\n<span class=\"bp\">|</span> <span class=\"n\">l</span> <span class=\"o\">(</span><span class=\"n\">k</span><span class=\"bp\">+</span><span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">l1</span><span class=\"o\">,</span> <span class=\"n\">l2</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">l</span><span class=\"bp\">.</span><span class=\"n\">split</span> <span class=\"k\">in</span> <span class=\"n\">itersplit</span> <span class=\"n\">l1</span> <span class=\"o\">(</span><span class=\"n\">k</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">++</span> <span class=\"n\">itersplit</span> <span class=\"n\">l2</span> <span class=\"o\">(</span><span class=\"n\">k</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">)</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">io</span> <span class=\"o\">(</span><span class=\"n\">handle</span> <span class=\"n\">run_tactic</span><span class=\"o\">)</span> <span class=\"n\">io</span><span class=\"bp\">.</span><span class=\"n\">fs</span>\n\n<span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">put_item_crawl</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">handle</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">env</span> <span class=\"o\">:</span> <span class=\"n\">environment</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">decl</span> <span class=\"o\">:</span> <span class=\"n\">declaration</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">io</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span>\n<span class=\"k\">let</span> <span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">decl</span><span class=\"bp\">.</span><span class=\"n\">to_name</span><span class=\"o\">,</span>\n    <span class=\"n\">pos</span> <span class=\"o\">:=</span> <span class=\"n\">pos_line</span> <span class=\"o\">(</span><span class=\"n\">env</span><span class=\"bp\">.</span><span class=\"n\">decl_pos</span> <span class=\"n\">name</span><span class=\"o\">),</span>\n    <span class=\"n\">fname</span> <span class=\"o\">:=</span> <span class=\"n\">file_name</span> <span class=\"o\">(</span><span class=\"n\">env</span><span class=\"bp\">.</span><span class=\"n\">decl_olean</span> <span class=\"n\">name</span><span class=\"o\">)</span> <span class=\"k\">in</span>\n<span class=\"n\">do</span>\n   <span class=\"n\">put_str_ln</span> <span class=\"n\">h</span> <span class=\"o\">(</span><span class=\"s2\">&quot;- Name: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">to_string</span> <span class=\"n\">name</span><span class=\"o\">),</span>\n   <span class=\"n\">put_str_ln</span> <span class=\"n\">h</span> <span class=\"o\">(</span><span class=\"s2\">&quot;  File: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">fname</span><span class=\"o\">),</span>\n   <span class=\"n\">put_str_ln</span> <span class=\"n\">h</span> <span class=\"o\">(</span><span class=\"s2\">&quot;  Line: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">pos</span><span class=\"o\">),</span>\n   <span class=\"n\">put_str_ln</span> <span class=\"n\">h</span> <span class=\"o\">(</span><span class=\"s2\">&quot;  Kind: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">decl</span><span class=\"bp\">.</span><span class=\"n\">get_kind_string</span><span class=\"o\">),</span>\n   <span class=\"n\">mods</span> <span class=\"err\">←</span> <span class=\"n\">run_tactic</span> <span class=\"err\">$</span> <span class=\"n\">env</span><span class=\"bp\">.</span><span class=\"n\">get_modifiers</span> <span class=\"n\">name</span><span class=\"o\">,</span>\n   <span class=\"n\">put_str_ln</span> <span class=\"n\">h</span> <span class=\"o\">(</span><span class=\"s2\">&quot;  Modifiers: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">to_string</span> <span class=\"n\">mods</span><span class=\"o\">),</span>\n\n   <span class=\"n\">pp_type</span> <span class=\"err\">←</span> <span class=\"n\">pp</span> <span class=\"n\">decl</span><span class=\"bp\">.</span><span class=\"n\">type</span><span class=\"o\">,</span>\n   <span class=\"n\">put_str_ln</span> <span class=\"n\">h</span> <span class=\"o\">(</span><span class=\"s2\">&quot;  Type: &quot;</span> <span class=\"bp\">++</span> <span class=\"o\">(</span><span class=\"n\">to_string</span> <span class=\"n\">pp_type</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">quote</span><span class=\"o\">),</span>\n   <span class=\"n\">type_proofs</span> <span class=\"err\">←</span> <span class=\"n\">run_tactic</span> <span class=\"err\">$</span> <span class=\"o\">(</span><span class=\"n\">list_items</span> <span class=\"n\">decl</span><span class=\"bp\">.</span><span class=\"n\">type</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">mfilter</span> <span class=\"err\">$</span> <span class=\"bp\">λ</span> <span class=\"n\">c</span><span class=\"o\">,</span> <span class=\"n\">mk_const</span> <span class=\"n\">c</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">is_proof</span><span class=\"o\">,</span>\n   <span class=\"n\">type_others</span> <span class=\"err\">←</span> <span class=\"n\">run_tactic</span> <span class=\"err\">$</span> <span class=\"o\">(</span><span class=\"n\">list_items</span> <span class=\"n\">decl</span><span class=\"bp\">.</span><span class=\"n\">type</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">mfilter</span> <span class=\"err\">$</span> <span class=\"bp\">λ</span> <span class=\"n\">c</span><span class=\"o\">,</span> <span class=\"n\">mk_const</span> <span class=\"n\">c</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">is_proof</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">mnot</span><span class=\"o\">,</span>\n   <span class=\"n\">put_str_ln</span> <span class=\"n\">h</span> <span class=\"o\">(</span><span class=\"s2\">&quot;  Type uses proofs: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">to_string</span> <span class=\"n\">type_proofs</span><span class=\"o\">),</span>\n   <span class=\"n\">put_str_ln</span> <span class=\"n\">h</span> <span class=\"o\">(</span><span class=\"s2\">&quot;  Type uses others: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">to_string</span> <span class=\"n\">type_others</span><span class=\"o\">),</span>\n\n   <span class=\"n\">pp_value</span> <span class=\"err\">←</span> <span class=\"n\">pp</span> <span class=\"n\">decl</span><span class=\"bp\">.</span><span class=\"n\">value</span><span class=\"o\">,</span>\n   <span class=\"n\">put_str_ln</span> <span class=\"n\">h</span> <span class=\"o\">(</span><span class=\"s2\">&quot;  Value: &quot;</span> <span class=\"bp\">++</span> <span class=\"o\">(</span><span class=\"n\">to_string</span> <span class=\"n\">pp_value</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">quote</span><span class=\"o\">),</span>\n   <span class=\"n\">value_proofs</span> <span class=\"err\">←</span> <span class=\"n\">run_tactic</span> <span class=\"err\">$</span> <span class=\"o\">(</span><span class=\"n\">list_items</span> <span class=\"n\">decl</span><span class=\"bp\">.</span><span class=\"n\">value</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">mfilter</span> <span class=\"err\">$</span> <span class=\"bp\">λ</span> <span class=\"n\">c</span><span class=\"o\">,</span> <span class=\"n\">mk_const</span> <span class=\"n\">c</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">is_proof</span><span class=\"o\">,</span>\n   <span class=\"n\">value_others</span> <span class=\"err\">←</span> <span class=\"n\">run_tactic</span> <span class=\"err\">$</span> <span class=\"o\">(</span><span class=\"n\">list_items</span> <span class=\"n\">decl</span><span class=\"bp\">.</span><span class=\"n\">value</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">mfilter</span> <span class=\"err\">$</span> <span class=\"bp\">λ</span> <span class=\"n\">c</span><span class=\"o\">,</span> <span class=\"n\">mk_const</span> <span class=\"n\">c</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">is_proof</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">mnot</span><span class=\"o\">,</span>\n   <span class=\"n\">put_str_ln</span> <span class=\"n\">h</span> <span class=\"o\">(</span><span class=\"s2\">&quot;  Value uses proofs: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">to_string</span> <span class=\"n\">value_proofs</span><span class=\"o\">),</span>\n   <span class=\"n\">put_str_ln</span> <span class=\"n\">h</span> <span class=\"o\">(</span><span class=\"s2\">&quot;  Value uses others: &quot;</span> <span class=\"bp\">++</span> <span class=\"n\">to_string</span> <span class=\"n\">value_others</span><span class=\"o\">),</span>\n\n   <span class=\"n\">put_str_ln</span> <span class=\"n\">h</span> <span class=\"o\">(</span><span class=\"s2\">&quot;  Target class: &quot;</span> <span class=\"bp\">++</span> <span class=\"k\">if</span> <span class=\"n\">mods</span><span class=\"bp\">.</span><span class=\"n\">Instance</span> <span class=\"k\">then</span> <span class=\"n\">to_string</span> <span class=\"n\">decl</span><span class=\"bp\">.</span><span class=\"n\">type</span><span class=\"bp\">.</span><span class=\"n\">get_pi_app_fn</span> <span class=\"k\">else</span> <span class=\"s2\">&quot;&quot;</span><span class=\"o\">),</span>\n   <span class=\"n\">put_str_ln</span> <span class=\"n\">h</span> <span class=\"o\">(</span><span class=\"s2\">&quot;  Parent: &quot;</span> <span class=\"bp\">++</span>  <span class=\"k\">match</span> <span class=\"n\">env</span><span class=\"bp\">.</span><span class=\"n\">is_projection</span> <span class=\"n\">name</span> <span class=\"k\">with</span>\n                           <span class=\"bp\">|</span> <span class=\"n\">some</span> <span class=\"n\">info</span> <span class=\"o\">:=</span> <span class=\"n\">to_string</span> <span class=\"n\">info</span><span class=\"bp\">.</span><span class=\"n\">cname</span>\n                           <span class=\"bp\">|</span> <span class=\"n\">none</span> <span class=\"o\">:=</span>  <span class=\"s2\">&quot;&quot;</span>\n                           <span class=\"kn\">end</span><span class=\"o\">),</span>\n   <span class=\"n\">put_str_ln</span> <span class=\"n\">h</span> <span class=\"o\">(</span><span class=\"s2\">&quot;  Fields: &quot;</span> <span class=\"bp\">++</span> <span class=\"o\">(</span><span class=\"n\">to_string</span> <span class=\"err\">$</span> <span class=\"o\">(</span><span class=\"n\">env</span><span class=\"bp\">.</span><span class=\"n\">structure_fields_full</span> <span class=\"n\">name</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">get_or_else</span> <span class=\"o\">[]))</span>\n\n\n<span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">print_all_content</span> <span class=\"o\">:</span> <span class=\"n\">io</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span>\n<span class=\"n\">do</span> <span class=\"n\">curr_env</span> <span class=\"err\">←</span> <span class=\"n\">run_tactic</span> <span class=\"n\">get_env</span><span class=\"o\">,</span>\n   <span class=\"k\">let</span> <span class=\"n\">decls</span> <span class=\"o\">:=</span> <span class=\"n\">curr_env</span><span class=\"bp\">.</span><span class=\"n\">fold</span> <span class=\"o\">[]</span> <span class=\"n\">list</span><span class=\"bp\">.</span><span class=\"n\">cons</span><span class=\"o\">,</span>\n   <span class=\"k\">let</span> <span class=\"n\">local_decls</span> <span class=\"o\">:=</span> <span class=\"n\">decls</span><span class=\"bp\">.</span><span class=\"n\">filter</span>\n     <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">not</span> <span class=\"o\">(</span><span class=\"n\">to_name</span> <span class=\"n\">x</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">is_internal</span><span class=\"o\">),</span>\n   <span class=\"n\">handle</span> <span class=\"err\">←</span> <span class=\"n\">io</span><span class=\"bp\">.</span><span class=\"n\">mk_file_handle</span> <span class=\"s2\">&quot;mathlib.yaml&quot;</span> <span class=\"n\">io</span><span class=\"bp\">.</span><span class=\"n\">mode</span><span class=\"bp\">.</span><span class=\"n\">write</span><span class=\"o\">,</span>\n   <span class=\"k\">let</span> <span class=\"n\">declss</span> <span class=\"o\">:=</span> <span class=\"n\">itersplit</span> <span class=\"n\">local_decls</span> <span class=\"mi\">8</span><span class=\"o\">,</span>\n   <span class=\"n\">declss</span><span class=\"bp\">.</span><span class=\"n\">mmap&#39;</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">l</span><span class=\"o\">,</span> <span class=\"n\">l</span><span class=\"bp\">.</span><span class=\"n\">mmap&#39;</span> <span class=\"err\">$</span> <span class=\"n\">put_item_crawl</span> <span class=\"n\">handle</span> <span class=\"n\">curr_env</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 210311032,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600285610
+    },
+    {
+        "content": "<p>After putting that file somewhere I import it in <code>all.lean</code> and add</p>\n<div class=\"codehilite\"><pre><span></span><code><span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">io</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span>  <span class=\"n\">print_all_conten</span>\n</code></pre></div>",
+        "id": 210311128,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600285658
+    },
+    {
+        "content": "<p>and use <code>lean --run all.lean</code></p>",
+        "id": 210311144,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600285669
+    },
+    {
+        "content": "<p>The produced yaml file typically stops in the middle of a line (at around 40Mb)</p>",
+        "id": 210311235,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600285696
+    },
+    {
+        "content": "<p>I don't have time to try it tonight but I can look tomorrow. At a quick glance I don't see anything suspicious. Does doc-gen do the same for you?</p>",
+        "id": 210311748,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600285944
+    },
+    {
+        "content": "<p>I never tried to run doc-gen locally. I'll see if I can find instructions</p>",
+        "id": 210311843,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600286000
+    },
+    {
+        "content": "<p>You only need to try to generate the json dump, just <code>lean --run whatever.lean</code> the obvious file in <code>src</code>.</p>",
+        "id": 210312113,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600286141
+    },
+    {
+        "content": "<p>doc-gen seems to work fine.</p>",
+        "id": 210314620,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600287329
+    },
+    {
+        "content": "<p>What's the size of the output file? Is it bigger than yours was dying on?</p>",
+        "id": 210314789,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600287396
+    },
+    {
+        "content": "<p>Yes, 57Mb for the json export vs 43Mb for my biggest random ouput</p>",
+        "id": 210314872,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600287449
+    },
+    {
+        "content": "<p>Wait, it depends</p>",
+        "id": 210314901,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600287465
+    },
+    {
+        "content": "<p>The thing that really crashed my computer was smaller, but not using io.fs</p>",
+        "id": 210314925,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600287480
+    },
+    {
+        "content": "<p>The code I posted tonight does not seem to crash, it simply randomly stops, at 40Mb or 43Mb depending on the run</p>",
+        "id": 210315025,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600287518
+    },
+    {
+        "content": "<p>Sounds like super fun debugging time then! What's the relevant difference between your code and doc-gen? They both fold over the environment and dump a bunch of text.</p>",
+        "id": 210315900,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600287954
+    },
+    {
+        "content": "<p>The main difference I can see is one of them has been written by some clueless functional programmer using cargo cult coding.</p>",
+        "id": 210316029,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600288004
+    },
+    {
+        "content": "<p>Rob, did you find some time to have a look at this issue?</p>",
+        "id": 210433101,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600368532
+    },
+    {
+        "content": "<p>I did not, it's been an extremely busy day.</p>",
+        "id": 210437602,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600370206
+    },
+    {
+        "content": "<p>Is there a relevant difference to doc-gen in the printing code?</p>",
+        "id": 210437667,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600370239
+    },
+    {
+        "content": "<p>They're doing essentially the same thing, and one of them seems to works on more data.</p>",
+        "id": 210437707,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600370278
+    },
+    {
+        "content": "<p>I have no idea.</p>",
+        "id": 210437802,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600370314
+    },
+    {
+        "content": "<p>I wouldn't really assume any sensible behavior here, but it would be sensible if this was caused by something being different, heh.</p>",
+        "id": 210437835,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600370333
+    },
+    {
+        "content": "<p>I think this needs someone who knows more about how io is implemented to debug, sorry.</p>",
+        "id": 210440481,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600371650
+    },
+    {
+        "content": "<p>There are clearly memory issues (clear from the fact that the itersplit hack is needed anywhere). And you're writing a huge amount of info to the file.</p>",
+        "id": 210440540,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600371681
+    },
+    {
+        "content": "<p>You could try changing <code>put_item_crawl</code> to write a single string instead of a bunch of individual writes, I don't know if that will make a difference.</p>",
+        "id": 210440716,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600371751
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110596\">Rob Lewis</span> <a href=\"#narrow/stream/113488-general/topic/random.20io.20output/near/210440540\">said</a>:</p>\n<blockquote>\n<p>There are clearly memory issues (clear from the fact that the itersplit hack is needed anywhere). And you're writing a huge amount of info to the file.</p>\n</blockquote>\n<p>Yeah I had a go at running the script and it was eating through memory (it hit 20GB+ when I killed it), so I guess you might be hitting an OOM issue Patrick?</p>\n<div class=\"message_inline_image\"><a href=\"https://user-images.githubusercontent.com/636814/93521264-b9889c00-f927-11ea-821a-ff21c3a1a66d.png\"><img src=\"https://user-images.githubusercontent.com/636814/93521264-b9889c00-f927-11ea-821a-ff21c3a1a66d.png\"></a></div><p>One thing you could try is opening (and then closing) a different file handle for each part of the list? E.g. writing to <code>mathlib1.yaml</code>, <code>mathlib2.yaml</code>, which you could then stitch together subsequently? And seeing if that makes any difference re: memory usage?</p>",
+        "id": 210442386,
+        "sender_full_name": "Alex Peattie",
+        "timestamp": 1600372609
+    },
+    {
+        "content": "<p>I returned to that and Rob's idea to write only one string per declaration seems to work. I still don't have a nice little graph for Quanta, but here is the current graph after removing logic.<br>\n<a href=\"/user_uploads/3121/fg44o79gtw3UMXIykDvAKFBP/image.png\">image.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/fg44o79gtw3UMXIykDvAKFBP/image.png\" title=\"image.png\"><img src=\"/user_uploads/3121/fg44o79gtw3UMXIykDvAKFBP/image.png\"></a></div>",
+        "id": 210619906,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600528384
+    },
+    {
+        "content": "<p>Who can guess what are the pieces that stick out?</p>",
+        "id": 210619915,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600528409
+    },
+    {
+        "content": "<p>The one on the left has to be meta land, right?</p>",
+        "id": 210619928,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600528439
+    },
+    {
+        "content": "<p>Heaven or hell depending on your perspective</p>",
+        "id": 210619972,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600528448
+    },
+    {
+        "content": "<p>Almost correct! Meta-land is on the right.</p>",
+        "id": 210619977,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600528466
+    },
+    {
+        "content": "<p>what's that one point at the top-right just left of the blob</p>",
+        "id": 210619997,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1600528535
+    },
+    {
+        "content": "<p><code>name</code>!</p>",
+        "id": 210620041,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600528583
+    },
+    {
+        "content": "<p>Are the colors def/lemma or something else?</p>",
+        "id": 210620063,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600528645
+    },
+    {
+        "content": "<p>Yes.</p>",
+        "id": 210620126,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600528708
+    },
+    {
+        "content": "<p>I'm sure Mario can guess what is the upper-left blob.</p>",
+        "id": 210620240,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600528875
+    },
+    {
+        "content": "<p>So if meta land is mostly blue, that must be def. What substantial blob is more disconnected from everything else than meta land, has a lot of defs, and only connects to the rest along a few strands? Is it computability?</p>",
+        "id": 210620310,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600528936
+    },
+    {
+        "content": "<p>I think you're vastly overestimating the size of computability in mathlib.</p>",
+        "id": 210620323,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600528971
+    },
+    {
+        "content": "<p>I agree, but it's hard to get a sense of scale from the picture since I can't see individual dots in most of the big blob</p>",
+        "id": 210620352,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600529037
+    },
+    {
+        "content": "<p>Is it category theory?</p>",
+        "id": 210620392,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600529053
+    },
+    {
+        "content": "<p>Hopefully this is about to change.</p>",
+        "id": 210620404,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600529099
+    },
+    {
+        "content": "<p>that was my next guess as well. It's a little sad that it's so visibly separate</p>",
+        "id": 210620409,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1600529114
+    },
+    {
+        "content": "<p>Algebraic geometry starts to use category theory if I understand correctly.</p>",
+        "id": 210620411,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600529121
+    },
+    {
+        "content": "<p>I would have expected meta land to be more distinct than category island.</p>",
+        "id": 210620463,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1600529206
+    },
+    {
+        "content": "<p>Trying to remove meta gives:<br>\n<a href=\"/user_uploads/3121/GSybdJA60yXY6YRiwlNO716k/image.png\">image.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/GSybdJA60yXY6YRiwlNO716k/image.png\" title=\"image.png\"><img src=\"/user_uploads/3121/GSybdJA60yXY6YRiwlNO716k/image.png\"></a></div>",
+        "id": 210620618,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600529410
+    },
+    {
+        "content": "<p>What does the graph for <code>abelian_category</code> look like?</p>",
+        "id": 210620659,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1600529505
+    },
+    {
+        "content": "<p><a href=\"/user_uploads/3121/HqUAWyMMpvYcbBot9cfvELRK/image.png\">image.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/HqUAWyMMpvYcbBot9cfvELRK/image.png\" title=\"image.png\"><img src=\"/user_uploads/3121/HqUAWyMMpvYcbBot9cfvELRK/image.png\"></a></div>",
+        "id": 210620842,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600529714
+    },
+    {
+        "content": "<p>The right-hand blob is <code>fintype</code> and its friends.</p>",
+        "id": 210620859,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600529732
+    },
+    {
+        "content": "<p>That's a reasonably small graph. I was hoping that <code>add_group</code> and <code>category</code> would be distinct blobs.</p>",
+        "id": 210621243,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1600530175
+    },
+    {
+        "content": "<p>It's funny that <code>fintype</code> is showing up (-; The informal definition only mentions binary products (-; But of course we work with arbitrary finite ones (-;</p>",
+        "id": 210621269,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1600530221
+    },
+    {
+        "content": "<p>I don't know if this graph is \"interesting\" for Quanta</p>",
+        "id": 210621275,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1600530238
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> yes, the definition of schemes uses categories, and if you look at the way that Ramon did it (presheaves of types, sheaves of types, presheaves of rings, sheaves of rings) and then the way we continued in the perfectoid project (presheaves of topological rings, sheaves of topological rings) you could see it was not going to scale. We want presheaves and sheaves of abelian groups, R-algebras, R-modules, \\mathcal{R}-modules where \\mathcal{R} is a sheaf of rings etc.</p>",
+        "id": 210623563,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1600533484
+    },
+    {
+        "content": "<p>Scott's approach gives us presheaves and sheaves taking values in an arbitrary category, and this looks like an appealing approach to me.</p>",
+        "id": 210623611,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1600533555
+    },
+    {
+        "content": "<p>That all sounds good, and in particular it is an important source of applications that were sorely lacking back at the start of the category theory library</p>",
+        "id": 210623618,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1600533569
+    },
+    {
+        "content": "<p>I think we should focus more on making category theory <em>applicable</em> to other areas by direct generalization of useful theorems in other areas</p>",
+        "id": 210623661,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1600533604
+    },
+    {
+        "content": "<p>Re: applications -- This is exactly why I'm flagging it. The acid test will be whether we can glue sheaves and schemes together, because now we're taking quotients and who knows if stuff will get hairy.</p>",
+        "id": 210623679,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1600533615
+    },
+    {
+        "content": "<p>\"Lean has schemes\" -&gt; \"mathlib has schemes\" took a really long time, and basically this is because I got it wrong twice and learnt a lot from my mistakes -- but we learnt that category theory had to be ready, and for a long time it wasn't.</p>",
+        "id": 210623722,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1600533692
+    },
+    {
+        "content": "<p>I'm really hoping that Amelia will be able to use it [category theory] to start doing some serious cohomology theory like Ext and Tor in her forthcoming MSc.</p>",
+        "id": 210623795,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1600533756
+    },
+    {
+        "content": "<p>So I'm seeing that area of the graph as hopefully changing soon, it should be interesting. It might just all grind to a halt or it might work great.</p>",
+        "id": 210623818,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1600533787
+    },
+    {
+        "content": "<p>My student Shenyang Wu defined group cohomology but did not prove the long exact sequence of cohomology associated to a short exact sequence of abelian groups because he had to submit his thesis before he was able to learn how to use the new machinery. All the mathematical theorems were there though, as far as I could see; we just ran out of time before we got the machine going. We need the long exact sequence of cohomology associated to a short exact sequence of abelian groups/Z-modules/objects in some abelian category.  I think Shenyang must have written the API for this, so perhaps this is something we can hand over to the category people.</p>",
+        "id": 210624169,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1600534274
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"112680\">Johan Commelin</span> <a href=\"#narrow/stream/113488-general/topic/random.20io.20output/near/210621243\">said</a>:</p>\n<blockquote>\n<p>That's a reasonably small graph. I was hoping that <code>add_group</code> and <code>category</code> would be distinct blobs.</p>\n</blockquote>\n<p>They are. <code>add_group</code> is a the bottom-left</p>",
+        "id": 210624240,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600534355
+    },
+    {
+        "content": "<p>Can you make a graph for <code>Scheme</code>?</p>",
+        "id": 210624256,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1600534389
+    },
+    {
+        "content": "<p>Aha, now I notice that there are two blobs close together</p>",
+        "id": 210624263,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1600534396
+    },
+    {
+        "content": "<p>Schemes for Reid<br>\n<a href=\"/user_uploads/3121/Tond4Qu3BDCqgRUwKllwfl6F/image.png\">image.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/Tond4Qu3BDCqgRUwKllwfl6F/image.png\" title=\"image.png\"><img src=\"/user_uploads/3121/Tond4Qu3BDCqgRUwKllwfl6F/image.png\"></a></div>",
+        "id": 210624539,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600534821
+    },
+    {
+        "content": "<p>colored by cluster</p>",
+        "id": 210624543,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600534827
+    },
+    {
+        "content": "<p>Blue is category theory, orange is order and some topology,  green seems to be more category theory, grey is commutative algebra</p>",
+        "id": 210624629,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600534952
+    },
+    {
+        "content": "<p>Why order?  Is that because of filters?</p>",
+        "id": 210624666,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1600535040
+    },
+    {
+        "content": "<p>We use order and lattices everywhere in mathlib.</p>",
+        "id": 210624738,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600535130
+    },
+    {
+        "content": "<p><a href=\"/user_uploads/3121/oqsmhpsgFFK11UEOPu5TNooz/screenshot_190450.png\">screenshot_190450.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/oqsmhpsgFFK11UEOPu5TNooz/screenshot_190450.png\" title=\"screenshot_190450.png\"><img src=\"/user_uploads/3121/oqsmhpsgFFK11UEOPu5TNooz/screenshot_190450.png\"></a></div>",
+        "id": 210624742,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600535140
+    },
+    {
+        "content": "<p>This is a close-up view</p>",
+        "id": 210624744,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600535148
+    },
+    {
+        "content": "<p>I guess the other relevant orders here might be on topologies and on subrings.</p>",
+        "id": 210624800,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1600535206
+    },
+    {
+        "content": "<p>And on open sets...</p>",
+        "id": 210624814,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600535232
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110031\">@Patrick Massot</span> This looks really sweet! Thanks so much for doing this</p>",
+        "id": 210624963,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1600535408
+    },
+    {
+        "content": "<p>We still need a more efficient way of pruning foundations.</p>",
+        "id": 210624980,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600535438
+    },
+    {
+        "content": "<p>Another idea for Quanta: The normed_ring instance on Z_p?</p>",
+        "id": 210624989,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1600535456
+    },
+    {
+        "content": "<p>Maybe a few of these could go on the website?</p>",
+        "id": 210624993,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1600535458
+    },
+    {
+        "content": "<p>They are so pretty, and they capture the imagination.</p>",
+        "id": 210625006,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1600535478
+    },
+    {
+        "content": "<p>Looking at the scheme graph I still see stuff like <code>quotient</code>. This idea is important and indeed unifies a lot of things, but it makes it impossible to have nice clusters</p>",
+        "id": 210625017,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600535510
+    },
+    {
+        "content": "<p>I would love to see Lie group (sometime, whenever you have time).</p>",
+        "id": 210625160,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1600535737
+    },
+    {
+        "content": "<p><a href=\"/user_uploads/3121/GYd3CoyFHzz7Xf_qTTqRFz9y/lie_group.png\">lie_group.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/GYd3CoyFHzz7Xf_qTTqRFz9y/lie_group.png\" title=\"lie_group.png\"><img src=\"/user_uploads/3121/GYd3CoyFHzz7Xf_qTTqRFz9y/lie_group.png\"></a></div>",
+        "id": 210625794,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600536605
+    },
+    {
+        "content": "<p>Can someone tell the difference between a Lie group and a perfectoid space?</p>",
+        "id": 210625815,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1600536660
+    },
+    {
+        "content": "<p>The weird thing in this case is that clusters don't seem to mean much. The graph is simply confusing for Gephi.</p>",
+        "id": 210625889,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600536763
+    },
+    {
+        "content": "<p>I tried a more aggressive pruning strategy and the graph looks completely different.<br>\n<a href=\"/user_uploads/3121/XkwWUTm-u-mbbC5ANUaXtWDN/lie_group2.png\">lie_group2.png</a> <br>\nThis is all very unscientific</p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/XkwWUTm-u-mbbC5ANUaXtWDN/lie_group2.png\" title=\"lie_group2.png\"><img src=\"/user_uploads/3121/XkwWUTm-u-mbbC5ANUaXtWDN/lie_group2.png\"></a></div>",
+        "id": 210627149,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600538575
+    },
+    {
+        "content": "<p>But I post it anyway because it's kind of pretty</p>",
+        "id": 210627159,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600538588
+    },
+    {
+        "content": "<p>and indeed removing more foundational stuff bring more structure</p>",
+        "id": 210627165,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600538604
+    },
+    {
+        "content": "<p>Does Gephi know that these are directed (rather than undirected) graphs?  Are there clustering algorithms that take this into account?</p>",
+        "id": 210636908,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1600552000
+    },
+    {
+        "content": "<p>It knows they are directed. I don't know about the other questions. I actually don't know anything about graph analysis, I'm just clicking random buttons.</p>",
+        "id": 210656251,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1600591167
+    },
+    {
+        "content": "<p>Are you training to be an ML researcher?</p>",
+        "id": 210658206,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1600594763
+    }
+]

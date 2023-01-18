@@ -1,0 +1,74 @@
+[
+    {
+        "content": "<p>The discussion at <a href=\"#narrow/stream/270676-lean4/topic/tactic.20naming.20convention\">https://leanprover.zulipchat.com/#narrow/stream/270676-lean4/topic/tactic.20naming.20convention</a> ended with a decision to use snake case for tactics, along with commands (which were already snake case). The suggested heuristic is that anything that acts like a keyword should be camel cased.</p>\n<p>But what about attributes? The keyword litmus test is inconclusive, because attributes can either use the catchall parser</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[builtinAttrParser]</span> <span class=\"kd\">def</span> <span class=\"n\">simple</span> <span class=\"o\">:=</span> <span class=\"n\">leading_parser</span> <span class=\"n\">ident</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"n\">optional</span> <span class=\"o\">(</span><span class=\"n\">priorityParser</span> <span class=\"bp\">&lt;|&gt;</span> <span class=\"n\">ident</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>which will parse arbitrary identifiers (not keywords), or they can be provided as keywords by adding productions to the <code>attr</code> grammar:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">syntax</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">mkIff</span><span class=\"o\">)</span> <span class=\"s2\">\"mk_iff\"</span> <span class=\"o\">(</span><span class=\"n\">ppSpace</span> <span class=\"n\">ident</span><span class=\"o\">)</span><span class=\"bp\">?</span> <span class=\"o\">:</span> <span class=\"n\">attr</span>\n</code></pre></div>\n<p>This latter method is required for any attribute that takes arguments. I don't like the idea of having different casing conventions for these two, because the user ideally should not have to care about the implementation detail of whether <code>@[foo]</code> is parsed using <code>Attr.simple</code> or <code>Attr.foo</code>.</p>\n<p>Currently, attributes in lean 4 core are camel cased (like <code>builtinInit</code>, <code>macroInline</code>, <code>implementedBy</code>), while the attributes in <code>Mathport.Syntax</code> were switched to use snake case along with tactics following <a href=\"https://github.com/leanprover-community/mathlib4/pull/141\">mathlib4#141</a>. I have no strong feelings about which way to go here, but it would be good to have a decision about this on record.</p>\n<p><span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span> <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> <span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> <span class=\"user-mention\" data-user-id=\"315577\">@Mac</span></p>",
+        "id": 265908900,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1640259574
+    },
+    {
+        "content": "<p>Another observation that might be relevant: Attribute names are in a flat namespace, in the sense that the name you pass to <code>registerBuiltinAttribute</code> has to be atomic, and it is derived from the last name component of the corresponding <code>syntax</code>. So for example the syntax for <code>mk_iff</code> above is registered under the name <code>\"mkIff\"</code> even though the user writes <code>@[mk_iff]</code> (even if that syntax declaration is in a namespace, in this case <code>Lean.Parser.Attr.mkIff</code>), and it would clash with any simple attribute like <code>@[mkIff]</code>. If you try to add <code>@[mk_iff]</code> to a declaration without a registered handler, you get the somewhat surprising error that there is no attribute declared for <code>[mkIff]</code>, while if you do the same for an undeclared identifier <code>@[foo_bar]</code> the error says there is no attribute declared for <code>[foo_bar]</code>.</p>\n<p>This suggests that we should try to keep the initial token the same as the name of the syntax, rather than using different naming conventions as in the example.</p>",
+        "id": 265909287,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1640259947
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> one other thing to note is that if you use the same casing style for attribute names as for keywords, you can end up with a lot of naming clashes for attributes using the <code>attr.simple</code> parser (i.e., an <code>ident</code> name). For example, if the  <code>mk_iff</code> attribute is a simple attribute and has a helper <code>mk_iff</code> syntax to define it then the attribute will now need french quotes when used manually (this is a problem I already experience in Lake with the <code>package</code> and <code>script</code> attributes and syntaxes).</p>",
+        "id": 265909505,
+        "sender_full_name": "Mac",
+        "timestamp": 1640260175
+    },
+    {
+        "content": "<p>One way to get around this would be if <code>attr.simple</code> used some kind of <code>rawIdent</code> parser (that capture any ident, regardless of keyword status) and the <code>attr</code> category used a leading behavior of symbol (or mixed).  I believe that would prevent such clashes from occurring and would not creating parsing ambiguities.</p>",
+        "id": 265909831,
+        "sender_full_name": "Mac",
+        "timestamp": 1640260509
+    },
+    {
+        "content": "<p>If feel like attributes should not keywordify their first token, similar to tactics. They are context-sensitive keywords so this shouldn't cause any problems</p>",
+        "id": 265909928,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1640260615
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> The problem is the other way around. The command / term level syntax keywordifies the token which then prevents it from being used as an identifier for <code>attr.simple</code> (without french quotes).</p>",
+        "id": 265910514,
+        "sender_full_name": "Mac",
+        "timestamp": 1640261149
+    },
+    {
+        "content": "<p>I see. Why not use a keyword attr parser in that case?</p>",
+        "id": 265910665,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1640261283
+    },
+    {
+        "content": "<p>Because the term keyword might have been declared afterwards or somewhere else.</p>",
+        "id": 265910706,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1640261311
+    },
+    {
+        "content": "<p>keywordification is a global thing, so you should try to avoid \"after the fact\" stuff. This is why the <code>precedence</code> command exists in lean 3, to make sure that things don't become keywords post hoc causing order dependent import and other messy things</p>",
+        "id": 265910845,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1640261444
+    },
+    {
+        "content": "<p>As far as I'm concerned, we could remove the simple parser and always require syntax definition + <del>elaborator</del> attribute registration, like we do with everything else.  But I feel like we're straying off-topic.</p>",
+        "id": 265910848,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1640261445
+    },
+    {
+        "content": "<p>IIRC the <code>simple</code> parser was mostly for bootstrapping</p>",
+        "id": 265911263,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1640261828
+    },
+    {
+        "content": "<p>If we agree that at least morally each attribute comes with its own syntax, then I agree that they should follow the same casing convention as tactics</p>",
+        "id": 265926014,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1640273026
+    }
+]

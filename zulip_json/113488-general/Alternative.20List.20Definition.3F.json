@@ -1,0 +1,200 @@
+[
+    {
+        "content": "<p>So an alternative definition of a list is the following:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">GetList</span> <span class=\"o\">(</span><span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n  <span class=\"n\">len</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n  <span class=\"n\">get</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"n\">len</span> <span class=\"bp\">→</span> <span class=\"n\">α</span>\n</code></pre></div>\n<p>I'm curious as to what this definition of a list is called and why it isn't used more in functional programming / type theory.</p>",
+        "id": 244774907,
+        "sender_full_name": "Mac",
+        "timestamp": 1625278980
+    },
+    {
+        "content": "<p>In Lean 3, that happens to be called <a href=\"https://leanprover-community.github.io/mathlib_docs/find/buffer\">docs#buffer</a>, which I understand has special support in the VM to use more efficient data structures.</p>\n<p>You likely see it less because the linked list definition tends to make for nice recursive definitions, and also it requires a dependent type system to use.</p>",
+        "id": 244777676,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1625284158
+    },
+    {
+        "content": "<p>In lean 4, it's called <code>Array</code></p>",
+        "id": 244779475,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625286319
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/Alternative.20List.20Definition.3F/near/244779475\">said</a>:</p>\n<blockquote>\n<p>In lean 4, it's called <code>Array</code></p>\n</blockquote>\n<p>What do you mean by that? A Lean 4 <code>Array</code> is just a wrapper around <code>List</code> that has a special handling in the code generator -- it is nothing like this?</p>",
+        "id": 244834855,
+        "sender_full_name": "Mac",
+        "timestamp": 1625364204
+    },
+    {
+        "content": "<p>Oh, did it change to <code>List</code> in the model? In lean 3 it was a <code>Fin n -&gt; A</code> function. Both are lies of course</p>",
+        "id": 244860500,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625406759
+    },
+    {
+        "content": "<p>I think another reason this alternative list definition tends not to be seen (without special support like in Lean 3) is that runtimes tend not to memoize functions, meaning most times when you compute <code>l.get i</code> it would evaluate the <code>Fin len → α</code> function again.  The usual inductive definition of a list gives the runtime places to store evaluated elements of the list.</p>\n<p>The famously lazy Haskell runtime, for example, uses 0-argument lambdas (\"thunks\") to represent unevaluated expressions, and once a computation forces a thunk to evaluate to weak head normal form, the thunk is mutated in-place with the evaluated result.  Constructors for inductive types, then, are a natural place to hold onto a number of thunks that you know will only ever be evaluated once.  There is a trick in Haskell to memoize functions whose domain is the natural numbers -- and that's to replace the function with one that accesses the corresponding element of a lazily constructed list!</p>\n<p>For what it's worth, while the underlying definition of <code>Array</code> is different, the library defines <code>Array.size</code> and <code>Array.get</code>, which correspond exactly to your <code>GetList.len</code> and <code>GetList.get</code>.  It's missing a <code>GetList</code>-like constructor, but it's easy enough to define one (though I'm not sure what I wrote is idiomatic):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">Array.create</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"n\">n</span> <span class=\"bp\">→</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">Array.empty</span>\n  <span class=\"n\">for</span> <span class=\"n\">i</span> <span class=\"k\">in</span> <span class=\"o\">[:</span><span class=\"n\">n</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n    <span class=\"k\">if</span> <span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">i</span> <span class=\"bp\">&lt;</span> <span class=\"n\">n</span> <span class=\"k\">then</span>\n      <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">a.push</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">⟨</span><span class=\"n\">i</span><span class=\"o\">,</span> <span class=\"n\">h</span><span class=\"o\">⟩)</span>\n  <span class=\"n\">a</span>\n</code></pre></div>\n<p>Once you have all these functions (along with some supporting lemmas) then there's not really a difference between <code>Array</code> and <code>GetList</code> other than computational efficiency.</p>",
+        "id": 244870625,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1625422283
+    },
+    {
+        "content": "<p>For your last definition, although it looks nice it bothers me a bit that there is a superfluous if-check. We can eliminate it like so (while retaining the tail recursive quality of the loop):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">partial</span> <span class=\"kd\">def</span> <span class=\"n\">Array.create</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"n\">n</span> <span class=\"bp\">→</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span> <span class=\"o\">:=</span>\n  <span class=\"n\">go</span> <span class=\"n\">Array.empty</span> <span class=\"mi\">0</span>\n<span class=\"n\">where</span>\n  <span class=\"n\">go</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">i</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span> <span class=\"o\">:=</span>\n  <span class=\"k\">if</span> <span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">i</span> <span class=\"bp\">&lt;</span> <span class=\"n\">n</span> <span class=\"k\">then</span>\n    <span class=\"n\">go</span> <span class=\"o\">(</span><span class=\"n\">a.push</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">⟨</span><span class=\"n\">i</span><span class=\"o\">,</span> <span class=\"n\">h</span><span class=\"o\">⟩))</span> <span class=\"o\">(</span><span class=\"n\">i</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">)</span>\n  <span class=\"k\">else</span>\n    <span class=\"n\">a</span>\n</code></pre></div>\n<p>Unfortunately we had to go <code>partial</code> to make this work, and to show termination we need to add more stuff that might break the performance again, so at this point I would just use an <code>implementedBy</code> to define your function as the model and my function as the implementation</p>",
+        "id": 244883254,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625442764
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/113488-general/topic/Alternative.20List.20Definition.3F/near/244870625\">said</a>:</p>\n<blockquote>\n<p>Once you have all these functions (along with some supporting lemmas) then there's not really a difference between <code>Array</code> and <code>GetList</code> other than computational efficiency.</p>\n</blockquote>\n<p>It is certainly true that they are functionally equivalent definitions. However, it is the computational efficiency part hat interests me.  I would think this model of a list would be much easier to implement computationally. A  normal functional <code>List</code> essentially models a linked list data structure. However, a <code>GetList</code> models l a  random access array. The <code>get</code> function would simply need to be an memory access (i.e., literally just a load instruction) from a given offset (which could, for example be part of the function's closure).  That is why I was curious why a model like this isn't used more often.</p>",
+        "id": 244885437,
+        "sender_full_name": "Mac",
+        "timestamp": 1625446667
+    },
+    {
+        "content": "<p>In fact, to directly represent a memory slice, we could model a list like so:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">Slice</span> <span class=\"o\">(</span><span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n  <span class=\"n\">head</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n  <span class=\"n\">tail</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n  <span class=\"n\">get</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">head</span> <span class=\"bp\">≤</span> <span class=\"n\">n</span> <span class=\"bp\">∧</span> <span class=\"n\">n</span> <span class=\"bp\">≤</span> <span class=\"n\">tail</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">α</span>\n</code></pre></div>\n<p>I would think that such types would be much better models for computational reasons. (This one is unfortunately less pretty as there is no builtin Nat interval type as far as I know).</p>",
+        "id": 244885585,
+        "sender_full_name": "Mac",
+        "timestamp": 1625446920
+    },
+    {
+        "content": "<p>Admittedly, a <code>Slice</code> would be less useful in a pure contexts because the actual head and tail are real world artifacts, but the <code>GetList</code> abstraction resolves this by removing those details.</p>",
+        "id": 244886072,
+        "sender_full_name": "Mac",
+        "timestamp": 1625447811
+    },
+    {
+        "content": "<blockquote>\n<p>It is certainly true that they are functionally equivalent definitions. However, it is the computational efficiency part hat interests me.</p>\n</blockquote>\n<p>Like I said, both definitions are lies. The computational efficiency of array operations is determined by the implementation of the functions, and means that <code>Array.get</code> is O(1) (assuming O(1) memory access), even though if you take the model seriously it looks like an O(n) definition to walk the <code>List</code>. But the <code>List</code> doesn't actually exist unless you call the function <code>Array.mk</code>, which despite having the appearance of a \"mere wrapper\" is actually a computationally heavy conversion function. Same for <code>Array.data</code>, which is not O(1) even though it looks like a field projection.</p>",
+        "id": 244893168,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625459382
+    },
+    {
+        "content": "<blockquote>\n<p>A normal functional List essentially models a linked list data structure. However, a GetList models l a random access array. The get function would simply need to be an memory access (i.e., literally just a load instruction) from a given offset (which could, for example be part of the function's closure). That is why I was curious why a model like this isn't used more often.</p>\n</blockquote>\n<p>If we assume no special runtime support for arrays and just consider a generic runtime using closures and linked lists, then a function <code>Fin n -&gt; A</code> is stored as a closure, and the performance cost of calling this function depends on the function that was stored. In theory it can be as good as O(1), for example if the user stored a constant function in the \"array\", but assuming that you actually want to store n different elements with no special rule for generation, for example if you are buffering characters from an input stream, then a pure functional data structure cannot do better than O(log(n)) access time, but clearly there are linear size data structures that achieve this bound (just use a balanced binary tree), and if you wrap the accessor for such a data structure in a closure then you can get this performance in a <code>Fin n -&gt; A</code> array as well.</p>",
+        "id": 244893485,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625459748
+    },
+    {
+        "content": "<p>Here's a less lying way to present the interface of <code>Array</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">constant</span> <span class=\"n\">Array</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n\n<span class=\"kd\">@[extern \"lean_array_mk\"]</span>\n<span class=\"kd\">constant</span> <span class=\"n\">Array.mk</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">Array</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n\n<span class=\"kd\">@[extern \"lean_array_data\"]</span>\n<span class=\"kd\">constant</span> <span class=\"n\">Array.data</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">List</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n</code></pre></div>\n<p>However this is a lot less convenient because you don't get things like <code>a.mk.data = a := rfl</code> like with the structure definition, and also you can't really fill those sorry's as written because constants can't depend on each other like this, you have to stick the whole spec in a structure and make one <code>constant</code> over the whole thing (this is how <code>Float</code> is defined, for example).</p>",
+        "id": 244893986,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625460308
+    },
+    {
+        "content": "<p>An interesting design for providing a data structure with O(1) access is in <a href=\"https://github.com/google-research/dex-lang\">Dex</a>, which has a special function arrow <code>a =&gt; b</code> when <code>a</code> is a finite type, and it stores the function as an array.  (Though these aren't functions precisely.)</p>",
+        "id": 244894260,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1625460643
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> I don't really think of a closure as a data structure. What it actually provides is the way to abstract over data structures through dynamic dispatch, but you still have to have an implementation behind the indirection and that implementation ultimately has to consult some <em>actual</em> data structure which determines the computational efficiency of the result. (That's not strictly true; a closure's actual data content is approximately the same as an inductive type, that is, a discriminant (the function pointer) and a tuple of local variables, so you can certainly use recursive closures to build real data structures, but this usually ends up being a less efficient version of <code>inductive</code> so I don't recommend it.)</p>",
+        "id": 244894373,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625460828
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/Alternative.20List.20Definition.3F/near/244894373\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> I don't really think of a closure as a data structure.</p>\n</blockquote>\n<p>I have always thought a closure as simple data structure which is a function (pointer) together with its environment  (i.e. a struct of related data the functon references).</p>",
+        "id": 244897518,
+        "sender_full_name": "Mac",
+        "timestamp": 1625465194
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/Alternative.20List.20Definition.3F/near/244893485\">said</a>:</p>\n<blockquote>\n<p>If we assume no special runtime support for arrays and just consider a generic runtime using closures and linked lists.</p>\n</blockquote>\n<p>I am confused about what you are assuming here. Why would a generic runtime with just closures and linked lists be a reasonable default assumption? Are there some constraints you are assuming about the representations of functional data structures that I don't understand?</p>\n<p>For example, is there some reason the an array like <code>[2,8]</code> could not (in some theoretical functional language) just be translated to  <code>{len := 2, get := fun | 0 =&gt; 2 | 1 =&gt; 8} : GetList</code> and the <code>get</code> function thus translate to an array access to an allocated <code>[2,8]</code> real array in its closure?</p>",
+        "id": 244898157,
+        "sender_full_name": "Mac",
+        "timestamp": 1625465962
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> I think the point is that with <code>GetList</code> you need to signal to the compiler that you want the function to store its values (the extension of the function), rather than the usual, which is to store a closure (the intension of the function).  If you extend the language to give you the ability to mark when a function's extension should be stored (which certainly should not be the default!) then I don't see why it can't be translated in the way you suggest.</p>\n<p>But also, if you're going through the effort to make a language extension for this, which might only ever be useful for implementing arrays, one wonders if it would be better to do what Lean 4 does, which is to create a general interface to allow theoretical definitions to be replaced by efficient code.</p>",
+        "id": 244900087,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1625467975
+    },
+    {
+        "content": "<p>I don't know if you're aware of this already <span class=\"user-mention\" data-user-id=\"315577\">@Mac</span>, but we have <code>![2, 8]</code> in mathlib that builds essentially that function</p>",
+        "id": 244907255,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1625473263
+    },
+    {
+        "content": "<blockquote>\n<p>For example, is there some reason the an array like [2,8] could not (in some theoretical functional language) just be translated to <code>{len := 2, get := fun | 0 =&gt; 2 | 1 =&gt; 8} : GetList</code> and the get function thus translate to an array access to an allocated [2,8] real array in its closure?</p>\n</blockquote>\n<p>This just shifts the question to how arbitrary-fanout matches are implemented. If, like lean, this is represented as a nested if-else expression (especially since it's probably of the form \"if zero then this, else call this nested function of a similar form\") it's no better than a linked list.</p>",
+        "id": 244915825,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625478935
+    },
+    {
+        "content": "<blockquote>\n<p>I am confused about what you are assuming here. Why would a generic runtime with just closures and linked lists be a reasonable default assumption? Are there some constraints you are assuming about the representations of functional data structures that I don't understand?</p>\n</blockquote>\n<p>I didn't mean that to be an exhaustive list. In particular I am also assuming that the runtime supports general inductive types (of fixed arity), i.e. pairs and sums, which is enough to build most lisp style functional data structures. This is the setting where you normally get the log(n) lower bound, because the core data constructor has finite branching factor so representing an object of size n requires log(n) constructor depth. Using functions with if-statements don't get you out of this, because if statements also have finite branching factor.</p>\n<p>Arrays are a fundamentally different thing in this setup, because they have arbitrary fanout. (Technically, it's still log(n) since you have to read the index which has size log(n), but we usually ignore that in the RAM model.) Large matches compiled to jump tables seem to be similar to arrays in this sense, but I think they still have finite branching factor if we assume all such matches are compiled up-front and there is no dynamic code generation. In any case we generally don't want to generate code proportional to the size of the array, that would be very wasteful.</p>",
+        "id": 244917193,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625479766
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/Alternative.20List.20Definition.3F/near/244915825\">said</a>:</p>\n<blockquote>\n<p>This just shifts the question to how arbitrary-fanout matches are implemented. If, like lean, this is represented as a nested if-else expression (especially since it's probably of the form \"if zero then this, else call this nested function of a similar form\") it's no better than a linked list.</p>\n</blockquote>\n<p>I didn't realize that large fanout was implemented as successive if-else trees. From my understanding, the general best practice for such things (which would parallel a <code>switch</code> in C/C++) is to compile them down into an constant array access (if the indices are reasonably adjacent) or a special no-collision hash map (if they are not). If a result is more complex than a single value, this might be a map to function pointers / labels. In fact, LLVM, for example, even has specific IR instruction (the <code>switch</code>) for implementing the later. Which, as the docs say, is usually implemented through such a lookup table (except in some targets that don't support it).</p>",
+        "id": 244948883,
+        "sender_full_name": "Mac",
+        "timestamp": 1625498789
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/113488-general/topic/Alternative.20List.20Definition.3F/near/244900087\">said</a>:</p>\n<blockquote>\n<p>But also, if you're going through the effort to make a language extension for this, which might only ever be useful for implementing arrays, one wonders if it would be better to do what Lean 4 does, which is to create a general interface to allow theoretical definitions to be replaced by efficient code.</p>\n</blockquote>\n<p>Well there are two problems with the Lean-like implementation (though these might be improved in Lean in the future). Either the implementation is is also written in Lean, which doesn't solve the representation problem, or it is implemented in an external language, which means the definition In Lean is lies and can't be analyzed within the functional language. The point of the model / implementation combination I am discussing is that, with it, you can get a one-to-one model to implementation correspondence. The fanout <code>get</code> is a proper truthful abstraction of an array access that can also be directly implemented as such.</p>",
+        "id": 244949514,
+        "sender_full_name": "Mac",
+        "timestamp": 1625499142
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/113488-general/topic/Alternative.20List.20Definition.3F/near/244907255\">said</a>:</p>\n<blockquote>\n<p>I don't know if you're aware of this already <span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span>, but we have <code>![2, 8]</code> in mathlib that builds essentially that function</p>\n</blockquote>\n<p>Cool, that's neat! My question is more though why this is not the general functional paradigm for lists.</p>",
+        "id": 244949809,
+        "sender_full_name": "Mac",
+        "timestamp": 1625499319
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/113488-general/topic/Alternative.20List.20Definition.3F/near/244948883\">said</a>:</p>\n<blockquote>\n<p>From my understanding, the general best practice for such things (which would parallel a <code>switch</code> in C/C++) is to compile them down into an constant array access (if the indices are reasonably adjacent) or a special no-collision hash map (if they are not). If a result is more complex than a single value, this might be a map to function pointers / labels. In fact, LLVM, for example, even has specific IR instruction (the <code>switch</code>) for implementing the later. Which, as the docs say, is usually implemented through such a lookup table (except in some targets that don't support it).</p>\n</blockquote>\n<p>This is assuming that the data is known up front so that the compiler can take a stab at optimizing it. Normally, if you have a piece of code manipulating arrays, the code itself is quite small even if it manipulates huge arrays. So there is no giant switch for the compiler to chew on. The only time this comes up is when you are using the code to store a large static array in the binary, it doesn't handle arrays coming from the runtime environment.</p>",
+        "id": 244951313,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625500226
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/Alternative.20List.20Definition.3F/near/244951313\">said</a>:</p>\n<blockquote>\n<p>The only time this comes up is when you are using the code to store a large static array in the binary, it doesn't handle arrays coming from the runtime environment.</p>\n</blockquote>\n<p>I think the runtime case is actually easier. There you could have something like <code>constant alloca (α : Type) (size : USize) : IO (Fin size.toNat → α)</code>. that allocates the runtime array and returns a wrapped lambda which performs the array access.</p>",
+        "id": 244976840,
+        "sender_full_name": "Mac",
+        "timestamp": 1625521857
+    },
+    {
+        "content": "<p>For cases where the runtime array is coming directly from the real world (like the argument list to main), even less lying has to be done as those objects are already opaque. The functional runtime can freely fill in <code>get</code> with an appropriate lambda accessing the proper place in memory (such as the beginning of the executable stack for main arguments).</p>",
+        "id": 244977111,
+        "sender_full_name": "Mac",
+        "timestamp": 1625522114
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/113488-general/topic/Alternative.20List.20Definition.3F/near/244976840\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/Alternative.20List.20Definition.3F/near/244951313\">said</a>:</p>\n<blockquote>\n<p>The only time this comes up is when you are using the code to store a large static array in the binary, it doesn't handle arrays coming from the runtime environment.</p>\n</blockquote>\n<p>I think the runtime case is actually easier. There you could have something like <code>constant alloca (α : Type) (size : USize) : IO (Fin size.toNat → α)</code>. that allocates the runtime array and returns a wrapped lambda which performs the array access.</p>\n</blockquote>\n<p>That function has to be implemented somehow though. If you just say \"it's abstract and implemented by magic\" then it's no different from lean's <code>Array.get</code>, except that lean doesn't wrap the result in <code>IO</code> because array creation can be a pure operation.</p>",
+        "id": 244984061,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625531351
+    },
+    {
+        "content": "<p>Lean actually has a much better thing since it also supports destructive <code>set</code>, not just <code>get</code>. That function representation can only support read-only arrays</p>",
+        "id": 244984135,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625531429
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/Alternative.20List.20Definition.3F/near/244984061\">said</a>:</p>\n<blockquote>\n<p>That function has to be implemented somehow though. If you just say \"it's abstract and implemented by magic\" then it's no different from lean's <code>Array.get</code>, except that lean doesn't wrap the result in <code>IO</code> because array creation can be a pure operation.</p>\n</blockquote>\n<p>A rough example implementation:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">abbrev</span> <span class=\"n\">Addr</span> <span class=\"o\">:=</span> <span class=\"n\">USize</span>\n\n<span class=\"kd\">@[extern c inline \"(sizeof(size_t))\"]</span>\n<span class=\"kd\">constant</span> <span class=\"n\">Addr.byteSize</span> <span class=\"o\">:</span> <span class=\"n\">USize</span>\n\n<span class=\"kd\">@[extern c inline \"((size_t)(malloc(#1)))\"]</span>\n<span class=\"kd\">constant</span> <span class=\"n\">malloc</span> <span class=\"o\">(</span><span class=\"n\">size</span> <span class=\"o\">:</span> <span class=\"n\">USize</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Addr</span>\n\n<span class=\"kd\">@[extern c inline \"(*((lean_object**)(#1)))\"]</span>\n<span class=\"n\">unsafe</span> <span class=\"kd\">axiom</span> <span class=\"n\">load</span> <span class=\"o\">{</span><span class=\"n\">α</span>  <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">addr</span> <span class=\"o\">:</span> <span class=\"n\">USize</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">α</span>\n\n<span class=\"n\">unsafe</span> <span class=\"kd\">def</span> <span class=\"n\">unsafeAlloc</span>\n<span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">size</span> <span class=\"o\">:</span> <span class=\"n\">USize</span><span class=\"o\">)</span>\n<span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Fin</span> <span class=\"n\">size.toNat</span> <span class=\"bp\">→</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:=</span>  <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">addr</span> <span class=\"bp\">←</span> <span class=\"n\">malloc</span> <span class=\"o\">(</span><span class=\"n\">Addr.byteSize</span> <span class=\"bp\">*</span> <span class=\"n\">size</span><span class=\"o\">)</span>\n  <span class=\"n\">return</span> <span class=\"k\">fun</span> <span class=\"n\">i</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">load</span> <span class=\"o\">(</span><span class=\"n\">addr</span> <span class=\"bp\">+</span> <span class=\"n\">i.val.toUSize</span><span class=\"o\">)</span>\n\n<span class=\"kd\">@[implementedBy unsafeAlloc]</span>\n<span class=\"kd\">constant</span> <span class=\"n\">alloc</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">size</span> <span class=\"o\">:</span> <span class=\"n\">USize</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Fin</span> <span class=\"n\">size.toNat</span> <span class=\"bp\">→</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>Admittedly, the <code>alloca</code> isn't very useful as you can't actually fill the array with values. But the point of this proof of concept was just to show how this model corresponds closely to the bare metal implementation and thus lies a lot less. I can provide a more feature complete model if you really want one though.</p>",
+        "id": 244988840,
+        "sender_full_name": "Mac",
+        "timestamp": 1625537586
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/Alternative.20List.20Definition.3F/near/244984061\">said</a>:</p>\n<blockquote>\n<p>lean doesn't wrap the result in <code>IO</code> because array creation can be a pure operation.</p>\n</blockquote>\n<p>I mean to, a certain extent, any operation can or cannot be pure based on what one wishes to consider as relevant state. Even basic mathematical operations (like addition) still change things like register state. Thus, if one wants to include that in their I/O model then a function like <code>add</code> would be impure and need to occur in an <code>IO</code> monad. Purity, to me, has about whether conceptually the operation is to occur in the 'real world' or happen in abstraction land. </p>\n<p>Thus, to me, allocating an array, and more generally, the stand concept of an array, is an impure concept because arrays are defined as being allocated consecutively in memory, which is a requirement on their 'real world' representation. Something like <code>GetList</code> would be the pure analog (of a read-only array) because it has the same abstract functional structure (i.e., random access lookup), but says nothing about its implementation. A <code>List</code>, on the other hand, does not have the same structure (it models iterative lookup) and thus a does not strike me as a good model. You can still model an Array as a <code>List</code> but then you are lying about its structure and the operations you are performing, and I personally don't like that approach.</p>",
+        "id": 244990456,
+        "sender_full_name": "Mac",
+        "timestamp": 1625539438
+    },
+    {
+        "content": "<blockquote>\n<p>I mean to, a certain extent, any operation can or cannot be pure based on what one wishes to consider as relevant state. Even basic mathematical operations (like addition) still change things like register state. Thus, if one wants to include that in their I/O model then a function like add would be impure and need to occur in an IO monad.</p>\n</blockquote>\n<p>Well, yes. But reading that the other way around, saying that a given operation is pure is indirectly putting constraints on the observable states of the machine, and making certain properties of the runtime inaccessible. Register states are certainly among the things on the FP cutting room floor.</p>\n<blockquote>\n<p>Thus, to me, allocating an array, and more generally, the stand concept of an array, is an impure concept because arrays are defined as being allocated consecutively in memory, which is a requirement on their 'real world' representation. </p>\n</blockquote>\n<p>This is only if pointer values are accessible, and FP languages almost universally deny access to this information. Without pointer values, \"consecutively in memory\" is not a concept that can even be stated. Runtime behavior is a little closer to the mark (i.e. the characteristic property of an array is the way in which its performance characteristics differ from a linked list or tree), but the time taken to execute an operation is another verboten property.</p>\n<blockquote>\n<p>You can still model an Array as a List but then you are lying about its structure and the operations you are performing, and I personally don't like that approach.</p>\n</blockquote>\n<p>An array is like a list in that it stores a sequence of values. All the provable properties about arrays and lists are the same. Lists are preferable to functions because it is easier to prove theorems about lists by induction than work with fin functions (just take a look at the relative sizes of the two theories in mathlib for an idea).</p>",
+        "id": 244991462,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1625540786
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/Alternative.20List.20Definition.3F/near/244991462\">said</a>:</p>\n<blockquote>\n<p>This is only if pointer values are accessible, and FP languages almost universally deny access to this information. Without pointer values, \"consecutively in memory\" is not a concept that can even be stated. Runtime behavior is a little closer to the mark (i.e. the characteristic property of an array is the way in which its performance characteristics differ from a linked list or tree), but the time taken to execute an operation is another verboten property.</p>\n</blockquote>\n<p>I think this gets to the heart of the matter. I guess the model desired depends heavily on what kind of things you are hoping to do and prove things about. As a computer scientist and a security researcher, runtime complexity, the location of objects in memory, register state (even undocumented hardware architectural state) are interesting proof points for me (for example, to reason about things like Spectre and Meltdown). In math, of course, most of this stuff does not matter, but it does heavily in systems, compilers, and security, which is my general domain. As such, I definitely don't want those things on the cutting room floor. :P</p>\n<p>What's neat about Lean is that it is perfectly capable of operating and reasoning at this level. For example, Joe Hendrix  and the team at Galois Inc use Lean for analyzing such systems. Admittedly, other high performance functional languages (such as Haskell) can do low-level computation as well and I know Coq is used to verify some formal hardware systems. Lean, however, appears to be somewhat unique in that it can do both in the same language. At the same time, it can do high level theoretical math. In fact, I am constantly impressed at just how good of a truly general, general purpose language Lean is.</p>",
+        "id": 245003665,
+        "sender_full_name": "Mac",
+        "timestamp": 1625556268
+    }
+]

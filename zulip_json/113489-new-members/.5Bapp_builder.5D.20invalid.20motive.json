@@ -1,0 +1,80 @@
+[
+    {
+        "content": "<p>MWE:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">tactic</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.app_builder</span> <span class=\"n\">true</span>\n<span class=\"kd\">structure</span> <span class=\"n\">T</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">n</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span> <span class=\"bp\">→</span> <span class=\"n\">true</span><span class=\"o\">)</span>\n\n<span class=\"kd\">noncomputable</span> <span class=\"kd\">def</span> <span class=\"n\">f</span>\n<span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"bp\">¬∃</span> <span class=\"o\">{</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span><span class=\"o\">},</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">T</span> <span class=\"o\">:=</span> <span class=\"k\">let</span>\n  <span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span>\n  <span class=\"k\">in</span> <span class=\"o\">⟨</span><span class=\"n\">n</span><span class=\"o\">,</span> <span class=\"kd\">begin</span>\n    <span class=\"n\">rintro</span> <span class=\"n\">h₁</span><span class=\"o\">,</span> <span class=\"n\">subst</span> <span class=\"n\">h₁</span><span class=\"o\">,</span>\n    <span class=\"n\">triv</span><span class=\"o\">,</span>\n  <span class=\"kd\">end</span><span class=\"o\">⟩</span>\n</code></pre></div>\n<p>It's just an example, it doesn't matter what the function is intended to do. But the <code>subst h₁</code> fails with a weird error: <code>[app_builder] failed to build eq.rec, invalid motive</code>. Is the <code>subst</code> tactic generally buggy and should be avoided? Or is this error expected?</p>",
+        "id": 263830990,
+        "sender_full_name": "Patrick Johnson",
+        "timestamp": 1638786535
+    },
+    {
+        "content": "<p>What happens if you do <code>cases h₁</code>?</p>",
+        "id": 263831150,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1638786627
+    },
+    {
+        "content": "<p>In general, I would say this code looks non-idiomatic. But since this is a MWE, I understand you might be trying to do something more complicated in your actual use case.</p>",
+        "id": 263831236,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1638786687
+    },
+    {
+        "content": "<p>Yeah, the example is too minimal. In my real code, instead of <code>n : ℕ := 0</code> I have <code>n : ℕ := some_complicated_expression</code>. I was expecting that <code>subst h₁</code> creates an assumpion of the form <code>some_complicated_expression = 0</code> and removes both <code>n</code> and <code>h₁</code>.</p>",
+        "id": 263831643,
+        "sender_full_name": "Patrick Johnson",
+        "timestamp": 1638786913
+    },
+    {
+        "content": "<p>Aah, you want <code>dsimp only [n]</code> in that case.</p>",
+        "id": 263832061,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1638787162
+    },
+    {
+        "content": "<p>I don't think you can do <code>subst</code> with a <code>let</code>-bound variable.  The full error is</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[</span><span class=\"n\">app_builder</span><span class=\"o\">]</span> <span class=\"n\">failed</span> <span class=\"n\">to</span> <span class=\"n\">build</span> <span class=\"n\">eq.rec</span><span class=\"o\">,</span> <span class=\"n\">invalid</span> <span class=\"n\">motive</span><span class=\"o\">:</span>\n<span class=\"k\">let</span> <span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span> <span class=\"k\">in</span> <span class=\"n\">true</span>\n</code></pre></div>\n<p>Notice that <code>cases h₁</code> doesn't do anything in this example.</p>",
+        "id": 263832074,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1638787171
+    },
+    {
+        "content": "<p>Thanks! <code>dsimp only [n] at *</code> failed to simplify, but <code>simp</code> succeeds. However, it doesn't update other let-bound definitions that reference <code>n</code>. For example, assumption <code>f : ℕ → Prop := λ (m : ℕ), m = n</code> remains unchanged.</p>",
+        "id": 263833262,
+        "sender_full_name": "Patrick Johnson",
+        "timestamp": 1638787904
+    },
+    {
+        "content": "<p>If you don't want <code>n</code> anywhere then you can just not use <code>let</code> in the first place. <code>let</code> isn't some syntax for defining your function on more lines, it is an actual term in the core theory.</p>",
+        "id": 263865399,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1638804188
+    },
+    {
+        "content": "<p>That said, it would make sense to have a <code>let_subst</code> tactic that \"undoes\" a let. Here is a quick and dirty implementation:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"k\">have</span> <span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">n</span> <span class=\"bp\">=</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"o\">{</span> <span class=\"n\">dsimp</span> <span class=\"n\">only</span> <span class=\"o\">[</span><span class=\"n\">n</span><span class=\"o\">],</span> <span class=\"n\">refl</span> <span class=\"o\">},</span> <span class=\"n\">clear_value</span> <span class=\"n\">n</span><span class=\"o\">,</span> <span class=\"n\">subst</span> <span class=\"n\">h</span><span class=\"o\">,</span>\n</code></pre></div>",
+        "id": 263869267,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1638805642
+    },
+    {
+        "content": "<p>Ahh, I think the original question is a bit extra confusing because you have two sources of <code>n = 0</code>: the definition of <code>n</code> itself, and <code>h₁</code>.</p>",
+        "id": 263869847,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1638805864
+    },
+    {
+        "content": "<p>Right, the MWE doesn't make much sense. I'm just looking for the most preferred pattern for writing a function that constructs a structure. Some parts of the structure are data and some are proofs. In order to prepare all data fields, I use <code>let ... in</code>, because most of the parts depend on some previous results. But when constructing proof fields, I would like to substitute all definitions from the <code>let</code> block. Is this the recommended pattern, or is there a better approach? Should I open one large <code>begin ... end</code> and construct everything in there using <code>set</code> tactic instead?</p>",
+        "id": 263871174,
+        "sender_full_name": "Patrick Johnson",
+        "timestamp": 1638806383
+    },
+    {
+        "content": "<p>Maybe you can give a more realistic example?</p>",
+        "id": 263873131,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1638807032
+    },
+    {
+        "content": "<p>The other thing about using <code>let</code> in a definition is that you will need to deal with the <code>let</code> again when proving things about the definition</p>",
+        "id": 263873199,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1638807060
+    }
+]

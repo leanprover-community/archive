@@ -1,0 +1,122 @@
+[
+    {
+        "content": "<p>Is there anything out there for data-level parallelism? E.g. some kind of parallel map (map/reduce style) or similar? The way I've found so far is to use <code>Task</code>, which from <a href=\"#narrow/stream/270676-lean4/topic/Another.20IO.20Task.20question\">this discussion</a> sounds like it would be a lot of overhead to spawn a new task for every single computation in a <code>map</code>.</p>",
+        "id": 291835439,
+        "sender_full_name": "Andrés Goens",
+        "timestamp": 1659526537
+    },
+    {
+        "content": "<p>That's a pretty long thread, can you be more specific?</p>",
+        "id": 291835991,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659526819
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Data-level.20parallelism/near/291835991\">said</a>:</p>\n<blockquote>\n<p>That's a pretty long thread, can you be more specific?</p>\n</blockquote>\n<p>Haha, indeed it is! I can try to be more specific: From the discussion it seems that if we have n <code>Task</code>s, then the runtime system will spawn <code>n</code> worker threads. My first thought was (without testing it though) that this would not be very efficient if we wanted to run a computation (like a <code>map</code>) on a very large <code>Array</code>, as the overhead of spawning a new thread for every value would not be worth it. Is that wrong, e.g. does the runtime system not spawn OS threads for that but rather be much more lightweight and it might be worth it?</p>\n<p>There's obviously other ways around this otherwise, like splitting the computation manually into m <code>Task</code>s, but I wanted to ask if there was any code out there that had done something like this</p>",
+        "id": 291836979,
+        "sender_full_name": "Andrés Goens",
+        "timestamp": 1659527382
+    },
+    {
+        "content": "<p>That's not true, non-dedicated tasks (the default) are backed by a thread pool bounded by the number of hardware threads</p>",
+        "id": 291837297,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659527543
+    },
+    {
+        "content": "<p>for the collections library, I plan to implement parallelized versions of map/whatever that chunk the data appropriately to minimize the overhead; I think even with a dedicated thread pool you'd want some granularity</p>",
+        "id": 291841879,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1659530054
+    },
+    {
+        "content": "<p>(but, very happy to hear that the overhead will not be the same as spawning a system thread)</p>",
+        "id": 291841954,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1659530097
+    },
+    {
+        "content": "<p>Curious: is there a <code>Channel</code> abstraction to go with <code>Task</code>?</p>",
+        "id": 291850103,
+        "sender_full_name": "Yuri de Wit",
+        "timestamp": 1659533685
+    },
+    {
+        "content": "<p>For future reference, I did some experimenting/measuring around and the performance is pretty decent even for a lot of threads and small-ish computation! Here's a version of this naive parallel map that I described</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">parallelMap</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">Array</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">β</span><span class=\"o\">)</span>\n  <span class=\"bp\">|</span> <span class=\"n\">f</span><span class=\"o\">,</span> <span class=\"n\">as</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"k\">let</span> <span class=\"n\">ts</span> <span class=\"o\">:=</span> <span class=\"n\">as.map</span> <span class=\"bp\">λ</span> <span class=\"n\">a</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Task.spawn</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">f</span> <span class=\"n\">a</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n  <span class=\"k\">let</span> <span class=\"n\">rs</span> <span class=\"o\">:=</span> <span class=\"n\">ts.map</span> <span class=\"n\">Task.get</span><span class=\"bp\">;</span>\n<span class=\"n\">return</span> <span class=\"n\">rs</span>\n</code></pre></div>\n<p>Using that I tested the following setup on an x86 machine with 24 HW threads and compared the two variants:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">someComputation</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span>\n <span class=\"bp\">|</span> <span class=\"n\">n</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">List.range</span> <span class=\"n\">n</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">foldl</span> <span class=\"o\">(</span><span class=\"n\">init</span> <span class=\"o\">:=</span> <span class=\"mi\">42</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">(</span><span class=\"n\">x</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">y</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">))</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">foo</span> <span class=\"o\">:=</span> <span class=\"n\">List.range</span> <span class=\"mi\">10000</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">toArray</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">map</span> <span class=\"n\">someComputation</span>\n  <span class=\"c\">/-</span><span class=\"cm\"></span>\n<span class=\"cm\">  real  1m21.293s</span>\n<span class=\"cm\">  user  1m21.244s</span>\n<span class=\"cm\">  sys   0m0.036s</span>\n<span class=\"cm\">  -/</span>\n  <span class=\"k\">let</span> <span class=\"n\">foo</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">List.range</span> <span class=\"mi\">10000</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">toArray</span> <span class=\"bp\">|&gt;</span> <span class=\"n\">parallelMap</span> <span class=\"n\">someComputation</span>\n  <span class=\"c\">/-</span><span class=\"cm\"></span>\n<span class=\"cm\">  real  0m6.240s</span>\n<span class=\"cm\">  user  2m22.260s</span>\n<span class=\"cm\">  sys   0m0.372s</span>\n<span class=\"cm\">  -/</span>\n  <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"res: {foo.size}\"</span>\n</code></pre></div>\n<p>That's a speedup of almost 14x (in a 24 thread machine, for this compute-bound problem we can probably think of HW threads as cores), which is surprisingly good.  Or put differently, there's factor ~1.7 in terms of CPU (user) time, which for this embarrassingly parallel problem should roughly correspond to the thread overhead (of ~70%).  With a nicely chunked version like <span class=\"user-mention\" data-user-id=\"407274\">@James Gallicchio</span> 's upcoming one this should be even better <span aria-label=\"wink\" class=\"emoji emoji-1f609\" role=\"img\" title=\"wink\">:wink:</span></p>",
+        "id": 291882928,
+        "sender_full_name": "Andrés Goens",
+        "timestamp": 1659547173
+    },
+    {
+        "content": "<p>Would it be possible to have <code>parallelMap</code> outside of <code>IO</code> monad? And other parallel algorithms too? If you are careful, you can make sure they are fully deterministic i.e. the result does not depend on the order of thread execution.</p>",
+        "id": 291979742,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1659602337
+    },
+    {
+        "content": "<p>It does look like the code is using the monad for <code>return</code> only :) ...</p>",
+        "id": 291979891,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659602415
+    },
+    {
+        "content": "<p>For the sake of completeness, the main optimization we're currently missing regarding task overhead is local queues with work stealing. All scheduling inside the current thread pool goes through a big global mutex.</p>",
+        "id": 291980128,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659602604
+    },
+    {
+        "content": "<p>Oh, I've no idea why I thought <code>Task</code> lived in <code>IO</code>,  just dropping them works indeed, thanks for that observation!</p>",
+        "id": 291980141,
+        "sender_full_name": "Andrés Goens",
+        "timestamp": 1659602619
+    },
+    {
+        "content": "<p>Ohh I also thought that <code>Task</code> lives in <code>IO</code> :)</p>",
+        "id": 291980392,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1659602773
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"463095\">Yuri de Wit</span> <a href=\"#narrow/stream/270676-lean4/topic/Data-level.20parallelism/near/291850103\">said</a>:</p>\n<blockquote>\n<p>Curious: is there a <code>Channel</code> abstraction to go with <code>Task</code>?</p>\n</blockquote>\n<p>Soon.. <a href=\"https://github.com/gebner/lean4/blob/10983d956cca532fcd3bdd6e7cd30ee1b87532de/src/Lean/Mutex.lean\">https://github.com/gebner/lean4/blob/10983d956cca532fcd3bdd6e7cd30ee1b87532de/src/Lean/Mutex.lean</a></p>",
+        "id": 291984410,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1659605484
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span> re: <code>Mutex.lean</code>, a notice a few patterns (?) I don't understand.</p>\n<p>Consider:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">private</span> <span class=\"n\">opaque</span> <span class=\"n\">BaseMutexImpl</span> <span class=\"o\">:</span> <span class=\"n\">NonemptyType.</span><span class=\"o\">{</span><span class=\"mi\">0</span><span class=\"o\">}</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">BaseMutex</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"o\">:=</span> <span class=\"n\">BaseMutexImpl.type</span>\n</code></pre></div>\n<ol>\n<li>What is <code>BaseMutexImpl.type</code>? It seems that elaboration is adding this to the environment when using opaque, but why?</li>\n<li>Why the indirection from <code>BaseMutex</code> to <code>BaseMutexImpl.type</code>? The same is used in Condvar.</li>\n<li>I see that BaseMutexImpl is generated as a lean_box(0): is this just so it can be threaded through the API calls like \"World\" is in main?</li>\n</ol>\n<p>(sorry for the tangent in this thread)</p>",
+        "id": 292031343,
+        "sender_full_name": "Yuri de Wit",
+        "timestamp": 1659630207
+    },
+    {
+        "content": "<p>That's just the boilerplate required for FFI types.  What <code>opaque BaseMutexImpl : NonemptyType</code> does is declare a constant of type <code>{ α : Type // Nonempty α }</code>, i.e. a type about which we only know a single thing, namely that it is nonempty.  (We need this so that we can declare <code>opaque BaseMutex.new : BaseIO BaseMutex</code> later: for consistency Lean needs to check that <code>BaseIO BaseMutex</code> is nonempty, which is only true if <code>BaseMutex</code> is nonempty.)</p>",
+        "id": 292046032,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1659635354
+    },
+    {
+        "content": "<p>The reason why we don't write <code>opaque BaseMutex : NonemptyType</code> is because we don't want to see/type <code>BaseMutex.type</code> afterwards.</p>",
+        "id": 292046089,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1659635385
+    },
+    {
+        "content": "<blockquote>\n<p>I see that BaseMutexImpl is generated as a lean_box(0)</p>\n</blockquote>\n<p>This is true for every type, and it's called erasure.  For example if you write <code>def foo := (Nat, 42)</code> then the first component will also be the scalar value 0 (which is generated with the C code <code>lean_box(0)</code>).</p>",
+        "id": 292046369,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1659635521
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/270676-lean4/topic/Data-level.20parallelism/near/292046369\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>I see that BaseMutexImpl is generated as a lean_box(0)</p>\n</blockquote>\n<p>This is true for every type, and it's called erasure.  For example if you write <code>def foo := (Nat, 42)</code> then the first component will also be the scalar value 0 (which is generated with the C code <code>lean_box(0)</code>).</p>\n</blockquote>\n<p>Ok. So there is still a tuple with two slots at runtime. It is just that the first one will be lean_object(0)? I was naively assuming that erasure meant that it would completely disappear from the runtime (e.g. a function with 2 parameters where one param is erased would become a function with 1 parameter at runtime).</p>",
+        "id": 292047349,
+        "sender_full_name": "Yuri de Wit",
+        "timestamp": 1659635976
+    },
+    {
+        "content": "<p>No, the memory representation of an inductive does not depend on the parameter (<code>Prod α β</code> has the same memory representation no matter what <code>α</code> and <code>β</code> are).  Otherwise you'd run into huge and ugly issues with polymorphism.  (Should <code>def blah : α × β → α</code> be compiled differently depending on <code>α</code>/<code>β</code>, or get a flag?  And what about <code>def hmm : (α : Type) × (α × Nat) → Nat := fun ⟨_, _, n⟩ =&gt; n</code>?)</p>",
+        "id": 292048566,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1659636540
+    }
+]

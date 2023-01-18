@@ -1,0 +1,338 @@
+[
+    {
+        "content": "<p>Regarding the purity of macro expansion: Is it possible to implement something like lean 3's <code> `(expr)</code> notation? For easy mode let's assume there are no antiquotations. Here the idea is that at parse time we typecheck <code>expr</code>, and we insert a literal or as close as we can get to one. For example turning <code> `(True.intro)</code> into <code>mkConst `True.intro</code> and <code> `(2 + 2 : Nat)</code> into <code>mkApp5 (mkConst `Add.add) (mkConst `Nat) (mkConst `instAddNat) &lt;2...&gt; &lt;2...&gt;</code></p>",
+        "id": 236933153,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619840295
+    },
+    {
+        "content": "<p>Since that is almost what <code> `(x) </code> already does, I assume you are just looking for a pure version of <code> `(x) </code>?  For that, you would just need to duplicate <code> `(x) </code>'s behavior, but stripping it of its state (which also include hygiene). It would be cool though if <code>  `(x) </code> was intelligent enough to not add state for expressions that don't need it.</p>",
+        "id": 236938488,
+        "sender_full_name": "Mac",
+        "timestamp": 1619845389
+    },
+    {
+        "content": "<p>The main mechanism of the current quotation syntax can be found here in the Lean 4 source: <a href=\"https://github.com/leanprover/lean4/blob/e70e924327c3b42d28dd8a59340a89cbafb3d5b6/src/Lean/Elab/Quotation.lean#L128\">https://github.com/leanprover/lean4/blob/e70e924327c3b42d28dd8a59340a89cbafb3d5b6/src/Lean/Elab/Quotation.lean#L128</a></p>",
+        "id": 236939191,
+        "sender_full_name": "Mac",
+        "timestamp": 1619846120
+    },
+    {
+        "content": "<p>In fact, here is a quick example that does just that:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span>\n\n<span class=\"n\">partial</span> <span class=\"kd\">def</span> <span class=\"n\">pureQuoteSyntax</span> <span class=\"o\">:</span> <span class=\"n\">Syntax</span> <span class=\"bp\">→</span> <span class=\"n\">MacroM</span> <span class=\"n\">Syntax</span>\n  <span class=\"bp\">|</span> <span class=\"n\">Syntax.ident</span> <span class=\"n\">_</span> <span class=\"n\">rawVal</span> <span class=\"n\">val</span> <span class=\"n\">preresolved</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">Syntax.ident</span> <span class=\"n\">SourceInfo.none</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">quote</span> <span class=\"n\">rawVal</span><span class=\"o\">)</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">quote</span> <span class=\"n\">val</span><span class=\"o\">)</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">quote</span> <span class=\"n\">preresolved</span><span class=\"o\">))</span>\n  <span class=\"bp\">|</span> <span class=\"n\">stx</span><span class=\"bp\">@</span><span class=\"o\">(</span><span class=\"n\">Syntax.node</span> <span class=\"n\">k</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n      <span class=\"k\">let</span> <span class=\"n\">empty</span> <span class=\"bp\">←</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">Array.empty</span><span class=\"o\">)</span>\n      <span class=\"k\">let</span> <span class=\"n\">args</span> <span class=\"bp\">←</span>\n        <span class=\"n\">stx.getArgs.foldlM</span>\n          <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">args</span> <span class=\"n\">arg</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n            <span class=\"k\">let</span> <span class=\"n\">arg</span> <span class=\"bp\">←</span> <span class=\"n\">pureQuoteSyntax</span> <span class=\"n\">arg</span><span class=\"bp\">;</span>\n            <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">Array.push</span> <span class=\"bp\">$</span><span class=\"n\">args</span> <span class=\"bp\">$</span><span class=\"n\">arg</span><span class=\"o\">))</span>\n          <span class=\"n\">empty</span>\n      <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">Syntax.node</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">quote</span> <span class=\"n\">k</span><span class=\"o\">)</span> <span class=\"bp\">$</span><span class=\"n\">args</span><span class=\"o\">)</span>\n  <span class=\"bp\">|</span> <span class=\"n\">Syntax.atom</span> <span class=\"n\">info</span> <span class=\"n\">val</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">Syntax.atom</span> <span class=\"n\">SourceInfo.none</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">quote</span> <span class=\"n\">val</span><span class=\"o\">))</span>\n  <span class=\"bp\">|</span> <span class=\"n\">Syntax.missing</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Macro.throwUnsupported</span>\n\n<span class=\"n\">macro</span> <span class=\"s2\">\"pureQuote\"</span> <span class=\"n\">x</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">pureQuoteSyntax</span> <span class=\"n\">x</span>\n\n<span class=\"k\">#check</span> <span class=\"n\">pureQuote</span> <span class=\"o\">(</span><span class=\"mi\">2</span> <span class=\"bp\">+</span> <span class=\"mi\">2</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span>\n<span class=\"c\">/-</span><span class=\"cm\"></span>\n<span class=\"cm\">Syntax.node (Name.mkStr (Name.mkStr (Name.mkStr (Name.mkStr Name.anonymous \"Lean\") \"Parser\") \"Term\") \"paren\")</span>\n<span class=\"cm\">  (Array.push</span>\n<span class=\"cm\">    (Array.push (Array.push Array.empty (Syntax.atom SourceInfo.none \"(\"))</span>\n<span class=\"cm\">      (Syntax.node (Name.mkStr Name.anonymous \"null\")</span>\n<span class=\"cm\">        (Array.push</span>\n<span class=\"cm\">          (Array.push Array.empty</span>\n<span class=\"cm\">            (Syntax.node (Name.mkStr Name.anonymous \"term_+_\")</span>\n<span class=\"cm\">              (Array.push</span>\n<span class=\"cm\">                (Array.push</span>\n<span class=\"cm\">                  (Array.push Array.empty</span>\n<span class=\"cm\">                    (Syntax.node (Name.mkStr Name.anonymous \"numLit\")</span>\n<span class=\"cm\">                      (Array.push Array.empty (Syntax.atom SourceInfo.none \"2\"))))</span>\n<span class=\"cm\">                  (Syntax.atom SourceInfo.none \"+\"))</span>\n<span class=\"cm\">                (Syntax.node (Name.mkStr Name.anonymous \"numLit\")</span>\n<span class=\"cm\">                  (Array.push Array.empty (Syntax.atom SourceInfo.none \"2\"))))))</span>\n<span class=\"cm\">          (Syntax.node (Name.mkStr Name.anonymous \"null\")</span>\n<span class=\"cm\">            (Array.push Array.empty</span>\n<span class=\"cm\">              (Syntax.node</span>\n<span class=\"cm\">                (Name.mkStr (Name.mkStr (Name.mkStr (Name.mkStr Name.anonymous \"Lean\") \"Parser\") \"Term\")</span>\n<span class=\"cm\">                  \"typeAscription\")</span>\n<span class=\"cm\">                (Array.push (Array.push Array.empty (Syntax.atom SourceInfo.none \":\"))</span>\n<span class=\"cm\">                  (Syntax.ident SourceInfo.none (String.toSubstring \"Nat\") (Name.mkStr Name.anonymous \"Nat\") []))))))))</span>\n<span class=\"cm\">    (Syntax.atom SourceInfo.none \")\")) : Syntax</span>\n<span class=\"cm\">-/</span>\n</code></pre></div>\n<p>Note that this example does not preserve source info but that could be easily resolved (by writing a <code>Quote SourceInfo</code> instance and splicing in<code>quote info</code> in the place of <code>SourceInfo.none</code></p>",
+        "id": 236939834,
+        "sender_full_name": "Mac",
+        "timestamp": 1619846843
+    },
+    {
+        "content": "<p>And because I was for some reason having fun doing this, here is a version that does that (and doesn't even need MacroM):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Syntax</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Quote</span> <span class=\"n\">SourceInfo</span> <span class=\"o\">:=</span>\n  <span class=\"n\">Quote.mk</span> <span class=\"k\">fun</span> <span class=\"n\">info</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"k\">match</span> <span class=\"n\">info</span> <span class=\"k\">with</span>\n    <span class=\"bp\">|</span> <span class=\"n\">SourceInfo.original</span> <span class=\"n\">leading</span> <span class=\"n\">pos</span> <span class=\"n\">trailing</span> <span class=\"bp\">=&gt;</span>\n      <span class=\"n\">mkCApp</span> <span class=\"bp\">``</span><span class=\"n\">SourceInfo.original</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">quote</span> <span class=\"n\">leading</span><span class=\"o\">,</span> <span class=\"n\">quote</span> <span class=\"n\">pos</span><span class=\"o\">,</span> <span class=\"n\">quote</span> <span class=\"n\">trailing</span><span class=\"o\">]</span>\n    <span class=\"bp\">|</span> <span class=\"n\">SourceInfo.synthetic</span> <span class=\"n\">pos</span> <span class=\"n\">endPos</span> <span class=\"bp\">=&gt;</span>\n      <span class=\"n\">mkCApp</span> <span class=\"bp\">``</span><span class=\"n\">SourceInfo.synthetic</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">quote</span> <span class=\"n\">pos</span><span class=\"o\">,</span> <span class=\"n\">quote</span> <span class=\"n\">endPos</span><span class=\"o\">]</span>\n    <span class=\"bp\">|</span> <span class=\"n\">SourceInfo.none</span> <span class=\"bp\">=&gt;</span>\n      <span class=\"n\">mkCIdent</span> <span class=\"bp\">``</span><span class=\"n\">SourceInfo.none</span>\n\n<span class=\"n\">partial</span> <span class=\"kd\">def</span> <span class=\"n\">pureQuoteSyntax</span> <span class=\"o\">:</span> <span class=\"n\">Syntax</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">Syntax</span>\n  <span class=\"bp\">|</span> <span class=\"n\">Syntax.ident</span> <span class=\"n\">info</span> <span class=\"n\">rawVal</span> <span class=\"n\">val</span> <span class=\"n\">preresolved</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">mkCApp</span> <span class=\"bp\">``</span><span class=\"n\">Lean.Syntax.ident</span>\n      <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">quote</span> <span class=\"n\">info</span><span class=\"o\">,</span> <span class=\"n\">quote</span> <span class=\"n\">rawVal</span><span class=\"o\">,</span> <span class=\"n\">quote</span> <span class=\"n\">val</span><span class=\"o\">,</span> <span class=\"n\">quote</span> <span class=\"n\">preresolved</span><span class=\"o\">]</span>\n  <span class=\"bp\">|</span> <span class=\"n\">stx</span><span class=\"bp\">@</span><span class=\"o\">(</span><span class=\"n\">Syntax.node</span> <span class=\"n\">k</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span>\n      <span class=\"k\">let</span> <span class=\"n\">args</span> <span class=\"o\">:=</span>\n        <span class=\"n\">stx.getArgs.foldl</span>\n          <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">args</span> <span class=\"n\">arg</span> <span class=\"bp\">=&gt;</span>\n            <span class=\"n\">mkCApp</span> <span class=\"bp\">``</span><span class=\"n\">Array.push</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">args</span><span class=\"o\">,</span> <span class=\"n\">pureQuoteSyntax</span> <span class=\"n\">arg</span><span class=\"o\">])</span>\n          <span class=\"o\">(</span><span class=\"n\">mkCIdent</span> <span class=\"bp\">``</span><span class=\"n\">Array.empty</span><span class=\"o\">)</span>\n      <span class=\"n\">mkCApp</span> <span class=\"bp\">``</span><span class=\"n\">Syntax.node</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">quote</span> <span class=\"n\">k</span><span class=\"o\">,</span> <span class=\"n\">args</span><span class=\"o\">]</span>\n  <span class=\"bp\">|</span> <span class=\"n\">Syntax.atom</span> <span class=\"n\">info</span> <span class=\"n\">val</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">mkCApp</span> <span class=\"bp\">``</span><span class=\"n\">Syntax.atom</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">quote</span> <span class=\"n\">info</span><span class=\"o\">,</span> <span class=\"n\">quote</span> <span class=\"n\">val</span><span class=\"o\">]</span>\n  <span class=\"bp\">|</span> <span class=\"n\">Syntax.missing</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">mkCIdent</span> <span class=\"bp\">``</span><span class=\"n\">Syntax.missing</span>\n\n<span class=\"n\">macro</span> <span class=\"s2\">\"pureQuote\"</span> <span class=\"n\">x</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">pureQuoteSyntax</span> <span class=\"n\">x</span>\n\n<span class=\"k\">#check</span> <span class=\"n\">pureQuote</span> <span class=\"o\">(</span><span class=\"mi\">2</span> <span class=\"bp\">+</span> <span class=\"mi\">2</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 236941250,
+        "sender_full_name": "Mac",
+        "timestamp": 1619848379
+    },
+    {
+        "content": "<p>Note that, unfortunately, the built-in <code>Quote Syntax</code> instance is just <code>id</code>, so we can't just use <code>quote</code> on <code>Syntax</code> directly. </p>\n<p>In fact, <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> ,  I feel like the fact that <code>Quote Syntax</code> is defined as <code>id</code> is incorrect. After all the whole point of <code>Quote</code> is for <code>$(quote x) = x</code> to hold, correct? The <code>id</code> definition violates this. It also means that complex structures with nested <code>Syntax</code> (such as Arrays) won't properly quote either.</p>",
+        "id": 236942073,
+        "sender_full_name": "Mac",
+        "timestamp": 1619849179
+    },
+    {
+        "content": "<p>For some reason, I even decided to go whole hog and adapt the antiquote code as well: <a href=\"https://gist.github.com/tydeu/bc706963b4e965901abbf44007f9c748\">https://gist.github.com/tydeu/bc706963b4e965901abbf44007f9c748</a></p>\n<p>Everything seems like it migrated properly into a Macro which produces pure syntax (I get no type errors and the macro still works), but I did not test it rigorously (or at all, really). So just take it as a proof of concept.</p>",
+        "id": 236945526,
+        "sender_full_name": "Mac",
+        "timestamp": 1619852789
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> I think this topic is about Lean 3's <code> ```(e) </code><br>\n<span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> That should definitely be an elaborator, but with that you can certainly implement the Lean 3 semantics: replace antiquotations with fresh mvar-typed locals, <code>elabTermAndSynthesize</code>, reflect resulting <code>Expr</code> into <code>Syntax</code>, substitute back antiquotations (may be fused with previous step)</p>",
+        "id": 236951751,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619859939
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/270676-lean4/topic/implementing.20.60.28x.29/near/236942073\">said</a>:</p>\n<blockquote>\n<p>It also means that complex structures with nested <code>Syntax</code> (such as Arrays) won't properly quote either.</p>\n</blockquote>\n<p>This is actually exactly how we use the current <code>Quote Syntax</code> instance. There may be use cases for the other definition, but this one works for us.</p>",
+        "id": 236951821,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619859994
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/implementing.20.60.28x.29/near/236951751\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> I think this topic is about Lean 3's <code> ```(e) </code></p>\n</blockquote>\n<p>No, it's about lean 3's <code> `(e) </code>, the one that produces an <code>expr</code> not a <code>pexpr</code></p>",
+        "id": 236961197,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619869941
+    },
+    {
+        "content": "<p>Lean 4's <code> `(e) </code> produces a <code>Syntax</code> (actually a <code>MacroM Syntax</code>) so it's closer to lean 3's <code> ``(e) </code></p>",
+        "id": 236961249,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619870030
+    },
+    {
+        "content": "<p>The distinction between <code> ``(e) </code> and <code> ```(e)</code> seems to depend on what you do with the macro that you get - you can embed it in another or execute it on the spot</p>",
+        "id": 236961343,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619870118
+    },
+    {
+        "content": "<p>The main point is that it should return an <code>Expr</code>, not a <code>Syntax</code> like lean 4 <code> `(e) </code></p>",
+        "id": 236961550,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619870348
+    },
+    {
+        "content": "<p>In lean3, there was a macro (I know, more name overloading) which directly implemented expr literals, so you wouldn't need to actually generate an expression like <code>mkApp (mkConst ...)</code> like I showed, you could instead just hold on to the expr itself (which is easy to generate using the elaborator) and then the \"expr literal\" macro would be an expr that means \"<code>e</code>, as an <code>expr</code>\" where <code>e</code> is an actual expr like <code>2 + 2</code>. In lean 4, I don't know how one could even express such a thing: ideally we would just precalculate an expr static and insert the code \"load this static expr\" rather than building it on the spot with all those <code>mkApp</code> calls</p>",
+        "id": 236962244,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619870923
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/implementing.20.60.28x.29/near/236961197\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/implementing.20.60.28x.29/near/236951751\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> I think this topic is about Lean 3's <code> ```(e) </code></p>\n</blockquote>\n<p>No, it's about lean 3's <code> `(e) </code>, the one that produces an <code>expr</code> not a <code>pexpr</code></p>\n</blockquote>\n<p>Right, more backticks in Lean 3 made quotations less specific and name literals more specific... whoever thought that was a good idea <span aria-label=\"halo\" class=\"emoji emoji-1f607\" role=\"img\" title=\"halo\">:halo:</span> . In the/my Lean 4 convention, this macro/elaborator should be called <code> `[Expr|e] </code>.</p>",
+        "id": 236963503,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619872219
+    },
+    {
+        "content": "<p>I don't think there is any practical need for the \"expr literal\" macro optimization</p>",
+        "id": 236963623,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619872360
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/implementing.20.60.28x.29/near/236963623\">said</a>:</p>\n<blockquote>\n<p>I don't think there is any practical need for the \"expr literal\" macro optimization</p>\n</blockquote>\n<p>It is very important for high performance tactics like <code>normNum</code> that they can use pre-constructed exprs when building things as much as possible. In a perfect world this would be essentially \"constant folding\" but I don't know to what extent lean supports constant folding of exprs and other inductive types</p>",
+        "id": 236964063,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619872799
+    },
+    {
+        "content": "<p>If I put it in an auxiliary <code>def myExpr : Expr := `[Expr| 2 + 2 : Nat]</code>, will the code that constructs <code>myExpr</code> be run once or every time <code>myExpr</code> is referenced? If once, is it done at compile time or on first use with a thunk setup? Do I need <code>initialize</code> to do this?</p>",
+        "id": 236964237,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619872938
+    },
+    {
+        "content": "<p>Currently, closed terms are evaluated exactly once, at startup. We are planning to refine this compilation step in the future so that they are either compiled in as constants (i.e. \"evaluated at compile time\") or, if they are too costly for that, which shouldn't be an issue for terms already in normal form like this macro, as thunks. So yes, this should be and should keep being essentially free.</p>",
+        "id": 236964438,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619873174
+    },
+    {
+        "content": "<p>Does that apply also to closed subterms of an open term, or is the usage of a <code>myExpr</code> auxiliary important to get the optimization?</p>",
+        "id": 236965279,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619874025
+    },
+    {
+        "content": "<p>That is, if I have <code> `[Expr|(2 + 2) + $x]</code> then I'd like to compile that to <code>mkApp &lt;+ constant&gt; &lt;nat constant&gt; &lt;instNatAdd constant&gt; &lt;2+2 constant&gt; x</code></p>",
+        "id": 236965347,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619874101
+    },
+    {
+        "content": "<p>Yes, that should work. You can give it a try using <code>set_option trace.compiler.ir.result true</code> (run on cmdline). The nat constant will be compiled in directly, there are a few special cases.</p>",
+        "id": 236965469,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619874210
+    },
+    {
+        "content": "<p>Great. So the only missing ingredient is translating <code>Expr.app -&gt; mkApp</code> and friends</p>",
+        "id": 236965616,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619874367
+    },
+    {
+        "content": "<p>or maybe reflect is able to do this?</p>",
+        "id": 236965646,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619874411
+    },
+    {
+        "content": "<p>You say \"this should be an elaborator\", could you show a simple example of an elaborator so I know what you mean?</p>",
+        "id": 236965686,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619874474
+    },
+    {
+        "content": "<p>Is there an equivalent of <code>has_reflect</code> in lean 4? I didn't see a <code>deriving Reflect</code> on <code>Expr</code></p>",
+        "id": 236966717,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619875423
+    },
+    {
+        "content": "<p>No, we had no need for it yet, just like the quotation</p>",
+        "id": 236966785,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619875494
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean.Elab.Term</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"`[Expr|\"</span> <span class=\"n\">stx</span><span class=\"o\">:</span><span class=\"n\">incQuotDepth</span><span class=\"o\">(</span><span class=\"n\">term</span><span class=\"o\">)</span> <span class=\"s2\">\"]\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">e</span> <span class=\"bp\">←</span> <span class=\"n\">elabTermAndSynthesize</span> <span class=\"n\">stx</span> <span class=\"o\">(</span><span class=\"n\">expectedType</span><span class=\"bp\">?</span> <span class=\"o\">:=</span> <span class=\"n\">none</span><span class=\"o\">)</span>\n  <span class=\"n\">_</span>\n</code></pre></div>",
+        "id": 236966871,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619875572
+    },
+    {
+        "content": "<p><code>elab</code> is a macro for <code>syntax</code> + <code>@[termElab]</code></p>",
+        "id": 236966912,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619875635
+    },
+    {
+        "content": "<p>That's what I did, but now I'm stuck with <code>e : Expr</code> and want a <code>Syntax</code> (or rather an <code>Expr</code> from it) to insert in the expression</p>",
+        "id": 236966928,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619875677
+    },
+    {
+        "content": "<p>That will give me the expr <code>2 + 2</code> and I want the expr <code>mkApp ... mk2 mk2</code></p>",
+        "id": 236966983,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619875717
+    },
+    {
+        "content": "<p>Yes, the <code>_</code> is where you fill in the missing implementation of <code>reflect : Expr -&gt; Expr</code> :)</p>",
+        "id": 236967017,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619875785
+    },
+    {
+        "content": "<p>where is the <code>expectedType?</code> argument in <code>elab</code>?</p>",
+        "id": 236967066,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619875806
+    },
+    {
+        "content": "<p>does it just call <code>ensureHasType</code> on the result?</p>",
+        "id": 236967101,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619875840
+    },
+    {
+        "content": "<p><del>Oh, I guess it should be an instance <code>Quote Expr</code>?</del> Depending on how you want to handle antiquotations</p>",
+        "id": 236967104,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619875843
+    },
+    {
+        "content": "<p>I'll worry about antiquotations later</p>",
+        "id": 236967111,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619875860
+    },
+    {
+        "content": "<p>Do you think it would be better to write <code>Expr -&gt; Syntax</code> or <code>Expr -&gt; Expr</code> for the quote function?</p>",
+        "id": 236967142,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619875917
+    },
+    {
+        "content": "<p>Yeah, it should be the latter, I just noticed</p>",
+        "id": 236967205,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619875962
+    },
+    {
+        "content": "<p>I suppose the former is a bit more versatile and also hooks in to the <code>Quote</code> typeclass, but it needs an elaboration afterward that isn't quite necessary here</p>",
+        "id": 236967258,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619876014
+    },
+    {
+        "content": "<p>I take it <code>deriving Quote</code> isn't a thing yet?</p>",
+        "id": 236967268,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619876039
+    },
+    {
+        "content": "<p>You can access the expected type like this (this will postpone the elaborator until the type is available): <a href=\"https://github.com/leanprover/lean4/blob/e70e924327c3b42d28dd8a59340a89cbafb3d5b6/tests/lean/run/elabCmd.lean#L27-L28\">https://github.com/leanprover/lean4/blob/e70e924327c3b42d28dd8a59340a89cbafb3d5b6/tests/lean/run/elabCmd.lean#L27-L28</a><br>\nBut you shouldn't need to just for checking, the outer expression should take care of that</p>",
+        "id": 236967406,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619876124
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Term</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">Lean</span>\n<span class=\"kd\">class</span> <span class=\"n\">Reflect</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n  <span class=\"n\">reflectTy</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span>\n  <span class=\"n\">reflect</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">Expr</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Reflect</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Reflect</span> <span class=\"n\">Bool</span> <span class=\"n\">where</span>\n  <span class=\"n\">reflectTy</span> <span class=\"o\">:=</span> <span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Bool</span>\n  <span class=\"n\">reflect</span> <span class=\"n\">b</span> <span class=\"o\">:=</span> <span class=\"k\">if</span> <span class=\"n\">b</span> <span class=\"k\">then</span> <span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">true</span> <span class=\"k\">else</span> <span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">false</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Reflect</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"o\">⟨</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Nat</span><span class=\"o\">,</span> <span class=\"n\">mkNatLit</span><span class=\"o\">⟩</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Reflect</span> <span class=\"n\">Int</span> <span class=\"n\">where</span>\n  <span class=\"n\">reflectTy</span> <span class=\"o\">:=</span> <span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Int</span>\n  <span class=\"n\">reflect</span> <span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"k\">if</span> <span class=\"n\">n</span> <span class=\"bp\">&lt;</span> <span class=\"mi\">0</span> <span class=\"k\">then</span>\n    <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Int.negOfNat</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">mkNatLit</span> <span class=\"n\">n.natAbs</span><span class=\"o\">)</span>\n  <span class=\"k\">else</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Int.ofNat</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">mkNatLit</span> <span class=\"n\">n.natAbs</span><span class=\"o\">)</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">Reflect</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">:</span> <span class=\"n\">Reflect</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"o\">⟨</span><span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">List</span> <span class=\"n\">us</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">reflectTy</span> <span class=\"n\">α</span><span class=\"o\">),</span> <span class=\"n\">f</span><span class=\"o\">⟩</span>\n<span class=\"n\">where</span>\n  <span class=\"n\">e</span> <span class=\"o\">:=</span> <span class=\"n\">reflectTy</span> <span class=\"n\">α</span>\n  <span class=\"n\">us</span> <span class=\"o\">:=</span> <span class=\"o\">[</span><span class=\"n\">levelZero</span><span class=\"o\">]</span>\n  <span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">Expr</span>\n  <span class=\"bp\">|</span> <span class=\"o\">[]</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">List.nil</span> <span class=\"n\">us</span><span class=\"o\">)</span> <span class=\"n\">e</span>\n  <span class=\"bp\">|</span> <span class=\"n\">h</span><span class=\"o\">::</span><span class=\"n\">t</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp3</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">List.cons</span> <span class=\"n\">us</span><span class=\"o\">)</span> <span class=\"n\">e</span> <span class=\"o\">(</span><span class=\"n\">reflect</span> <span class=\"n\">h</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">t</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">Name.reflect</span> <span class=\"o\">:</span> <span class=\"n\">Name</span> <span class=\"bp\">→</span> <span class=\"n\">Expr</span>\n  <span class=\"bp\">|</span> <span class=\"n\">anonymous</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">anonymous</span>\n  <span class=\"bp\">|</span> <span class=\"n\">str</span> <span class=\"n\">anonymous</span> <span class=\"n\">s</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkSimple</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">mkStrLit</span> <span class=\"n\">s</span><span class=\"o\">)</span>\n  <span class=\"bp\">|</span> <span class=\"n\">str</span> <span class=\"n\">p</span> <span class=\"n\">s</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp2</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkStr</span><span class=\"o\">)</span> <span class=\"n\">p.reflect</span> <span class=\"o\">(</span><span class=\"n\">mkStrLit</span> <span class=\"n\">s</span><span class=\"o\">)</span>\n  <span class=\"bp\">|</span> <span class=\"n\">num</span> <span class=\"n\">p</span> <span class=\"n\">v</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp2</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkNum</span><span class=\"o\">)</span> <span class=\"n\">p.reflect</span> <span class=\"o\">(</span><span class=\"n\">mkNatLit</span> <span class=\"n\">v</span><span class=\"o\">)</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Reflect</span> <span class=\"n\">Name</span> <span class=\"o\">:=</span> <span class=\"o\">⟨</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Name</span><span class=\"o\">,</span> <span class=\"n\">Name.reflect</span><span class=\"o\">⟩</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">Level.reflect</span> <span class=\"o\">:</span> <span class=\"n\">Level</span> <span class=\"bp\">→</span> <span class=\"n\">Expr</span>\n  <span class=\"bp\">|</span> <span class=\"n\">zero</span> <span class=\"n\">_</span>       <span class=\"bp\">=&gt;</span> <span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">levelZero</span>\n  <span class=\"bp\">|</span> <span class=\"n\">succ</span> <span class=\"n\">l</span> <span class=\"n\">_</span>     <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkLevelSucc</span><span class=\"o\">)</span> <span class=\"n\">l.reflect</span>\n  <span class=\"bp\">|</span> <span class=\"n\">max</span> <span class=\"n\">l₁</span> <span class=\"n\">l₂</span> <span class=\"n\">_</span>  <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp2</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkLevelMax</span><span class=\"o\">)</span> <span class=\"n\">l₁.reflect</span> <span class=\"n\">l₂.reflect</span>\n  <span class=\"bp\">|</span> <span class=\"n\">imax</span> <span class=\"n\">l₁</span> <span class=\"n\">l₂</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp2</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkLevelIMax</span><span class=\"o\">)</span> <span class=\"n\">l₁.reflect</span> <span class=\"n\">l₂.reflect</span>\n  <span class=\"bp\">|</span> <span class=\"n\">param</span> <span class=\"n\">n</span> <span class=\"n\">_</span>    <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkLevelParam</span><span class=\"o\">)</span> <span class=\"n\">n.reflect</span>\n  <span class=\"bp\">|</span> <span class=\"n\">mvar</span> <span class=\"n\">n</span> <span class=\"n\">_</span>     <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkLevelMVar</span><span class=\"o\">)</span> <span class=\"n\">n.reflect</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Reflect</span> <span class=\"n\">Level</span> <span class=\"o\">:=</span> <span class=\"o\">⟨</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Level</span><span class=\"o\">,</span> <span class=\"n\">Level.reflect</span><span class=\"o\">⟩</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Reflect</span> <span class=\"n\">BinderInfo</span> <span class=\"n\">where</span>\n  <span class=\"n\">reflectTy</span> <span class=\"o\">:=</span> <span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">BinderInfo</span>\n  <span class=\"n\">reflect</span>\n  <span class=\"bp\">|</span> <span class=\"n\">BinderInfo.default</span>        <span class=\"bp\">=&gt;</span> <span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">BinderInfo.default</span>\n  <span class=\"bp\">|</span> <span class=\"n\">BinderInfo.implicit</span>       <span class=\"bp\">=&gt;</span> <span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">BinderInfo.implicit</span>\n  <span class=\"bp\">|</span> <span class=\"n\">BinderInfo.strictImplicit</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">BinderInfo.strictImplicit</span>\n  <span class=\"bp\">|</span> <span class=\"n\">BinderInfo.instImplicit</span>   <span class=\"bp\">=&gt;</span> <span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">BinderInfo.instImplicit</span>\n  <span class=\"bp\">|</span> <span class=\"n\">BinderInfo.auxDecl</span>        <span class=\"bp\">=&gt;</span> <span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">BinderInfo.auxDecl</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">DataValue</span> <span class=\"k\">in</span>\n<span class=\"kd\">def</span> <span class=\"n\">MData.reflect</span> <span class=\"o\">(</span><span class=\"n\">md</span> <span class=\"o\">:</span> <span class=\"n\">MData</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">e</span> <span class=\"o\">:=</span> <span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">MData.empty</span>\n  <span class=\"n\">for</span> <span class=\"o\">(</span><span class=\"n\">k</span><span class=\"o\">,</span> <span class=\"n\">v</span><span class=\"o\">)</span> <span class=\"k\">in</span> <span class=\"n\">md</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">k</span> <span class=\"o\">:=</span> <span class=\"n\">k.reflect</span>\n    <span class=\"n\">e</span> <span class=\"o\">:=</span> <span class=\"k\">match</span> <span class=\"n\">v</span> <span class=\"k\">with</span>\n    <span class=\"bp\">|</span> <span class=\"n\">ofString</span> <span class=\"n\">v</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp3</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">KVMap.setString</span><span class=\"o\">)</span> <span class=\"n\">e</span> <span class=\"n\">k</span> <span class=\"o\">(</span><span class=\"n\">mkStrLit</span> <span class=\"n\">v</span><span class=\"o\">)</span>\n    <span class=\"bp\">|</span> <span class=\"n\">ofBool</span> <span class=\"n\">v</span>   <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp3</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">KVMap.setBool</span><span class=\"o\">)</span> <span class=\"n\">e</span> <span class=\"n\">k</span> <span class=\"o\">(</span><span class=\"n\">Reflect.reflect</span> <span class=\"n\">v</span><span class=\"o\">)</span>\n    <span class=\"bp\">|</span> <span class=\"n\">ofName</span> <span class=\"n\">v</span>   <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp3</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">KVMap.setName</span><span class=\"o\">)</span> <span class=\"n\">e</span> <span class=\"n\">k</span> <span class=\"n\">v.reflect</span>\n    <span class=\"bp\">|</span> <span class=\"n\">ofNat</span> <span class=\"n\">v</span>    <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp3</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">KVMap.setNat</span><span class=\"o\">)</span> <span class=\"n\">e</span> <span class=\"n\">k</span> <span class=\"o\">(</span><span class=\"n\">mkNatLit</span> <span class=\"n\">v</span><span class=\"o\">)</span>\n    <span class=\"bp\">|</span> <span class=\"n\">ofInt</span> <span class=\"n\">v</span>    <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp3</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">KVMap.setInt</span><span class=\"o\">)</span> <span class=\"n\">e</span> <span class=\"n\">k</span> <span class=\"o\">(</span><span class=\"n\">Reflect.reflect</span> <span class=\"n\">v</span><span class=\"o\">)</span>\n  <span class=\"n\">e</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Reflect</span> <span class=\"n\">MData</span> <span class=\"o\">:=</span> <span class=\"o\">⟨</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">MData</span><span class=\"o\">,</span> <span class=\"n\">MData.reflect</span><span class=\"o\">⟩</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Literal</span> <span class=\"k\">in</span>\n<span class=\"kd\">def</span> <span class=\"n\">Expr.reflect</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span> <span class=\"bp\">→</span> <span class=\"n\">Expr</span>\n  <span class=\"bp\">|</span> <span class=\"n\">bvar</span> <span class=\"n\">n</span> <span class=\"n\">_</span>        <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkBVar</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">mkNatLit</span> <span class=\"n\">n</span><span class=\"o\">)</span>\n  <span class=\"bp\">|</span> <span class=\"n\">fvar</span> <span class=\"n\">n</span> <span class=\"n\">_</span>        <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkFVar</span><span class=\"o\">)</span> <span class=\"n\">n.reflect</span>\n  <span class=\"bp\">|</span> <span class=\"n\">mvar</span> <span class=\"n\">n</span> <span class=\"n\">_</span>        <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkMVar</span><span class=\"o\">)</span> <span class=\"n\">n.reflect</span>\n  <span class=\"bp\">|</span> <span class=\"n\">sort</span> <span class=\"n\">l</span> <span class=\"n\">_</span>        <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkSort</span><span class=\"o\">)</span> <span class=\"n\">l.reflect</span>\n  <span class=\"bp\">|</span> <span class=\"n\">const</span> <span class=\"n\">n</span> <span class=\"n\">ls</span> <span class=\"n\">_</span>    <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp2</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkConst</span><span class=\"o\">)</span> <span class=\"n\">n.reflect</span> <span class=\"o\">(</span><span class=\"n\">Reflect.reflect</span> <span class=\"n\">ls</span><span class=\"o\">)</span>\n  <span class=\"bp\">|</span> <span class=\"n\">app</span> <span class=\"n\">f</span> <span class=\"n\">x</span> <span class=\"n\">_</span>       <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp2</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkApp</span><span class=\"o\">)</span> <span class=\"n\">f.reflect</span> <span class=\"n\">x.reflect</span>\n  <span class=\"bp\">|</span> <span class=\"n\">lam</span> <span class=\"n\">x</span> <span class=\"n\">d</span> <span class=\"n\">b</span> <span class=\"n\">c</span>     <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp4</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkLambda</span><span class=\"o\">)</span>\n    <span class=\"n\">x.reflect</span> <span class=\"o\">(</span><span class=\"n\">Reflect.reflect</span> <span class=\"n\">c.binderInfo</span><span class=\"o\">)</span> <span class=\"n\">d.reflect</span> <span class=\"n\">b.reflect</span>\n  <span class=\"bp\">|</span> <span class=\"n\">forallE</span> <span class=\"n\">x</span> <span class=\"n\">d</span> <span class=\"n\">b</span> <span class=\"n\">c</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp4</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkForall</span><span class=\"o\">)</span>\n    <span class=\"n\">x.reflect</span> <span class=\"o\">(</span><span class=\"n\">Reflect.reflect</span> <span class=\"n\">c.binderInfo</span><span class=\"o\">)</span> <span class=\"n\">d.reflect</span> <span class=\"n\">b.reflect</span>\n  <span class=\"bp\">|</span> <span class=\"n\">letE</span> <span class=\"n\">x</span> <span class=\"n\">t</span> <span class=\"n\">v</span> <span class=\"n\">b</span> <span class=\"n\">c</span>  <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp5</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkLet</span><span class=\"o\">)</span>\n    <span class=\"n\">x.reflect</span> <span class=\"n\">t.reflect</span> <span class=\"n\">v.reflect</span> <span class=\"n\">b.reflect</span> <span class=\"o\">(</span><span class=\"n\">Reflect.reflect</span> <span class=\"n\">c.nonDepLet</span><span class=\"o\">)</span>\n  <span class=\"bp\">|</span> <span class=\"n\">lit</span> <span class=\"o\">(</span><span class=\"n\">natVal</span> <span class=\"n\">n</span><span class=\"o\">)</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkNatLit</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">mkNatLit</span> <span class=\"n\">n</span><span class=\"o\">)</span>\n  <span class=\"bp\">|</span> <span class=\"n\">lit</span> <span class=\"o\">(</span><span class=\"n\">strVal</span> <span class=\"n\">s</span><span class=\"o\">)</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkStrLit</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">mkStrLit</span> <span class=\"n\">s</span><span class=\"o\">)</span>\n  <span class=\"bp\">|</span> <span class=\"n\">mdata</span> <span class=\"n\">md</span> <span class=\"n\">e</span> <span class=\"n\">_</span>    <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp2</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkMData</span><span class=\"o\">)</span> <span class=\"n\">md.reflect</span> <span class=\"n\">e.reflect</span>\n  <span class=\"bp\">|</span> <span class=\"n\">proj</span> <span class=\"n\">s</span> <span class=\"n\">i</span> <span class=\"n\">e</span> <span class=\"n\">_</span>    <span class=\"bp\">=&gt;</span> <span class=\"n\">mkApp3</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">mkProj</span><span class=\"o\">)</span> <span class=\"n\">s.reflect</span> <span class=\"o\">(</span><span class=\"n\">mkNatLit</span> <span class=\"n\">i</span><span class=\"o\">)</span> <span class=\"n\">e.reflect</span>\n\n<span class=\"kd\">end</span> <span class=\"n\">Lean</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"`[Expr|\"</span> <span class=\"n\">stx</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"s2\">\"]\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">e</span> <span class=\"bp\">←</span> <span class=\"n\">elabTermAndSynthesize</span> <span class=\"n\">stx</span> <span class=\"o\">(</span><span class=\"n\">expectedType</span><span class=\"bp\">?</span> <span class=\"o\">:=</span> <span class=\"n\">none</span><span class=\"o\">)</span>\n  <span class=\"n\">e.reflect</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"two_plus_two\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">[</span><span class=\"n\">Expr</span><span class=\"bp\">|</span> <span class=\"mi\">2</span> <span class=\"bp\">+</span> <span class=\"mi\">2</span><span class=\"o\">]</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">bar</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"n\">two_plus_two</span>\n\n<span class=\"k\">#print</span> <span class=\"n\">bar</span> <span class=\"c1\">-- def bar : Nat := 2 + 2</span>\n</code></pre></div>",
+        "id": 236972283,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619879572
+    },
+    {
+        "content": "<p>Does <code>ForIn</code> provide a <code>fold</code> function? It is a little cumbersome to have to write a do block with a for loop in order to fold over <code>KVMap</code></p>",
+        "id": 236972971,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619880160
+    },
+    {
+        "content": "<p>Also the use of <code>[levelZero]</code> in the reflect instance for <code>List</code> is questionable. The reflect typeclass could come with a level argument</p>",
+        "id": 236973213,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619880380
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> FYI a <code>Reflect</code>already exists (<code>ToExpr</code> <a href=\"https://github.com/leanprover/lean4/blob/master/src/Lean/ToExpr.lean\">https://github.com/leanprover/lean4/blob/master/src/Lean/ToExpr.lean</a>) but it is missing some instances.</p>",
+        "id": 236977905,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1619883486
+    },
+    {
+        "content": "<p>Actually, it may be designed for a different purpose, since <code>Expr</code>s <code>toExpr</code> to themselves.</p>",
+        "id": 236977951,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1619883566
+    },
+    {
+        "content": "<p>Oh, right! So in that regard it is just like <code>Quote</code>.</p>",
+        "id": 236978040,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619883629
+    },
+    {
+        "content": "<p>I don't think either behavior is correct (Mac already observed this for <code>Quote</code> above)</p>",
+        "id": 236978085,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619883695
+    },
+    {
+        "content": "<p>In what setting is the identity function the right behavior?</p>",
+        "id": 236978099,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619883719
+    },
+    {
+        "content": "<p>For example one reasonable constraint is that <code>inferType (toExpr x) = toTypeExpr</code>, and all instances satisfy this except <code>ToExpr Expr</code></p>",
+        "id": 236978193,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619883803
+    },
+    {
+        "content": "<p>The <code>ToExpr Expr</code> instance is not being used currently.</p>",
+        "id": 236978322,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1619883931
+    },
+    {
+        "content": "<p>I also slightly prefer the <code>Reflect</code> name because <code>ToExpr</code> suggests a \"coercion\" like behavior such that the identity function is defensible</p>",
+        "id": 236978422,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1619884015
+    },
+    {
+        "content": "<p>I agree.</p>",
+        "id": 236978467,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1619884042
+    },
+    {
+        "content": "<p>So, if I understand correctly, something that is phrased as </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">t</span> <span class=\"bp\">←</span> <span class=\"n\">mk_mvar</span>\n<span class=\"n\">to_expr</span> <span class=\"bp\">``</span><span class=\"o\">(</span><span class=\"n\">false.elim</span> <span class=\"bp\">%%</span><span class=\"n\">t</span><span class=\"o\">)</span> <span class=\"n\">tt</span> <span class=\"n\">ff</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">exact</span>\n</code></pre></div>\n<p>or</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">exact</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">True</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>in Lean 3 is not yet possible because there is no <code>Quote Expr</code>?</p>",
+        "id": 237081002,
+        "sender_full_name": "Yakov Pechersky",
+        "timestamp": 1619988083
+    },
+    {
+        "content": "<p>No, <code>Quote</code> is about reflection at run time. Your first example is covered by the stdlib, your second one by Mario's macro.</p>",
+        "id": 237082184,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619989170
+    },
+    {
+        "content": "<p>Thanks for the clarification. Could you please share a stub showing how the first example is expressed in the stdlib?</p>",
+        "id": 237082556,
+        "sender_full_name": "Yakov Pechersky",
+        "timestamp": 1619989279
+    }
+]

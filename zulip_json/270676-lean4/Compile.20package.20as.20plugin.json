@@ -1,0 +1,104 @@
+[
+    {
+        "content": "<p>Does anyone know how to compile a Lean 4 package into a <code>.so</code> that Lean can load with <code>lean --plugin</code>? There are some previous conversations about this on Zulip and there's the test case in the Lean repo, but I'm still unable to figure this out. (My ignorance of C may have something to do with that.)</p>",
+        "id": 248465260,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1628163470
+    },
+    {
+        "content": "<p>It seems <code>leanmake</code> does not support plugins. I guess we'll have this in Lake. You could try this Makefile in the meantime</p>\n<div class=\"codehilite\" data-code-language=\"Makefile\"><pre><span></span><code><span class=\"nv\">CFLAGS</span> <span class=\"o\">=</span> -O3 -fPIC\n\n<span class=\"nf\">%.olean </span><span class=\"o\">:</span> %.<span class=\"n\">lean</span>\n        <span class=\"nv\">LEAN_PATH</span><span class=\"o\">=</span><span class=\"si\">${</span><span class=\"nv\">HOME</span><span class=\"si\">}</span>/mathlib4/build/ lean -o <span class=\"nv\">$@</span> $&lt;\n\n<span class=\"nf\">%.c </span><span class=\"o\">:</span> %.<span class=\"n\">lean</span>\n        <span class=\"nv\">LEAN_PATH</span><span class=\"o\">=</span><span class=\"si\">${</span><span class=\"nv\">HOME</span><span class=\"si\">}</span>/mathlib4/build/ lean -c <span class=\"nv\">$@</span> $&lt;\n\n<span class=\"nf\">%.o </span><span class=\"o\">:</span> %.<span class=\"n\">c</span>\n        leanc -c $&lt; -o <span class=\"nv\">$@</span> <span class=\"k\">$(</span>CFLAGS<span class=\"k\">)</span>\n\n<span class=\"nf\">%.so </span><span class=\"o\">:</span> %.<span class=\"n\">o</span>\n        leanc -shared -x none $&lt; -L<span class=\"si\">${</span><span class=\"nv\">HOME</span><span class=\"si\">}</span>/mathlib4/build/lib/ -lMathlib -o <span class=\"nv\">$@</span> <span class=\"k\">$(</span>CFLAGS<span class=\"k\">)</span>\n</code></pre></div>\n<p>And then <code>make MyPlugin.so</code>.</p>",
+        "id": 248555174,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1628211000
+    },
+    {
+        "content": "<p>(Btw, that links against Mathlib. If you don't need Mathlib4, remove the <code>LEAN_PATH=..mathlib</code> and <code>-L..mathlib..</code> and <code>-lMathlib</code>.</p>",
+        "id": 248555257,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1628211086
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"128280\">@Wojciech Nawrocki</span>  Do you know if this works on Windows yet? if I recall correctly, plugins with Lean code need to link to the Lean binary, and this does not work properly on the Windows MSYS2 build of Lean.</p>",
+        "id": 248555323,
+        "sender_full_name": "Mac",
+        "timestamp": 1628211155
+    },
+    {
+        "content": "<p>I would not expect that to work on MSYS2 Windows, no :/ I use WSL.</p>",
+        "id": 248555416,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1628211280
+    },
+    {
+        "content": "<p>It's kind of weird that even that works given that the stdlib is not yet compiled with fPIC</p>",
+        "id": 248579651,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1628234831
+    },
+    {
+        "content": "<p>If anyone wants to debug <a href=\"https://github.com/leanprover/lean4/pull/555\">https://github.com/leanprover/lean4/pull/555</a> on Windows, please do</p>",
+        "id": 248579722,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1628234887
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"128280\">@Wojciech Nawrocki</span> Your recipe works (thanks!), but apparently not with plugins that use <code>initialize</code>. Full MWE:</p>\n<p>Plugin.lean:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean.Elab.Tactic</span>\n\n<span class=\"n\">initialize</span> <span class=\"n\">opt</span> <span class=\"o\">:</span> <span class=\"n\">Lean.Option</span> <span class=\"n\">Bool</span> <span class=\"bp\">&lt;-</span>\n  <span class=\"n\">Option.register</span> <span class=\"bp\">`</span><span class=\"n\">opt</span> <span class=\"o\">{</span> <span class=\"n\">defValue</span> <span class=\"o\">:=</span> <span class=\"n\">true</span><span class=\"o\">,</span> <span class=\"n\">group</span> <span class=\"o\">:=</span> <span class=\"s2\">\"\"</span><span class=\"o\">,</span> <span class=\"n\">descr</span> <span class=\"o\">:=</span> <span class=\"s2\">\"\"</span> <span class=\"o\">}</span>\n\n<span class=\"n\">syntax</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">aesop</span><span class=\"o\">)</span> <span class=\"bp\">&amp;</span><span class=\"s2\">\"aesop\"</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span>\n\n<span class=\"kd\">@[tactic aesop]</span>\n<span class=\"kd\">def</span> <span class=\"n\">evalAesop</span> <span class=\"o\">:</span> <span class=\"n\">Tactic</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span> <span class=\"n\">evalTactic</span> <span class=\"o\">(</span><span class=\"bp\">&lt;-</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">tactic</span><span class=\"bp\">|</span> <span class=\"n\">assumption</span><span class=\"o\">))</span>\n</code></pre></div>\n<p>Client.lean:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Plugin</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">aesop</span>\n</code></pre></div>\n<p>Makefile:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">CFLAGS</span> <span class=\"bp\">=</span> <span class=\"bp\">-</span><span class=\"n\">O3</span> <span class=\"bp\">-</span><span class=\"n\">fPIC</span>\n\n<span class=\"n\">Client.olean</span> <span class=\"o\">:</span> <span class=\"n\">Client.lean</span> <span class=\"n\">Plugin.so</span> <span class=\"n\">Plugin.olean</span>\n    <span class=\"n\">env</span> <span class=\"n\">LEAN_PATH</span><span class=\"bp\">=</span><span class=\"s2\">\".\"</span> <span class=\"n\">lean</span> <span class=\"c1\">--plugin=Plugin.so -o Client.olean Client.lean</span>\n\n<span class=\"bp\">%.</span><span class=\"n\">olean</span> <span class=\"o\">:</span> <span class=\"bp\">%.</span><span class=\"n\">lean</span>\n    <span class=\"n\">lean</span> <span class=\"bp\">-</span><span class=\"n\">o</span> <span class=\"bp\">$@</span> <span class=\"bp\">$&lt;</span>\n\n<span class=\"bp\">%.</span><span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"bp\">%.</span><span class=\"n\">lean</span>\n    <span class=\"n\">lean</span> <span class=\"bp\">-</span><span class=\"n\">c</span> <span class=\"bp\">$@</span> <span class=\"bp\">$&lt;</span>\n\n<span class=\"bp\">%.</span><span class=\"n\">o</span> <span class=\"o\">:</span> <span class=\"bp\">%.</span><span class=\"n\">c</span>\n    <span class=\"n\">leanc</span> <span class=\"bp\">-</span><span class=\"n\">c</span> <span class=\"bp\">$&lt;</span> <span class=\"bp\">-</span><span class=\"n\">o</span> <span class=\"bp\">$@</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">CFLAGS</span><span class=\"o\">)</span>\n\n<span class=\"bp\">%.</span><span class=\"n\">so</span> <span class=\"o\">:</span> <span class=\"bp\">%.</span><span class=\"n\">o</span>\n    <span class=\"n\">leanc</span> <span class=\"bp\">-</span><span class=\"n\">shared</span> <span class=\"bp\">-</span><span class=\"n\">x</span> <span class=\"n\">none</span> <span class=\"bp\">$&lt;</span> <span class=\"bp\">-</span><span class=\"n\">o</span> <span class=\"bp\">$@</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">CFLAGS</span><span class=\"o\">)</span>\n\n<span class=\"bp\">.</span><span class=\"n\">PHONY</span><span class=\"o\">:</span> <span class=\"n\">clean</span>\n<span class=\"n\">clean</span><span class=\"o\">:</span>\n    <span class=\"n\">rm</span> <span class=\"bp\">-</span><span class=\"n\">rf</span> <span class=\"n\">Plugin.olean</span> <span class=\"n\">Plugin.so</span> <span class=\"n\">Plugin.c</span> <span class=\"n\">Plugin.so</span> <span class=\"n\">Client.olean</span>\n</code></pre></div>\n<p><code>make Client.olean</code> fails with</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Client.lean</span><span class=\"o\">:</span><span class=\"mi\">1</span><span class=\"o\">:</span><span class=\"mi\">0</span><span class=\"o\">:</span> <span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">invalid</span> <span class=\"n\">option</span> <span class=\"n\">declaration</span> <span class=\"bp\">'</span><span class=\"n\">opt'</span><span class=\"o\">,</span> <span class=\"n\">option</span> <span class=\"n\">already</span> <span class=\"n\">exists</span>\n</code></pre></div>\n<p>When I remove the <code>initialize</code> block from <code>Plugin.lean</code>, the same command succeeds.</p>",
+        "id": 248626501,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1628264223
+    },
+    {
+        "content": "<p>Note that the current version (commit a230fe2) runs <code>initialize</code> blocks on <code>import</code>, so if you just want the custom option you don't need a plugin. The error you're seeing is because Lean tries to run your <code>initialize</code> twice -- once from the <code>--plugin</code> and once because you <code>import Plugin</code>.</p>",
+        "id": 248647306,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1628273329
+    },
+    {
+        "content": "<p>How does the plugin option impact the environment? Is it as though you had <code>import Plugin</code> in every file?</p>",
+        "id": 248648789,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1628274062
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"128280\">Wojciech Nawrocki</span> <a href=\"#narrow/stream/270676-lean4/topic/Compile.20package.20as.20plugin/near/248647306\">said</a>:</p>\n<blockquote>\n<p>Note that the current version (commit a230fe2) runs <code>initialize</code> blocks on <code>import</code>, so if you just want the custom option you don't need a plugin. The error you're seeing is because Lean tries to run your <code>initialize</code> twice -- once from the <code>--plugin</code> and once because you <code>import Plugin</code>.</p>\n</blockquote>\n<p>Yeah, everything works fine without the <code>--plugin</code>. I'm writing a search tactic that would benefit from being compiled. But this is not urgent, so I'll just wait until <code>initialize</code> works in plugins. I could also split the library into an <code>initialize</code> part and a compiled part; that might be okay.</p>",
+        "id": 248650196,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1628274657
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Compile.20package.20as.20plugin/near/248648789\">said</a>:</p>\n<blockquote>\n<p>How does the plugin option impact the environment? Is it as though you had <code>import Plugin</code> in every file?</p>\n</blockquote>\n<p>AFAIK it shouldn't impact the environment at all. Using <code>--plugin</code> will run the <code>initialize</code> blocks and that's it. So you can register custom linters, options, and so on. But for the <code>def</code>s, you need a manual <code>import</code>.</p>",
+        "id": 248650906,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1628274988
+    },
+    {
+        "content": "<p>Doesn't that mean that it is problematic to <code>import</code> something that is also <code>--plugin</code>'d? Since you will have to somehow dodge the <code>initialize</code> but do everything else</p>",
+        "id": 248652806,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1628275887
+    },
+    {
+        "content": "<p>Yeah, I suppose it does. You could have a do-once mechanism with an <code>IO.Ref Bool</code>. This part of the system still seems a bit in flux.</p>",
+        "id": 248653804,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1628276244
+    },
+    {
+        "content": "<p>Or maybe Lean could auto-insert those. The semantics of <code>initialize</code> are not very clear (to me, at least).</p>",
+        "id": 248654017,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1628276348
+    },
+    {
+        "content": "<p>Yes, it's not expected to also import a plugin, though we should probably make sure it still works since you might not be able to avoid it in case of some shared module. I'm not sure <code>initialize</code> being run in a plugin is even intended, usually <code>builtin*</code> means \"run when native code is loaded, register into some global IO.Ref\" and non-builtin means \"run when imported, register into the environment\".</p>",
+        "id": 248657707,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1628278214
+    },
+    {
+        "content": "<p>To clarify <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span>'s point <span class=\"user-mention\" data-user-id=\"256311\">@Jannis Limperg</span>, you should use <code>builtin_initialize</code> if you are planning to use the module via a <code>--plugin</code> and <code>initialize</code> only if you are planning to use the module via <code>import</code>.</p>",
+        "id": 248684443,
+        "sender_full_name": "Mac",
+        "timestamp": 1628297121
+    }
+]

@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>In Lean 3, we had pretty strict restrictions on possible coercion instances.  For example, <code>has_coe α t</code> was always forbidden.  Otherwise you easily ran into nontermination.<br>\nI thought that the new type-class synthesis algorithm in Lean 4 solved these nontermination issues in a more principled way, but I've just ran into this at first glance unrelated error with a seemingly innocent coercion:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">Cached</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">_</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">b</span> <span class=\"bp\">//</span> <span class=\"n\">b</span> <span class=\"bp\">=</span> <span class=\"n\">a</span> <span class=\"o\">}</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">{</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">Coe</span> <span class=\"o\">(</span><span class=\"n\">Cached</span> <span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"n\">α</span> <span class=\"n\">where</span>\n  <span class=\"n\">coe</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">x.1</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">a</span> <span class=\"bp\">++</span> <span class=\"n\">b</span> <span class=\"c1\">-- times out</span>\n</code></pre></div>",
+        "id": 232777581,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1617291257
+    },
+    {
+        "content": "<p>Replacing <code>Coe</code> by either <code>CoeHead</code> or <code>CoeTail</code> fixes the issue, but of course restricts the coercion.</p>",
+        "id": 232777751,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1617291319
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span> Tabling only prevents cycles under the bounded-term-size hypothesis, which means that the terms do not grow arbitrarily big. In your example, the instance effectively says \"whenever you are trying to prove any goal <code>α</code>, try to prove the bigger goal <code>@Cached α a</code>\". The trace shows this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[</span><span class=\"n\">Meta.synthInstance.newSubgoal</span><span class=\"o\">]</span> <span class=\"n\">Coe</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span>\n<span class=\"bp\">...</span>\n<span class=\"o\">[</span><span class=\"n\">Meta.synthInstance.newSubgoal</span><span class=\"o\">]</span> <span class=\"n\">Coe</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">Cached</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"n\">_tc.0</span><span class=\"o\">)</span>\n<span class=\"bp\">...</span>\n<span class=\"o\">[</span><span class=\"n\">Meta.synthInstance.newSubgoal</span><span class=\"o\">]</span> <span class=\"n\">Coe</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">Cached</span> <span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">Cached</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"n\">_tc.0</span><span class=\"o\">)</span> <span class=\"n\">_tc.1</span><span class=\"o\">)</span>\n<span class=\"bp\">...</span>\n<span class=\"o\">[</span><span class=\"n\">Meta.synthInstance.newSubgoal</span><span class=\"o\">]</span> <span class=\"n\">Coe</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">Cached</span> <span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">Cached</span> <span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">Cached</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"n\">_tc.0</span><span class=\"o\">)</span> <span class=\"n\">_tc.1</span><span class=\"o\">)</span> <span class=\"n\">_tc.2</span><span class=\"o\">)</span>\n<span class=\"bp\">...</span>\n</code></pre></div>\n<p>We don't have a great solution to this problem in general, though this instance seems like an ideal candidate for a head/tail restriction. I know Leo has thought about this problem a lot recently, and played with many heuristics for detecting \"bad traces\", but I don't know what his current thoughts are. There are many other options (e.g. iterative deepening) but no silver bullet yet AFAIK.</p>",
+        "id": 232781329,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1617292684
+    },
+    {
+        "content": "<p>There are a few other funny things about this example. The identity coercion should probably have maximum priority:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">Cached</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">b</span> <span class=\"bp\">//</span> <span class=\"n\">b</span> <span class=\"bp\">=</span> <span class=\"n\">a</span> <span class=\"o\">}</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">{</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">Coe</span> <span class=\"o\">(</span><span class=\"n\">Cached</span> <span class=\"n\">α</span> <span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"n\">α</span> <span class=\"n\">where</span>\n  <span class=\"n\">coe</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">x.1</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Coe</span> <span class=\"n\">α</span> <span class=\"n\">α</span> <span class=\"n\">where</span>\n  <span class=\"n\">coe</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">x</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">a</span> <span class=\"bp\">++</span> <span class=\"n\">b</span> <span class=\"c1\">-- works now, since the coercion becomes id</span>\n</code></pre></div>",
+        "id": 232782470,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1617293094
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 232785379,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1617294300
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"230999\">@Daniel Selsam</span>  I just realized that I've had an implicitly operational interpretation of coercions as trying to convert a value to match an argument type (e.g., starting from the type of the value and trying to find an coercion to the argument type).</p>\n<p>Are coercisions  searches fully bidirectional?  Would it be useful/feasible to have oriented coercisions (or perhaps more generally triggered instances) that require a specific <code>Coe</code> form to apply?  There may be similarities with SMT heuristics for instantiating universally quantified variables.</p>",
+        "id": 232790178,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1617296322
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110994\">@Joe Hendrix</span> Currently, coercions are handled by the typeclass mechanism, so the search is effectively defined by the typeclass instances, most of which are defined in <a href=\"https://github.com/leanprover/lean4/blob/master/src/Init/Coe.lean\">https://github.com/leanprover/lean4/blob/master/src/Init/Coe.lean</a></p>",
+        "id": 232792057,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1617297075
+    },
+    {
+        "content": "<p>Thanks.  It looks like it could be pretty programmable, maybe the Cached coercision above could use <code>CoeHead</code> or one of the more restricted type classes.</p>",
+        "id": 232793297,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1617297698
+    },
+    {
+        "content": "<blockquote>\n<p>In your example, the instance effectively says \"whenever you are trying to prove any goal α, try to prove the bigger goal @Cached α a</p>\n</blockquote>\n<p>This is not a property of type-class inference itself, but of the way that the <code>*Coe*</code> instances are set up.  (The type class instance itself says \"whenever you prove <code>Coe (Cached a) α</code>, you need to prove nothing else\".)  This particular instance also seems to have changed since Lean 3.  <code>Coe (Foo α) α</code> used to be okay while <code>Coe α (Foo α)</code> was forbidden.  Now it seems to be the other way around.<br>\nIt's good to know that the Lean 3 issues with transitive coercions are still there, and need similar workarounds.  I won't push the issue if the coercion design is still subject to change anyhow.  I don't think this pathological type class encoding (i.e., encoding a transitive predicate as a typeclass) is used for anything else either.</p>",
+        "id": 232795393,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1617298576
+    },
+    {
+        "content": "<blockquote>\n<p>This is not a property of type-class inference itself, but of the way that the <em>Coe</em> instances are set up. </p>\n</blockquote>\n<p>Yes, my response was poorly worded. FYI here is the Lean4 instance in question: <a href=\"https://github.com/leanprover/lean4/blob/master/src/Init/Coe.lean#L70\">https://github.com/leanprover/lean4/blob/master/src/Init/Coe.lean#L70</a> as you said, the corresponding Lean3 one goes in the other direction: <a href=\"https://github.com/leanprover-community/lean/blob/master/library/init/coe.lean#L95\">https://github.com/leanprover-community/lean/blob/master/library/init/coe.lean#L95</a></p>",
+        "id": 232796031,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1617298886
+    }
+]

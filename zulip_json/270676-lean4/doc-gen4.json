@@ -1,0 +1,332 @@
+[
+    {
+        "content": "<p>I'd be interested in writing a tool like <a href=\"https://github.com/leanprover-community/doc-gen\">doc-gen</a> for Lean 4 since this seems rather important to me, especially considering Lean 4 wants to be more of a general purpose language as well where you'd definitely want to have a nice way to explore documentation. </p>\n<p>Now I've never messed with the lean compiler itself before and the original doc-gen mentions some PR that added additional APIs so they could actually access the docstrings so I'm wondering whether APIs like this already exist/whether there is a plan for them to exist.</p>",
+        "id": 254294684,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1632267816
+    },
+    {
+        "content": "<p>In Lean 4, doc comments are a first class part of the syntax, so you can directly extract it from a declaration source.</p>",
+        "id": 254294815,
+        "sender_full_name": "Mac",
+        "timestamp": 1632267904
+    },
+    {
+        "content": "<p>In fact,  a documentation generator for Lean 4 would likely only need to analyze the <code>Syntax</code> of a Lean file and not even worry about the elaborator or the compiler.</p>",
+        "id": 254294865,
+        "sender_full_name": "Mac",
+        "timestamp": 1632267955
+    },
+    {
+        "content": "<p>With the one caveat of likely needed to extract said syntax first from the elaboration <code>Environment</code>.</p>",
+        "id": 254294951,
+        "sender_full_name": "Mac",
+        "timestamp": 1632267999
+    },
+    {
+        "content": "<p>I'll try to do some digging regarding both of those types tomorrow then, thanks for the pointers!</p>",
+        "id": 254295553,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1632268450
+    },
+    {
+        "content": "<p>I quickly whipped up this example which reads a file, elaborates it, and prints the doc string of a declaration:</p>\n<p><strong>Foo.lean</strong></p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"sd\">/-- Some comment -/</span>\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span>\n</code></pre></div>\n<p><strong>Main.lean</strong></p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">System</span>\n\n<span class=\"n\">abbrev</span> <span class=\"n\">EnvM</span> <span class=\"o\">:=</span> <span class=\"n\">StateM</span> <span class=\"n\">Environment</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">EnvM.run'</span> <span class=\"o\">(</span><span class=\"n\">env</span> <span class=\"o\">:</span> <span class=\"n\">Environment</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">self</span> <span class=\"o\">:</span> <span class=\"n\">EnvM</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">StateT.run'</span> <span class=\"n\">self</span> <span class=\"n\">env</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">run</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">MonadEnv</span> <span class=\"n\">EnvM</span> <span class=\"n\">where</span>\n  <span class=\"n\">getEnv</span> <span class=\"o\">:=</span> <span class=\"n\">get</span>\n  <span class=\"n\">modifyEnv</span> <span class=\"o\">:=</span> <span class=\"n\">modify</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">printDocString</span> <span class=\"o\">(</span><span class=\"n\">declName</span> <span class=\"o\">:</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">path</span> <span class=\"o\">:</span> <span class=\"n\">FilePath</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">PUnit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">opts</span> <span class=\"o\">:=</span> <span class=\"n\">Options.empty</span>\n  <span class=\"k\">let</span> <span class=\"n\">mainModuleName</span> <span class=\"o\">:=</span> <span class=\"bp\">`</span><span class=\"n\">main</span>\n  <span class=\"k\">let</span> <span class=\"n\">input</span> <span class=\"bp\">←</span> <span class=\"n\">IO.FS.readFile</span> <span class=\"n\">path</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">env</span><span class=\"o\">,</span> <span class=\"n\">ok</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">Elab.runFrontend</span> <span class=\"n\">input</span> <span class=\"n\">opts</span> <span class=\"n\">path.toString</span> <span class=\"n\">mainModuleName</span>\n  <span class=\"n\">unless</span> <span class=\"n\">ok</span> <span class=\"k\">do</span> <span class=\"n\">throw</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">IO.userError</span> <span class=\"s2\">\"could not elaborate file\"</span>\n  <span class=\"k\">match</span> <span class=\"n\">EnvM.run'</span> <span class=\"n\">env</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">findDocString</span><span class=\"bp\">?</span> <span class=\"n\">declName</span> <span class=\"k\">with</span>\n  <span class=\"bp\">|</span> <span class=\"n\">some</span> <span class=\"n\">docStr</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">IO.println</span> <span class=\"n\">docStr</span>\n  <span class=\"bp\">|</span> <span class=\"n\">none</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">throw</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">IO.userError</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"no doc string found for '{declName}'\"</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">printDocString</span> <span class=\"bp\">`</span><span class=\"n\">foo</span> <span class=\"s2\">\"Foo.lean\"</span> <span class=\"c1\">-- prints \"Some comment\"</span>\n</code></pre></div>",
+        "id": 254296953,
+        "sender_full_name": "Mac",
+        "timestamp": 1632269451
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> / <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span>,  could <a href=\"https://github.com/leanprover/lean4/blob/245d36147e879a485e6dcbc383cbf2f4dc0ecd5f/src/Lean/DocString.lean#L10\"><code>docStringExt</code></a> be made public or, alternatively, could we get a <code>findDocString?</code> variant that operates on a explicitly specified <code>Environment</code>?</p>",
+        "id": 254297607,
+        "sender_full_name": "Mac",
+        "timestamp": 1632269953
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> I just pushed the change.</p>",
+        "id": 254298542,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1632270656
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span>  Thanks! This also reminded me of a code style question I had been meaning to ask for a while: why are functions like <code>findDocString?</code>/<code>getMainModuleDoc</code> (and other <code>env</code> getters) not added to the <code>Environment</code> namespace so they can be used with dot notation?</p>",
+        "id": 254301093,
+        "sender_full_name": "Mac",
+        "timestamp": 1632272966
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> It is what it is. We are focusing now on missing features, bugs, and porting Mathlib.<br>\nAfter we finish the porting, we can discuss these issues and try to make the API more consistent.</p>",
+        "id": 254302124,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1632273962
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"395550\">@Henrik Böving</span> Note that <span class=\"user-mention\" data-user-id=\"284160\">@Eric Rodriguez</span> has been working on a Lean 3 port of Alectryon: <a href=\"https://www.ma.imperial.ac.uk/~buzzard/xena/alectryon/\">https://www.ma.imperial.ac.uk/~buzzard/xena/alectryon/</a> and <a href=\"https://www.ma.imperial.ac.uk/~buzzard/xena/alectryon/plain.lean.html\">https://www.ma.imperial.ac.uk/~buzzard/xena/alectryon/plain.lean.html</a><br>\nI think Eric can provide a lot more details than I can.</p>\n<p>It would be great if a doc-gen tool for Lean 4 could have dedicated support for goal states and the \"interactive\" nature of Lean.</p>",
+        "id": 254313221,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1632284540
+    },
+    {
+        "content": "<p>Oh that looks really cool as well! I'll keep it in the back of my head for sure for when the regular doc-gen stuff is working.</p>",
+        "id": 254345172,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1632306096
+    },
+    {
+        "content": "<p>Sorry, just say this! I'm hoping that Alectryon for lean4 can become a defacto alternative for doc-gen, as it should be able to do everything we want, and some more nice stuff (say, custom rendererers for things like commutative diagrams in docstrings or even in the code, and as Johan mentioned interactive features). I haven't started looking at lean4 too deeply yet, but it seems a lot easier to work with than Lean3 in this regard so I have high hopes</p>",
+        "id": 254680556,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1632478217
+    },
+    {
+        "content": "<p>I'll definitely try to have a look at it (however I'm rather a beginner with regular programming in Lean so that might take some time). And while the thing about the defacto alternative might surely be right for mathematical purposes Lean 4 is also supposed to be used by regular programmers and those want explorable documentation as is provided by doc-gen so I think a fusion of both is the correct way to go here.</p>",
+        "id": 254682800,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1632479459
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"284160\">@Eric Rodriguez</span>, I'm actually a bit surprised that you're trying to produce documentation that captures the intermediate goal states of proofs. At least for Lean3 where we have lean-in-a-browser, isn't just linking to a live lean session in every way superior?</p>",
+        "id": 254684401,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1632480367
+    },
+    {
+        "content": "<p>I mean, that's just how Alectryon is set up. I think it's got its advantages and disadvantages; for beginners, it makes it clearer where the bigger changes are; also, it will load far faster than the browser Lean/gitpod, and there's cool things that you can do that you couldn't do with the live setup (e.g. replace some <code>Prop</code>s in the tactic state with MathJax'd versions). However, there are many times I wish I had the flexibility of the server, too.</p>",
+        "id": 254684683,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1632480525
+    },
+    {
+        "content": "<p>My understanding of Alectryon was that its primary goal was for exploring proofs, whereas doc-gen's primary goal is for exploring lemma statements. Am I underestimating the scope of Alectryon?</p>",
+        "id": 254690419,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1632483917
+    },
+    {
+        "content": "<p>It's not too tough to extend it; put the proof in a spoiler bracket to indeed allow that, and format the docs with the other nice formatting tools that we have available to act as docs</p>",
+        "id": 254690539,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1632483982
+    },
+    {
+        "content": "<p>I'm not too sure what's up with the full demo, but this is an example that hasn't been too far processed (in Coq, mind): <a href=\"https://alectryon-paper.github.io/bench/stdlib/theories/Lists/List.html\">https://alectryon-paper.github.io/bench/stdlib/theories/Lists/List.html</a></p>",
+        "id": 254690759,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1632484126
+    },
+    {
+        "content": "<p>Extending that to better docstrings and generating a doc-gen-like-stub doesn't seem too far out of reach</p>",
+        "id": 254690937,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1632484216
+    },
+    {
+        "content": "<p>I think it would be really nice to have something like Alectryon reading on Lean file and produce both doc-gen like documentation and fully interactive online file (including widgets) with a seamless transition.</p>",
+        "id": 254693206,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1632485450
+    },
+    {
+        "content": "<p>Eric I think your summer project funding runs out at the end of Sept so looks like you have a lot to do ;-)</p>",
+        "id": 254704622,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1632490592
+    },
+    {
+        "content": "<p>I do have a lot to do:) Exciting times!</p>",
+        "id": 254704984,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1632490723
+    },
+    {
+        "content": "<p>Hey @Mac, I tried your code on the latest master bits, but it is not compiling, can you help me out?</p>\n<p><a href=\"/user_uploads/3121/-9nhyDEvKcDWRPHPKbplWtEp/image.png\">image.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/-9nhyDEvKcDWRPHPKbplWtEp/image.png\" title=\"image.png\"><img src=\"/user_uploads/3121/-9nhyDEvKcDWRPHPKbplWtEp/image.png\"></a></div>",
+        "id": 260070442,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1635894683
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"434989\">@Chris Lovett</span>  Leo kindly improved the API so the following simpler example now works:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">System</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">printDocString</span> <span class=\"o\">(</span><span class=\"n\">declName</span> <span class=\"o\">:</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">path</span> <span class=\"o\">:</span> <span class=\"n\">FilePath</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">PUnit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">opts</span> <span class=\"o\">:=</span> <span class=\"n\">Options.empty</span>\n  <span class=\"k\">let</span> <span class=\"n\">mainModuleName</span> <span class=\"o\">:=</span> <span class=\"bp\">`</span><span class=\"n\">main</span>\n  <span class=\"k\">let</span> <span class=\"n\">input</span> <span class=\"bp\">←</span> <span class=\"n\">IO.FS.readFile</span> <span class=\"n\">path</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">env</span><span class=\"o\">,</span> <span class=\"n\">ok</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">Elab.runFrontend</span> <span class=\"n\">input</span> <span class=\"n\">opts</span> <span class=\"n\">path.toString</span> <span class=\"n\">mainModuleName</span>\n  <span class=\"n\">unless</span> <span class=\"n\">ok</span> <span class=\"k\">do</span> <span class=\"n\">throw</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">IO.userError</span> <span class=\"s2\">\"could not elaborate file\"</span>\n  <span class=\"k\">match</span> <span class=\"n\">findDocString</span><span class=\"bp\">?</span> <span class=\"n\">env</span> <span class=\"n\">declName</span> <span class=\"k\">with</span>\n  <span class=\"bp\">|</span> <span class=\"n\">some</span> <span class=\"n\">docStr</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">IO.println</span> <span class=\"n\">docStr</span>\n  <span class=\"bp\">|</span> <span class=\"n\">none</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">throw</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">IO.userError</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"no doc string found for '{declName}'\"</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">printDocString</span> <span class=\"bp\">`</span><span class=\"n\">foo</span> <span class=\"s2\">\"Foo.lean\"</span> <span class=\"c1\">-- prints \"Some comment\"</span>\n</code></pre></div>",
+        "id": 260070852,
+        "sender_full_name": "Mac",
+        "timestamp": 1635894996
+    },
+    {
+        "content": "<p>Thanks that works, and I figured out a slight variation that checks the name is actually defined:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">printDocString</span> <span class=\"o\">(</span><span class=\"n\">declName</span> <span class=\"o\">:</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">path</span> <span class=\"o\">:</span> <span class=\"n\">FilePath</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">PUnit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">opts</span> <span class=\"o\">:=</span> <span class=\"n\">Options.empty</span>\n    <span class=\"k\">let</span> <span class=\"n\">mainModuleName</span> <span class=\"o\">:=</span> <span class=\"bp\">`</span><span class=\"n\">main</span>\n    <span class=\"k\">let</span> <span class=\"n\">input</span> <span class=\"bp\">←</span> <span class=\"n\">IO.FS.readFile</span> <span class=\"n\">path</span>\n    <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">env</span><span class=\"o\">,</span> <span class=\"n\">ok</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">Elab.runFrontend</span> <span class=\"n\">input</span> <span class=\"n\">opts</span> <span class=\"n\">path.toString</span> <span class=\"n\">mainModuleName</span>\n    <span class=\"n\">unless</span> <span class=\"n\">ok</span> <span class=\"k\">do</span> <span class=\"n\">throw</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">IO.userError</span> <span class=\"s2\">\"could not elaborate file\"</span>\n    <span class=\"k\">if</span> <span class=\"n\">env.contains</span> <span class=\"n\">declName</span> <span class=\"k\">then</span>\n      <span class=\"k\">let</span> <span class=\"n\">comment</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">findDocString</span><span class=\"bp\">?</span> <span class=\"n\">env</span> <span class=\"n\">declName</span><span class=\"o\">)</span>\n      <span class=\"n\">IO.println</span> <span class=\"n\">comment</span>\n    <span class=\"k\">else</span> <span class=\"n\">throw</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">IO.userError</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"symbol '{declName}' not found\"</span>\n</code></pre></div>\n<p>I don't really care if the comment is 'none' - I care more than the symbol is not defined...</p>",
+        "id": 260075780,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1635898668
+    },
+    {
+        "content": "<p>hey <span class=\"user-mention\" data-user-id=\"315577\">@Mac</span>  one more newby question, how do I get this getEnv to work for a version that looks up Lean defined doc comments?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">findLeanDocString</span> <span class=\"o\">(</span><span class=\"n\">declName</span> <span class=\"o\">:</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">String</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">env</span> <span class=\"bp\">←</span> <span class=\"n\">getEnv</span>\n    <span class=\"k\">if</span> <span class=\"n\">env.contains</span> <span class=\"n\">declName</span> <span class=\"k\">then</span>\n      <span class=\"k\">let</span> <span class=\"n\">comment</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">findDocString</span><span class=\"bp\">?</span> <span class=\"n\">env</span> <span class=\"n\">declName</span><span class=\"o\">)</span>\n      <span class=\"n\">return</span> <span class=\"n\">comment.get</span><span class=\"bp\">!</span>\n    <span class=\"k\">else</span>\n      <span class=\"n\">return</span> <span class=\"s2\">\"\"</span>\n</code></pre></div>\n<p>Not sure what to do about the error <code>failed to synthesize instance  MonadEnv IO</code>  I see similar code containing <code>let e ← getEnv</code> all over the place in Lean sources so I'm not sure why it isn't working here...</p>",
+        "id": 260078227,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1635901026
+    },
+    {
+        "content": "<p>Never mind, found the missing magic, I needed to add <code>MetaM</code> to the return types...</p>",
+        "id": 260078631,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1635901395
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"434989\">@Chris Lovett</span> while that does work, that is doing something very different -- that is checking the environment of the running Lean interpreter instead, of as the example is doing, checking the environment of a newly elaborated file.</p>",
+        "id": 260079467,
+        "sender_full_name": "Mac",
+        "timestamp": 1635902202
+    },
+    {
+        "content": "<p>Right, that's what I want in this case, build lean.exe, then run this program using that new build and dump all the docs for that version of lean, that way I don't have to go searching for .lean source files.</p>",
+        "id": 260079869,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1635902659
+    },
+    {
+        "content": "<p>Also since some people voiced interest in alectryon like visualization for lean4 proofs, I found this on Github today: <a href=\"https://github.com/insightmind/LeanInk\">https://github.com/insightmind/LeanInk</a></p>\n<p>CC <span class=\"user-mention\" data-user-id=\"110031\">@Patrick Massot</span> <span class=\"user-mention\" data-user-id=\"284160\">@Eric Rodriguez</span> <span class=\"user-mention\" data-user-id=\"112680\">@Johan Commelin</span></p>",
+        "id": 260185331,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1635967867
+    },
+    {
+        "content": "<p>Cool! <span class=\"user-mention\" data-user-id=\"451040\">@Niklas Bülow</span> are you working with Sebastian?</p>",
+        "id": 260185557,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1635967966
+    },
+    {
+        "content": "<p>Yeah sebastian is commenting in the issues, they definitely know of each other.</p>",
+        "id": 260185593,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1635967983
+    },
+    {
+        "content": "<p>Yes, this work was mentioned before but the repo wasn't mentioned I think</p>",
+        "id": 260190956,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1635970300
+    },
+    {
+        "content": "<p>It wasn't there before :)</p>",
+        "id": 260196616,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1635973136
+    },
+    {
+        "content": "<p>And how long did you believe you could hide it? <span aria-label=\"smiling devil\" class=\"emoji emoji-1f608\" role=\"img\" title=\"smiling devil\">:smiling_devil:</span></p>",
+        "id": 260198021,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1635973819
+    },
+    {
+        "content": "<p>I loved the alias \"insightmind\" :)</p>",
+        "id": 260198181,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1635973908
+    },
+    {
+        "content": "<p>Thx, yeah LeanInk is basically a Lean 4 driver (written in Lean 4) for Alectryon. You'll still be using Alectryon directly to generate the webpages, etc. but Alectryon will use the driver to get some information about the Lean code. I'll be doing the project as my bachelor thesis, so Sebastian will support me on my way there. Our first goal is to get Lean 4 near feature-parity compared to Alectryon's Coq support.  Afterward, we'll try to hopefully take advantage of some Lean 4 features to make it even more capable. So if you have some suggestions for features you'd like to see, feel free to share them with us.  PS.: About hiding xD, Github Actions is just a lot more affordable when we're not trying to hide it  <span aria-label=\"wink\" class=\"emoji emoji-1f609\" role=\"img\" title=\"wink\">:wink:</span></p>",
+        "id": 260207345,
+        "sender_full_name": "Niklas Bülow",
+        "timestamp": 1635979286
+    },
+    {
+        "content": "<p>Does anyone know if it is possible to make <a href=\"https://readthedocs.org/\">Read the Docs</a> compatible with generic documentation generators (like <code>doc-gen4</code>) or is it committed to Python?</p>\n<p>Edit: it's compatible with <a href=\"https://docs.readthedocs.io/en/stable/intro/getting-started-with-mkdocs.html\">MkDocs</a> but then I don't know if it's possible to write plugins that would allow MkDocs to process other languages <span aria-label=\"thinking\" class=\"emoji emoji-1f914\" role=\"img\" title=\"thinking\">:thinking:</span></p>",
+        "id": 264461313,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1639149464
+    },
+    {
+        "content": "<p>Read the Docs is meant as a website to show documentation generated by Sphinx or just plain restructured text (for example the Linux kernel docs are hosted this way). You would probably have to hack Lean support into Sphinx in order to make this work, I don't really know how painful this would be.</p>\n<p>Besides since Lean 4 is a fully fledged programming language on its own I don't think we have to rely on something like Read the Docs etc. I'm currently porting over the jinja2 templates from the original doc-gen to this JSX like syntax proposed over here <a href=\"https://github.com/leanprover/lean4/pull/723/files\">https://github.com/leanprover/lean4/pull/723/files</a> (fetching information from the compiler is already sort of working in the fork over here <a href=\"https://github.com/hargoniX/doc-gen4\">https://github.com/hargoniX/doc-gen4</a>).</p>",
+        "id": 264464665,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1639150917
+    },
+    {
+        "content": "<p>I wrote a POC of using sphinx for Lean.</p>",
+        "id": 264465413,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1639151250
+    },
+    {
+        "content": "<p>But I haven't touched it in months.</p>",
+        "id": 264465428,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1639151256
+    },
+    {
+        "content": "<p>It's here <a href=\"https://github.com/Julian/sphinxcontrib-lean/\">https://github.com/Julian/sphinxcontrib-lean/</a> and Lean3 obviously</p>",
+        "id": 264465460,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1639151270
+    },
+    {
+        "content": "<p>You can see a result of it here: <a href=\"https://lean-across-the-board.readthedocs.io/en/latest/\">https://lean-across-the-board.readthedocs.io/en/latest/</a></p>",
+        "id": 264465521,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1639151286
+    },
+    {
+        "content": "<p>I was thinking more about the easiness of hosting and synchronization that Read the Docs allows. I mean, it is a business with adds and stuff, which allows them to keep the repo hooks online</p>",
+        "id": 264465827,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1639151428
+    },
+    {
+        "content": "<p>Julian, that was pretty rad <span aria-label=\"+1\" class=\"emoji emoji-1f44d\" role=\"img\" title=\"+1\">:+1:</span></p>",
+        "id": 264466464,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1639151663
+    },
+    {
+        "content": "<p>doc-gen4 won't build with nightly-2022-12-03 (due to changes in Lake; <code>recBuildLocalModules</code> has been <a href=\"https://github.com/leanprover/lake/commit/003b3a1fd75aab39bc30847a91815ce72676e3cb#diff-a60e6cc2a6f22f13d93406d5cbf48f5e0092552a5ad28c75ca370a3f451f9d5cL13\">removed</a>)</p>",
+        "id": 313683293,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1670072815
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"395550\">@Henrik Böving</span></p>",
+        "id": 313683354,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1670072844
+    },
+    {
+        "content": "<p>I fixed it just yesterday /o\\</p>",
+        "id": 313683405,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1670072870
+    },
+    {
+        "content": "<p>Sorry, just checking --- you mean you fixed something else, right? It's not compiling for me.</p>",
+        "id": 313684469,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1670073301
+    },
+    {
+        "content": "<p>Yeah yeah I made it compatible with 11-30 yesterday. There was a relatively calm phase now because Mac didn't work much on Lake but when he does you can usually expect stuff to break on a daily or weekly basis until it eventually stabilizes</p>",
+        "id": 313684732,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1670073387
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> I'm not quite sure how to fix this here? </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"k\">let</span> <span class=\"n\">moduleJobs</span> <span class=\"bp\">←</span> <span class=\"n\">BuildJob.mixArray</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">←</span> <span class=\"n\">lib.recBuildLocalModules</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"bp\">`</span><span class=\"n\">docs</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>I'm guessing i want something along the lines of what you are doing in <code>LeanLib.recBuildStatic</code> but specifically tailored to the <code>docs</code> module facet?</p>",
+        "id": 313685665,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1670073798
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"395550\">@Henrik Böving</span> Oo! I forgot doc-gen4 was using <code>recBuildLocalModules</code>. Yeah, you got the idea right. With the new API the code would be:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">let</span> <span class=\"n\">mods</span> <span class=\"bp\">←</span> <span class=\"n\">lib.modules.fetch</span>\n<span class=\"k\">let</span> <span class=\"n\">moduleJobs</span> <span class=\"bp\">←</span> <span class=\"n\">BuildJob.mixArray</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">←</span> <span class=\"n\">mods.mapM</span> <span class=\"o\">(</span><span class=\"n\">fetch</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">·.</span><span class=\"n\">facet</span> <span class=\"bp\">`</span><span class=\"n\">docs</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>The change was made to increase performance, so hopefully you might see a bit of a gain in doc-gen4 as well!</p>",
+        "id": 313710126,
+        "sender_full_name": "Mac",
+        "timestamp": 1670085330
+    },
+    {
+        "content": "<p>We shall see that right away!</p>",
+        "id": 313710159,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1670085354
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> builds now</p>",
+        "id": 313711987,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1670086497
+    }
+]

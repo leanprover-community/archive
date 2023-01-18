@@ -1,0 +1,518 @@
+[
+    {
+        "content": "<p>Hello! I am implementing an LCF-style kernel for a proof checker, and came up with what I think is a somewhat interesting design:</p>\n<ul>\n<li>Implement the kernel in Lean 4, and prove soundness and other fun properties</li>\n<li>Export the syntax tree and validated constructors via C FFI; this entire API is simply typed so should be easy to use safely</li>\n<li>Wrap the C FFI in a nice clean Rust API, and publish the result as a Rust library; the rest of the prover will then use the kernel via the Rust API, which we know to be bug free due to the Lean formalization</li>\n</ul>\n<p>Unfortunately, I have no idea how I would go about exposing the necessary functions and/or data types (may actually want the term/derivation data structures to be opaque, owned by Lean and only accessed via exposed API functions) to C. Is there a way, in particular, to say take a function <code>myFunc: Term -&gt; Term</code> and expose it to C?</p>",
+        "id": 290645376,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658628585
+    },
+    {
+        "content": "<p>I'm guessing I need to use <code>@[export]</code> from <a href=\"https://leanprover.github.io/lean4/doc/dev/ffi.html\">https://leanprover.github.io/lean4/doc/dev/ffi.html</a>, but I'm a bit confused with how to package/link things nicely with Rust</p>",
+        "id": 290645579,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658628890
+    },
+    {
+        "content": "<p>You can tag a definition <code>@[export your_c_name]</code> to give it said symbol name in the compiled object.</p>",
+        "id": 290645613,
+        "sender_full_name": "Mac",
+        "timestamp": 1658628926
+    },
+    {
+        "content": "<p>Oops beat me to it.</p>",
+        "id": 290645621,
+        "sender_full_name": "Mac",
+        "timestamp": 1658628954
+    },
+    {
+        "content": "<p>When you build a Lean package you get object files (and can build a static library for library via <code>lake build Lib:static</code>). Just link the built static library / object file of the module containing the <code>@[export]</code> symbol with your Rust code to make the symbol available. Then, in Rust, declare it as you would any other foreign language symbol.</p>",
+        "id": 290645763,
+        "sender_full_name": "Mac",
+        "timestamp": 1658629145
+    },
+    {
+        "content": "<p>e.g., via <code>extern { fn your_c_name ... }</code></p>",
+        "id": 290645853,
+        "sender_full_name": "Mac",
+        "timestamp": 1658629232
+    },
+    {
+        "content": "<p>You will also likely to create an opaque type corresponding to Lean's <code>lean_object</code> type via e.g. :</p>\n<div class=\"codehilite\" data-code-language=\"Rust\"><pre><span></span><code><span class=\"cp\">#[repr(C)]</span><span class=\"w\"> </span><span class=\"k\">pub</span><span class=\"w\"> </span><span class=\"k\">struct</span> <span class=\"nc\">LeanObject</span><span class=\"w\"> </span><span class=\"p\">{</span><span class=\"w\"> </span><span class=\"n\">_private</span>: <span class=\"p\">[</span><span class=\"kt\">u8</span><span class=\"p\">;</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"p\">]</span><span class=\"w\"> </span><span class=\"p\">}</span><span class=\"w\"></span>\n</code></pre></div>\n<p>Then you can do:</p>\n<div class=\"codehilite\" data-code-language=\"Rust\"><pre><span></span><code><span class=\"k\">extern</span><span class=\"w\"> </span><span class=\"p\">{</span><span class=\"w\"></span>\n<span class=\"w\"> </span><span class=\"k\">pub</span><span class=\"w\"> </span><span class=\"k\">fn</span> <span class=\"nf\">my_func</span><span class=\"p\">(</span><span class=\"n\">term</span>: <span class=\"o\">*</span><span class=\"k\">mut</span><span class=\"w\"> </span><span class=\"n\">LeanObject</span><span class=\"p\">)</span><span class=\"w\"> </span>-&gt; <span class=\"nc\">LeanObject</span><span class=\"p\">;</span><span class=\"w\"></span>\n<span class=\"p\">}</span><span class=\"w\"></span>\n</code></pre></div>\n<p>To reference your Lean function defined like so:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[export my_func]</span> <span class=\"kd\">def</span> <span class=\"n\">myFunc</span><span class=\"o\">:</span> <span class=\"n\">Term</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">Term</span>\n</code></pre></div>\n<p><strong>Note:</strong> I do not know much Rust, but I believe this is how it works on that side.</p>",
+        "id": 290646468,
+        "sender_full_name": "Mac",
+        "timestamp": 1658630005
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> sounds good! I was thinking of actually making a separate crate for re-usable Lean-Rust bindings too (basically, wrapping up lean.h in Rust), as that doesn't seem to exist yet and I'll have to write them anyways.</p>",
+        "id": 290691874,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658684763
+    },
+    {
+        "content": "<p>Any name suggestions?</p>",
+        "id": 290691880,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658684770
+    },
+    {
+        "content": "<p>Also question: what's the thread safety of the functions in <code>lean.h</code>?</p>",
+        "id": 290704093,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658703033
+    },
+    {
+        "content": "<p>Are all the compiled functions in a Lean program thread safe?</p>",
+        "id": 290704101,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658703052
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"461231\">Jad Ghalayini</span> <a href=\"#narrow/stream/270676-lean4/topic/C.20FFI.20export/near/290704101\">said</a>:</p>\n<blockquote>\n<p>Are all the compiled functions in a Lean program thread safe?</p>\n</blockquote>\n<p>No and yes. Lots of the Lean code itself is not thread safe. However, the basic representations used to build functions (e.g., the allocator) are. That is, if a user makes sure to write thread safe code (e.g., parallel Tasks don't perform IO actions that can deadlock -- like waiting on each other), the under the hood parts of Lean (like memory management, etc.) are generally thread safe. One noteworthy exception I know of at the moment is <a href=\"https://github.com/leanprover/lean4/issues/1282\">#1282</a> -- <code>IO.Process.spawn</code> with different environments is not thread safe.</p>",
+        "id": 290706208,
+        "sender_full_name": "Mac",
+        "timestamp": 1658706312
+    },
+    {
+        "content": "<p>Wait, what do you mean by thread safe? Because deadlocking is thread safe, just bad. I meant undefined behavior</p>",
+        "id": 290710854,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658713582
+    },
+    {
+        "content": "<p>I would generally not consider deadlocking to be thread safe (though, looking further, whether or not thread safe includes or excludes deadlocks seems debatable). However, to clarify, there are many functions in the Lean core which will can break if multiple threads run them simultanously (like my <code>IO.Proccess.spawn</code> example above). One import example is setting up an Lean environment, which is very much not thread safe (as <a href=\"https://github.com/leanprover/lean4/blob/a62949c49b4f631624fe33315f04b738f0cce349/src/Lean/ImportingFlag.lean#L35-L45\">this comment highlights</a>).</p>",
+        "id": 290716805,
+        "sender_full_name": "Mac",
+        "timestamp": 1658720986
+    },
+    {
+        "content": "<blockquote>\n<p>However, to clarify, there are many functions in the Lean core which will can break if multiple threads run them simultanously</p>\n</blockquote>\n<p>Just to clarify, the only thing that's definitely not expected to be thread-safe is setting up an environment for imported modules.  But you're not supposed to do that more than once in a single process anyhow (since it modifies global variables).</p>\n<p>Accessing <code>IO.Ref</code>s from multiple threads is merely a bad idea, but not really unsafe.  Just be aware that <code>IO.Ref</code> uses busy-waiting if another thread calls <code>modify</code>, so keep those modify functions short.  If you're only using <code>get</code> and <code>set</code>, they're just atomic references.</p>\n<p>The process spawning issue is a bug.  Feel free to submit a fix, you're one of the few people here with a windows machine.</p>",
+        "id": 290767330,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1658760055
+    },
+    {
+        "content": "<p>Coming back to <code>lean.h</code>, the short answer is that all functions should be thread-safe as long as you give them Lean objects marked as multi-threaded (<code>lean_mark_mt</code>).</p>",
+        "id": 290769670,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1658761010
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> I guess when I was daying unsafe I meant precisely the Rust semantics of the word, since I want to wrtie a Rust wrapper</p>",
+        "id": 290783608,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658766172
+    },
+    {
+        "content": "<p>And in Rust deadlock is safe haha</p>",
+        "id": 290783635,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658766178
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> I'm about 70% of the way through translating <code>lean.h</code> to Rust, and on the way I came across some interesting design decisions</p>",
+        "id": 290783837,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658766258
+    },
+    {
+        "content": "<p>I also found that a lot of things that were not implemeneted with atomics should have been relaxed reads afaict</p>",
+        "id": 290783905,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658766294
+    },
+    {
+        "content": "<p>You know who I can ask about this?</p>",
+        "id": 290783923,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658766300
+    },
+    {
+        "content": "<p>You can ask this stream :)</p>",
+        "id": 290784048,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1658766355
+    },
+    {
+        "content": "<p>Is there plan for proper FFI support (feature parity with libffi)?</p>",
+        "id": 290824992,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1658786770
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"515610\">@Locria Cyber</span> could you elaborate?</p>",
+        "id": 290842164,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658801872
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/C.20FFI.20export/near/290784048\">said</a>:</p>\n<blockquote>\n<p>You can ask this stream :)</p>\n</blockquote>\n<p>Well, for one, all the reference count operations on the hot path, e.g. checking if something is single-threaded, do not use relaxed atomics, but rather just directly test for equality. I recognize I'm being a typical pedantic Rust stickler but aren't potentially racy accesses like that UB?</p>",
+        "id": 290842657,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658802372
+    },
+    {
+        "content": "<p>In my Rust wrapper anyways I used relaxed atomic loads for the checks; I still don't understand why we even need a separate single-threaded case at all though</p>",
+        "id": 290842669,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658802402
+    },
+    {
+        "content": "<p>In particular, the array-tricks used with mutation of arrays having only one reference can be implemented in a multi-threaded context with only a bit (1 atomic operation) of overhead; this would then avoid having to ever mark things multi-threaded while probably giving comparable performance</p>",
+        "id": 290842761,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658802496
+    },
+    {
+        "content": "<p>Has benchmarking shown this is inadequate?</p>",
+        "id": 290842767,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658802506
+    },
+    {
+        "content": "<p>Or is there other functionality that depends on the ST/MT distinction?</p>",
+        "id": 290842784,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658802526
+    },
+    {
+        "content": "<p>The prime motivation of the MT bit is making single-threaded RC ops fast, see Section 7.2 of <a href=\"https://arxiv.org/pdf/1908.05647.pdf\">https://arxiv.org/pdf/1908.05647.pdf</a></p>",
+        "id": 290855072,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1658818186
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"515610\">Locria Cyber</span> <a href=\"#narrow/stream/270676-lean4/topic/C.20FFI.20export/near/290824992\">said</a>:</p>\n<blockquote>\n<p>Is there plan for proper FFI support (feature parity with libffi)?</p>\n</blockquote>\n<p>No plans, only a wish</p>",
+        "id": 290855134,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1658818228
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> that's very interesting; I'm pleasantly surprised it's actually faster. One thing I noticed however is that multithreaded values are never recognized as unique; I think it should be relatively simple to add support for this though, but not sure if any problems would come up in practice.</p>",
+        "id": 290856254,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658819329
+    },
+    {
+        "content": "<p>I tried to bind libffi with lean. It seem feasible. I may need help on <code>lean_object*</code>.</p>",
+        "id": 290938639,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1658861086
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"461231\">Jad Ghalayini</span> <a href=\"#narrow/stream/270676-lean4/topic/C.20FFI.20export/near/290783837\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> I'm about 70% of the way through translating <code>lean.h</code> to Rust, and on the way I came across some interesting design decisions</p>\n</blockquote>\n<p>I probably should use Rust to bind libffi. What do you think?</p>",
+        "id": 290938842,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1658861188
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"461231\">@Jad Ghalayini</span>  I'd like see a link to that source code (Rust interface).</p>",
+        "id": 290939058,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1658861305
+    },
+    {
+        "content": "<p>It's on <a href=\"http://crates.io\">crates.io</a>!</p>",
+        "id": 290980641,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658889268
+    },
+    {
+        "content": "<p>lean-sys</p>",
+        "id": 290980646,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658889272
+    },
+    {
+        "content": "<p>Just a translation of lean.h to Rust</p>",
+        "id": 290980654,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658889288
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"515610\">@Locria Cyber</span> would be happy to try to extend it to add libffi support</p>",
+        "id": 290980702,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658889330
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"461231\">@Jad Ghalayini</span> What do you mean by </p>\n<blockquote>\n<p>Well, for one, all the reference count operations on the hot path, e.g. checking if something is single-threaded, do not use relaxed atomics, but rather just directly test for equality. I recognize I'm being a typical pedantic Rust stickler but aren't potentially racy accesses like that UB?</p>\n</blockquote>\n<p>C++ has a fairly-well defined memory model and if not explicitly specified (e.g. as a relaxed read) the default behavior is to fall back to sequential consistency (which is obviously stronger), so I assume I'm misunderstanding your statement.  How would the access be racy/lead to UB?  Could you please point me at an example C++ file?</p>\n<p>As for the hot path comment, what arch are you running on?  Seems most of time marking reads as relaxed hardly matters unless you're on some more exotic arch which doesn't implement MESI.</p>",
+        "id": 291114223,
+        "sender_full_name": "Tom",
+        "timestamp": 1658958112
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"515083\">@Tom</span> yes, a relaxed read to an atomic variable defaults to sequential consistency; but the reference count used is <em>not</em> marked atomic. It's just an i32</p>",
+        "id": 291133258,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658974803
+    },
+    {
+        "content": "<p>Also this is in lean.h so it's actually being called from C code, but the memory models don't disagree here</p>",
+        "id": 291133267,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1658974830
+    },
+    {
+        "content": "<p>Well, this is the core of a language runtime. So rules around UB might get a little... relaxed at times. Effectively, if it's impossible for the compiler or any reasonable hardware implementation to screw up, we might just have to live with it.</p>",
+        "id": 291156749,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1658998578
+    },
+    {
+        "content": "<p>Here the basic proposition not supported by the C/C++ memory models is that a nonatomic write (no larger than the word size, in particular) to a location where the old and new value agree on a particular bit cannot be observed concurrently to change that bit.</p>",
+        "id": 291156989,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1658998761
+    },
+    {
+        "content": "<p>I don't see why this can't be a relaxed atomic write. It should yield the same assembly</p>",
+        "id": 291170781,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659008836
+    },
+    {
+        "content": "<p>Your basic proposition is certainly not valid in the C/C++ spec, so it can be miscompiled. Basically, the compiler can see a nonatomic write as evidence that it is the only writer to that location which makes it legal to insert other writes to that location, inline the results of reads and writes, and so on which is not what you want</p>",
+        "id": 291171035,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659009009
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/C.20FFI.20export/near/291170781\">said</a>:</p>\n<blockquote>\n<p>I don't see why this can't be a relaxed atomic write. It should yield the same assembly</p>\n</blockquote>\n<p>That's not true without further changes <a href=\"https://godbolt.org/z/fjK91aEYc\">https://godbolt.org/z/fjK91aEYc</a></p>",
+        "id": 291173427,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659010310
+    },
+    {
+        "content": "<p>Ah, I was assuming you didn't actually have data races, but this code is defending against exactly that. I assume <code>lean_is_st</code> means \"is single-threaded\"? So there isn't actually a race to change this <code>m_rc</code> variable because in multithreaded mode it's always 0?</p>",
+        "id": 291184580,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659016425
+    },
+    {
+        "content": "<p>It's also a bit sketchy but this yields the equivalent assembly:</p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"k\">static</span><span class=\"w\"> </span><span class=\"kr\">inline</span><span class=\"w\"> </span><span class=\"kt\">bool</span><span class=\"w\"> </span><span class=\"nf\">lean_is_st2</span><span class=\"p\">(</span><span class=\"n\">lean_object2</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"w\"> </span><span class=\"n\">o</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span><span class=\"w\"></span>\n<span class=\"w\">    </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"n\">atomic_load_explicit</span><span class=\"p\">(</span><span class=\"o\">&amp;</span><span class=\"n\">o</span><span class=\"o\">-&gt;</span><span class=\"n\">m_rc</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"n\">memory_order_relaxed</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"o\">&gt;</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"p\">;</span><span class=\"w\"></span>\n<span class=\"p\">}</span><span class=\"w\"></span>\n\n<span class=\"kt\">void</span><span class=\"w\"> </span><span class=\"nf\">lean_inc_ref2</span><span class=\"p\">(</span><span class=\"n\">lean_object2</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"w\"> </span><span class=\"n\">o</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span><span class=\"w\"></span>\n<span class=\"w\">    </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"n\">lean_is_st2</span><span class=\"p\">(</span><span class=\"n\">o</span><span class=\"p\">))</span><span class=\"w\"> </span><span class=\"p\">{</span><span class=\"w\"></span>\n<span class=\"w\">        </span><span class=\"p\">(</span><span class=\"o\">*</span><span class=\"p\">(</span><span class=\"kt\">int</span><span class=\"o\">*</span><span class=\"p\">)</span><span class=\"o\">&amp;</span><span class=\"n\">o</span><span class=\"o\">-&gt;</span><span class=\"n\">m_rc</span><span class=\"p\">)</span><span class=\"o\">++</span><span class=\"p\">;</span><span class=\"w\"></span>\n<span class=\"w\">    </span><span class=\"p\">}</span><span class=\"w\"> </span><span class=\"k\">else</span><span class=\"w\"> </span><span class=\"p\">{}</span><span class=\"w\"></span>\n<span class=\"p\">}</span><span class=\"w\"></span>\n</code></pre></div>\n<p>In C++20 you can use <code>atomic_ref</code> to do non-atomic operations on atomic objects, but AFAIK this is the best you can do in C11</p>",
+        "id": 291186002,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659017016
+    },
+    {
+        "content": "<p>in this particular case you can also just manually inline the function instead of relying on the compiler to do a sketchy optimization on your behalf</p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"kt\">void</span><span class=\"w\"> </span><span class=\"nf\">lean_inc_ref2</span><span class=\"p\">(</span><span class=\"n\">lean_object2</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"w\"> </span><span class=\"n\">o</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span><span class=\"w\"></span>\n<span class=\"w\">    </span><span class=\"kt\">int</span><span class=\"w\"> </span><span class=\"n\">rc</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">atomic_load_explicit</span><span class=\"p\">(</span><span class=\"o\">&amp;</span><span class=\"n\">o</span><span class=\"o\">-&gt;</span><span class=\"n\">m_rc</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"n\">memory_order_relaxed</span><span class=\"p\">);</span><span class=\"w\"></span>\n<span class=\"w\">    </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"n\">rc</span><span class=\"w\"> </span><span class=\"o\">&gt;</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span><span class=\"w\"></span>\n<span class=\"w\">        </span><span class=\"n\">atomic_store_explicit</span><span class=\"p\">(</span><span class=\"o\">&amp;</span><span class=\"n\">o</span><span class=\"o\">-&gt;</span><span class=\"n\">m_rc</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"n\">rc</span><span class=\"w\"> </span><span class=\"o\">+</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"n\">memory_order_relaxed</span><span class=\"p\">);</span><span class=\"w\"></span>\n<span class=\"w\">    </span><span class=\"p\">}</span><span class=\"w\"> </span><span class=\"k\">else</span><span class=\"w\"> </span><span class=\"p\">{}</span><span class=\"w\"></span>\n<span class=\"p\">}</span><span class=\"w\"></span>\n</code></pre></div>",
+        "id": 291186228,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659017112
+    },
+    {
+        "content": "<p>Yeah, either of these would probably fine. It reminds me a bit of the non-transitivity of defeq issue - we know it's not optimal and there may even be a simple fix, but the practical impact is likely zero. So let's maybe wait a bit more.</p>",
+        "id": 291202129,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659019189
+    },
+    {
+        "content": "<p>I was really surprised that nontransitivity of defeq doesn't ruin the party more often (or indeed ever, as far as I can see). We've now done a substantial bunch of mathematics in Lean and I don't ever recall it getting in the way (perhaps because we often care less about defeq than about good <code>simp</code> lemmas).</p>",
+        "id": 291234426,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1659033674
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/C.20FFI.20export/near/291202129\">said</a>:</p>\n<blockquote>\n<p>Yeah, either of these would probably fine. It reminds me a bit of the non-transitivity of defeq issue - we know it's not optimal and there may even be a simple fix, but the practical impact is likely zero. So let's maybe wait a bit more.</p>\n</blockquote>\n<p>I couldn't agree more. I agree that impact is likely zero. We currently don't even have resources to review a PR with this kind of change that affects a critical part of the system.<br>\nIt is great to see all the enthusiasm. BTW, I'd like to remind everybody that we have a list of \"help wanted\" issues, they are great for first-time contributors. <br>\n<a href=\"https://github.com/leanprover/lean4/labels/help%20wanted\">https://github.com/leanprover/lean4/labels/help%20wanted</a></p>",
+        "id": 291244673,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1659038639
+    },
+    {
+        "content": "<p>Btw <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> your code is basically what I put in my Rust lean-sys</p>",
+        "id": 291281757,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1659067831
+    },
+    {
+        "content": "<p>Whwt can I say I'm very pedantic about UB hahaha</p>",
+        "id": 291281761,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1659067843
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"461231\">Jad Ghalayini</span> <a href=\"#narrow/stream/270676-lean4/topic/C.20FFI.20export/near/290980702\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"515610\">Locria Cyber</span> would be happy to try to extend it to add libffi support</p>\n</blockquote>\n<p>I mean to use lean-sys and bind ffi (Rust crate) with lean, so lean can use ffi.</p>",
+        "id": 291310556,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1659094749
+    },
+    {
+        "content": "<p>it's a pain that Lean doesn't expose Nat -&gt; C<br>\nall <code>nat_to_intxxxx</code> is modulo</p>",
+        "id": 291311106,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1659095169
+    },
+    {
+        "content": "<p>I found maybe a bug in <code>tests/compiler/foreign/myfuns.cpp</code></p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">lean_object</span> <span class=\"bp\">*</span> <span class=\"n\">lean_S_update_global</span><span class=\"o\">(</span><span class=\"n\">b_lean_obj_arg</span> <span class=\"n\">s</span><span class=\"o\">,</span> <span class=\"n\">lean_object</span> <span class=\"bp\">/*</span> <span class=\"n\">w</span> <span class=\"bp\">*/</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>world object is <code>lean_object*</code></p>",
+        "id": 291312395,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1659096132
+    },
+    {
+        "content": "<p>I think the world object is borrowed?</p>",
+        "id": 291312456,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1659096208
+    },
+    {
+        "content": "<p>It's just the tagged pointer <code>0x1</code>, so it's neither really. But that signature is incorrect, right.</p>",
+        "id": 291312826,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659096476
+    },
+    {
+        "content": "<p>also, Int64 isn't generated as int64_t in C</p>",
+        "id": 291313046,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1659096637
+    },
+    {
+        "content": "<p>There is no Int64 in the stdlib?</p>",
+        "id": 291313453,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659096916
+    },
+    {
+        "content": "<p>I mean FFI. It is generated as <code>lean_object *</code> with <code>@[extern \"xxx\"]</code></p>",
+        "id": 291313749,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1659097112
+    },
+    {
+        "content": "<p>How do I use static library with lake?</p>",
+        "id": 291313986,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1659097310
+    },
+    {
+        "content": "<p>The Lake's readme is vague</p>",
+        "id": 291313997,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1659097317
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"461231\">@Jad Ghalayini</span> <br>\nYour <code>lean_alloc_ctor</code> leaks memory</p>",
+        "id": 291327665,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1659101922
+    },
+    {
+        "content": "<p>no, it's my fault of using Rust &amp;str as C string</p>",
+        "id": 291328687,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1659102479
+    },
+    {
+        "content": "<p><a href=\"https://github.com/locriacyber/lean-sys-example\">https://github.com/locriacyber/lean-sys-example</a><br>\nHere's an example I made</p>",
+        "id": 291330384,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1659103276
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"515610\">Locria Cyber</span> <a href=\"#narrow/stream/270676-lean4/topic/C.20FFI.20export/near/291313986\">said</a>:</p>\n<blockquote>\n<p>How do I use static library with lake?</p>\n</blockquote>\n<p>Does the <a href=\"https://github.com/leanprover/lake/blob/dcf8e1fc406acfd4dbbfd691f4ecf76966fae407/examples/ffi/lib/lakefile.lean\">FFI example</a> help?</p>",
+        "id": 291347620,
+        "sender_full_name": "Mac",
+        "timestamp": 1659111603
+    },
+    {
+        "content": "<p>I already figured it out</p>",
+        "id": 291347661,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1659111624
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"461231\">@Jad Ghalayini</span> I made a pull request on Gitlab on lean-sys for some fixes</p>",
+        "id": 292636675,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1660070900
+    },
+    {
+        "content": "<p>Turns out there is no need for libffi if I can link the C/Rust library.</p>",
+        "id": 292636952,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1660071005
+    },
+    {
+        "content": "<p>at runtime, libffi may be needed</p>",
+        "id": 292636985,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1660071020
+    },
+    {
+        "content": "<p>although some glue code in C is enough</p>",
+        "id": 292637041,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1660071042
+    },
+    {
+        "content": "<p>Merged!</p>",
+        "id": 292637458,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1660071205
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"515610\">@Locria Cyber</span> would you like to be added as a maintainer</p>",
+        "id": 292637487,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1660071217
+    },
+    {
+        "content": "<p>I plan to extend the library significantly with some higher-level safe wrappers later</p>",
+        "id": 292637532,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1660071236
+    },
+    {
+        "content": "<p>Tell me if you're interested!</p>",
+        "id": 292637616,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1660071254
+    },
+    {
+        "content": "<p>Also I'm curious what exactly you need libffi for</p>",
+        "id": 292637652,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1660071265
+    },
+    {
+        "content": "<p>I plan to be making very heavy use if Lean FFI in my PhD as proposed (see <a href=\"http://gitlab.com/tekne/phd-proposal\">gitlab.com/tekne/phd-proposal</a>) and would be happy to collaborate!</p>",
+        "id": 292637706,
+        "sender_full_name": "Jad Ghalayini",
+        "timestamp": 1660071290
+    },
+    {
+        "content": "<p>Do you a pdf of the proposal? I'm not very good at reading raw TeX.</p>",
+        "id": 292666466,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1660083328
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"461231\">Jad Ghalayini</span> <a href=\"#narrow/stream/270676-lean4/topic/C.20FFI.20export/near/292637487\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"515610\">Locria Cyber</span> would you like to be added as a maintainer</p>\n</blockquote>\n<p>ok</p>",
+        "id": 293702964,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1660651798
+    },
+    {
+        "content": "<p>libffi is for runtime loading of dynamic library</p>",
+        "id": 293703074,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1660651835
+    },
+    {
+        "content": "<p>at runtime</p>\n<ul>\n<li>loading dynamic library</li>\n<li>make the function's type/ABI</li>\n<li>call it</li>\n</ul>",
+        "id": 293703200,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1660651892
+    },
+    {
+        "content": "<p>This is not really necessary, since in most FFI usage, you know the function types you want to call.<br>\ne.g. <code>void puts(char*);</code></p>",
+        "id": 293703348,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1660651946
+    },
+    {
+        "content": "<p><a href=\"https://gitlab.com/tekne/phd-proposal/-/blob/main/figures/rvsdg.pdf\">https://gitlab.com/tekne/phd-proposal/-/blob/main/figures/rvsdg.pdf</a><br>\n<span aria-label=\"rolling on the floor laughing\" class=\"emoji emoji-1f923\" role=\"img\" title=\"rolling on the floor laughing\">:rolling_on_the_floor_laughing:</span> why this RVSDG seems very similar to a language/notation I made</p>",
+        "id": 293703857,
+        "sender_full_name": "Locria Cyber",
+        "timestamp": 1660652169
+    }
+]

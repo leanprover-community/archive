@@ -1,0 +1,110 @@
+[
+    {
+        "content": "<p>I see <code>std</code> now has its own implementation of <code>HashMap</code>, <code>Std.HashMap</code>, distinct from <code>Lean.HashMap</code>. What's the advantage of this, compared to changing the implementation in core (and adding functions/lemmas in <code>std</code> as necessary)? I feel like having two types which fulfil the same purposes and have almost the same implementation is not ideal.</p>",
+        "id": 302504534,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1664989896
+    },
+    {
+        "content": "<p>I think the reasoning is that Std.HashMap is intended to be more stable than Lean.HashMap. Having people rely on the Lean one makes it more difficult if the compiler devs need to make changes.  Also there's some issues in the bootstrap that affect its API, which Std.HashMap can avoid since it's not in the bootstrap</p>",
+        "id": 302515757,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1664993421
+    },
+    {
+        "content": "<p>I'm sure you all have given this issue more consideration than I have, but I already see myself wanting to use some library (which uses <code>Std.HashMap</code>) for metaprogramming (which uses <code>Lean.HashMap</code>). At that point, my options are</p>\n<ul>\n<li>conversions back and forth, probably linear-time;</li>\n<li>really unsafe casts if the representations are sufficiently similar;</li>\n<li>duplicating the relevant part of the library's API for <code>Lean.HashMap</code>.</li>\n</ul>\n<p>I would take occasional breakage over this.</p>\n<p>Out of curiosity, what are the bootstrapping concerns?</p>",
+        "id": 302616270,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1665049543
+    },
+    {
+        "content": "<p>I'm not super familiar with the metaprogramming API, does it explicitly expose hashmaps somewhere?</p>",
+        "id": 302676970,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1665069545
+    },
+    {
+        "content": "<p>Yes. For example, <code>simp</code> now collects used simp lemmas and these are stored in a <code>HashMap</code>. More importantly, <code>PersistentHashMap</code>s, which I guess should also move to <code>std</code> by the same reasoning, are used to implement all the core data structures.</p>\n<p>In general, the metaprogramming API is now the entire non-<code>private</code> compiler API. So whatever appears in a type signature there is exposed. (Technically, defeq also makes all implementations part of the API, but let's not go there.)</p>",
+        "id": 302689104,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1665072680
+    },
+    {
+        "content": "<p>I was planning to add a conversion between the two types to Std. I think it has to be the linear time conversion because the invariants aren't the same. I think it is an acceptable cost for conversion (the zero-cost conversion is a little sketchy and will again tie the representations together, so I don't want to promise its continued availability), but in applications I would generally want to <a href=\"https://en.wikipedia.org/wiki/XY_problem\">#xy</a> why you actually need the conversion: it's rare to be literally giving a whole hashmap from one module to another. In most cases you should just use the data structure required by the API you are interacting with, or default to Std.HashMap if you have a free choice.</p>",
+        "id": 302702881,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1665076776
+    },
+    {
+        "content": "<blockquote>\n<p>Out of curiosity, what are the bootstrapping concerns?</p>\n</blockquote>\n<p>Std wants to put invariants on all the data structures such that they can be verified to have the correct behavior under reasonable assumptions, and this sometimes front-loads the proving effort. Lean core is not currently in a position to be able to do those proofs however unless we move a decent chunk of Std to core.</p>",
+        "id": 302703491,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1665076984
+    },
+    {
+        "content": "<p>The potential issue I'm describing hasn't occurred yet, so I can't xy. I agree that the issue won't be terribly common in practice, but at the same time, passing around a map doesn't sound like an outlandish thing either.</p>\n<p>One concrete issue I already have is that I have some utility methods for <code>Lean.HashMap</code>, <code>Lean.PersistentHashMap</code>, etc. lying around. I was planning to move them to std, but will now have to duplicate them for the <code>Std</code> versions as well. These are things like <code>insertWith</code>, <code>update</code>, <code>merge</code>, <code>ForIn</code>, <code>BEq</code>. In the long run, I think we will want much larger APIs for these data structures along the lines of Haskell's <a href=\"https://hackage.haskell.org/package/containers-0.6.6/docs/Data-Map-Strict.html\"><code>Data.Map</code></a>. Duplicating these APIs will be annoying.</p>\n<p>Could the bootstrapping issue be addressed by having the unverified data structure in core and verifying it post-hoc (and perhaps packaging up the verified version as a subtype, as usual)?</p>",
+        "id": 302814686,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1665136360
+    },
+    {
+        "content": "<p>I would eagerly add those APIs to std, and backport them to lean core as they become necessary</p>",
+        "id": 302815443,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1665136652
+    },
+    {
+        "content": "<p>I think it is feasible to have the unverified version in core, but leo doesn't want to deal with the maintenance overhead of that at the moment. I don't think this is a permanent state of affairs (but it could be a while before this is changed)</p>",
+        "id": 302815589,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1665136702
+    },
+    {
+        "content": "<p>All right, I'll deal with it for now and we'll see whether the duplication becomes an issue in practice.</p>",
+        "id": 302818243,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1665137732
+    },
+    {
+        "content": "<p>Just in case it was not noticed, in the master of mathlib3port there is exactly this collision in <code>Mathlib.Tactic.Sat.FromLRAT</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">stdout</span><span class=\"o\">:</span>\n<span class=\"bp\">./</span><span class=\"n\">lean_packages</span><span class=\"bp\">/</span><span class=\"n\">mathlib</span><span class=\"bp\">/././</span><span class=\"n\">Mathlib</span><span class=\"bp\">/</span><span class=\"n\">Tactic</span><span class=\"bp\">/</span><span class=\"n\">Sat</span><span class=\"bp\">/</span><span class=\"n\">FromLRAT.lean</span><span class=\"o\">:</span><span class=\"mi\">251</span><span class=\"o\">:</span><span class=\"mi\">30</span><span class=\"o\">:</span> <span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">ambiguous</span><span class=\"o\">,</span> <span class=\"n\">possible</span> <span class=\"n\">interpretations</span>\n  <span class=\"n\">Std.HashMap</span> <span class=\"n\">ℕ</span> <span class=\"n\">Clause</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span>\n</code></pre></div>",
+        "id": 302824093,
+        "sender_full_name": "Siddhartha Gadgil",
+        "timestamp": 1665140269
+    },
+    {
+        "content": "<p>that's only a name collision, it can be fixed by using <code>open Lean hiding HashMap</code> or the other way around</p>",
+        "id": 302826776,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1665141250
+    },
+    {
+        "content": "<p>you shouldn't be getting that error if the version of std4 and mathlib4 match. Note that this was fixed in the <a href=\"https://github.com/leanprover-community/mathlib4/commit/a4369ab32fb20b9bd33f5064032ff2b2e2f67abe\">std4 bump for 10-03</a></p>",
+        "id": 302827329,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1665141458
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/HashMap.20moved.20to.20std/near/302827329\">said</a>:</p>\n<blockquote>\n<p>you shouldn't be getting that error if the version of std4 and mathlib4 match. Note that this was fixed in the <a href=\"https://github.com/leanprover-community/mathlib4/commit/a4369ab32fb20b9bd33f5064032ff2b2e2f67abe\">std4 bump for 10-03</a></p>\n</blockquote>\n<p>That commit is for <code>mathlib4</code>. I am getting the error for <code>mathlib3port</code>.</p>",
+        "id": 302832848,
+        "sender_full_name": "Siddhartha Gadgil",
+        "timestamp": 1665143522
+    },
+    {
+        "content": "<p>you probably have the wrong <code>lean-toolchain</code></p>",
+        "id": 302833761,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1665143894
+    },
+    {
+        "content": "<p>it needs to match whatever version of std4 / mathlib4 is being used</p>",
+        "id": 302833807,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1665143913
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/HashMap.20moved.20to.20std/near/302833761\">said</a>:</p>\n<blockquote>\n<p>you probably have the wrong <code>lean-toolchain</code></p>\n</blockquote>\n<p>Thanks. I will try to get things in sync.</p>",
+        "id": 302859380,
+        "sender_full_name": "Siddhartha Gadgil",
+        "timestamp": 1665151517
+    }
+]

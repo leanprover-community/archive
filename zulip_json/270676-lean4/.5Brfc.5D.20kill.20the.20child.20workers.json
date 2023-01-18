@@ -1,0 +1,92 @@
+[
+    {
+        "content": "<p>Since I'm not good at writing efficient code, I often manage to make Lean use 100% of the CPU.  To see what I mean, try out this code:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"n\">partial</span> <span class=\"kd\">def</span> <span class=\"n\">slow</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span>\n  <span class=\"n\">slow</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"k\">in</span>\n<span class=\"n\">elab</span> <span class=\"s2\">\"slower\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"n\">toExpr</span> <span class=\"o\">(</span><span class=\"n\">slow</span> <span class=\"mi\">0</span><span class=\"o\">)</span>\n\n<span class=\"k\">#check</span> <span class=\"n\">slower</span>\n</code></pre></div>\n<p>You're now in a very unfortunate state:</p>\n<ul>\n<li>If you change something (for example add a space), Lean now uses 2 threads to occupy 200% of your CPU.</li>\n<li>Then you try to restart the file worker (in vscode this is the \"refresh file dependencies\" command), but this only makes the situation worse.  Because Lean now has two processes running and uses 300% of your CPU.</li>\n<li>Now your laptop is getting warm enough to cook your breakfast so you decide to close vscode.  But that doesn't help either: Lean continues to heat your apartment.  The file worker processes keep running.</li>\n</ul>\n<p>Therefore I propose the following three changes:</p>\n<ol>\n<li>We introduce a <code>IO.Process.Child.kill</code> function with the natural semantics.</li>\n<li>The watchdog kills the child when it receives a didClose notification and on exit.</li>\n<li>We add <code>terminateWhenParentExits</code> flag to <code>SpawnArgs</code>, which calls <code>prctl(PR_SET_PDEATHSIG, SIGTERM)</code> in the child (Linux-only).</li>\n<li>The watchdog sets this flags when spawning children (this is only a fallback measure since it's Linux-only).</li>\n</ol>",
+        "id": 243542726,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1624379613
+    },
+    {
+        "content": "<p>This likely only happens because we do not have \"background\" tasks but join on them on main thread exit, which we mostly do because it simplifies the task implementation and pleases lsan. We could implement background tasks... or simply call <code>System.exit</code> on worker main thread exit.</p>",
+        "id": 243545028,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1624380581
+    },
+    {
+        "content": "<p>Ah, that's a good point.</p>",
+        "id": 243545525,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1624380785
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/pull/543\">https://github.com/leanprover/lean4/pull/543</a></p>",
+        "id": 243546673,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1624381280
+    },
+    {
+        "content": "<blockquote>\n<p>Let's see how many sanitizers this breaks in CI.</p>\n</blockquote>\n<p>Surprisingly, none (on my machine). Let's hope it stays that way...</p>",
+        "id": 243548658,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1624382086
+    },
+    {
+        "content": "<p>...hah</p>",
+        "id": 243549826,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1624382573
+    },
+    {
+        "content": "<p>I can't get it to leak locally even with something simple like</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">(</span><span class=\"n\">args</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">IO.asTask</span> <span class=\"o\">(</span><span class=\"k\">do</span> <span class=\"n\">IO.sleep</span> <span class=\"mi\">10000</span><span class=\"bp\">;</span> <span class=\"n\">IO.println</span> <span class=\"n\">args</span><span class=\"o\">)</span>\n  <span class=\"n\">IO.Process.exit</span> <span class=\"mi\">0</span>\n</code></pre></div>\n<p>right now</p>",
+        "id": 243553840,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1624384288
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 243554078,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1624384378
+    },
+    {
+        "content": "<p>BTW, I've disabled lsan for the interactive tests now.</p>",
+        "id": 243554139,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1624384411
+    },
+    {
+        "content": "<p>Oh. Wow, ok that's good to know. I was starting to wonder why I had to run <code>pkill -f lean</code> so often.</p>",
+        "id": 243557670,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1624385863
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/.5Brfc.5D.20kill.20the.20child.20workers/near/243553840\">said</a>:</p>\n<blockquote>\n<p>I can't get it to leak locally even with something simple like</p>\n</blockquote>\n<p>Me neither, not even with this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">unsafe</span> <span class=\"kd\">inductive</span> <span class=\"n\">S</span>\n  <span class=\"bp\">|</span> <span class=\"n\">a</span>\n  <span class=\"bp\">|</span> <span class=\"n\">b</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">IO.Ref</span> <span class=\"n\">S</span><span class=\"o\">)</span>\n\n<span class=\"n\">unsafe</span> <span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">r</span> <span class=\"o\">:</span> <span class=\"n\">IO.Ref</span> <span class=\"n\">S</span> <span class=\"bp\">←</span> <span class=\"n\">IO.mkRef</span> <span class=\"n\">S.a</span>\n  <span class=\"n\">r.set</span> <span class=\"o\">(</span><span class=\"n\">S.b</span> <span class=\"n\">r</span><span class=\"o\">)</span>\n\n<span class=\"n\">unsafe</span> <span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">(</span><span class=\"n\">args</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">foo</span>\n</code></pre></div>",
+        "id": 243557826,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1624385920
+    },
+    {
+        "content": "<p>That does leak for me; did you build with <code>-DSMALL_ALLOCATOR=OFF</code>?</p>",
+        "id": 243567386,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1624390236
+    },
+    {
+        "content": "<p>I get the feeling lsan does scan remaining thread stacks on exit for roots, in which case I'm even less sure why it fails on CI</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>==953921==T1: stack [0x7f23eb6fd000,0x7f23ebefbe00) size 0x7fee00; local=0x7f23ebefbd2c\n==953923==Processing thread 953921.\n==953923==Stack at 0x7ffdf4a83000-0x7ffdf5283000 (SP = 0x7ffdf527f848).\n==953923==TLS at 0x7f23eff50f40-0x7f23eff52140.\n==953923==Processing thread 953922.\n==953923==Stack at 0x7f23eb6fd000-0x7f23ebefbe00 (SP = 0x7f23ebef2780).\n==953923==TLS at 0x7f23ebefbe00-0x7f23ebefd000.\n</code></pre></div>",
+        "id": 243567810,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1624390428
+    },
+    {
+        "content": "<p>Oh well, a problem for another day. Let's squash the original bug first.</p>",
+        "id": 243582268,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1624397883
+    },
+    {
+        "content": "<p>I oppose this subject line on ethical grounds. :)</p>",
+        "id": 243692938,
+        "sender_full_name": "Hunter Monroe",
+        "timestamp": 1624472694
+    }
+]

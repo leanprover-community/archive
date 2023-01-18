@@ -1,0 +1,110 @@
+[
+    {
+        "content": "<p>Trying to understand transformers and port <a href=\"https://mmhaskell.com/monads/transformers\">https://mmhaskell.com/monads/transformers</a> to lean, there is something I don't quite yet follow in the following code. I find  <code>validUserName </code> is of type <code>Except String String</code> and not just <code>String</code>.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">readUserName</span> <span class=\"o\">:</span> <span class=\"n\">ExceptT</span> <span class=\"n\">String</span> <span class=\"n\">IO</span> <span class=\"n\">String</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">IO.println</span> <span class=\"s2\">\"Please enter your username:\"</span>\n  <span class=\"k\">let</span> <span class=\"n\">stdin</span> <span class=\"bp\">←</span> <span class=\"n\">IO.getStdin</span>\n  <span class=\"k\">let</span> <span class=\"n\">str</span> <span class=\"bp\">←</span> <span class=\"n\">stdin.getLine</span>\n  <span class=\"k\">if</span> <span class=\"n\">str.length</span> <span class=\"bp\">&gt;</span> <span class=\"mi\">5</span> <span class=\"k\">then</span>\n    <span class=\"n\">return</span> <span class=\"n\">str.trim</span>\n  <span class=\"k\">else</span> <span class=\"n\">throw</span> <span class=\"s2\">\"Username must be more than 5 characters\"</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">try</span>\n    <span class=\"k\">let</span> <span class=\"n\">validUserName</span> <span class=\"bp\">←</span> <span class=\"n\">readUserName</span>\n    <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"Hello, {validUserName}!\"</span>\n  <span class=\"n\">catch</span> <span class=\"n\">e</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"Error: {e}\"</span>\n</code></pre></div>\n<p>I tried also <code>readUserName .run</code> but it doesn't help.  So it seems I needs some sort of extra lift here to force the try/catch to do something useful here.  I was able to fix it with my liftIO function, but why is this necessary, and is there some easier way to do this?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">open</span> <span class=\"n\">EStateM</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">liftIO</span> <span class=\"o\">(</span><span class=\"n\">t</span> <span class=\"o\">:</span> <span class=\"n\">Except</span> <span class=\"n\">String</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">match</span> <span class=\"n\">t</span> <span class=\"k\">with</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">ok</span> <span class=\"n\">r</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Result.ok</span> <span class=\"n\">r</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">error</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Result.error</span> <span class=\"n\">s</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">try</span>\n    <span class=\"k\">let</span> <span class=\"n\">validUserName</span> <span class=\"bp\">←</span> <span class=\"n\">readUserName</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">liftIO</span>\n    <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"Hello, {validUserName}!\"</span>\n  <span class=\"n\">catch</span> <span class=\"n\">e</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"Error: {e}\"</span>\n</code></pre></div>\n<p>The liftIO now cases the error case to go to the catch block which is what I wanted?</p>",
+        "id": 295543048,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1661572680
+    },
+    {
+        "content": "<p><code>try ... catch</code> desugars to <a href=\"https://leanprover-community.github.io/mathlib4_docs/Init/Prelude.html#MonadExceptOf\"><code>tryCatch</code></a>, which does not change the type in the body of the try block. So it can't be used to eliminate an <code>Except ...</code> wrapper around the type</p>",
+        "id": 295543795,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1661573519
+    },
+    {
+        "content": "<p>Ok, I figured it had something to do with my <code>main</code> type of <code>IO String</code> not matching so I moved the code to a new function and now it works fine:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">login</span> <span class=\"o\">:</span> <span class=\"n\">ExceptT</span> <span class=\"n\">String</span> <span class=\"n\">IO</span> <span class=\"n\">String</span><span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">try</span>\n    <span class=\"k\">let</span> <span class=\"n\">username</span> <span class=\"bp\">←</span> <span class=\"n\">readUserName</span>\n    <span class=\"k\">let</span> <span class=\"n\">email</span> <span class=\"bp\">←</span> <span class=\"n\">readEmail</span>\n    <span class=\"k\">let</span> <span class=\"n\">password</span> <span class=\"bp\">←</span> <span class=\"n\">readPassword</span>\n    <span class=\"n\">return</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"Hello, {username}, we are logging you in...!\"</span>\n  <span class=\"n\">catch</span> <span class=\"n\">e</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">throw</span> <span class=\"n\">e</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">IO.println</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">login</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 295544504,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1661574381
+    },
+    {
+        "content": "<p>The simplest fix to your code is to remove the <code>ExceptT</code> like so:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">readUserName</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">String</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">IO.println</span> <span class=\"s2\">\"Please enter your username:\"</span>\n  <span class=\"k\">let</span> <span class=\"n\">stdin</span> <span class=\"bp\">←</span> <span class=\"n\">IO.getStdin</span>\n  <span class=\"k\">let</span> <span class=\"n\">str</span> <span class=\"bp\">←</span> <span class=\"n\">stdin.getLine</span>\n  <span class=\"k\">if</span> <span class=\"n\">str.length</span> <span class=\"bp\">&gt;</span> <span class=\"mi\">5</span> <span class=\"k\">then</span>\n    <span class=\"n\">return</span> <span class=\"n\">str.trim</span>\n  <span class=\"k\">else</span> <span class=\"n\">throw</span> <span class=\"bp\">↑</span><span class=\"s2\">\"Username must be more than 5 characters\"</span>\n</code></pre></div>",
+        "id": 295544516,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1661574407
+    },
+    {
+        "content": "<p>Woah, what?  IO is not \"Except\" as far as I know so where did that <code>throw</code> come from, something to do with that tricky up arrow <code>↑</code> ?</p>",
+        "id": 295544544,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1661574481
+    },
+    {
+        "content": "<p>IO is a <code>MonadExcept</code></p>",
+        "id": 295544590,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1661574497
+    },
+    {
+        "content": "<p>So demonstrating monad transformers with <code>ExceptT String IO String</code> is a bad idea then?</p>",
+        "id": 295544595,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1661574514
+    },
+    {
+        "content": "<p>but the error type is <code>IO.Error</code> so you need to coerce it from <code>String</code></p>",
+        "id": 295544599,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1661574521
+    },
+    {
+        "content": "<p>How about using a simple monad as the base, like <code>StateM Nat</code>?</p>",
+        "id": 295544638,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1661574595
+    },
+    {
+        "content": "<p>So <code>↑</code> is a notation for coercion? Where is it defined?</p>",
+        "id": 295544695,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1661574615
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib4_docs///Init/Coe.html\">https://leanprover-community.github.io/mathlib4_docs///Init/Coe.html</a></p>",
+        "id": 295544705,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1661574641
+    },
+    {
+        "content": "<p>Found it, thanks: <code>syntax:1024 (name := coeNotation) \"↑\" term:1024 : term</code></p>",
+        "id": 295544742,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1661574692
+    },
+    {
+        "content": "<p>Hmmm, ok, the <a href=\"https://mmhaskell.com/monads/transformers\">haskell chapter</a> uses <code>OptionT IO String</code> which I also found a bit contrived, given IO can already return errors.  So I'll switch to something more like what I wrote in <a href=\"https://github.com/leanprover/lean4-samples/tree/main/SimpleMonads#monad-composition\">https://github.com/leanprover/lean4-samples/tree/main/SimpleMonads#monad-composition</a> like functions of type <code>StateT Nat (ExceptT String Id) Float</code>.</p>",
+        "id": 295544898,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1661574855
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> In this code:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"n\">throw</span> <span class=\"s2\">\"hello\"</span>\n<span class=\"c1\">-- failed to synthesize instance</span>\n<span class=\"c1\">--   MonadExcept String IO</span>\n</code></pre></div>\n<p>Is this expected / intended behavior? <code>throw</code> has the type</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">throw</span> <span class=\"o\">[</span><span class=\"n\">MonadExcept</span> <span class=\"n\">ε</span> <span class=\"n\">m</span><span class=\"o\">]</span> <span class=\"o\">:</span> <span class=\"n\">ε</span> <span class=\"bp\">→</span> <span class=\"n\">m</span> <span class=\"n\">α</span>\n</code></pre></div>\n<p>where <code>ε</code> is an <code>outParam</code> of <code>MonadExcept</code>, so there is a competition between using the <code>ε</code> from the argument (which is <code>String</code>) and the <code>ε</code> inferred from the <code>MonadExcept</code> instance (which is <code>IO.Error</code>).</p>",
+        "id": 295544915,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1661574872
+    },
+    {
+        "content": "<p>I think that simple monads like <code>StateT</code> and <code>ExceptT</code> are easier to understand if you are building things from scratch</p>",
+        "id": 295544931,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1661574917
+    },
+    {
+        "content": "<p>I notice <a href=\"https://mmhaskell.com/monads/transformers\">mmhaskell</a> uses this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">MonadTrans</span> <span class=\"n\">t</span> <span class=\"n\">where</span>\n  <span class=\"n\">lift</span> <span class=\"o\">::</span> <span class=\"o\">(</span><span class=\"n\">Monad</span> <span class=\"n\">m</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">m</span> <span class=\"n\">a</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">t</span> <span class=\"n\">m</span> <span class=\"n\">a</span>\n</code></pre></div>\n<p>And the book has these <code>lift</code> commands to access functions on inner monads, but I'm not finding the need for that in Lean?  For example, here I'm able to access <code>throw</code> without any lift keywords:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">abbrev</span> <span class=\"n\">Arguments</span> <span class=\"o\">:=</span> <span class=\"n\">List</span> <span class=\"n\">String</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">hasSwitch</span> <span class=\"o\">(</span><span class=\"n\">name</span><span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"n\">Arguments</span> <span class=\"o\">(</span><span class=\"n\">Except</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"n\">Bool</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">args</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"k\">if</span> <span class=\"n\">args.contains</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"--{name}\"</span> <span class=\"k\">then</span>\n    <span class=\"n\">return</span> <span class=\"n\">true</span>\n  <span class=\"k\">else</span>\n    <span class=\"n\">throw</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"Command line argument --{name} not found\"</span>\n</code></pre></div>\n<p>I assume lifting works differently in lean with <code>MonadLift</code> and all that - which seems to operate more on return values - lifting them to match some larger monad at the call site?</p>",
+        "id": 295549375,
+        "sender_full_name": "Chris Lovett",
+        "timestamp": 1661580103
+    },
+    {
+        "content": "<p>Yes, automatic monad lifting is described in <a href=\"https://leanprover.github.io/papers/do.pdf#page=18\">https://leanprover.github.io/papers/do.pdf#page=18</a></p>",
+        "id": 295558989,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1661587401
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/lifting.20transformers/near/295544915\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"112857\">Leonardo de Moura</span> In this code:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"n\">throw</span> <span class=\"s2\">\"hello\"</span>\n<span class=\"c1\">-- failed to synthesize instance</span>\n<span class=\"c1\">--   MonadExcept String IO</span>\n</code></pre></div>\n<p>Is this expected / intended behavior? <code>throw</code> has the type</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">throw</span> <span class=\"o\">[</span><span class=\"n\">MonadExcept</span> <span class=\"n\">ε</span> <span class=\"n\">m</span><span class=\"o\">]</span> <span class=\"o\">:</span> <span class=\"n\">ε</span> <span class=\"bp\">→</span> <span class=\"n\">m</span> <span class=\"n\">α</span>\n</code></pre></div>\n<p>where <code>ε</code> is an <code>outParam</code> of <code>MonadExcept</code>, so there is a competition between using the <code>ε</code> from the argument (which is <code>String</code>) and the <code>ε</code> inferred from the <code>MonadExcept</code> instance (which is <code>IO.Error</code>).</p>\n</blockquote>\n<p>The type class resolution procedure failed when trying to check whether the synthesized value type had the expected type. Here:<br>\n<a href=\"https://github.com/leanprover/lean4/blob/766afdd0bc6c6480113b6dd91033fea871028fcd/src/Lean/Meta/SynthInstance.lean#L695\">https://github.com/leanprover/lean4/blob/766afdd0bc6c6480113b6dd91033fea871028fcd/src/Lean/Meta/SynthInstance.lean#L695</a><br>\nI agree this is a different kind of failure. Moreover, it does not give the caller the opportunity to do something about it (e.g., adding a coercion).<br>\nWe can get more information using <code>set_option trace.Meta.synthInstance true</code>. BTW, the new tracing infrastructure that <span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span> implemented looks great. We get:<br>\n<a href=\"/user_uploads/3121/MztlNfHYggMfammPYb79Oik4/image.png\">image.png</a> <br>\nThen, we can expand the trace and get<br>\n<a href=\"/user_uploads/3121/Yko608W5c6BtLczZGhSuoPQE/image.png\">image.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/MztlNfHYggMfammPYb79Oik4/image.png\" title=\"image.png\"><img src=\"/user_uploads/3121/MztlNfHYggMfammPYb79Oik4/image.png\"></a></div><div class=\"message_inline_image\"><a href=\"/user_uploads/3121/Yko608W5c6BtLczZGhSuoPQE/image.png\" title=\"image.png\"><img src=\"/user_uploads/3121/Yko608W5c6BtLczZGhSuoPQE/image.png\"></a></div>",
+        "id": 295604259,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1661610503
+    }
+]

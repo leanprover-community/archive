@@ -1,0 +1,128 @@
+[
+    {
+        "content": "<p>I'm currently trying to understand how case tags work, and they are rather more complicated than expected. There seem to be two ways to tag a goal as a 'case', <code>_case.n</code> (where <code>n</code> is a natural number; what's this for?) and <code>_case_simple</code>. Both seem to be in use. When the <code>case</code> tactic tries to find a case that matches the name given by the user, it inspects the term constructed so far <a href=\"https://github.com/leanprover-community/lean/blob/c59125c188468fb83ca95353376e1ce953b57a5e/library/init/meta/interactive.lean#L629\" title=\"https://github.com/leanprover-community/lean/blob/c59125c188468fb83ca95353376e1ce953b57a5e/library/init/meta/interactive.lean#L629\">in some unholy fashion</a> -- but only for <code>_case_simple</code> tags. Does anyone know why all this is necessary? I would have expected <code>case</code> to just look for a goal with a matching name.</p>",
+        "id": 194832958,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1587488894
+    },
+    {
+        "content": "<p>The \"interesting\" code is from my original implementation of <code>case</code>, before Leo added any tag management. As the comment at the use site of <code>find_case</code> explains, it is not being used for actually locating the goal anymore. I don't know/remember much about the tags themselves.</p>",
+        "id": 194857600,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1587501142
+    },
+    {
+        "content": "<p>Thanks, that helps a lot! Perhaps a refactoring to remove <code>_case_simple</code> is in order.</p>",
+        "id": 194937444,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1587565096
+    },
+    {
+        "content": "<p>I think I broadly understand what's happening now. Documenting it here (for myself if noone else):</p>\n<ul>\n<li>A tag is a list of names.</li>\n<li><code>induction</code> and <code>cases</code> (and variants) tag each goal they generate with the tag <code>['_case_simple, cname]</code> where <code>cname</code> is the name of the constructor (fully qualified).</li>\n<li><code>with_cases t</code> runs the tactic <code>t</code>. Then, for any new goal <code>g</code> produced by <code>t</code>, it reverts any hypotheses of <code>g</code> that did not occur in the original goal. Finally, <code>g</code>'s tag gets prefixed with <code>'_case.n</code> where <code>n</code> is the number of hypotheses that were reverted.</li>\n<li><code>case name : x, y, ...</code> first finds a goal whose tag matches <code>name</code>. It then proceeds according to whether the goal's tag starts with <code>'_case.n</code> or <code>'_case_simple</code>.<ul>\n<li>For <code>'_case.n</code>, it introduces <code>n</code> arguments, using the names <code>x, y, ...</code> (if available).</li>\n<li>For <code>'_case_simple</code>, it determines the number of arguments of the constructor which generated this case. (This is what the linked <code>find_case</code> does, as far as I can tell.) It then renames these arguments to <code>x, y, ...</code> (if available).</li>\n</ul>\n</li>\n</ul>",
+        "id": 194949985,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1587570017
+    },
+    {
+        "content": "<p>A PR to add this info in the form of doc strings to leanprover-community/lean would be greatly appreciated!</p>",
+        "id": 194950171,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1587570103
+    },
+    {
+        "content": "<p>Can do, but at the moment I want to redesign the whole thing anyway. Besides being ugly, the <code>find_case</code> hack leads to such tight coupling between <code>induction</code>/<code>cases</code> and <code>case</code> that I can't use case tags with an alternative induction tactic that I'm working on.</p>",
+        "id": 194951189,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1587570569
+    },
+    {
+        "content": "<p>New design:</p>\n<ul>\n<li>A case tag has the form <code>['_case, cname_0, ... cname_m, '_arg.x_0, ..., '_arg.x_n, '_end_case]</code> where the <code>cname_i</code> are names associated with the case (usually just one constructor name) and the <code>x_i</code> are the unique names of those local hypotheses which were added for the case.</li>\n<li><code>cases</code>, <code>induction</code> and friends, when called on a goal with tag <code>t</code>, generate one goal per constructor and prepend an appropriate case tag to <code>t</code>.</li>\n<li><code>case c : x y z... { t }</code> searches all goals for one whose tag includes a case tag for <code>c</code>. (The search remains fuzzy, so <code>case zero</code> finds a goal tagged <code>nat.zero</code>.) If it finds exactly one such goal, it renames the <code>_arg</code> hypotheses to <code>x, y, z, ...</code> (if present) and runs <code>t</code> on the goal.</li>\n<li>Some other tactics can also set tags if tags are enabled. As far as I can tell, these are always 'simple' tags, meaning the tag is just one or more names which are associated with the case. For example, <code>apply</code> can set tags for generated subgoals if the arguments that generate these subgoals are named in the applied lemma.</li>\n<li><code>with_cases t</code> runs <code>t</code> with tags enabled. For each new goal <code>g</code>, it then generates a case tag <code>['_case, cname_i, ..., '_arg.x_i, ..., '_end_case]</code> where<ul>\n<li>the <code>cname_i</code> are the associated names of any case tags or simple tags of <code>g</code>;</li>\n<li>the <code>_arg.x_i</code> are those hypotheses of <code>g</code> that did not appear in the original goal.<br>\nThis ensures that <code>with_cases</code> can be used both with <code>cases</code>/<code>induction</code> (though there isn't really any reason to do so any more) and with tactics like <code>apply</code> that generate simple tags. The latter is used occasionally in core, to apply custom induction principles.</li>\n</ul>\n</li>\n</ul>\n<p>This design should cover all current uses of case tags. It doesn't require any C++ changes. It is backwards-incompatible for people setting tags manually, but as far as I can see, there is only direct  use of <code>set_tag</code> in all of Github (the <code>wlog</code> tactic in mathlib, which I can fix).</p>\n<p>Any concerns?</p>",
+        "id": 195007477,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1587601880
+    },
+    {
+        "content": "<p>I don't like all this layered information in a <code>list name</code>. Why not just use an <code>expr</code>?</p>",
+        "id": 195008268,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587602574
+    },
+    {
+        "content": "<p>I'd also prefer more structured data. However, that would require changes to the C++ (tags are part of the tactic state), which I'd rather avoid.</p>",
+        "id": 195012742,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1587608392
+    },
+    {
+        "content": "<p>I don't think the C++ needs to do much? Just associate an expr to the goal instead of a list name. I don't think these tags are used much on the C++ side</p>",
+        "id": 195016054,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587613733
+    },
+    {
+        "content": "<p>An <code>expr</code> would be doable, yes. However, I don't understand what this would buy us. We'd still need to define which <code>expr</code>s are valid tags and what their semantics are, right? Could you maybe elaborate on the design you were thinking of?</p>",
+        "id": 195136533,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1587689268
+    },
+    {
+        "content": "<p>It leaves the door open for other uses of tags, like in <code>refine_struct</code>, without constraining the form of the metadata</p>",
+        "id": 195137132,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587689901
+    },
+    {
+        "content": "<p>Yes, for case tags we would still need roughly the same structure, although I think the way it is currently done is a bit idiosyncratic. What should case tags for <code>rcases</code> look like, for instance?</p>",
+        "id": 195137186,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587690001
+    },
+    {
+        "content": "<p>Also, the hypotheses pointing to unique names need to be organized in a way so that they can be updated without regard for the surrounding data structure, for things like <code>revert</code></p>",
+        "id": 195137376,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587690142
+    },
+    {
+        "content": "<p>I agree that it would be nice to have more flexibility in the metadata, to support other uses of tags. However, there needs to be some structure to the data because Lean needs to know how to print a tag. How about this: a tag is a <code>list (name x list name x expr)</code>. The first component identifies what kind of tag this is, e.g. <code>_case</code> or <code>_field</code>. The second component gives names that should be displayed in the goal state (<code>['c, 'd]</code> becomes \"case c, d\"). The third component is arbitrary metadata. This certainly covers all current uses and imposes only minimal structure. The printing is still a bit restrictive, but I don't immediately see a way around that.</p>\n<p>To support <code>rcases</code>, one would need to identify cases by a sequence of names (rather than one name): <code>sum.inj/sum.inr</code> could be one case if we split a nested sum. However, I'm not sure that this is worth the extra complexity.</p>\n<p>I'm afraid I don't understand your remark about the unique names. How should <code>revert</code> interact with them?</p>",
+        "id": 195139425,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1587693197
+    },
+    {
+        "content": "<p>There are lots of tactics that use revert/intro to \"rewrite in hypotheses\", such as <code>rw at h</code>. This changes the unique name of the hypothesis, and the case tag needs to be updated to match. Even <code>cases</code> itself can cause this behavior, which causes some problems in <code>rcases</code> when it loses track of which hypotheses need to be case split. The information about names needs to be stored in such a way that it can be updated by tactics that don't care if it's a case tag or otherwise</p>",
+        "id": 195140015,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587694038
+    },
+    {
+        "content": "<p>Why are there multiple constructor tags on a case tag if not for this?</p>",
+        "id": 195140070,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587694096
+    },
+    {
+        "content": "<p>I think you can store the <code>_case</code>/<code>_field</code> marker in the head of the <code>expr</code></p>",
+        "id": 195140116,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587694193
+    },
+    {
+        "content": "<p>I don't know what the top level <code>list</code> is for in your design</p>",
+        "id": 195140168,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1587694259
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/Case.20tags/near/195140015\" title=\"#narrow/stream/113488-general/topic/Case.20tags/near/195140015\">said</a>:</p>\n<blockquote>\n<p>There are lots of tactics that use revert/intro to \"rewrite in hypotheses\", such as <code>rw at h</code>. This changes the unique name of the hypothesis, and the case tag needs to be updated to match. Even <code>cases</code> itself can cause this behavior, which causes some problems in <code>rcases</code> when it loses track of which hypotheses need to be case split. The information about names needs to be stored in such a way that it can be updated by tactics that don't care if it's a case tag or otherwise</p>\n</blockquote>\n<p>Okay, this throws quite a spanner into the works.  Some ways we could deal with this:</p>\n<ul>\n<li>Add an additional list of names to each tag containing unique names that the tag refers to. Any tactic that uses the <code>revert</code>/<code>intro</code> trick would then have to update these unique names accordingly. This would be the correct thing to do, but it sounds impractical to me. Afaik, most third-party tactics don't even propagate the current tags correctly, so we'd get a bunch of issues where <code>case</code> gets mysteriously broken by tactics that forgot to update the unique names.</li>\n<li>Keep the current design where the case tag only says \"the last N hypotheses were introduced by me\". This works just as well in the common case where the <code>induction</code>/<code>cases</code>/... is immediately followed by a sequence of <code>case ...</code>. It breaks more easily -- and in a way that's hard for users to understand -- if anything happens between the <code>induction</code> and the <code>case</code>, e.g. an <code>intro</code> (though situations like this can be handled by <code>with_cases</code>). That leads me to consider...</li>\n<li>Drop the renaming functionality of <code>case</code> entirely. If we can't implement it in a robust way, perhaps it would be better to direct users to <code>induction with ...</code> instead. This provides the same functionality, but doesn't suffer from the issue that we have to pass information along arbitrary chains of tactics. Tags could then return to being just a list of names and <code>case</code> would just look for a tag with matching names. However, this design would break a bunch of stuff and is somewhat less convenient in the common case.</li>\n</ul>\n<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/Case.20tags/near/195140070\" title=\"#narrow/stream/113488-general/topic/Case.20tags/near/195140070\">said</a>:</p>\n<blockquote>\n<p>Why are there multiple constructor tags on a case tag if not for this?</p>\n</blockquote>\n<p>Fair. <code>case</code> could be extended such that <code>case c_1 ... c_n</code> looks for a tag which includes the <code>c_i</code> in the same order.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/Case.20tags/near/195140116\" title=\"#narrow/stream/113488-general/topic/Case.20tags/near/195140116\">said</a>:</p>\n<blockquote>\n<p>I think you can store the <code>_case</code>/<code>_field</code> marker in the head of the <code>expr</code></p>\n</blockquote>\n<p>Sure. I find it a little cleaner to have it outside so that the <code>expr</code> really is arbitrary data that will only ever be inspected by tactics that deal with that particular sort of tag. But this is more aesthetic preference than anything.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/Case.20tags/near/195140168\" title=\"#narrow/stream/113488-general/topic/Case.20tags/near/195140168\">said</a>:</p>\n<blockquote>\n<p>I don't know what the top level <code>list</code> is for in your design</p>\n</blockquote>\n<p>This is so that goals can have multiple tags, e.g. a goal could be tagged with a <code>field</code> tag and a <code>case</code> tag if we do a case split while defining a field. I'm also thinking of potential future uses of tags (e.g. grouping related goals or hiding goals) where it would make sense for a goal to have multiple tags.</p>",
+        "id": 195215710,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1587747259
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/lean/pull/228\">The PR is finally here.</a></p>\n<p>I've gone for a middle of the road design which leaves the internal representation of goal tags alone and is mostly compatible with the current behaviour of <code>cases</code>/<code>induction</code>/<code>apply</code>/<code>with_cases</code>/<code>case</code> (so users shouldn't need to care in most cases [pun not intended]). I didn't want to do a more invasive redesign because (a) it's not clear what exactly that redesign should be and (b) all this is going to get killed by Lean 4 anyway.</p>",
+        "id": 197171894,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1589214971
+    }
+]

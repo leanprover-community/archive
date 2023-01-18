@@ -1,0 +1,44 @@
+[
+    {
+        "content": "<p>While porting files on ints, I ran into confusing behaviour that led me to finding out about the new heterogenous operators.</p>\n<p>The issue stemmed from the fact that there are multiple ways lean can express <code>a+n</code>. <a href=\"https://github.com/leanprover-community/lean/blob/0bbad25ba6f428618e25399850f78dc5efcef9b0/library/init/data/int/order.lean#L38\">One lemma</a> in the original file has the hypothesis <code>{a b : ℤ} {n : ℕ} (h : b - a = n)</code>, and <a href=\"https://github.com/leanprover-community/lean/blob/0bbad25ba6f428618e25399850f78dc5efcef9b0/library/init/data/int/order.lean#L44\">the next</a> has the seemingly equivalent <code>{a b : ℤ} {n : ℕ} (h : a + n = b)</code>. In lean4, the first gets translated into <code>h : b - a = ofNat n</code>and the second becomes <code>h : a + n = b</code>, where <code>+</code> here is the sneaky heterogenous kind causing the rewrite of <code>add_comm</code> to fail. Looking at how they're defined anyone would expect rearranging one to give you an identical hypothesis to the other. </p>\n<p>What made this especially confusing to me was that neither of these behaviours is what would happen in lean3, which IIRC would insert a coercion arrow in front of n in both cases. Since coercion arrows are hidden by default in lean4 I assumed that this is what was happening and what I saw as <code>h : a + n = b</code> was actually <code>h : a + ↑n = b</code>. After all, how else can you add an int and a nat? This thinking led me to infuriating errors before I realised what was wrong:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">tactic</span> <span class=\"bp\">'</span><span class=\"n\">rewrite'</span> <span class=\"n\">failed</span><span class=\"o\">,</span> <span class=\"n\">did</span> <span class=\"n\">not</span> <span class=\"n\">find</span> <span class=\"kd\">instance</span> <span class=\"n\">of</span> <span class=\"n\">the</span> <span class=\"n\">pattern</span> <span class=\"k\">in</span> <span class=\"n\">the</span> <span class=\"n\">target</span> <span class=\"n\">expression</span>\n  <span class=\"bp\">-</span><span class=\"n\">a</span> <span class=\"bp\">+</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"bp\">+</span> <span class=\"n\">n</span><span class=\"o\">)</span>\n<span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span>\n<span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span>\n<span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">+</span> <span class=\"n\">n</span> <span class=\"bp\">=</span> <span class=\"n\">b</span>\n<span class=\"bp\">⊢</span> <span class=\"bp\">-</span><span class=\"n\">a</span> <span class=\"bp\">+</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"bp\">+</span> <span class=\"n\">n</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">ofNat</span> <span class=\"n\">n</span>\n</code></pre></div>\n<p>To work around this I now make sure to use explicit coercion arrows wherever possible and enable showing coercions in the pretty printer (which I also struggled with as <code>set_option pp.coercions true</code> does the opposite of what the name suggests and should probably be renamed).</p>\n<p>While having heterogenous operators (especially hMul) seem very useful, I suggest removing <a href=\"https://github.com/leanprover/lean4/blob/67bffa7de0add25b9e17e8ca13e2c4d202688012/src/Init/Coe.lean#L151\">these instances</a> for generating them from coercions. Users shouldn't have to worry about whether it's the operators that are being silently coerced or their inputs.</p>",
+        "id": 244805619,
+        "sender_full_name": "Deniz Aydin",
+        "timestamp": 1625319220
+    },
+    {
+        "content": "<p>I've warned of this problem before: <a href=\"https://github.com/leanprover/lean4/issues/433#issuecomment-831928888\">https://github.com/leanprover/lean4/issues/433#issuecomment-831928888</a><br>\nI completely agree with you that these instances should be removed.</p>",
+        "id": 244807211,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1625321019
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"364484\">Deniz Aydin</span> <a href=\"#narrow/stream/270676-lean4/topic/heterogenous.20operators.20and.20coercions/near/244805619\">said</a>:</p>\n<blockquote>\n<p>Since coercion arrows are hidden by default in lean4</p>\n</blockquote>\n<p>Coercions are actually not hidden at all (except for these few problematic instances), they are even unfolded into the concrete coercion functions (instead of the generic arrow) which I like very much.</p>",
+        "id": 244807466,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1625321356
+    },
+    {
+        "content": "<p>Interesting, so does this mean that I should be expressing statements about coercions from Nat to Int using <code>Int.ofNat</code> instead of <code>↑</code> since that's now the default way lean translates statements like <code>(a : Int) = (n : Nat)</code>?<br>\nThat does make it clear what's being coerced to what but I'm not sure I prefer it since it's a lot of boilerplate on what would otherwise be statements that read very naturally.</p>",
+        "id": 244810929,
+        "sender_full_name": "Deniz Aydin",
+        "timestamp": 1625325635
+    },
+    {
+        "content": "<p>If you want to hide the Int.ofNat function, that's a 5 line delaboration function. We can even put it scoped in a namespace, so that you can enable it only when you want.</p>",
+        "id": 244811573,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1625326690
+    },
+    {
+        "content": "<p>Is there a way that, when one declares a coercion, the corresponding function automatically gets a special treatment in pretty-printing, and is represented by <code>↑</code> there?</p>",
+        "id": 244811801,
+        "sender_full_name": "Sebastien Gouezel",
+        "timestamp": 1625327124
+    },
+    {
+        "content": "<p>You can write a macro that does both at once, declare the coercion and hide the function.</p>",
+        "id": 244811908,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1625327315
+    }
+]

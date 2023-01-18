@@ -1,0 +1,278 @@
+[
+    {
+        "content": "<p>Right now, none of mathlib is using the <code>precompileModules</code> flag. How do I enable it? More importantly, we don't want <em>all</em> modules to be precompiled, only those with performance sensitive tactics in them. Can I make a list of modules that I want to have precompiled in the lakefile?</p>",
+        "id": 307476594,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1667379481
+    },
+    {
+        "content": "<p>Selective precompilation gets pretty complicated when you skip some modules but then downstream modules (e.g. from someone depending on mathlib) want to get precompiled after all; <a href=\"http://leanprover.github.io/talks/WITS2022.pdf#page=23\">http://leanprover.github.io/talks/WITS2022.pdf#page=23</a>. It would be great to first quantify the overhead of precompiling everything, especially for modules that don't contain all that much computable code anyway. Though the fact that on Windows we have to pass the entire closure of DLLs in the command line does make scaling a bit more difficult.</p>",
+        "id": 307478245,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1667380082
+    },
+    {
+        "content": "<p>In that case, let's assume that the set of precompiled modules is downward-closed. It shouldn't be too hard to automate that in lake given some set of desired modules</p>",
+        "id": 307478434,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1667380178
+    },
+    {
+        "content": "<p>Isn't basically all of mathlib in the downstream of important tactics?</p>",
+        "id": 307478594,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1667380235
+    },
+    {
+        "content": "<p>er, upward-closed</p>",
+        "id": 307478620,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1667380248
+    },
+    {
+        "content": "<p>that is, only the tactic files and their dependencies would get precompiled, not dependents</p>",
+        "id": 307478762,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1667380310
+    },
+    {
+        "content": "<p>Yeah, it shouldn't be too hard to implement that</p>",
+        "id": 307478786,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1667380321
+    },
+    {
+        "content": "<p>Note that the current precompilation logic in Lake has some big performance and functionality issues (<a href=\"https://github.com/leanprover/lake/pull/132#issuecomment-1286372892\">https://github.com/leanprover/lake/pull/132#issuecomment-1286372892</a>), and I'm currently looking into fixing that.</p>",
+        "id": 307598926,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1667415775
+    },
+    {
+        "content": "<p>I have a much simpler version of this problem. How can I precompile mathlib completely in a test file? I want to profile compiled tactics but I have no idea how to compile any tactics in std or mathlib4.</p>",
+        "id": 310321827,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668560402
+    },
+    {
+        "content": "<p>I'm not quite sure if this is what you're asking but <a href=\"https://github.com/joehendrix/lean-crypto/blob/08b7ff272d3b3e9eeb782c7b88dfacc6a2219248/lakefile.lean#L116\">here</a> is something to load in the compiled version of a dependency when running tests. You may need to run <code>lake build DepLib:sharedLib</code> first.</p>",
+        "id": 310322728,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1668561035
+    },
+    {
+        "content": "<p>I guess the tldr almost-lake-less variant is <code>lake env lean --load-dynlib=&lt;somelib.so&gt;</code></p>",
+        "id": 310322775,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1668561072
+    },
+    {
+        "content": "<p>Aha, I also found something like that. It runs, hard to say if it's working</p>",
+        "id": 310322907,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668561162
+    },
+    {
+        "content": "<p>Help! I'm not having any success with perf-profiling tactics even after all these steps, there are no functions from mathlib showing up in the trace. I tried modifying the mathlib lakefile to this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lake</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lake</span> <span class=\"n\">DSL</span>\n\n<span class=\"n\">package</span> <span class=\"n\">mathlib</span> <span class=\"n\">where</span>\n  <span class=\"n\">precompileModules</span> <span class=\"o\">:=</span> <span class=\"n\">true</span>\n\n<span class=\"kd\">@[default_target]</span>\n<span class=\"n\">lean_lib</span> <span class=\"n\">Mathlib</span> <span class=\"n\">where</span>\n  <span class=\"n\">moreLeanArgs</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"s2\">\"-DwarningAsError=true\"</span><span class=\"o\">]</span>\n  <span class=\"n\">moreLeancArgs</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"s2\">\"-UNDEBUG\"</span><span class=\"o\">,</span> <span class=\"s2\">\"-Og\"</span><span class=\"o\">,</span> <span class=\"s2\">\"-ggdb\"</span><span class=\"o\">,</span> <span class=\"s2\">\"-g3\"</span><span class=\"o\">,</span> <span class=\"s2\">\"-fno-omit-frame-pointer\"</span><span class=\"o\">]</span>\n  <span class=\"n\">moreLinkArgs</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[</span>\n    <span class=\"s2\">\"-fuse-ld=ld\"</span><span class=\"o\">,</span>\n    <span class=\"s2\">\"-L/home/mario/.elan/toolchains/leanprover--lean4---nightly-2022-11-14/lib\"</span><span class=\"o\">,</span>\n    <span class=\"s2\">\"-Lbuild/lib\"</span>\n  <span class=\"o\">]</span>\n\n<span class=\"kd\">@[default_target]</span>\n<span class=\"n\">lean_exe</span> <span class=\"n\">runLinter</span> <span class=\"n\">where</span>\n  <span class=\"n\">root</span> <span class=\"o\">:=</span> <span class=\"bp\">`</span><span class=\"n\">scripts.runLinter</span>\n  <span class=\"n\">supportInterpreter</span> <span class=\"o\">:=</span> <span class=\"n\">true</span>\n\n<span class=\"kd\">meta</span> <span class=\"k\">if</span> <span class=\"n\">get_config</span><span class=\"bp\">?</span> <span class=\"n\">doc</span> <span class=\"bp\">=</span> <span class=\"n\">some</span> <span class=\"s2\">\"on\"</span> <span class=\"k\">then</span> <span class=\"c1\">-- do not download and build doc-gen4 by default</span>\n<span class=\"n\">require</span> <span class=\"bp\">«</span><span class=\"n\">doc</span><span class=\"bp\">-</span><span class=\"n\">gen4</span><span class=\"bp\">»</span> <span class=\"k\">from</span> <span class=\"n\">git</span> <span class=\"s2\">\"https://github.com/leanprover/doc-gen4\"</span> <span class=\"bp\">@</span> <span class=\"s2\">\"main\"</span>\n\n<span class=\"n\">require</span> <span class=\"n\">std</span> <span class=\"k\">from</span> <span class=\"n\">git</span> <span class=\"s2\">\"https://github.com/leanprover/std4\"</span> <span class=\"bp\">@</span> <span class=\"s2\">\"main\"</span>\n<span class=\"n\">require</span> <span class=\"n\">Qq</span> <span class=\"k\">from</span> <span class=\"n\">git</span> <span class=\"s2\">\"https://github.com/gebner/quote4\"</span> <span class=\"bp\">@</span> <span class=\"s2\">\"master\"</span>\n</code></pre></div>\n<p>and then</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">lake</span> <span class=\"n\">env</span> <span class=\"n\">lean</span> <span class=\"c1\">--load-dynlib ./build/lib/libMathlib-Tactic-Ring.so test/ring.lean</span>\n</code></pre></div>\n<p>takes 1.7 s while</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">lake</span> <span class=\"n\">env</span> <span class=\"n\">lean</span> <span class=\"n\">test</span><span class=\"bp\">/</span><span class=\"n\">ring.lean</span>\n</code></pre></div>\n<p>takes 1.9 s, which is a performance difference small enough that it might be noise; and <code>perf record --call-graph dwarf lake ...</code> records only stack frames from <code>leanlibshared.so</code>.</p>",
+        "id": 310326002,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668563557
+    },
+    {
+        "content": "<p>I couldn't get <code>perf report</code> to work either...  <code>hotspot</code> works just fine though.  I only had to add <code>precompiledModules := true</code> to the lakefile and then ran <code>perf</code> on your example command.</p>",
+        "id": 310329418,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668566353
+    },
+    {
+        "content": "<p>The perf difference is so small because around 60% of the runtime is spent inside <code>lean_is_expr_def_eq</code> (a large part of that seems to be in the code generated by <code>~q(...)</code>).  Also really surprising: 23% of the time is spent in elaborating the <em>statements</em>.</p>",
+        "id": 310329880,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668566761
+    },
+    {
+        "content": "<p>(The 60% and 23% are probably not disjoint.)</p>",
+        "id": 310329959,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668566812
+    },
+    {
+        "content": "<p>Another cost center: 10% of the time is spent processing the imports.</p>",
+        "id": 310329986,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668566856
+    },
+    {
+        "content": "<p>Another exciting discovery: <code>Simp.tryTheoremWithExtraArgs?</code> takes 25% of the runtime.</p>",
+        "id": 310330468,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668567314
+    },
+    {
+        "content": "<p>What does the performance look like for a more extreme example like <code>(1 + x) ^ 50 = (x + 1) ^ 50</code> for a sufficiently large value of <code>50</code>? Ideally it should not spend much time in <code>~q</code> and <code>isDefEq</code> since that's only used during reification</p>",
+        "id": 310331138,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668567812
+    },
+    {
+        "content": "<blockquote>\n<p>ran <code>perf</code> on your example command.</p>\n</blockquote>\n<p>ran perf how? I used <code>perf record --call-graph dwarf lake env lean ...</code> and then <code>perf script &gt; test.perf</code>, is that what you mean?</p>",
+        "id": 310331227,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668567895
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> it works for me with <code> lake env perf record --call-graph dwarf,60000 lean --load-dynlib=build/lib/libMathlib-Tactic-Ring.so test/ring.lean</code> which avoids profiling lake itself.</p>",
+        "id": 310331417,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1668568080
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Bash\"><pre><span></span><code>lake env perf record --call-graph<span class=\"o\">=</span>dwarf,60000 lean --load-dynlib<span class=\"o\">=</span>./build/lib/libMathlib-Tactic-Ring.so test/ring2.lean\nhotspot\n</code></pre></div>",
+        "id": 310331462,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668568090
+    },
+    {
+        "content": "<p>The n=100 result is interesting.  We now spend 17% of the time in <code>Lean.getMaxHeight</code>.</p>",
+        "id": 310331503,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668568144
+    },
+    {
+        "content": "<p>is compiling making a bigger difference?</p>",
+        "id": 310331584,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668568206
+    },
+    {
+        "content": "<p>6.5s vs 6.1s</p>",
+        "id": 310331705,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668568326
+    },
+    {
+        "content": "<p>But we're breaking the <code>FoldConsts</code> cache here.</p>",
+        "id": 310331724,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668568362
+    },
+    {
+        "content": "<p>oh, is it because the cache size is only 8192?</p>",
+        "id": 310331746,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668568399
+    },
+    {
+        "content": "<p>We're also breaking the <code>Expr.find?</code> cache.</p>",
+        "id": 310331765,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668568429
+    },
+    {
+        "content": "<blockquote>\n<p>oh, is it because the cache size is only 8192?</p>\n</blockquote>\n<p>Effectively it's even less because we take the pointer address modulo 8192 as the key.  I think you can see the issue here.</p>",
+        "id": 310331853,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668568491
+    },
+    {
+        "content": "<p>oof</p>",
+        "id": 310331870,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668568504
+    },
+    {
+        "content": "<p>For Expr.replace I added a <code>&gt;&gt;&gt; 4</code> and it's a much smaller issue.</p>",
+        "id": 310331877,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668568510
+    },
+    {
+        "content": "<p>Maybe pick a prime number cache size? Or is the mod too much</p>",
+        "id": 310331906,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668568549
+    },
+    {
+        "content": "<p>Picking an <em>odd</em> cache size would already be an improvement I think (because then the modulo doesn't align perfectly with the pointer alignment..).</p>",
+        "id": 310332023,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668568646
+    },
+    {
+        "content": "<p>Or maybe just hash the pointer.</p>",
+        "id": 310332035,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668568662
+    },
+    {
+        "content": "<p>It would also be interesting to see whether different proof terms for <code>ring</code> would be helpful here.  (I always like nested lets.)</p>",
+        "id": 310332096,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668568705
+    },
+    {
+        "content": "<p>I don't think <code>ring</code> has a lot of pointer duplication in its proofs unless it is 'discovered' by <code>ShareCommon</code></p>",
+        "id": 310332139,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668568771
+    },
+    {
+        "content": "<p>except in the expression terms</p>",
+        "id": 310332192,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668568807
+    },
+    {
+        "content": "<p>Can the typechecker check a <code>let</code> without doing a full expression traversal to replace the value everywhere? It seems like that would defeat the optimization</p>",
+        "id": 310332247,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668568872
+    },
+    {
+        "content": "<p>BTW if you are in the mood I also would like a performance gut check on the <code>LinearCombination</code> PR. It was noticeably slow which got me on the topic</p>",
+        "id": 310332328,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668568942
+    },
+    {
+        "content": "<p>Ah I see where you're coming from.  In Lean 3 the lets were substituted in the kernel iirc.   But in Lean 4 the type checker adds let-bindings to the lctx now.</p>",
+        "id": 310332377,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668569021
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Precompile.20specific.20modules/near/310332328\">said</a>:</p>\n<blockquote>\n<p>BTW if you are in the mood I also would like a performance gut check on the <code>LinearCombination</code> PR. It was noticeably slow which got me on the topic</p>\n</blockquote>\n<p>I think you should try installing <code>hotspot</code>.</p>",
+        "id": 310332391,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668569032
+    },
+    {
+        "content": "<p>I did, trying to replicate your result now</p>",
+        "id": 310332445,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668569052
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/270676-lean4/topic/Precompile.20specific.20modules/near/310332377\">said</a>:</p>\n<blockquote>\n<p>Ah I see where you're coming from.  In Lean 3 the lets were substituted in the kernel iirc.   But in Lean 4 the type checker adds let-bindings to the lctx now.</p>\n</blockquote>\n<p>Doesn't it still have to traverse the expression to replace the bvars with fvars?</p>",
+        "id": 310332608,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668569230
+    },
+    {
+        "content": "<p>Oh hey, it works <span aria-label=\"tada\" class=\"emoji emoji-1f389\" role=\"img\" title=\"tada\">:tada:</span> ,  mathlib functions are showing up now</p>",
+        "id": 310332899,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668569443
+    },
+    {
+        "content": "<p>Oh yeah the bvar replacement overhead is still there ofc. But this should be only linear.</p>",
+        "id": 310335478,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1668571840
+    },
+    {
+        "content": "<p>only if all the lets are in a block, right? If there was some arbitrary pattern it would be quadratic</p>",
+        "id": 310336667,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668572659
+    }
+]

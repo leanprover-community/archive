@@ -1,0 +1,446 @@
+[
+    {
+        "content": "<p>I have a set of functions living in <code>IO</code> which I use to produce a data structure (that recently became universe polymorphic) along with logs and possible errors. I really like <code>IO</code> for this task because logs and errors are displayed in a very natural way by LSP plugins. Unfortunately, <code>IO</code> only lives in <code>Type</code>, so it can't accommodate for the latest version of the data structure.</p>\n<p>I've seen a couple of threads suggesting that there is no reason <code>IO</code> couldn't be universe polymorphic, albeit with the limitation of using <code>ULift</code> (which is fine for me). How realistic would it be to make it universe polymorphic in the current codebase? Specifically is it an achievable target for a new contributor?</p>\n<p>If there are other ways to achieve the same integration as <code>IO</code> with a lower-level structure, I'd be interested to know. I tried returning some <code>Result</code>s but that doesn't seem to be what top-level error displays are based on.</p>\n<p>Cc <span class=\"user-mention\" data-user-id=\"130575\">@Siddharth Bhat</span></p>",
+        "id": 282494539,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652707682
+    },
+    {
+        "content": "<blockquote>\n<p>How realistic would it be to make it universe polymorphic in the current codebase? Specifically is it an achievable target for a new contributor?</p>\n</blockquote>\n<p>It is a realistic goal, but it can get messy. We consider this a low-priority modification because it is currently quite inconvenient to manually add the <code>ULift</code>. Moreover, error messages corresponding to missing <code>ULift</code>s are quite hard to understand. See comment at <a href=\"https://github.com/leanprover/lean4/issues/1136\">https://github.com/leanprover/lean4/issues/1136</a></p>",
+        "id": 282560584,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1652735132
+    },
+    {
+        "content": "<p>There was some discussion in the context of lean3 about changing the monadic typeclasses to use <code>out_param</code>s rather than quantifying over types in their fields; such that no ulift would be needed. I'll try and find the thread...</p>",
+        "id": 282564988,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1652737501
+    },
+    {
+        "content": "<p>Zulip doesn't let me find a link to the message  on mobile, but the thread was</p>\n<p><a href=\"#narrow/stream/113488-general/topic/Changing.20the.20functor.20typeclasses\">https://leanprover.zulipchat.com/#narrow/stream/113488-general/topic/Changing.20the.20functor.20typeclasses</a></p>",
+        "id": 282565497,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1652737783
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"112857\">Leonardo de Moura</span> <a href=\"#narrow/stream/270676-lean4/topic/universe.20polymorphic.20IO/near/282560584\">said</a>:</p>\n<blockquote>\n<p>It is a realistic goal, but it can get messy. We consider this a low-priority modification because it is currently quite inconvenient to manually add the <code>ULift</code>. Moreover, error messages corresponding to missing <code>ULift</code>s are quite hard to understand. See comment at <a href=\"https://github.com/leanprover/lean4/issues/1136\">https://github.com/leanprover/lean4/issues/1136</a></p>\n</blockquote>\n<p>Thanks. I've certainly seen the confusing messages while updating other parts of my project. Fortunately I had read about this effect of bind before, so I didn't have too much trouble. At least it seems worth trying.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/270676-lean4/topic/universe.20polymorphic.20IO/near/282564988\">said</a>:</p>\n<blockquote>\n<p>There was some discussion in the context of lean3 about changing the monadic typeclasses to use <code>out_param</code>s rather than quantifying over types in their fields; such that no ulift would be needed. I'll try and find the thread...</p>\n</blockquote>\n<p>I don't fully get the approach here. As far as I understand, <code>outParam</code> (I assume it's <a href=\"https://github.com/leanprover/lean4/blob/master/doc/typeclass.md#output-parameters\">still the same in Lean4</a>) only influences the resolution process. But the trouble with <code>ULift</code> comes from the use of <code>do</code>/<code>bind</code>, which are going to remain the same regardless of how the instance is found. Could you please elaborate a little bit?</p>",
+        "id": 282613192,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652779773
+    },
+    {
+        "content": "<p>The reason <code>bind</code> causes universe troubles it that <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Bind.bind#doc\">docs4#Bind.bind</a> is defined as</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">Bind</span> <span class=\"o\">(</span><span class=\"n\">m</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">v</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n  <span class=\"n\">bind</span> <span class=\"o\">:</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">}</span> <span class=\"bp\">→</span> <span class=\"n\">m</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">m</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">m</span> <span class=\"n\">β</span>\n</code></pre></div>\n<p>which restricts <code>α</code> and <code>β</code> to the same universe, The suggestion in that thread is to change it to something like</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- this allows `α` to be extracted from `list α`</span>\n<span class=\"kd\">class</span> <span class=\"n\">is_monadic</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"n\">out_param</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">mα</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">is_monadic</span> <span class=\"n\">α</span> <span class=\"o\">(</span><span class=\"n\">list</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">is_monadic.mk</span>\n\n<span class=\"kd\">class</span> <span class=\"n\">Bind'</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"o\">:</span> <span class=\"n\">out_param</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">mα</span> <span class=\"n\">mβ</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">is_monadic</span> <span class=\"n\">α</span> <span class=\"n\">mα</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">is_monadic</span> <span class=\"n\">β</span> <span class=\"n\">mβ</span><span class=\"o\">]</span> <span class=\"o\">:=</span>\n  <span class=\"n\">map</span> <span class=\"o\">:</span> <span class=\"n\">mα</span> <span class=\"bp\">→</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">mβ</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">mβ</span>\n</code></pre></div>\n<p>which allows <code>α</code> and <code>β</code> to live in different universes. It also allows restrictions to be put on <code>α</code> and <code>β</code>, such as finiteness or decidable equality.</p>",
+        "id": 282613597,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1652780040
+    },
+    {
+        "content": "<p>Right, I see now. This sounds like it would impact a lot of code though, compared to using <code>ULift</code> <span aria-label=\"thinking\" class=\"emoji emoji-1f914\" role=\"img\" title=\"thinking\">:thinking:</span></p>",
+        "id": 282618140,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652782704
+    },
+    {
+        "content": "<p>Yes, this would be a big change; but also, mathlib would be able to make a lot more use of these classes if they were phrased in this way. Right now we just end up mostly not using them at all because we'd lose universe polymorphism.</p>",
+        "id": 282619618,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1652783604
+    },
+    {
+        "content": "<p>One example is defining a bind operation on finsets, which isn't possible without decideable equality. With <code>Bind</code>, there's nowhere to put that assumption, so it's not possible. With <code>Bind'</code>, you can put it before the colon in the <code>Bind'</code> instance as something like</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">instance</span> <span class=\"o\">[</span><span class=\"n\">DecidableEq</span> <span class=\"n\">β</span><span class=\"o\">]</span> <span class=\"o\">:</span> <span class=\"n\">Bind'</span> <span class=\"o\">(</span><span class=\"n\">Finset</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">Finset</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n   <span class=\"n\">bind</span> <span class=\"n\">s</span> <span class=\"n\">f</span> <span class=\"o\">:=</span> <span class=\"n\">s.bUnion</span> <span class=\"n\">f</span>\n</code></pre></div>\n<p>(<a href=\"https://leanprover-community.github.io/mathlib_docs/find/finset.bUnion\">docs#finset.bUnion</a>)</p>",
+        "id": 282619751,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1652783682
+    },
+    {
+        "content": "<p>(cc <span class=\"user-mention\" data-user-id=\"387244\">@Yaël Dillies</span>, who may not follow this stream)</p>",
+        "id": 282629984,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1652789491
+    },
+    {
+        "content": "<p>I made a similar suggestion for an <code>HBind</code> a while back which would could also solve the problem. See <a href=\"#narrow/stream/236449-Program-verification/topic/universes/near/257719653\">this message</a>.</p>",
+        "id": 282668091,
+        "sender_full_name": "Mac",
+        "timestamp": 1652805022
+    },
+    {
+        "content": "<p>How would you express operations that are polymorphic in a monad in this setup?</p>",
+        "id": 282674763,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1652807578
+    },
+    {
+        "content": "<p>An <code>HBind</code> typeclass looks pretty appealing (from my limited perspective) since it would be non-invasive. I also looked at the code that elaborates <code>do</code>, and the uses of <code>bind</code> are fairly shallow, so it seems like testing a variation of <code>do</code> that uses it would be possible.</p>\n<p>I'm not sure what would be the best way to approach the problem. <span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> do you have any thoughts on <code>ULift</code> vs. heterogeneous binds? Is it maybe worth an RFC issue?</p>",
+        "id": 282697789,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652817247
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"484617\">@Sébastien Michelland</span> This kind of modification is tricky and generates a bunch of unexpected elaboration problems. It is hard to tell without trying. Note that <code>HBind</code> does not propagate type information as effectively as the regular <code>Bind</code>. We have a bunch of polymorphic monadic operations and their elaboration will be \"stuck\" until we apply the <code>HBind</code> default instance. <code>HBind</code> will also affect a few meta-programs such as the \"auto-lifting\" procedure. Recall that it took us several iterations to get the heterogeneous arithmetic operators working in a reasonable way, but we still had to improve the elaborator a few weeks ago. <br>\nI do not have time right now to perform these experiments and devise workarounds for the new issues <code>HBind</code> may create. I will be very happy if you have time to try it. We cannot guarantee we will be able to merge the solution, but I am sure we will learn a lot from this experiment.</p>",
+        "id": 282710658,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1652823455
+    },
+    {
+        "content": "<p>I have similar reservations regarding the <code>is_monadic</code> solution. Both <code>is_monadic</code> and <code>HBind</code> are at a very preliminary stage, and both may generate a bunch of unexpected elaboration issues.</p>",
+        "id": 282710971,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1652823599
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110032\">Reid Barton</span> <a href=\"#narrow/stream/270676-lean4/topic/universe.20polymorphic.20IO/near/282674763\">said</a>:</p>\n<blockquote>\n<p>How would you express operations that are polymorphic in a monad in this setup?</p>\n</blockquote>\n<p>Was that aimed at me or Mac? I'm not sure I understand the question.</p>",
+        "id": 282720671,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1652830094
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> I would also be very happy if you could explore the <code>is_monadic</code> approach you suggested. I could only find preliminary experiments in the commit you posted above. You had compelling examples above. Again, I think even if the experiments are not successful, I think we would learn a lot from them.  For <code>is_monadic</code>, I am also curious about the interaction with all \"gadgets\" we use (e.g., transformers, <code>MonadLift</code>, <code>MonadControl</code>, etc). It would also be great to explore whether the two approaches could coexist. I suspect it should be feasible, but I didn't have time to play with your approach yet.</p>",
+        "id": 282722931,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1652832031
+    },
+    {
+        "content": "<p>I'm unlikely to find time for that any time soon unfortunately (I haven't written any lean4 yet); but was hoping a more interested party might pick up the idea in the meantime!</p>\n<p>We of course also need to be wary of any such change disturbing mathport in a big way, but I'm not remotely qualified to assess that.</p>",
+        "id": 282724137,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1652833048
+    },
+    {
+        "content": "<p>Let me try to get some basics going. I <a href=\"https://github.com/opencompl/lean-mlir/blob/user-types/MLIR/Util/HBind.lean\">pushed some tests</a> in my project with <span class=\"user-mention\" data-user-id=\"130575\">@Siddharth Bhat</span>.</p>\n<p>Using <code>HBind</code> in itself <a href=\"https://github.com/opencompl/lean-mlir/blob/user-types/MLIR/Util/HBind.lean#L1741-L1744\">works exactly as one would expect</a>; the first harder challenge is to have <code>do</code> use it.</p>\n<p>The elaborator for <code>do</code> uses <code>MProd</code> instead of <code>Prod</code> in a couple of places because it assumes no universe polymorphism, so I changed it back to <code>Prod</code>. I also mechanically replaced <code>bind</code> with <code>hBind</code>. This allows non-polymorphic examples to elaborate properly, eg.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">test_IO</span><span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"n\">hdo</span>\n  <span class=\"n\">IO.println</span> <span class=\"s2\">\"Lean4\"</span>\n  <span class=\"n\">IO.println</span> <span class=\"s2\">\"hBind\"</span>\n  <span class=\"n\">return</span> <span class=\"o\">()</span>\n<span class=\"c1\">-- HBind.hBind (IO.println \"Lean4\") fun x =&gt;</span>\n<span class=\"c1\">-- HBind.hBind (IO.println \"hBind\") fun x =&gt;</span>\n<span class=\"c1\">-- pure ()</span>\n</code></pre></div>\n<p>The next issue is that <code>do</code> finds the monad in the return type (here <code>IO Unit</code>) and <a href=\"https://github.com/leanprover/lean4/blob/master/src/Lean/Elab/Do.lean#L1617-L1624\">refers to it through a meta-variable</a>. Both of these facts restrict the construction to a single universe.</p>\n<p>We hacked around this by allowing the polymorphic form of the monad to be specified as an argument of the <code>hdo</code> notation, then <a href=\"https://github.com/opencompl/lean-mlir/blob/user-types/MLIR/Util/HBind.lean#L1637-L1653\">building a new definition</a> instead of a metavariable. This allows the following expression to elaborate (where each <code>get_*</code> returns a value in a different universe):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">universe</span> <span class=\"n\">u</span> <span class=\"k\">in</span>\n<span class=\"kd\">example</span><span class=\"o\">:</span> <span class=\"n\">Id</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"n\">hdo</span> <span class=\"o\">(</span><span class=\"n\">monad</span> <span class=\"o\">:=</span> <span class=\"n\">Id.</span><span class=\"o\">{</span><span class=\"n\">u</span><span class=\"o\">})</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">get_0</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">get_1</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">get_any.</span><span class=\"o\">{</span><span class=\"mi\">2</span><span class=\"o\">}</span>\n  <span class=\"n\">get_any.</span><span class=\"o\">{</span><span class=\"mi\">0</span><span class=\"o\">}</span>\n</code></pre></div>\n<p>I'm pretty happy about this, even if it's mostly hacks. <span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span> Feedback on how to do these things properly would be much welcome. In particular I'd like to know why a metavariable is created to refer to the monad instance.</p>",
+        "id": 282800233,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1652885900
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"484617\">Sébastien Michelland</span> <a href=\"#narrow/stream/270676-lean4/topic/universe.20polymorphic.20IO/near/282800233\">said</a>:</p>\n<blockquote>\n<p>I'm pretty happy about this, even if it's mostly hacks. <span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span> Feedback on how to do these things properly would be much welcome.</p>\n</blockquote>\n<p>Looks reasonable to me. The quickest way to test it would be to apply these changes to the Lean core and see if it builds and passes all the tests.</p>",
+        "id": 282814362,
+        "sender_full_name": "Mac",
+        "timestamp": 1652891761
+    },
+    {
+        "content": "<p>Note that the <code>Hbind</code> solution doesn't solve the <code>finset</code> <code>DecidableEq</code> problem</p>",
+        "id": 282814726,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1652891925
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"484617\">@Sébastien Michelland</span> This is great start.</p>\n<blockquote>\n<p>The elaborator for do uses MProd instead of Prod in a couple of places because it assumes no universe polymorphism, so I changed it back to Prod.</p>\n</blockquote>\n<p>The <code>MProd</code> was originally introduced to ensure Lean did not get stuck into universe-level constraints while elaborating the <code>for in do</code> notation. Note that, we used <code>Prod</code> before we switched to <code>MProd</code>. Since then, we have improved the universe-level constraint solving part, but you should expect problems when switching back to <code>MProd</code>. Universe-level constraints still create issues. See comment on this recent issue. <a href=\"https://github.com/leanprover/lean4/issues/1136\">https://github.com/leanprover/lean4/issues/1136</a></p>\n<blockquote>\n<p>In particular I'd like to know why a metavariable is created to refer to the monad instance.</p>\n</blockquote>\n<p>This is a trick to embed an expression inside of <code>Syntax</code>. Note that, <code>m</code> in the code you pointed to is an <code>Expr</code>, then we create a metavariable <code>?m := m</code> and refer to it in <code>Syntax</code> objects using the named hole notation <code>?m</code>.</p>\n<blockquote>\n<p>I'm pretty happy about this, even if it's mostly hacks. </p>\n</blockquote>\n<p>It would be great if you could try harder examples before trying to apply the changes to Lean core. I think it is very unlikely you will be able to compile Lean core using these changes. Trying examples that use <code>for in</code>, <code>try catch</code>, ... will provide you insight into the challenges ahead. I think it is also worth experimenting with polymorphic monadic operators (i.e., functions that should work with arbitrary monads, and have parameters such as <code>[MonadRef m]</code>, <code>[MonadEnv m]</code>, etc), and functions that require auto lifting.</p>",
+        "id": 282832402,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1652900127
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"112857\">Leonardo de Moura</span> <a href=\"#narrow/stream/270676-lean4/topic/universe.20polymorphic.20IO/near/282832402\">said</a>:</p>\n<blockquote>\n<p>I think it is also worth experimenting with polymorphic monadic operators (i.e., functions that should work with arbitrary monads, and have parameters such as <code>[MonadRef m]</code>, <code>[MonadEnv m]</code>, etc), [...]</p>\n</blockquote>\n<p><span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> This last part is what I meant earlier.</p>",
+        "id": 283055326,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1653045785
+    },
+    {
+        "content": "<p>I'm picking this up again, and started by pushing the code to a proper repository updated to a recent nightly: <a href=\"https://github.com/lephe/lean4-hbind\">https://github.com/lephe/lean4-hbind</a><br>\nI will try and build more complex examples to see how it inevitably fails. I'm not familiar with all the features of <code>do</code> notation yet.</p>",
+        "id": 289590017,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1657804518
+    },
+    {
+        "content": "<p>Some more progress: I <a href=\"https://github.com/lephe/lean4-hbind/commit/a78cea057b9bd8378a374a7929847f53c627b259\">updated</a> the elaborator (which has access to the monad name as a identifier with a universe polymorphic definition) to specify it on both sides of every <code>hBind</code>, which makes it possible to use actions defined for any monad:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- Dn: Type n; Dx is universe polymorphic</span>\n<span class=\"kd\">def</span> <span class=\"n\">getD0</span> <span class=\"o\">[</span><span class=\"n\">Monad</span> <span class=\"n\">m</span><span class=\"o\">]:</span> <span class=\"n\">m</span> <span class=\"n\">D0</span> <span class=\"o\">:=</span> <span class=\"n\">pure</span> <span class=\"n\">default</span>\n<span class=\"kd\">def</span> <span class=\"n\">getD1</span> <span class=\"o\">[</span><span class=\"n\">Monad</span> <span class=\"n\">m</span><span class=\"o\">]:</span> <span class=\"n\">m</span> <span class=\"n\">D1</span> <span class=\"o\">:=</span> <span class=\"n\">pure</span> <span class=\"n\">default</span>\n<span class=\"kd\">def</span> <span class=\"n\">getDx</span> <span class=\"o\">[</span><span class=\"n\">Monad</span> <span class=\"n\">m</span><span class=\"o\">]:</span> <span class=\"n\">m</span> <span class=\"n\">Dx</span> <span class=\"o\">:=</span> <span class=\"n\">pure</span> <span class=\"n\">default</span>\n\n<span class=\"kd\">universe</span> <span class=\"n\">u</span> <span class=\"k\">in</span>\n<span class=\"kd\">example</span><span class=\"o\">:</span> <span class=\"n\">Id</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"n\">hdo</span> <span class=\"o\">(</span><span class=\"n\">monad</span> <span class=\"o\">:=</span> <span class=\"n\">Id.</span><span class=\"o\">{</span><span class=\"n\">u</span><span class=\"o\">})</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">getD0</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">getD1</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">getDx.</span><span class=\"o\">{</span><span class=\"mi\">2</span><span class=\"o\">}</span>\n  <span class=\"n\">getDx.</span><span class=\"o\">{</span><span class=\"mi\">0</span><span class=\"o\">}</span>\n</code></pre></div>\n<p>Nothing fancy obviously, but I did spend some time trying to make the monad alias <code>@[reducible]</code>. I couldn't find where the <code>DefView</code>s are used, and ended up using <code>Term.applyAttribute</code> after declaring the alias with <code>addAndCompile</code>.</p>\n<p>I believe that since only top-level definitions can be universe polymorphic, there are necessarily going to be restrictions on what can be used as input. For instance I don't think we could work with <code>[MonadLift m m']</code> since that hypothesis would only be for a particular universe level.</p>",
+        "id": 289607712,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1657812673
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"484617\">@Sébastien Michelland</span> It may also be worth playing with a fully generalized variant of <code>HBind</code>. That is, something like the following:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">HBind</span> <span class=\"o\">(</span><span class=\"n\">m</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u1</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">v1</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">outParam</span> <span class=\"bp\">$</span> <span class=\"kt\">Type</span> <span class=\"n\">u2</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">v2</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">o</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u2</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">v3</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n  <span class=\"n\">hBind</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u1</span><span class=\"o\">}</span> <span class=\"o\">{</span><span class=\"n\">β</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u2</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">m</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">n</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">o</span> <span class=\"n\">β</span>\n</code></pre></div>",
+        "id": 289615681,
+        "sender_full_name": "Mac",
+        "timestamp": 1657816323
+    },
+    {
+        "content": "<p>Thanks. When does this sort of signature come into play?</p>",
+        "id": 289621507,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1657819000
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"484617\">@Sébastien Michelland</span> A good example is the asynchronous binds (e.g., <code>mapTask</code>, <code>bindTask</code>) which, in Lean, have signatures like:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">mapTask</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">BaseIO</span> <span class=\"n\">b</span><span class=\"o\">)</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">Task</span> <span class=\"n\">a</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">BaseIO</span> <span class=\"o\">(</span><span class=\"n\">Task</span> <span class=\"n\">a</span><span class=\"o\">)</span>\n<span class=\"n\">bindTask</span> <span class=\"o\">:</span> <span class=\"n\">Task</span> <span class=\"n\">a</span> <span class=\"bp\">-&gt;</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">BaseIO</span> <span class=\"o\">(</span><span class=\"n\">Task</span> <span class=\"n\">b</span><span class=\"o\">))</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">BaseIO</span> <span class=\"o\">(</span><span class=\"n\">Task</span> <span class=\"n\">a</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>Thus, the <code>mapTask</code> instance would be:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">abbrev</span> <span class=\"n\">AsyncBaseIO</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">BaseIO</span> <span class=\"o\">(</span><span class=\"n\">Task</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">HBind</span> <span class=\"n\">Task</span> <span class=\"n\">BaseIO</span> <span class=\"n\">AsyncBaseIO</span> <span class=\"n\">where</span>\n  <span class=\"n\">hBind</span> <span class=\"n\">x</span> <span class=\"n\">f</span> <span class=\"o\">:=</span> <span class=\"n\">BaseIO.mapTask</span> <span class=\"n\">f</span> <span class=\"n\">x</span>\n</code></pre></div>",
+        "id": 289622921,
+        "sender_full_name": "Mac",
+        "timestamp": 1657819685
+    },
+    {
+        "content": "<p>and the <code>bindTask</code> instance would be:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">HBind</span> <span class=\"n\">Task</span> <span class=\"n\">AsyncBaseIO</span> <span class=\"n\">AsyncBaseIO</span> <span class=\"n\">where</span>\n  <span class=\"n\">hBind</span> <span class=\"o\">:=</span> <span class=\"n\">BaseIO.bindTask</span>\n</code></pre></div>\n<p>Thus, whether <code>n</code> should be an <code>outParam</code> and which one (or both) of the instances should be considered a bind is debatable.</p>",
+        "id": 289623820,
+        "sender_full_name": "Mac",
+        "timestamp": 1657820079
+    },
+    {
+        "content": "<p>Right. I don't feel like I can grasp the full extent of this change yet (especially on how this influences the \"inference capital\" of the whole scheme), so I've shelved it on the TODO list for now. I think I should consider this once I get the basic versions to work in a remotely useful manner.</p>",
+        "id": 289637910,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1657826861
+    },
+    {
+        "content": "<p>On that note, I updated the monad detection code to <a href=\"https://github.com/lephe/lean4-hbind/commit/aac8e6ddbc3793686e6153bca27e3a9854a43a8a\">automatically generalize universe parameters</a> if the monad is a simple constant name, which means this example now works without the extra annotation and the <code>universe u in...</code> hack.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span><span class=\"o\">:</span> <span class=\"n\">Id</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"n\">hdo</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">getD0</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">getD1</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">getDx.</span><span class=\"o\">{</span><span class=\"mi\">2</span><span class=\"o\">}</span>\n  <span class=\"n\">getDx.</span><span class=\"o\">{</span><span class=\"mi\">0</span><span class=\"o\">}</span>\n</code></pre></div>",
+        "id": 289638078,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1657826944
+    },
+    {
+        "content": "<p>Another update! I <a href=\"https://github.com/lephe/lean4-hbind/commit/47fe6a8bdda94021d6a9820597190ed6163347b3\">pushed a small improvement in the monad generalization step</a>, and I figure I might as well explain the thought process. Any insight is welcome!</p>\n<p>The basic problem is identifying the monad at play. The <a href=\"https://github.com/lephe/lean4-hbind/blob/main/HBind/HBind.lean#L1-L2\">definition of <code>HBind</code></a> highlights what universe polymorphism tries to hide, in that the same monad at different universe levels is really different monads. Since the return type of the <code>do</code> block only gives us the monad used in the final bind, we either have to infer or provide the general shape.</p>\n<p>For instance, <a href=\"https://github.com/lephe/lean4-hbind/blob/main/Main.lean#L55-L59\">here</a> the monad determined from the output type is <code>Id.{0}</code>, but the second and third actions use <code>Id.{1}</code> and <code>Id.{2}</code> instead.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span><span class=\"o\">:</span> <span class=\"n\">Id</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"n\">hdo</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">getD0</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">getD1</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">getDx.</span><span class=\"o\">{</span><span class=\"mi\">2</span><span class=\"o\">}</span>\n  <span class=\"n\">getDx.</span><span class=\"o\">{</span><span class=\"mi\">0</span><span class=\"o\">}</span>\n</code></pre></div>\n<p>The scheme works by <em>generalizing</em> the universe levels of <code>Id.{0}</code> into <code>Id.{u}</code>, storing it as a new constant, and then using that constant as a monad for each call to <code>HBind.hBind</code>. Determining the proper level is left to unification based on the action, as I don't see anything reasonable that can be done.</p>\n<p>Note that since level parameters only exist on constants, this idea only works if the monad is a constant. In fact, in a  function on eg. <code>[MonadEnv m]</code>, there is only one monad <code>m</code> with one fixed universe, so it can't be universe polymorphic. So barring any typeclass shenanigans, it seems that the best possible result here is to stay in a single universe and just be compatible with <code>do</code>.</p>\n<p>But there are still problems even with simpler types. For instance, this <a href=\"https://github.com/lephe/lean4-hbind/blob/main/Main.lean#L72-L74\">essentially freer monad</a> has three levels <code>u</code>, <code>v</code> and <code>w</code> but only the last is relevant for <code>HBind</code> (the parameter <code>E</code> is fixed for any whole <code>do</code> block).</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">inductive</span> <span class=\"n\">ITree</span> <span class=\"o\">(</span><span class=\"n\">E</span><span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">v</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">R</span><span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">w</span><span class=\"o\">):</span> <span class=\"kt\">Type</span> <span class=\"n\">_</span> <span class=\"o\">:=</span>\n  <span class=\"bp\">|</span> <span class=\"n\">Ret</span> <span class=\"o\">(</span><span class=\"n\">r</span><span class=\"o\">:</span> <span class=\"n\">R</span><span class=\"o\">)</span>\n  <span class=\"bp\">|</span> <span class=\"n\">Vis</span> <span class=\"o\">{</span><span class=\"n\">T</span><span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">_</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">e</span><span class=\"o\">:</span> <span class=\"n\">E</span> <span class=\"n\">T</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">k</span><span class=\"o\">:</span> <span class=\"n\">T</span> <span class=\"bp\">→</span> <span class=\"n\">ITree</span> <span class=\"n\">E</span> <span class=\"n\">R</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>The most favorable case for the elaborator would be to specialize with an <code>abbrev ITree'.{w} := ITree.{_,_,w} E</code>, but this is inconvenient to write manually. In my latest commit, I just (non-recursively) generalize level parameters in constant parameters as well:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">inductive</span> <span class=\"n\">PVoid</span><span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">v</span> <span class=\"o\">:=</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.Elab.do</span> <span class=\"n\">true</span> <span class=\"k\">in</span>\n<span class=\"kd\">example</span><span class=\"o\">:</span> <span class=\"n\">ITree</span> <span class=\"n\">PVoid</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"n\">hdo</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">getD0</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">getDx.</span><span class=\"o\">{</span><span class=\"mi\">4</span><span class=\"o\">}</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">getD1</span>\n  <span class=\"n\">pure</span> <span class=\"mi\">0</span>\n<span class=\"c1\">-- [Elab.do] Found monad constant ITree with levels [?u.5198, ?u.5197, 0]</span>\n<span class=\"c1\">-- [Elab.do] Generalizing ITree into ITree.{u v w}</span>\n<span class=\"c1\">-- [Elab.do] Generalizing ITree.PVoid.{?_uniq.5198 ?_uniq.5197} into ITree.PVoid.{?_uniq.5227 ?_uniq.5226}</span>\n<span class=\"c1\">-- [Elab.do] Final monad: ITree.{u v w} ITree.PVoid.{u v}</span>\n</code></pre></div>\n<p>Now when declaring the intermediate constant for the generalized monad, the unification step determines that the argument <code>PVoid</code> generalizes as <code>PVoid.{u,v}</code>.</p>\n<p>However, this is quite fragile; if <code>PVoid</code> were only defined as <code>Type → Type</code>, this would fail since the generality of <code>u</code> and <code>v</code> would not be captured. In this simple example only <code>w</code> needs to be generalized, but I don't know how feasible it is to determine that. There are more complications if we have eg. <code>ITree (E: Type u → Type v) (R: Type u)</code>.</p>",
+        "id": 289995809,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1658164303
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"484617\">@Sébastien Michelland</span>  I think you may be doing more work than necessary. For instance, you have this example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- The two monads in `hBind` are morally the same, but Lean won't guess that.</span>\n<span class=\"c1\">-- We need to indicate it by specifying the `m` parameter for the left action.</span>\n<span class=\"kd\">example</span><span class=\"o\">:</span> <span class=\"n\">Id</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span>\n  <span class=\"n\">hBind</span> <span class=\"n\">getD0</span> <span class=\"o\">(</span><span class=\"n\">m</span> <span class=\"o\">:=</span> <span class=\"n\">Id</span><span class=\"o\">)</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"n\">hBind</span> <span class=\"n\">getD1</span> <span class=\"o\">(</span><span class=\"n\">m</span> <span class=\"o\">:=</span> <span class=\"n\">Id</span><span class=\"o\">)</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"n\">hBind</span> <span class=\"n\">getDx.</span><span class=\"o\">{</span><span class=\"mi\">5</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">m</span> <span class=\"o\">:=</span> <span class=\"n\">Id</span><span class=\"o\">)</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"n\">pure</span> <span class=\"n\">default</span>\n</code></pre></div>\n<p>The problem here is that the monad of <code>getD[0,1,x]</code> is polymorphic and <code>hBind</code> is polymorphic in its left action so there is nothing constraining the monad of the left action. I would  also not say that it is morally the same as right action monad. If the right action monad is some super complicated monad stack (e.g., <code>CommandElabM</code>), we don't really want it to default to that (and have to lift the left action up the whole stack). In fact one of the main advantages of <code>HBind</code> is we don't have to do liftings in many cases in order to perform binds. Instead, we would like the monad to default to the simplest one possible. In this case, <code>Id</code>. For example, this works:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[defaultInstance]</span> <span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Monad</span> <span class=\"n\">Id</span> <span class=\"o\">:=</span> <span class=\"n\">inferInstance</span>\n\n<span class=\"c1\">-- No type ascriptions needed.</span>\n<span class=\"kd\">example</span><span class=\"o\">:</span> <span class=\"n\">Id</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span>\n  <span class=\"n\">hBind</span> <span class=\"n\">getD0</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"n\">hBind</span> <span class=\"n\">getD1</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"n\">hBind</span> <span class=\"n\">getDx.</span><span class=\"o\">{</span><span class=\"mi\">5</span><span class=\"o\">}</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"n\">pure</span> <span class=\"n\">default</span>\n</code></pre></div>",
+        "id": 290000737,
+        "sender_full_name": "Mac",
+        "timestamp": 1658166771
+    },
+    {
+        "content": "<p>Your  universe generalization approach, while neat,  also fails on some basic use cases. For example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span><span class=\"o\">:</span> <span class=\"n\">ReaderT</span> <span class=\"n\">Nat</span> <span class=\"n\">Id</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"n\">hdo</span>\n  <span class=\"k\">let</span> <span class=\"n\">n</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">getD0</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">getD1</span>\n  <span class=\"n\">return</span> <span class=\"n\">n</span>\n\n<span class=\"c\">/-</span><span class=\"cm\"></span>\n<span class=\"cm\">application type mismatch</span>\n<span class=\"cm\">  ReaderT.{u, v} Nat</span>\n<span class=\"cm\">argument</span>\n<span class=\"cm\">  Nat</span>\n<span class=\"cm\">has type</span>\n<span class=\"cm\">  Type : Type 1</span>\n<span class=\"cm\">but is expected to have type</span>\n<span class=\"cm\">  Type u : Type (u + 1)</span>\n<span class=\"cm\">-/</span>\n</code></pre></div>\n<p>I do not really see why you are generalizing them in the first place,. The signature, as you should be enough to determine the type of the final bind and that should be sufficient. The left actions of the higher behinds should be fixed before being bound based either on their type signature or some form of type class defaulting (it should not be using type information from the bind to determine that).</p>",
+        "id": 290001615,
+        "sender_full_name": "Mac",
+        "timestamp": 1658167200
+    },
+    {
+        "content": "<p>Regardless, I am very happy to see you working on this concept and am very impressed that you managed to port over the do code to make a new <code>hdo</code> notation. I look forward to seeing where you go from here. <span aria-label=\"big smile\" class=\"emoji emoji-1f604\" role=\"img\" title=\"big smile\">:big_smile:</span></p>",
+        "id": 290001826,
+        "sender_full_name": "Mac",
+        "timestamp": 1658167283
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> Thanks for this input. The reason I'm generalizing is to guide instance search because <em>this</em> fails:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span><span class=\"o\">:</span> <span class=\"n\">Id</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span>\n  <span class=\"n\">hBind</span> <span class=\"n\">getD0</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"n\">hBind</span> <span class=\"n\">getD1</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"n\">hBind</span> <span class=\"n\">getDx.</span><span class=\"o\">{</span><span class=\"mi\">5</span><span class=\"o\">}</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"n\">pure</span> <span class=\"n\">default</span>\n<span class=\"c1\">-- typeclass instance problem is stuck, it is often due to metavariables</span>\n<span class=\"c1\">--  HBind.{?u.567, ?u.566, ?u.565, ?u.564} ?m.568 ?m.569</span>\n</code></pre></div>\n<p>But thinking about it now, I think it should work, and neither <code>(m := Id)</code> nor the default instance (which I just learned is a thing!) should be required. This is because, unlike what the error message suggests, in the example the right monad <em>is</em> known so the <code>HBind</code> instance for <code>Id</code> is found. It fails for a different reason, as we can evidence in a simpler example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">set_option</span> <span class=\"n\">trace.Meta.synthInstance</span> <span class=\"n\">true</span> <span class=\"k\">in</span>\n<span class=\"bp\">#</span><span class=\"n\">synth</span> <span class=\"n\">HBind.</span><span class=\"o\">{</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">}</span> <span class=\"n\">_</span> <span class=\"n\">Id.</span><span class=\"o\">{</span><span class=\"mi\">0</span><span class=\"o\">}</span>\n<span class=\"c1\">-- failed to synthesize</span>\n<span class=\"c1\">--   HBind.{1, ?u.524, 0, 0} ?m.525 Id.{0}</span>\n</code></pre></div>\n<p>With the trace:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"o\">[</span><span class=\"n\">Meta.synthInstance</span><span class=\"o\">]</span> <span class=\"n\">main</span> <span class=\"n\">goal</span> <span class=\"n\">HBind.</span><span class=\"o\">{</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"bp\">?</span><span class=\"n\">u.524</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">}</span> <span class=\"bp\">?</span><span class=\"n\">m.525</span> <span class=\"n\">Id.</span><span class=\"o\">{</span><span class=\"mi\">0</span><span class=\"o\">}</span>\n  <span class=\"o\">[</span><span class=\"n\">Meta.synthInstance.newSubgoal</span><span class=\"o\">]</span> <span class=\"n\">HBind.</span><span class=\"o\">{</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"bp\">?</span><span class=\"n\">u.524</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">}</span> <span class=\"bp\">?</span><span class=\"n\">m.525</span> <span class=\"n\">Id.</span><span class=\"o\">{</span><span class=\"mi\">0</span><span class=\"o\">}</span>\n  <span class=\"o\">[</span><span class=\"n\">Meta.synthInstance.globalInstances</span><span class=\"o\">]</span> <span class=\"n\">HBind.</span><span class=\"o\">{</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"bp\">?</span><span class=\"n\">u.524</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">}</span> <span class=\"bp\">?</span><span class=\"n\">m.525</span>\n    <span class=\"n\">Id.</span><span class=\"o\">{</span><span class=\"mi\">0</span><span class=\"o\">},</span> <span class=\"o\">[</span><span class=\"bp\">@</span><span class=\"n\">instHBind.</span><span class=\"o\">{</span><span class=\"bp\">?</span><span class=\"n\">u.528</span><span class=\"o\">,</span> <span class=\"bp\">?</span><span class=\"n\">u.529</span><span class=\"o\">},</span> <span class=\"n\">instHBindIdId.</span><span class=\"o\">{</span><span class=\"bp\">?</span><span class=\"n\">u.530</span><span class=\"o\">,</span> <span class=\"bp\">?</span><span class=\"n\">u.531</span><span class=\"o\">}]</span>\n  <span class=\"o\">[</span><span class=\"n\">Meta.synthInstance.generate</span><span class=\"o\">]</span> <span class=\"kd\">instance</span> <span class=\"n\">instHBindIdId.</span><span class=\"o\">{</span><span class=\"bp\">?</span><span class=\"n\">u.530</span><span class=\"o\">,</span> <span class=\"bp\">?</span><span class=\"n\">u.531</span><span class=\"o\">}</span>\n  <span class=\"o\">[</span><span class=\"n\">Meta.synthInstance.tryResolve</span><span class=\"o\">]</span> <span class=\"bp\">∨</span>\n    <span class=\"o\">[</span><span class=\"n\">Meta.synthInstance.tryResolve</span><span class=\"o\">]</span> <span class=\"n\">HBind.</span><span class=\"o\">{</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"bp\">?</span><span class=\"n\">u.524</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">}</span> <span class=\"bp\">?</span><span class=\"n\">m.525</span>\n      <span class=\"n\">Id.</span><span class=\"o\">{</span><span class=\"mi\">0</span><span class=\"o\">}</span> <span class=\"bp\">=?=</span> <span class=\"n\">HBind.</span><span class=\"o\">{</span><span class=\"bp\">?</span><span class=\"n\">u.530</span><span class=\"o\">,</span> <span class=\"bp\">?</span><span class=\"n\">u.530</span><span class=\"o\">,</span> <span class=\"bp\">?</span><span class=\"n\">u.531</span><span class=\"o\">,</span> <span class=\"bp\">?</span><span class=\"n\">u.531</span><span class=\"o\">}</span> <span class=\"n\">Id.</span><span class=\"o\">{</span><span class=\"bp\">?</span><span class=\"n\">u.530</span><span class=\"o\">}</span> <span class=\"n\">Id.</span><span class=\"o\">{</span><span class=\"bp\">?</span><span class=\"n\">u.531</span><span class=\"o\">}</span>\n</code></pre></div>\n<p>Note how <code>instHBindIdId</code> is found, and as far as I can tell the last problem unification step should have succeeded with <code>?u.524 = ?u.530 = 1</code>, <code>?u.531 = 0</code>, and <code>?m.525 = Id.{1}</code>. If you know how to debug this further that would be interesting, as indeed this might rid us of the fragile generalization idea.</p>",
+        "id": 290004227,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1658168522
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/270676-lean4/topic/universe.20polymorphic.20IO/near/290001826\">said</a>:</p>\n<blockquote>\n<p>Regardless, I am very happy to see you working on this concept and am very impressed that you managed to port over the do code to make a new <code>hdo</code> notation. I look forward to seeing where you go from here. <span aria-label=\"big smile\" class=\"emoji emoji-1f604\" role=\"img\" title=\"big smile\">:big_smile:</span></p>\n</blockquote>\n<p>I'm glad I can help make some progress! Changing the <code>do</code> code was quite easy honestly, I just replaced a bunch of <code>MProd</code> with <code>Prod</code> (this might haunt me later), <code>Bind.bind</code> to <code>HBind.hBind</code>, and the main elaboration command. I was quite surprised.</p>",
+        "id": 290004391,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1658168603
+    },
+    {
+        "content": "<p>Ok I figured out the problem, which is partly sitting on my chair. When synthesizing <code>HBind.{1,1,0,0} ?m.524 Id.{0}</code>, the failure comes from the unification of <code>?m.524</code> with the discovered instance <code>HBind Id.{u} Id.{v}</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">?</span><span class=\"n\">m.524</span> <span class=\"o\">[</span><span class=\"n\">nonassignable</span><span class=\"o\">]</span> <span class=\"bp\">=?=</span> <span class=\"n\">Id.</span><span class=\"o\">{</span><span class=\"bp\">?</span><span class=\"n\">u.529</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">nonassignable</span><span class=\"o\">]</span>\n  <span class=\"o\">[</span><span class=\"n\">Meta.isDefEq.stuck</span><span class=\"o\">]</span> <span class=\"bp\">?</span><span class=\"n\">m.524</span> <span class=\"bp\">=?=</span> <span class=\"n\">Id.</span><span class=\"o\">{</span><span class=\"bp\">?</span><span class=\"n\">u.529</span><span class=\"o\">}</span>\n</code></pre></div>\n<p>I modified <code>isDefEq</code> to understand why <code>?m.524</code> is non-assignable:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">?</span><span class=\"n\">m.524</span> <span class=\"o\">[</span><span class=\"n\">nonassignable</span> <span class=\"n\">natural</span> <span class=\"n\">depth</span> <span class=\"mi\">0</span><span class=\"bp\">/</span><span class=\"mi\">1</span><span class=\"o\">]</span> <span class=\"bp\">=?=</span> <span class=\"n\">Id.</span><span class=\"o\">{</span><span class=\"bp\">?</span><span class=\"n\">u.529</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">nonassignable</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>And the reason is the metavariable depth was increased, which I believe is <a href=\"https://github.com/leanprover/lean4/blob/master/src/Lean/Meta/SynthInstance.lean#L682\">here specifically</a>. It seems obvious in retrospect that it's supposed to be that way, and that this only works if <code>m</code> is an <code>outParam</code> in <code>HBind</code>.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">HBind</span> <span class=\"o\">(</span><span class=\"n\">m</span> <span class=\"o\">:</span> <span class=\"n\">outParam</span> <span class=\"o\">(</span><span class=\"kt\">Type</span> <span class=\"n\">u₁</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">v₁</span><span class=\"o\">))</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u₂</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">v₂</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n  <span class=\"n\">hBind</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u₁</span><span class=\"o\">}</span> <span class=\"o\">{</span><span class=\"n\">β</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u₂</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">m</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">n</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">n</span> <span class=\"n\">β</span>\n\n<span class=\"c1\">-- Easy</span>\n<span class=\"bp\">#</span><span class=\"n\">synth</span> <span class=\"n\">HBind.</span><span class=\"o\">{</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">}</span> <span class=\"n\">_</span> <span class=\"n\">Id.</span><span class=\"o\">{</span><span class=\"mi\">0</span><span class=\"o\">}</span>\n\n<span class=\"c1\">-- Also easy</span>\n<span class=\"kd\">example</span><span class=\"o\">:</span> <span class=\"n\">Id</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span>\n  <span class=\"n\">hBind</span> <span class=\"n\">getD0</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"n\">hBind</span> <span class=\"n\">getD1</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"n\">hBind</span> <span class=\"n\">getDx.</span><span class=\"o\">{</span><span class=\"mi\">2</span><span class=\"o\">}</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"n\">pure</span> <span class=\"n\">default</span>\n</code></pre></div>\n<p>Now the question is how reliable is this approach? Do we have monads that would <code>HBind</code> with more than one instance? What does the typeclass engine do with <code>outParam</code> when there are several options?</p>",
+        "id": 290360964,
+        "sender_full_name": "Sébastien Michelland",
+        "timestamp": 1658401523
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"484617\">Sébastien Michelland</span> <a href=\"#narrow/stream/270676-lean4/topic/universe.20polymorphic.20IO/near/290360964\">said</a>:</p>\n<blockquote>\n<p>Do we have monads that would <code>HBind</code> with more than one instance?</p>\n</blockquote>\n<p>Definitely! The main point of <code>HBInd</code> is to enable binds between a wide variety of different monads.</p>",
+        "id": 290414702,
+        "sender_full_name": "Mac",
+        "timestamp": 1658428034
+    },
+    {
+        "content": "<p>However, I think the code is somewhat cheating here, so that may not matter. The<code>outParam</code> is actually non-injective (the are already multiple instances with different <code>m</code>s for a given <code>n</code>) based on the instances you have defined. Thus, Lean is able to pick the right instance when <code>m</code> has already been fixed and fix it when it has not,. Thus, the <code>outParam</code> may be fine.</p>",
+        "id": 290415346,
+        "sender_full_name": "Mac",
+        "timestamp": 1658428327
+    },
+    {
+        "content": "<p>However, this approach is still essentially causing the left action to default to the monad of the right action, which is not ideal.</p>",
+        "id": 290415611,
+        "sender_full_name": "Mac",
+        "timestamp": 1658428451
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"112857\">Leonardo de Moura</span> <a href=\"#narrow/stream/270676-lean4/topic/universe.20polymorphic.20IO/near/282560584\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>How realistic would it be to make it universe polymorphic in the current codebase? Specifically is it an achievable target for a new contributor?</p>\n</blockquote>\n<p>It is a realistic goal, but it can get messy. We consider this a low-priority modification because it is currently quite inconvenient to manually add the <code>ULift</code>.</p>\n</blockquote>\n<p>Would a PR with the basic universe polymorphic <code>IO</code> (requiring <code>ULift</code>) be acceptable? I am currently battling a problem in Lake that very much wants <code>IO</code> to be in universe 3 (<code>Type 2</code>) and is been heavily constrained by the fact it only accepts <code>Type</code>.</p>",
+        "id": 290559926,
+        "sender_full_name": "Mac",
+        "timestamp": 1658520352
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> I am surprised that you need <code>Type 2</code> in Lake. It would be great if you could find a simpler design. <br>\nWe already have so many things on our plates.</p>",
+        "id": 290565831,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1658523249
+    },
+    {
+        "content": "<p>k, I will stick with  my current workarounds <span aria-label=\"thumbs up\" class=\"emoji emoji-1f44d\" role=\"img\" title=\"thumbs up\">:thumbs_up:</span></p>",
+        "id": 290565935,
+        "sender_full_name": "Mac",
+        "timestamp": 1658523329
+    },
+    {
+        "content": "<p>Dare I ask why you need the universe bump? In mathematics if you need a higher universe there's usually (but not always) a set theory whizz who can talk you back down.</p>",
+        "id": 290575146,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1658529389
+    },
+    {
+        "content": "<p>One \"reasonable\" option is a <code>usquash</code> operator that maps <code>Type u</code> to <code>Type</code>. Obviously this is unsound if we posit all the isomorphism stuff, but it is possible to soundly introduce the necessary operators as uninterpreted <code>partial</code> functions, and for programming applications universes are really irrelevant (evidence: haskell)</p>",
+        "id": 290576618,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658530686
+    },
+    {
+        "content": "<p>The problem is that <a href=\"https://github.com/leanprover/lake/blob/0ca66ed2facf889b5317cc422695f1ced0de12ce/Lake/Config/FacetConfig.lean#L11-L20\"><code>FacetConfig</code></a> has the type signature:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">FacetConfig</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">Name</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"o\">(</span><span class=\"kt\">Type</span> <span class=\"n\">u</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">v</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">Name</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"o\">(</span><span class=\"n\">max</span> <span class=\"o\">(</span><span class=\"n\">u</span> <span class=\"bp\">+</span> <span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"n\">v</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>And that <code>max (u + 2)</code> bubbles up much of the type hierarchy of Lake.</p>",
+        "id": 290577290,
+        "sender_full_name": "Mac",
+        "timestamp": 1658531215
+    },
+    {
+        "content": "<p>I've no context at all, but it seems quite strange to be storing an equality of types in <code>FacetConfig</code></p>",
+        "id": 290582130,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1658536347
+    },
+    {
+        "content": "<p>It is strange, but it was the best mechanism I could think of to implement open type families in Lean (see <a href=\"https://github.com/leanprover/lake/blob/0ca66ed2facf889b5317cc422695f1ced0de12ce/Lake/Util/Family.lean\">Family.lean</a> for details).</p>",
+        "id": 290583663,
+        "sender_full_name": "Mac",
+        "timestamp": 1658538353
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> Could you elaborate on this general design? I would like to <a href=\"https://en.wikipedia.org/wiki/XY_problem\">#xy</a> this but it seems there are a lot of threads to pull. What is <code>FacetConfig</code> trying to accomplish: is it a user extension point? How does the user use this type, and how does the system make use of the information?</p>",
+        "id": 290590077,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658546942
+    },
+    {
+        "content": "<p>A more specific question: do you actually need <code>FacetConfig</code> to be universe polymorphic, and if so, why? Is it just \"trivial generalization\"?</p>",
+        "id": 290590157,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658547016
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> I added a refactor proposal at <a href=\"https://github.com/leanprover/lake/pull/107\">leanprover/lake#107</a> which rejiggers things so that <code>FacetConfig</code> can live in <code>Type</code>.</p>",
+        "id": 290595506,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658555082
+    },
+    {
+        "content": "<p>One observation that might have gotten lost: DTT already has something that acts a lot like open type families: Function types. These are morally \"coinductive\" which means that you can create an open inductive by specifying all the ways you would like to destruct that value, and then downstream users can construct as many extra types as they want by choosing different tuples of functions. (These are often supplied via typeclasses.) If you want to control how the functions are derived, you can provide a \"smart constructor\" / corecursor that takes arbitrary data in any universe and applies your functions to construct data in the lowest universe.</p>",
+        "id": 290595771,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658555462
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> i don't follow this idea of using functions to mimic open type families.  I'd be much obliged if there's a <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a> demonstrating this.</p>",
+        "id": 290612402,
+        "sender_full_name": "Siddharth Bhat",
+        "timestamp": 1658580774
+    },
+    {
+        "content": "<p>The <a href=\"https://en.wikipedia.org/wiki/Expression_problem\">expression problem</a> is the observation that when we have <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>m</mi></mrow><annotation encoding=\"application/x-tex\">m</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.4306em;\"></span><span class=\"mord mathnormal\">m</span></span></span></span> producers and <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>n</mi></mrow><annotation encoding=\"application/x-tex\">n</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.4306em;\"></span><span class=\"mord mathnormal\">n</span></span></span></span> consumers of an interface, there are <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>m</mi><mi>n</mi></mrow><annotation encoding=\"application/x-tex\">mn</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.4306em;\"></span><span class=\"mord mathnormal\">mn</span></span></span></span> interactions to be specified, and we can't have both the producer side and the consumer side be fully decoupled and extensible because then it is possible to introduce a producer in one import and a consumer in another import and there is no place to put the interaction between them.</p>\n<p>So we must choose either the producer side or the consumer side to be \"non-extensible\", which in this case means that extensions, although possible, require changing the source code and updating everyone on the other side to accommodate.</p>\n<p>The case where the producers are non-extensible and the consumers are extensible is well known to lean users: we create an inductive type containing a case for each producer, and then consumers pattern match on the inductive type; there is no need for coordination between the consumers so you can have as many as you like.</p>\n<p>The case where the consumers are non-extensible and the producers are extensible is what type classes (or generally structures of functions) are for. We create a type class containing a field for each consumer (each thing we want to do with the data), and then the producers are instances of the type class. The producers don't need to coordinate with each other, and you can have as many as you like.</p>",
+        "id": 290641302,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658621955
+    },
+    {
+        "content": "<p>Here is an illustration of the two approaches in code:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- non-extensible Producer, extensible consumer</span>\n<span class=\"kd\">inductive</span> <span class=\"n\">Producer</span>\n<span class=\"bp\">|</span> <span class=\"n\">A</span> <span class=\"o\">:</span> <span class=\"n\">Producer</span>\n<span class=\"bp\">|</span> <span class=\"n\">B</span> <span class=\"o\">:</span> <span class=\"n\">Producer</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">consumerC</span> <span class=\"o\">:</span> <span class=\"n\">Producer</span> <span class=\"bp\">→</span> <span class=\"n\">String</span>\n<span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">A</span> <span class=\"bp\">=&gt;</span> <span class=\"s2\">\"interaction of A and C\"</span>\n<span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">B</span> <span class=\"bp\">=&gt;</span> <span class=\"s2\">\"interaction of B and C\"</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">consumerD</span> <span class=\"o\">:</span> <span class=\"n\">Producer</span> <span class=\"bp\">→</span> <span class=\"n\">String</span>\n<span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">A</span> <span class=\"bp\">=&gt;</span> <span class=\"s2\">\"interaction of A and D\"</span>\n<span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">B</span> <span class=\"bp\">=&gt;</span> <span class=\"s2\">\"interaction of B and D\"</span>\n</code></pre></div>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- non-extensible consumer, extensible Producer</span>\n<span class=\"kd\">structure</span> <span class=\"n\">Producer</span> <span class=\"n\">where</span>\n  <span class=\"n\">C</span> <span class=\"o\">:</span> <span class=\"n\">String</span>\n  <span class=\"n\">D</span> <span class=\"o\">:</span> <span class=\"n\">String</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">producerA</span> <span class=\"o\">:</span> <span class=\"n\">Producer</span> <span class=\"n\">where</span>\n  <span class=\"n\">C</span> <span class=\"o\">:=</span> <span class=\"s2\">\"interaction of A and C\"</span>\n  <span class=\"n\">D</span> <span class=\"o\">:=</span> <span class=\"s2\">\"interaction of A and D\"</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">producerB</span> <span class=\"o\">:</span> <span class=\"n\">Producer</span> <span class=\"n\">where</span>\n  <span class=\"n\">C</span> <span class=\"o\">:=</span> <span class=\"s2\">\"interaction of B and C\"</span>\n  <span class=\"n\">D</span> <span class=\"o\">:=</span> <span class=\"s2\">\"interaction of B and D\"</span>\n</code></pre></div>",
+        "id": 290641538,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658622338
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/universe.20polymorphic.20IO/near/290641302\">said</a>:</p>\n<blockquote>\n<p>we can't have both the producer side and the consumer side be fully decoupled and extensible because then it is possible to introduce a producer in one import and a consumer in another import and there is no place to put the interaction between them.</p>\n</blockquote>\n<p>As far as I know, there is no reason (in the abstract) why you can't decouple all three, have the producers in one place, the consumers in another, and their interactions in a third.</p>",
+        "id": 290646633,
+        "sender_full_name": "Mac",
+        "timestamp": 1658630226
+    },
+    {
+        "content": "<p>Which is an approach taken by e..g., open types and open definitions.</p>",
+        "id": 290646934,
+        "sender_full_name": "Mac",
+        "timestamp": 1658630608
+    },
+    {
+        "content": "<p>That is, open types are extensible producers, open definitions are extensible consumers, and their interactions can be defined independently.</p>",
+        "id": 290647027,
+        "sender_full_name": "Mac",
+        "timestamp": 1658630706
+    },
+    {
+        "content": "<p>The Expression Problem, while a core concern in programming language design, does have many hypothesized solutions, many approaches of which have been implemented (sometimes only partially, though) in new languages.</p>",
+        "id": 290647100,
+        "sender_full_name": "Mac",
+        "timestamp": 1658630816
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>  I feel my responses may have come off as overly critical. I so. I am sorry. The strong assertion that \"we can't have both the producer side and the consumer side be fully decoupled and extensible\" confused me. Figuring out the best way to do so is generally a main part of expression problem solutions whereas the statement made it sound to me like it was impossible. Or were you just talking about in Lean for the topic in question?</p>",
+        "id": 290647729,
+        "sender_full_name": "Mac",
+        "timestamp": 1658631665
+    },
+    {
+        "content": "<p>No, I mean that it is a fairly fundamental issue in decoupling things</p>",
+        "id": 290647809,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658631724
+    },
+    {
+        "content": "<p>Because of this <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>m</mi><mo>×</mo><mi>n</mi></mrow><annotation encoding=\"application/x-tex\">m\\times n</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6667em;vertical-align:-0.0833em;\"></span><span class=\"mord mathnormal\">m</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span><span class=\"mbin\">×</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.4306em;\"></span><span class=\"mord mathnormal\">n</span></span></span></span> thing, we need to know all consumers when we add a producer, and we need to know all producers when we add a consumer, and it's not obvious how to have them both without linearizing the addition of producers and consumers</p>",
+        "id": 290647832,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658631780
+    },
+    {
+        "content": "<p>If you can separate the producers and the consumers via an \"API\", then you have essentially split the problem into two since each side only has to interact with the API, and then both sides can grow independently while the API becomes \"non-extensible\". This is totally possible. The expression problem is specifically for the case where there is no mediator, each producer wants to talk individually to each consumer and all pairwise interactions are potentially completely different</p>",
+        "id": 290647961,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658631961
+    },
+    {
+        "content": "<p>(Note that in both examples, there are 4 string literals corresponding to every pairwise interaction of producer and consumer)</p>",
+        "id": 290648011,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658632013
+    },
+    {
+        "content": "<p>I thought I'd heard the tagless-final style solved the expression problem <a href=\"https://okmij.org/ftp/tagless-final/\">https://okmij.org/ftp/tagless-final/</a> (and <a href=\"https://oleksandrmanzyuk.wordpress.com/2014/06/18/from-object-algebras-to-finally-tagless-interpreters-2/\">a blogpost</a> with an introduction)</p>\n<p>This is a solution in the sense that it's possible to encode extensions to the API between producers and consumers as types, and given a valid producer/consumer pair, you can replace the producer with a \"simpler\" producer or the consumer with a \"more complex\" consumer, with respect to the API.</p>",
+        "id": 290648095,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1658632122
+    },
+    {
+        "content": "<p>I am assuming some aspects which could be considered specific to the lean setup, in particular that there is no \"global view\" of the entire set of things because everything could have a downstream dependent which performs some kind of extension</p>",
+        "id": 290648097,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658632129
+    },
+    {
+        "content": "<p>so you have to decide in advance what things can be extended and what can't by downstream dependents</p>",
+        "id": 290648105,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658632175
+    },
+    {
+        "content": "<p>A simplification of the tagless final pattern for lean is the observation that we can use typeclasses to just fill in elements of the matrix on an ad hoc basis:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">Interaction</span> <span class=\"o\">(</span><span class=\"n\">producer</span> <span class=\"n\">consumer</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n  <span class=\"n\">interaction</span> <span class=\"o\">:</span> <span class=\"n\">String</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">ProducerA</span>\n<span class=\"kd\">structure</span> <span class=\"n\">ProducerB</span>\n<span class=\"kd\">structure</span> <span class=\"n\">ConsumerC</span>\n<span class=\"kd\">structure</span> <span class=\"n\">ConsumerD</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Interaction</span> <span class=\"n\">ProducerA</span> <span class=\"n\">ConsumerC</span> <span class=\"n\">where</span>\n  <span class=\"n\">interaction</span> <span class=\"o\">:=</span> <span class=\"s2\">\"interaction of A and C\"</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Interaction</span> <span class=\"n\">ProducerA</span> <span class=\"n\">ConsumerD</span> <span class=\"n\">where</span>\n  <span class=\"n\">interaction</span> <span class=\"o\">:=</span> <span class=\"s2\">\"interaction of A and D\"</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Interaction</span> <span class=\"n\">ProducerB</span> <span class=\"n\">ConsumerC</span> <span class=\"n\">where</span>\n  <span class=\"n\">interaction</span> <span class=\"o\">:=</span> <span class=\"s2\">\"interaction of B and C\"</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Interaction</span> <span class=\"n\">ProducerB</span> <span class=\"n\">ConsumerC</span> <span class=\"n\">where</span>\n  <span class=\"n\">interaction</span> <span class=\"o\">:=</span> <span class=\"s2\">\"interaction of B and D\"</span>\n</code></pre></div>\n<p>The downside of this pattern is that you don't know until you call the function whether the interaction between the two chosen types has in fact been defined</p>",
+        "id": 290648648,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658632885
+    },
+    {
+        "content": "<p>You can also take either the producer side or the consumer side to be the typeclass with the other one being the argument</p>",
+        "id": 290648652,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1658632921
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/universe.20polymorphic.20IO/near/290648097\">said</a>:</p>\n<blockquote>\n<p>I am assuming some aspects which could be considered specific to the lean setup, in particular that there is no \"global view\" of the entire set of things because everything could have a downstream dependent which performs some kind of extension</p>\n</blockquote>\n<p>For many things in Lean which are extensible (e.g., syntax, environment extensions, etc.) it is entirely possible to freeze the setup at any given point and perform global optimizations.</p>",
+        "id": 290657173,
+        "sender_full_name": "Mac",
+        "timestamp": 1658645585
+    },
+    {
+        "content": "<p>The only real exceptions to this is the type system, but it also doesn't really have true open types in the first place that need freezing. Type classes could be an exception, but they are technically also freezable.</p>",
+        "id": 290657224,
+        "sender_full_name": "Mac",
+        "timestamp": 1658645663
+    },
+    {
+        "content": "<p>Also, specialization could be seen as a form of freezing as well.</p>",
+        "id": 290657248,
+        "sender_full_name": "Mac",
+        "timestamp": 1658645744
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/270676-lean4/topic/universe.20polymorphic.20IO/near/290646633\">said</a>:</p>\n<blockquote>\n<p>As far as I know, there is no reason (in the abstract) why you can't decouple all three, have the producers in one place, the consumers in another, and their interactions in a third.</p>\n</blockquote>\n<p>I don't disagree but I would like to point out that this type of polygamy might be illegal in some jurisdictions. <span aria-label=\"rolling on the floor laughing\" class=\"emoji emoji-1f923\" role=\"img\" title=\"rolling on the floor laughing\">:rolling_on_the_floor_laughing:</span> <a href=\"https://media2.giphy.com/media/MuI2Oxjb9gCy9s4Nxq/giphy.gif?cid=c623cb35w3hvqnavuoz1eqhktax59hsh81dlevxza57i33ou&amp;rid=giphy.gif&amp;ct=g\">https://media2.giphy.com/media/MuI2Oxjb9gCy9s4Nxq/giphy.gif?cid=c623cb35w3hvqnavuoz1eqhktax59hsh81dlevxza57i33ou&amp;rid=giphy.gif&amp;ct=g</a></p>\n<div class=\"message_inline_image\"><a href=\"https://media2.giphy.com/media/MuI2Oxjb9gCy9s4Nxq/giphy.gif?cid=c623cb35w3hvqnavuoz1eqhktax59hsh81dlevxza57i33ou&amp;rid=giphy.gif&amp;ct=g\"><img src=\"https://uploads.zulipusercontent.net/320ca930d0a4481d7c80c60c135e716b262fab07/68747470733a2f2f6d65646961322e67697068792e636f6d2f6d656469612f4d7549324f786a62396743793973344e78712f67697068792e6769663f6369643d633632336362333577336876716e6176756f7a316571686b74617835396873683831646c6576787a6135376933336f75267269643d67697068792e6769662663743d67\"></a></div>",
+        "id": 290665259,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1658658744
+    }
+]

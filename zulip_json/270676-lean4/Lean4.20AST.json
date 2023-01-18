@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>is there a way to extract the AST for a particular source file? I think I saw something about lean3 having an AST fork where you could pass <code>--ast</code> as an argument, but does something similar exist for lean4?<br>\napologies if this is documented somewhere, I couldn't really find anything</p>",
+        "id": 320597672,
+        "sender_full_name": "Bhakti Shah",
+        "timestamp": 1673412677
+    },
+    {
+        "content": "<p>lean 4 has much better out of the box support for AST traversal, so the hack that was done to lean 3 is not really necessary anymore. lean files parse into objects of type <code>Syntax</code> and you can just write that out as JSON if you want</p>",
+        "id": 320619836,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1673421878
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> </p>\n<blockquote>\n<p>lean files parse into objects of type <code>Syntax</code> and you can just write that out as JSON if you want</p>\n</blockquote>\n<p>I see -- so the <code>.ilean</code> file is basically the AST, can't believe it was that simple, I just never thought to look there. Is there any known documentation on the grammar other than the <code>Parser</code> directory in the source code?</p>",
+        "id": 320806868,
+        "sender_full_name": "Bhakti Shah",
+        "timestamp": 1673474956
+    },
+    {
+        "content": "<p>the grammar is extensible, so no not really, it's context sensitive and defined by the <code>syntax</code> lines that have occurred so far</p>",
+        "id": 320812917,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1673477625
+    },
+    {
+        "content": "<p>The syntax trees are not persisted. <code>.ilean</code> is just a serialization of <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Server.Ilean#doc\">docs4#Lean.Server.Ilean</a>, no syntax trees there.</p>",
+        "id": 320878970,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1673512597
+    },
+    {
+        "content": "<p>I see -- my bad, didn't look closely enough</p>\n<p>is there a way to extract the syntax object from a program, then? sorry if these are super basic, I'm more of a coq user</p>",
+        "id": 321066825,
+        "sender_full_name": "Bhakti Shah",
+        "timestamp": 1673572997
+    },
+    {
+        "content": "<p>I don't know if there's a more elegant way, but this (mostly) works</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean.Elab</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean.Elab.Command</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"dbg\"</span> <span class=\"n\">cmd</span><span class=\"o\">:</span><span class=\"n\">command</span><span class=\"bp\">+</span> <span class=\"o\">:</span> <span class=\"n\">command</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"n\">for</span> <span class=\"n\">cmd</span> <span class=\"k\">in</span> <span class=\"n\">cmd</span> <span class=\"k\">do</span>\n        <span class=\"n\">dbg_trace</span> <span class=\"s2\">\"</span><span class=\"se\">\\n</span><span class=\"s2\">{cmd}</span><span class=\"se\">\\n\\n</span><span class=\"s2\">\"</span>\n        <span class=\"n\">elabCommand</span> <span class=\"n\">cmd</span>\n</code></pre></div>\n<p>It does slightly change the meaning of the commands, since parsing and elaboration are now no longer interspersed, all parsing happens at the start, so this will break if you define and directly use parser extensions in the code you're examining</p>",
+        "id": 321089742,
+        "sender_full_name": "Alex Keizer",
+        "timestamp": 1673591368
+    },
+    {
+        "content": "<p>Here's another trick to get the commands, using a linter and a global variable:</p>\n<p><code>Test/SpySyntax.lean</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"n\">initialize</span> <span class=\"n\">syntaxes</span> <span class=\"o\">:</span> <span class=\"n\">IO.Ref</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">Lean.Syntax</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">IO.mkRef</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n<span class=\"n\">initialize</span> <span class=\"n\">Lean.addLinter</span> <span class=\"k\">fun</span> <span class=\"n\">stx</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">syntaxes.modify</span> <span class=\"o\">(</span><span class=\"bp\">·.</span><span class=\"n\">push</span> <span class=\"n\">stx</span><span class=\"o\">)</span>\n</code></pre></div>\n<p><code>Test.lean</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Test.SpySyntax</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">pp.rawOnError</span> <span class=\"n\">true</span>\n<span class=\"n\">elab</span> <span class=\"s2\">\"foo\"</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"n\">for</span> <span class=\"n\">stx</span> <span class=\"k\">in</span> <span class=\"bp\">←</span> <span class=\"n\">syntaxes.get</span> <span class=\"k\">do</span>\n    <span class=\"n\">try</span> <span class=\"n\">logInfo</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"{← PrettyPrinter.formatCommand stx}\"</span>\n    <span class=\"n\">catch</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">pure</span> <span class=\"o\">()</span>\n  <span class=\"n\">syntaxes.set</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">foo</span>\n</code></pre></div>",
+        "id": 321091901,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1673592497
+    },
+    {
+        "content": "<p>The \"right\" way to do this is to use a custom driver based on <code>runFrontend</code>. That will allow you to get the AST for any file without modifying the target file</p>",
+        "id": 321092009,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1673592565
+    },
+    {
+        "content": "<p>Thank you! I'll start with these and probably try to work my way up to the \"right\" way</p>",
+        "id": 321397342,
+        "sender_full_name": "Bhakti Shah",
+        "timestamp": 1673722270
+    }
+]

@@ -1,0 +1,224 @@
+[
+    {
+        "content": "<p>This example violates my expectations on how <code>Syntax.missing</code> works.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"n\">syntax</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">foo</span><span class=\"o\">)</span> <span class=\"s2\">\"foo\"</span> <span class=\"o\">(</span><span class=\"s2\">\"(\"</span> <span class=\"n\">ident</span> <span class=\"s2\">\")\"</span><span class=\"o\">)</span><span class=\"bp\">?</span> <span class=\"n\">ident</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"#stx\"</span> <span class=\"n\">tm</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">command</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"n\">dbg_trace</span> <span class=\"n\">tm</span>\n\n<span class=\"bp\">#</span><span class=\"n\">stx</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"n\">x</span> <span class=\"c1\">-- (foo \"foo\" [\"(\" `a \")\"] `x)</span>\n<span class=\"bp\">#</span><span class=\"n\">stx</span> <span class=\"n\">foo</span> <span class=\"o\">()</span> <span class=\"n\">x</span> <span class=\"c1\">-- (foo \"foo\" [\"(\" &lt;missing&gt;])</span>\n</code></pre></div>\n<p>In the example, we are causing a malformed parse of the <code>foo</code> syntax, and we see that because the identifier <code>a</code> was not found, it has a <code>&lt;missing&gt;</code> in its place, so far so good. But the terminating atom <code>\")\"</code> is not parsed, and even worse, the entire right half of <code>foo</code> is missing: the first subtree has only 2 elements instead of 3, and the <code>foo</code> node also has 2 elements instead of 3. This causes index out of bounds exceptions with naive syntax addressing like <code>stx[2]</code> to get the identifier <code>x</code>. Is this working as designed, or is it a bug?</p>",
+        "id": 291654900,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659404622
+    },
+    {
+        "content": "<p>Note that if the middle node is marked <code>atomic</code> you get the 3 elements in <code>foo</code> as you expected:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">namespace</span> <span class=\"n\">B</span>\n<span class=\"kn\">local</span> <span class=\"n\">syntax</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">foo</span><span class=\"o\">)</span> <span class=\"s2\">\"foo\"</span> <span class=\"n\">atomic</span><span class=\"o\">(</span><span class=\"s2\">\"(\"</span> <span class=\"n\">ident</span> <span class=\"s2\">\")\"</span><span class=\"o\">)</span><span class=\"bp\">?</span> <span class=\"n\">ident</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n\n<span class=\"bp\">#</span><span class=\"n\">stx</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"n\">x</span> <span class=\"c1\">-- (foo \"foo\" [\"(\" `a \")\"] `x)</span>\n<span class=\"bp\">#</span><span class=\"n\">stx</span> <span class=\"n\">foo</span> <span class=\"o\">()</span> <span class=\"n\">x</span> <span class=\"c1\">-- (B.foo \"foo\" [] &lt;missing&gt;)</span>\n<span class=\"kd\">end</span> <span class=\"n\">B</span>\n</code></pre></div>",
+        "id": 291658548,
+        "sender_full_name": "Mac",
+        "timestamp": 1659408743
+    },
+    {
+        "content": "<p>The problem with your example is that because the parser successfully parsed <code>\"(\"</code>, it is now committed to parse <code>\"(\" ident \")\"</code>. Thus, when it fails to parse <code>ident</code> it is now in a fatal state and has to fail hard from the command it is parsing, hence the malformed syntax after that point.</p>",
+        "id": 291658671,
+        "sender_full_name": "Mac",
+        "timestamp": 1659408891
+    },
+    {
+        "content": "<p>In other words, without the atomic, the missing <code>ident</code> means the whole command is ill-formed, with the <code>atomic</code>, only the optional middle part is ill-formed.</p>",
+        "id": 291658891,
+        "sender_full_name": "Mac",
+        "timestamp": 1659409166
+    },
+    {
+        "content": "<p>is there a version that gets me <code>(foo \"foo\" [\"(\" &lt;missing&gt; \")\"] `x)</code>?</p>",
+        "id": 291659346,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659409622
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> no, how would Lean create the final <code>\")\"</code> atom? Remember that <code>Syntax</code> is a concrete syntax tree and the parser is assumed to produce syntax which can be directly reprinted as the fragment of source parsed. Thus, to create the final <code>\")\"</code> the parser needs source information which it does not have because it never made it there.</p>",
+        "id": 291659520,
+        "sender_full_name": "Mac",
+        "timestamp": 1659409820
+    },
+    {
+        "content": "<p>I don't follow. It just failed to parse a <code>x</code> but there is a <code>)</code> right in front of it, so it could certainly finish the job</p>",
+        "id": 291659560,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659409888
+    },
+    {
+        "content": "<p>recall the input is <code>foo () x</code></p>",
+        "id": 291659569,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659409901
+    },
+    {
+        "content": "<p>You could conceivable create a new parser combinator ala <code>optional</code> that attempts to perform a parse and fails with missing if it does not.</p>",
+        "id": 291659571,
+        "sender_full_name": "Mac",
+        "timestamp": 1659409907
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/how.20is.20.3Cmissing.3E.20used.20in.20parsers.3F/near/291659560\">said</a>:</p>\n<blockquote>\n<p>I don't follow. It just failed to parse a <code>x</code> but there is a <code>)</code> right in front of it, so it could certainly finish the job</p>\n</blockquote>\n<p>It doesn't know that though,  what <code>ident</code> parses is opaque to the combinators, it might have  wanted to eat the rest of the file for all it knows.</p>",
+        "id": 291659618,
+        "sender_full_name": "Mac",
+        "timestamp": 1659409940
+    },
+    {
+        "content": "<p>All it knows is that the parse of some parser (the one represented by <code>ident</code>) failed and parser state is now erroneous so it needs to fail hard.</p>",
+        "id": 291659664,
+        "sender_full_name": "Mac",
+        "timestamp": 1659409990
+    },
+    {
+        "content": "<p>For instance, consider the case were <code>ident</code> is instead <code>str</code> and it failed in the middle of the string parse (e.g., due to a bad escape), it would be very bad if it then ate a following ')' in the string because it assumed it was the following token.</p>",
+        "id": 291659799,
+        "sender_full_name": "Mac",
+        "timestamp": 1659410160
+    },
+    {
+        "content": "<p>In code:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">namespace</span> <span class=\"n\">C</span>\n<span class=\"kn\">local</span> <span class=\"n\">syntax</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">foo</span><span class=\"o\">)</span> <span class=\"s2\">\"foo\"</span> <span class=\"o\">(</span><span class=\"s2\">\"(\"</span> <span class=\"n\">str</span> <span class=\"s2\">\")\"</span><span class=\"o\">)</span><span class=\"bp\">?</span> <span class=\"n\">ident</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n<span class=\"bp\">#</span><span class=\"n\">stx</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"s2\">\"</span><span class=\"err\">\\</span><span class=\"s2\">u8x</span><span class=\"se\">\\\"</span><span class=\"s2\">) x -- (C.foo \"</span><span class=\"n\">foo</span><span class=\"s2\">\" [\"</span><span class=\"o\">(</span><span class=\"s2\">\" &lt;missing&gt;])</span>\n<span class=\"s2\">end C</span>\n</code></pre></div>",
+        "id": 291660036,
+        "sender_full_name": "Mac",
+        "timestamp": 1659410431
+    },
+    {
+        "content": "<p>I don't see why that would be bad. It may sometimes lead you astray - recovery is never perfect - but it should do a lot better than completely giving up on the rest of the command</p>",
+        "id": 291660723,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659411176
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> My reasoning for it being bad would be that it violates a lot of the assumptions the Lean core makes about the <code>Syntax</code> objects produced by parsers (that they are a well-formed replication of the fragment of code the parser successfully parsed). With your approach, I am not even sure how places that care about this invariant (e.g., <code>reprint</code>) would verify that the nodes produce were actually properly parsed and not best effort synthetic reconstructions.</p>",
+        "id": 291661061,
+        "sender_full_name": "Mac",
+        "timestamp": 1659411512
+    },
+    {
+        "content": "<p>I don't understand the distinction. I would like the syntax to be as well formed as possible, with every node either being completely correct or completely <code>.missing</code></p>",
+        "id": 291661100,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659411598
+    },
+    {
+        "content": "<p>The rest of the system will handle it quite well if that's the situation</p>",
+        "id": 291661176,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659411625
+    },
+    {
+        "content": "<p>in particular, this doesn't violate the property that the syntax is an exact  representation of the text</p>",
+        "id": 291661191,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659411656
+    },
+    {
+        "content": "<p>The problem is two-fold: (1) most of the parser code does not have the information to do this -- once the parser errors, the is no going on to future parsers to figure out how to construct missing nodes; (2) there is the big question of how to properly produce source information (which is very important for things like the editor) in this scenario. The leading/trailing whitespace computation requires executing parsers to collect that information and that can't feasibly happen if the parser is already in an error state.</p>",
+        "id": 291661290,
+        "sender_full_name": "Mac",
+        "timestamp": 1659411753
+    },
+    {
+        "content": "<p>Point (1) is also important for things like syntax categories where there is the question on errors of which of the erroring parsers should be producing the fake syntax.</p>",
+        "id": 291661546,
+        "sender_full_name": "Mac",
+        "timestamp": 1659411908
+    },
+    {
+        "content": "<p>It also would mean that each erroring parser would need to construct its entire fake syntax tree before it errors and then potentially has that syntax discarded when an alternative parser is tried. That would greatly reduce the performance of the parser.</p>",
+        "id": 291661627,
+        "sender_full_name": "Mac",
+        "timestamp": 1659411987
+    },
+    {
+        "content": "<p>At least, that would be my reasoning. To get the official reason, <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> would need to chime in.</p>",
+        "id": 291661900,
+        "sender_full_name": "Mac",
+        "timestamp": 1659412184
+    },
+    {
+        "content": "<p>Parser recovery is a well-trodden topic in the literature, and closing parentheses are indeed usually part of the anchor set. I wouldn't be surprised is (sub-command) parser recovery eventually makes it into Lean, but I think the usability of the current implementation shows that it's far from a must-have.</p>",
+        "id": 291678323,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659428299
+    },
+    {
+        "content": "<p>I don't see any direct issues with producing a concrete syntax tree in presence of parser recovery. Recovery inside backtracking would need some more thought though, yes.</p>",
+        "id": 291678519,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659428416
+    },
+    {
+        "content": "<blockquote>\n<p>This causes index out of bounds exceptions with naive syntax addressing like stx[2]</p>\n</blockquote>\n<p>Note that this returns <code>.missing</code> instead of panicking for this very reason</p>",
+        "id": 291678641,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659428512
+    },
+    {
+        "content": "<p>The bug I found was actually using something like <code>stx.getSepArgs[0]!</code> (on a <code>thing,+</code> syntax)</p>",
+        "id": 291680473,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659429480
+    },
+    {
+        "content": "<p>Ah, yeah. We want to introduce proper <code>$x,+</code> antiquotations that would not match an empty sequence.</p>",
+        "id": 291680654,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659429569
+    },
+    {
+        "content": "<p>well in this case the syntax was completely missing, since it was in the right half of <code>foo</code></p>",
+        "id": 291680776,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659429638
+    },
+    {
+        "content": "<p>or are you saying that you would use a pattern match to extract the separgs and then the pattern just wouldn't match in this case</p>",
+        "id": 291680829,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659429678
+    },
+    {
+        "content": "<p>Yes. If the sequence is completely <code>.missing</code>, <code>$x,*</code> would not match either, I think?</p>",
+        "id": 291680859,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659429713
+    },
+    {
+        "content": "<p>Note that you can also use <code>$x, $xs,*</code> to extract a fixed-length prefix or suffix of a sequence</p>",
+        "id": 291680944,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659429747
+    },
+    {
+        "content": "<p>It was supposed to have already been matched by the parser, I guess</p>",
+        "id": 291680950,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659429765
+    },
+    {
+        "content": "<p>If partial syntax trees did not exist, then yes</p>",
+        "id": 291680988,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659429805
+    },
+    {
+        "content": "<p>Partial syntax trees and partial elaboration of them is another feature that I think we're very surprised about working as well as it does, with most code being completely oblivious to it.</p>",
+        "id": 291681185,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659429931
+    },
+    {
+        "content": "<p>In case you are wondering, <a href=\"https://github.com/leanprover/lean4/blob/31b8be9367cfc9e4ddd1c2f113ef3e7285c1d1e6/src/Lean/Elab/Do.lean#L1575\">this line</a> is the bugfix, which I may extract from the PR since it appears it won't get merged any time soon</p>",
+        "id": 291681285,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659429987
+    },
+    {
+        "content": "<p>note the use of <code>doForDecls[0]!</code> on the next line</p>",
+        "id": 291681324,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1659430011
+    },
+    {
+        "content": "<p>Oh yeah, I believe most of the <code>Do</code> code predates our fancier antiquotations</p>",
+        "id": 291681389,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1659430056
+    }
+]

@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>Hi all,</p>\n<p>The following parsing script is succeeding on cases I would prefer it to fail on. For example in the case <code>λ {α : Type u} [_inst_1 : linear_ordered_add_comm_group α], @with_top.linear_ordered_add_comm_monoid_with_top α),</code> there is an extra \")\" at the very end which has no opening parenthesis to match it. This proof term successfully parses and type checks because the final \")\" is just ignored. </p>\n<p><strong>How can I force the parser to consume the whole string, and fail if the whole string can't be parsed?</strong> </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">system.io</span>\n<span class=\"kn\">import</span> <span class=\"n\">all</span>\n\n<span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">parse_texpr_with_univs</span> <span class=\"o\">(</span><span class=\"n\">univs</span> <span class=\"o\">:</span> <span class=\"n\">list</span> <span class=\"n\">string</span><span class=\"o\">):</span> <span class=\"n\">lean.parser</span> <span class=\"n\">pexpr</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"c1\">-- add all universe names in the list as universe levels</span>\n  <span class=\"n\">univs.mmap</span> <span class=\"bp\">$</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">s</span><span class=\"o\">,</span> <span class=\"n\">lean.parser.add_local_level</span> <span class=\"n\">s</span><span class=\"o\">),</span>\n  <span class=\"c1\">-- parse the buffer as a pexpr</span>\n  <span class=\"n\">interactive.types.texpr</span>\n\n<span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">io</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">s</span> <span class=\"o\">:=</span> <span class=\"s2\">\"λ {α : Type u} [_inst_1 : linear_ordered_add_comm_group α], @with_top.linear_ordered_add_comm_monoid_with_top α)\"</span><span class=\"o\">,</span>\n  <span class=\"k\">let</span> <span class=\"n\">univs</span> <span class=\"o\">:=</span> <span class=\"o\">[</span><span class=\"s2\">\"u\"</span><span class=\"o\">],</span>\n\n  <span class=\"n\">io.run_tactic</span> <span class=\"bp\">$</span> <span class=\"k\">do</span> <span class=\"o\">{</span>\n    <span class=\"c1\">-- parse the expression using the universe names</span>\n    <span class=\"n\">t</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">lean.parser.run_with_input</span> <span class=\"o\">(</span><span class=\"n\">parse_texpr_with_univs</span> <span class=\"n\">univs</span><span class=\"o\">)</span> <span class=\"n\">s</span><span class=\"o\">,</span>\n\n    <span class=\"c1\">-- convert to proof term and check type</span>\n    <span class=\"n\">e</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">tactic.to_expr</span> <span class=\"n\">t</span><span class=\"o\">,</span>\n    <span class=\"n\">tp</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">tactic.infer_type</span> <span class=\"n\">e</span><span class=\"o\">,</span>\n    <span class=\"n\">tactic.trace</span> <span class=\"n\">tp</span>\n  <span class=\"o\">}</span>\n</code></pre></div>\n<p>Thanks!</p>",
+        "id": 239263086,
+        "sender_full_name": "Joe Palermo",
+        "timestamp": 1621348217
+    },
+    {
+        "content": "<p>I think using <code>run (with_input p s)</code> instead of <code>run_with_input</code> will solve your problem</p>",
+        "id": 239264730,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1621348752
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib_docs/find/lean.parser.run_with_input/src\">src#lean.parser.run_with_input</a> just calls what I suggest, then throws away the information about the remaining input</p>",
+        "id": 239264798,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1621348780
+    },
+    {
+        "content": "<p>Since <code>run_with_input </code> is used nowhere in core lean or mathlib, perhaps the thing to do is just change <code>run_with_input </code> to perform the necessary check</p>",
+        "id": 239265034,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1621348845
+    },
+    {
+        "content": "<p>This does the job:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">run_with_input'</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">parser</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">string</span> <span class=\"bp\">→</span> <span class=\"n\">tactic</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">p</span> <span class=\"n\">s</span><span class=\"o\">,</span>\n<span class=\"k\">do</span>\n  <span class=\"o\">(</span><span class=\"n\">p</span><span class=\"o\">,</span> <span class=\"s2\">\"\"</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">run</span> <span class=\"o\">(</span><span class=\"n\">with_input</span> <span class=\"n\">p</span> <span class=\"n\">s</span><span class=\"o\">),</span>\n  <span class=\"n\">pure</span> <span class=\"n\">p</span>\n</code></pre></div>\n<p>although you probably want it to emit a better error about the remaining content rather than just failing a pattern match</p>",
+        "id": 239266472,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1621349318
+    },
+    {
+        "content": "<p>Ahh great! Thank you <span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span></p>",
+        "id": 239268277,
+        "sender_full_name": "Joe Palermo",
+        "timestamp": 1621349977
+    },
+    {
+        "content": "<p>I tested it and it works, but I don't understand why this works. On the surface it appears that the only difference between run_with_input and run_with_input' is how the result is retrieved.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">run_with_input</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">parser</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">string</span> <span class=\"bp\">→</span> <span class=\"n\">tactic</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">p</span> <span class=\"n\">s</span><span class=\"o\">,</span>\n  <span class=\"n\">prod.fst</span> <span class=\"bp\">&lt;$&gt;</span> <span class=\"n\">run</span> <span class=\"o\">(</span><span class=\"n\">with_input</span> <span class=\"n\">p</span> <span class=\"n\">s</span><span class=\"o\">)</span>\n\n<span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">run_with_input'</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">parser</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">string</span> <span class=\"bp\">→</span> <span class=\"n\">tactic</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">p</span> <span class=\"n\">s</span><span class=\"o\">,</span>\n<span class=\"k\">do</span>\n  <span class=\"o\">(</span><span class=\"n\">p</span><span class=\"o\">,</span> <span class=\"s2\">\"\"</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">run</span> <span class=\"o\">(</span><span class=\"n\">with_input</span> <span class=\"n\">p</span> <span class=\"n\">s</span><span class=\"o\">),</span>\n  <span class=\"n\">pure</span> <span class=\"n\">p</span>\n</code></pre></div>",
+        "id": 239269847,
+        "sender_full_name": "Joe Palermo",
+        "timestamp": 1621350445
+    },
+    {
+        "content": "<p>I think the intended use is to call <code>run_with_input</code> with a parser chain that ends with the <code>eof</code> parser</p>",
+        "id": 239281395,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1621354372
+    },
+    {
+        "content": "<p><code>(p, \"\") ← ...</code> means \"call <code>failure</code> if the second item is not <code>\"\"</code>\"</p>",
+        "id": 239285703,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1621355991
+    },
+    {
+        "content": "<p>I wasn't able to find the eof parser. <a href=\"https://leanprover-community.github.io/mathlib_docs/find/lean.parser.eof\">docs#lean.parser.eof</a> doesn't exist.</p>",
+        "id": 239285767,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1621356007
+    },
+    {
+        "content": "<p>We have <a href=\"https://leanprover-community.github.io/mathlib_docs/find/parser.eof\">docs#parser.eof</a>, but isn't that a very different parser?</p>",
+        "id": 239285925,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1621356071
+    }
+]

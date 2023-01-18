@@ -1,0 +1,1130 @@
+[
+    {
+        "content": "<p><a href=\"https://sites.google.com/view/holist/home\" target=\"_blank\" title=\"https://sites.google.com/view/holist/home\">DeepHOL/HOList</a> is Google Research neural-based automatic theorem prover for HOL Light.  A number of us have had deep discussions about it, how it works, and some of its design decisions.  Here are some highlights:</p>\n<ul>\n<li><span class=\"user-mention\" data-user-id=\"213234\">@Aaron Hadley</span>  and his team at UCF have made a great notebook demonstrating the \"front end\" Python API how to extend HOList to use other machine learning models <a href=\"https://github.com/aahadley/deepmath-jupyter/blob/master/HOLJup.ipynb\" target=\"_blank\" title=\"https://github.com/aahadley/deepmath-jupyter/blob/master/HOLJup.ipynb\">here</a> and they also added a <a href=\"https://github.com/aahadley/deepmath-jupyter/blob/master/TutorialPaper.pdf\" target=\"_blank\" title=\"https://github.com/aahadley/deepmath-jupyter/blob/master/TutorialPaper.pdf\">tutorial</a>.</li>\n<li>If you are more interested in how DeepHOL (the neural prover) communicates with HOList (the modified from of HOL Light), here is a <a href=\"https://github.com/jasonrute/holist-communication-example\" target=\"_blank\" title=\"https://github.com/jasonrute/holist-communication-example\">project of mine</a> which fleshes out the backend API.  In particular, <a href=\"https://github.com/jasonrute/holist-communication-example/blob/master/walkthrough_of_holist_api.ipynb\" target=\"_blank\" title=\"https://github.com/jasonrute/holist-communication-example/blob/master/walkthrough_of_holist_api.ipynb\">this notebook</a> walks you through the gRPC API.</li>\n<li>It should be noted that a lot of the backend API is not used in the front end API.  For example, currently DeepHOL can't supply term parameters to tactics.  But it can choose tactics and choose theorem parameters (premise selection).</li>\n<li>If anyone is interesting in hooking up Lean (or any other ITP) to DeepHOL, <a href=\"https://gist.github.com/jasonrute/00109af2bdc0974d2e8e79faf26ba556\" target=\"_blank\" title=\"https://gist.github.com/jasonrute/00109af2bdc0974d2e8e79faf26ba556\">here</a> is a very preliminary best guess at what it would take to do it after talking with <span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span> at Google.</li>\n</ul>",
+        "id": 185555422,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1578963705
+    },
+    {
+        "content": "<p>I know there are still a lot of questions about HOList (like why it uses s-expressions).  Feel free to discuss here.</p>",
+        "id": 185555480,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1578963742
+    },
+    {
+        "content": "<p>On the question of S-expression, I think that we went to the bottom of it through various private discussions. Pretty-printed HOL-light expressions which are appealing because they are close to what a human formalizing a proof would use are unfortunately ambiguous. The parser supports type annotation for human to disambiguate term types when coding in HOL Light, but unfortunately the pretty-printer is destructive such that <code>pretty_print o parse</code> is not the identity.</p>\n<p>S-expressions are unambiguous as they are a natural way to marshal the in-memory representation of HOL Light terms (with every variable/constant being explicitly typed).</p>\n<p>Ideally for some ML application, having compact representations is useful. Theoretically we could record the top-level semi-typed parsable theorem and term expressions and have them appear in proof logs as tactics arguments but that's probably not practical because hol-light starts by turning these expressions into in-memory representations, destroying the disambiguated human-provided terms.</p>\n<p>Hope this context is useful!</p>",
+        "id": 185575109,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1578991765
+    },
+    {
+        "content": "<p>I think to take a step back, we have to acknowledge that s-expressions are used in 2.5 different ways in HOList.</p>\n<ul>\n<li>They are used as a serialization method to send HOL Light terms back and forth between HOList and DeepHOL (again, see my <a href=\"https://github.com/jasonrute/holist-communication-example/blob/master/walkthrough_of_holist_api.ipynb\" target=\"_blank\" title=\"https://github.com/jasonrute/holist-communication-example/blob/master/walkthrough_of_holist_api.ipynb\">\"backend\" walkthrough of HOList/DeepHOL</a>.)  This is sort of natural since the terms are algebraic data structures and s-expressions are natural for capturing such algebraic data structures.  This would generalize to any formal logic I can think of, making it sort of language neutral (before training).  However, I can also imagine one could use other serialization methods.  One could have used JSON or gRPC (which naturally translates to JSON) as the serialization method as well.  <span class=\"user-mention\" data-user-id=\"246156\">@Brando Miranda</span> has asked about JSON and said that Emilio at <a href=\"https://github.com/ejgallego/coq-serapi\" target=\"_blank\" title=\"https://github.com/ejgallego/coq-serapi\">Serapi/Coq</a> was thinking about switching from s-expressions to JSON.  In some sense I don't think it matters much here as long as one uses a lossless encoding which is easy to parse.  (And in this case, these s-expressions are extremely easy to parse into whatever form one wants.)</li>\n<li>They are also used as the text entered into the neural network model.  If one is using a pure sequence input model like an RNN or wavenet, then I think the idea is that you would plug the s-expression in as is (except one-hot encoding every token first?).  Or if one was using a tree or graph NN, then one naturally parses the s-expression into that tree or graph.  <span class=\"user-mention\" data-user-id=\"249373\">@Stanislas Polu</span> has lamented that the current s-expressions are probably too long for an RNN and has suggested shorter encodings.  Again, I think one has full freedom to play around with other representations.  I can think of many.  On the most compact side is to use the compact representation from the HOLStep data set.  It throws away types.  It uses polish notation.  And it uses skolemization and DeBruin indices for quantifiers and variables.  This however might be too compact.  HOList has found (from taking with Markus) that variable names matter a lot.  Another compact-ish approach would be to simulate the HOL Light pretty printer, but maybe add a few extra things.  It wouldn't be hard to get the parentheses the same as HOL Light.  As for types, the HOL Light pretty printer throws them away, but I think one might want to keep them for quantifiers and lambdas only.  Now, intermediate goals might not have any quantifiers, but one could borrow notation from say Lean and write something like this for an intermediate goal <code>(n: nat), (m: nat) |- = (num_add m n) (num_add n m)</code>.  It is hard to know what would work best without experimentation.  I've suggested that rather than trying this all out on HOList, it might be better to experiment first with some of the different string representations with different neural network models on HOLStep first since it is an easier to train dataset.  We would be looking for something which is quick to run but also does well on the task.  Since it is so up in the air what a good string input is, I think it wouldn't make sense to encode it into the HOList/DeepMath interface.  Instead, s-expressions work nice as a loss-less encoding which could be tweaked into something else when needed.</li>\n<li>Last, one is also using these s-expressions as some sort of semi-human-readable term representation.  This is needed for debugging and understanding the outputs.  Again, the programmer is free to clean up the formula a bit for debugging, but most of the current HOList printouts use these s-expressions.</li>\n</ul>\n<p>So in summary, s-expressions try to be everything to everyone.  While in practice they might fail at that, they are pretty easy to parse and turn into something else.  The only exception is that the HOL Light pretty printed expressions are a bit complicated to 100% reproduce, but one can come close.  If it is important to have the exact pretty printed expressions, one could build that as another server call into the gRPC interface.  Get me the pretty printed version of this s-expression.</p>",
+        "id": 185593684,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1579007249
+    },
+    {
+        "content": "<p>The response to any apply tactic request should already include the pretty printed version of the terms (as well as the s-expression, of course). Also all the theorem in the theorem database should have a pretty printed field in their proto.</p>",
+        "id": 185607167,
+        "sender_full_name": "Markus Rabe",
+        "timestamp": 1579016216
+    },
+    {
+        "content": "<p>Our first models were convolutional networks that take the  tokenized s-expression (with types) as input. We have removed the parenthesis as well, as it is redundant, but makes parsing of the expressions a bit easier (esp. for humans). </p>\n<p>We have tried to train sequence models on the pretty printed output as well, but it yielded inferior results to the models taking s-expressions as input.</p>\n<p>Our graph-neural networks uses subexpression-sharing (still containing) which makes the input significantly shorter</p>\n<p>Using JSON would have had the disadvantage that we would have needed a JSON parser in our Google internal version of HOL Light, which would have required importing extra packages.</p>",
+        "id": 185624371,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1579026551
+    },
+    {
+        "content": "<blockquote>\n<p>The response to any apply tactic request should already include the pretty printed version of the terms </p>\n</blockquote>\n<p>I didn’t see this behavior in <a href=\"https://github.com/jasonrute/holist-communication-example/blob/master/walkthrough_of_holist_api.ipynb\" target=\"_blank\" title=\"https://github.com/jasonrute/holist-communication-example/blob/master/walkthrough_of_holist_api.ipynb\">my notebook</a>.  All the apply tactic calls only return the full s-expressions.  For example see cell 10.</p>",
+        "id": 185655886,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1579047449
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110026\">@Simon Hudon</span> are you following this thread in order to see how the Lean4 editor integration could also be a machine learning rig integration? Or is it something completely different?</p>",
+        "id": 185746134,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1579123699
+    },
+    {
+        "content": "<p>such integration would be more structured than the current language server protocol, which does not serialize the environment, nor fully elaborated terms (and only does so as unstructured strings via JSON)</p>",
+        "id": 185746790,
+        "sender_full_name": "Jesse Michael Han",
+        "timestamp": 1579124120
+    },
+    {
+        "content": "<p>The next language server will serialize the syntax tree and the type information</p>",
+        "id": 185746915,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1579124184
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110031\">@Patrick Massot</span>, does that answer your question? I'm not sure I understood what you were looking for</p>",
+        "id": 185747146,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1579124329
+    },
+    {
+        "content": "<p>So it'll still be bespoke and not LSP based?</p>",
+        "id": 185747174,
+        "sender_full_name": "Simon Cruanes",
+        "timestamp": 1579124347
+    },
+    {
+        "content": "<blockquote>\n<p>So it'll still be bespoke and not LSP based?</p>\n</blockquote>\n<p>We can add as many extension to LSP as we want.</p>",
+        "id": 185747579,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1579124598
+    },
+    {
+        "content": "<p>We're basing it on LSP but we're going to get beyond the LSP basic features for the more advance uses</p>",
+        "id": 185747586,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1579124605
+    },
+    {
+        "content": "<blockquote>\n<p>Patrick Massot, does that answer your question? I'm not sure I understood what you were looking for</p>\n</blockquote>\n<p>I have no idea. I only hope people who followed this thread will know.</p>",
+        "id": 185747611,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1579124631
+    },
+    {
+        "content": "<p>I'm hoping you document those extensions</p>",
+        "id": 185747612,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579124631
+    },
+    {
+        "content": "<blockquote>\n<p>We can add as many extension to LSP as we want.</p>\n</blockquote>\n<p>yes, but LSP remains based on buffers and JSON, I'm not sure I see how you can carry ASTs on it efficiently?</p>",
+        "id": 185747736,
+        "sender_full_name": "Simon Cruanes",
+        "timestamp": 1579124708
+    },
+    {
+        "content": "<p>you can json anything</p>",
+        "id": 185747750,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579124718
+    },
+    {
+        "content": "<p>I guess the efficiency isn't so great, but as long as it's only sent when needed it shouldn't be so bad</p>",
+        "id": 185747804,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579124760
+    },
+    {
+        "content": "<p>sometimes I wish LSP had been built on msgpack-rpc or something like that</p>",
+        "id": 185747855,
+        "sender_full_name": "Simon Cruanes",
+        "timestamp": 1579124782
+    },
+    {
+        "content": "<p>huh, msgpack is pretty cool</p>",
+        "id": 185748765,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1579125530
+    },
+    {
+        "content": "<p>especially when you want to embed big chunks of code into it… no escaping needed</p>",
+        "id": 185749163,
+        "sender_full_name": "Simon Cruanes",
+        "timestamp": 1579125790
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span> and others friends knowledgeable about Holist. I've been able to spin up a holist instance using the <code>gcr.io/deepmath/hol-light</code> image. One thing that I expected from reading the code and introspecting the proof logs was that all theorems fingerprints appearing in the proof logs would be directly usable with that image but it looks like that's not the case. How does one is supposed to interact with the prover for a goal part of the test set? Do they have to replay and register all theorems first?</p>",
+        "id": 186201897,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579625216
+    },
+    {
+        "content": "<p>Example code failing:</p>\n<div class=\"codehilite\"><pre><span></span>for_all_x_exists_y_x_equals_y = Theorem(\n    name=&quot;FORALL_X_EXISTS_Y_SUCH_THAT_X_EQUALS_Y&quot;,\n    conclusion=&quot;(a (c (fun (fun A (bool)) (bool)) !) (l (v A x) (a (c (fun (fun A (bool)) (bool)) ?) (l (v A y) (a (a (c (fun A (fun A (bool))) =) (v A x)) (v A y))))))&quot;,\n    training_split=Theorem.Split.TESTING,\n    tag=Theorem.Tag.THEOREM,\n)\n\nif __name__ == &#39;__main__&#39;:\n    with grpc.insecure_channel(&#39;10.72.7.138:2000&#39;) as channel:\n        stub = ProofAssistantServiceStub(channel)\n\n        request3 = ApplyTacticRequest(goal=for_all_x_exists_y_x_equals_y, tactic=&quot;SIMP_TAC [ THM 220805353555668225 ]&quot;)\n        print(&quot;Request:&quot;)\n        print(request3)\n\n        response3 = stub.ApplyTactic(request3)\n        print(&quot;Response:&quot;)\n        print(response3)\n</pre></div>\n\n\n<p>Where <code>220805353555668225</code> is the fingerprint of a theorem argument taken from the training set (appears in <code>human/train/prooflogs-00037-of-00600.pbtxt</code>)</p>\n<p>This gives:</p>\n<div class=\"codehilite\"><pre><span></span>Request:\ngoal {\n  conclusion: &quot;(a (c (fun (fun A (bool)) (bool)) !) (l (v A x) (a (c (fun (fun A (bool)) (bool)) ?) (l (v A y) (a (a (c (fun A (fun A (bool))) =) (v A x)) (v A y))))))&quot;\n  tag: THEOREM\n  name: &quot;FORALL_X_EXISTS_Y_SUCH_THAT_X_EQUALS_Y&quot;\n  training_split: TESTING\n}\ntactic: &quot;SIMP_TAC [ THM 220805353555668225 ]&quot;\n\nResponse:\nerror: &quot;Failure(\\&quot;No theorem exists with index 220805353555668225\\&quot;)&quot;\n</pre></div>",
+        "id": 186202542,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579625609
+    },
+    {
+        "content": "<p>Or in other words how can I easily replay a proof log ?</p>",
+        "id": 186202862,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579625777
+    },
+    {
+        "content": "<p>Ah I now realize that some theorems in <code>theorem_database_v1.1.textpb</code> are registered and usable.  I think only definitions are registered, but other theorems are not. </p>\n<p>The question therefore remains?</p>",
+        "id": 186203965,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579626394
+    },
+    {
+        "content": "<p>I was under the impression, possibly wrong, that one needs to replay (VerifyProof) and register (RegisterTheorem) all the theorems.  Of course this is assuming you are working in the “low level” gRPC API.  If you are working in the “high level” Python API then I assume the Python code does that stuff for you, but I haven’t explored that as much yet.</p>",
+        "id": 186210355,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1579630257
+    },
+    {
+        "content": "<p>Maybe <span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span> or <span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> can shed some light on this? <span aria-label=\"grimacing\" class=\"emoji emoji-1f62c\" role=\"img\" title=\"grimacing\">:grimacing:</span></p>",
+        "id": 186211833,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579631274
+    },
+    {
+        "content": "<blockquote>\n<blockquote>\n<p>The response to any apply tactic request should already include the pretty printed version of the terms </p>\n</blockquote>\n<p>I didn’t see this behavior in <a href=\"https://github.com/jasonrute/holist-communication-example/blob/master/walkthrough_of_holist_api.ipynb\" target=\"_blank\" title=\"https://github.com/jasonrute/holist-communication-example/blob/master/walkthrough_of_holist_api.ipynb\">my notebook</a>.  All the apply tactic calls only return the full s-expressions.  For example see cell 10.</p>\n</blockquote>\n<p>It looks like (unfortunately) that this is only in our Google-internal version. We could do another round of exporting, especially that we have some code for an ICLR paper that should be open-sourced as well.</p>",
+        "id": 186218006,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1579635061
+    },
+    {
+        "content": "<blockquote>\n<p>I was under the impression, possibly wrong, that one needs to replay (VerifyProof) and register (RegisterTheorem) all the theorems.  Of course this is assuming you are working in the “low level” gRPC API.  If you are working in the “high level” Python API then I assume the Python code does that stuff for you, but I haven’t explored that as much yet.</p>\n</blockquote>\n<p>The current verifier verifies theorems in their original context. So currently. you need to replay the whole theorem library in order to verify any number of theorems:<br>\n- You can verify only theorems that came from the HOL-Light library (complex),<br>\n- You can verify any number of theorems (you don't need to verify all of them)<br>\n- All the theorems in the library will be run through the kernel for verification.<br>\n- Those theorems that had an external proof (to be verified) will use their external proof at exactly that position where the theorem was proved originally.</p>",
+        "id": 186218426,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1579635314
+    },
+    {
+        "content": "<blockquote>\n<p>Ah I now realize that some theorems in <code>theorem_database_v1.1.textpb</code> are registered and usable.  I think only definitions are registered, but other theorems are not. </p>\n<p>The question therefore remains?</p>\n</blockquote>\n<p>The human prooflogs contain proof-steps that rely on theorems created \"on the fly\" by forward reasoning steps (so called conversions). These theorems don't show up in the theorem database. Also proofs relying on them can't be replayed as conversions can't be replayed either.</p>\n<p>On the other hand the exported tensorflow examples contain the actual s-expression of those parameters, so if somebody uses those examples, the corresponding theorem can be used for training the parameter-selection models, even if those tactic-parameters don't show up in the proof-logs.</p>\n<p>Around 60% of the human proofs can be replayed, as a large number of them uses theorems deduced by forward reasoning steps, other theorems use ad-hoc substitution of terms that we did not log either.</p>",
+        "id": 186220118,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1579636369
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"249373\">@Stanislas Polu</span> <span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span><br>\nThe example above failed because the theorem with the fingerprint (or \"index\") 220805353555668225 is unknown to HOL Light when it is started up. Only the \"core\" Theorems are loaded at that point (which includes some basic definitions and theorems). Before you use any other theorem you need to register that theorem with the RegisterTheoremRequest.</p>\n<p>As Christian said, don't expect all human-written proofs to go through, as some tactics are not supported and not all theorems that humans used in the proofs are in our theorem database.</p>\n<p>As a final note: VerifyProof was only used for a deprecated version of our proof checker. Currently it is not used for anything and should be ignored.</p>",
+        "id": 186252165,
+        "sender_full_name": "Markus Rabe",
+        "timestamp": 1579663220
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span> Thanks! Let me experiment with that. Ack re the obvious non-possibility to input any human proof. That being said, is it true that we can proof check all the proofs in the proof logs?</p>",
+        "id": 186268156,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579684733
+    },
+    {
+        "content": "<p>Ah from reading <span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> post above I realize that property (replayability of the proof logs) does not hold true. If only 60% of the human proofs can be replayed, then 60% is somewhat of an upper bound on the performance of any supervised prover, right? (not sure it's mentioned in the papers?)</p>",
+        "id": 186268720,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579685172
+    },
+    {
+        "content": "<blockquote>\n<p>On the other hand the exported tensorflow examples contain the actual s-expression of those parameters, so if somebody uses those examples, the corresponding theorem can be used for training the parameter-selection models, even if those tactic-parameters don't show up in the proof-logs.</p>\n</blockquote>\n<p>I was under the impression that the information contained in the proof logs (pbtxt) was equivalent to the information contained in the tf examples (for the positive arguments) ? Is it not true? Is there a source of truth for the specification of the content of these files?</p>",
+        "id": 186269417,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579685706
+    },
+    {
+        "content": "<p>Finally <span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span> is your latest comment on VerifyProof true of the publicly available version? (Thanks thanks!)</p>",
+        "id": 186269695,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579685982
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span> I’m under the impression from my experiments with the public HOList Docker image that one has to first verify a theorem before one can register it (and it has to be the most recently verified theorem).  I assume this has gone away in the internal versions.</p>",
+        "id": 186272422,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1579688064
+    },
+    {
+        "content": "<p>Also, I assume the way that RegisterTheorem now works is to add the theorem as an axiom using the CHEAT tactic?</p>",
+        "id": 186272506,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1579688155
+    },
+    {
+        "content": "<p>Form the code in [0], it looks like anything received from RegisterTheorem is indeed assumed:</p>\n<div class=\"codehilite\"><pre><span></span>Theorem_fingerprint.index_thm index (Drule.mk_thm (to_term_list gs));\n</pre></div>\n\n\n<p>As Drule.mk_thm is a wrapper around the ASSUME tactic I believe.</p>\n<p>But unclear if [0] is what is deployed in the <code>gcr.io/deepmath/hol-light</code> image?</p>\n<p>[0] <a href=\"https://github.com/brain-research/hol-light/blob/master/sandboxee.ml#L141-L144\" target=\"_blank\" title=\"https://github.com/brain-research/hol-light/blob/master/sandboxee.ml#L141-L144\">https://github.com/brain-research/hol-light/blob/master/sandboxee.ml#L141-L144</a></p>",
+        "id": 186278286,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579693160
+    },
+    {
+        "content": "<p>I confirm that you can register any theorem (Only caveat is that it seems that the fingerprint does not get returned if not passed).</p>",
+        "id": 186305426,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579711609
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> can you expand on the limitation related to conversions? Replaying the prooflogs would just fail there? From skimming through the <a href=\"http://parse_tactic.ml\" target=\"_blank\" title=\"http://parse_tactic.ml\">parse_tactic.ml</a> code it looks like there is some support for conversions? What are the current limitations?</p>",
+        "id": 186305605,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579711707
+    },
+    {
+        "content": "<blockquote>\n<p>If only 60% of the human proofs can be replayed, then 60% is somewhat of an upper bound on the performance of any supervised prover, right? (not sure it's mentioned in the papers?)</p>\n</blockquote>\n<p>This is not necessarily true. Since we use the network to guide a search, if the search explores enough branches it can discover proofs that are alternative to the human proofs.</p>",
+        "id": 186329092,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1579725933
+    },
+    {
+        "content": "<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"239426\">Christian Szegedy</span> can you expand on the limitation related to conversions? Replaying the prooflogs would just fail there? From skimming through the <a href=\"http://parse_tactic.ml\" target=\"_blank\" title=\"http://parse_tactic.ml\">parse_tactic.ml</a> code it looks like there is some support for conversions? What are the current limitations?</p>\n</blockquote>\n<p>We log some of the conversions, but the ApplyTactic function call can't make use of them.</p>\n<p>We have a new internal extension to the API that allows the application of \"rules\" (forward reasoning steps), we have run some preliminary expriments using them, but we don't have a proper integration, especially proof replay and verification are not implemented for them. We plan to open source our extensions to the interface as soon as there is enough interest in the community to use it.</p>",
+        "id": 186329489,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1579726236
+    },
+    {
+        "content": "<p>BTW, this is the code to properly initialize the environment with all of the (complex) proofs:</p>\n<p><a href=\"https://github.com/tensorflow/deepmath/blob/c51df033cdf8d2d103fd277beb3b9acf39b8d9c1/deepmath/deephol/prover.py#L359\" target=\"_blank\" title=\"https://github.com/tensorflow/deepmath/blob/c51df033cdf8d2d103fd277beb3b9acf39b8d9c1/deepmath/deephol/prover.py#L359\">https://github.com/tensorflow/deepmath/blob/c51df033cdf8d2d103fd277beb3b9acf39b8d9c1/deepmath/deephol/prover.py#L359</a></p>",
+        "id": 186330963,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1579727219
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"249373\">@Stanislas Polu</span> You're right. The publicly available version of our modified HOL Light still includes the old proof checker. It should still work. <br>\nWhat I meant is that we have a new proof checker that bypasses the API and instead compiles proof logs to OCaml code. Thereby we don't have to trust our Python code and the API. The new proof checker is described at <a href=\"http://deephol.org\" target=\"_blank\" title=\"http://deephol.org\">deephol.org</a>.</p>",
+        "id": 186332996,
+        "sender_full_name": "Markus Rabe",
+        "timestamp": 1579728607
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span> <span class=\"user-mention\" data-user-id=\"249373\">@Stanislas Polu</span> Indeed, you can even register terms that are not true. So it is your responsibility to stay sound in the stateless API. (Hence our stand-alone proof checker.)</p>",
+        "id": 186333304,
+        "sender_full_name": "Markus Rabe",
+        "timestamp": 1579728817
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span>  Thanks for your additional comments</p>",
+        "id": 186366816,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579767489
+    },
+    {
+        "content": "<blockquote>\n<p>BTW, this is the code to properly initialize the environment with all of the (complex) proofs:<br>\n<a href=\"https://github.com/tensorflow/deepmath/blob/c51df033cdf8d2d103fd277beb3b9acf39b8d9c1/deepmath/deephol/prover.py#L359\" target=\"_blank\" title=\"https://github.com/tensorflow/deepmath/blob/c51df033cdf8d2d103fd277beb3b9acf39b8d9c1/deepmath/deephol/prover.py#L359\">https://github.com/tensorflow/deepmath/blob/c51df033cdf8d2d103fd277beb3b9acf39b8d9c1/deepmath/deephol/prover.py#L359</a></p>\n</blockquote>\n<p>I had stumbled on this and was plan to use exactly that <span aria-label=\"+1\" class=\"emoji emoji-1f44d\" role=\"img\" title=\"+1\">:+1:</span></p>\n<blockquote>\n<p>We have a new internal extension to the API that allows the application of \"rules\" (forward reasoning steps), we have run some preliminary expriments using them, but we don't have a proper integration, especially proof replay and verification are not implemented for them. We plan to open source our extensions to the interface as soon as there is enough interest in the community to use it.</p>\n</blockquote>\n<p>There is interest to use it :)</p>",
+        "id": 186366828,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579767517
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span> thanks!</p>",
+        "id": 186366915,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579767626
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> Let me rephrase a bit what you stated. Even without support for forward reasoning with conversions one could imagine that a system that takes the results of the conversion (input to later tactics) as part of its training set, it could potentially replay some theorems successfully skipping entirely the conv step. Do you guys include these theorems to your database when training?</p>",
+        "id": 186367435,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579768250
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"249373\">@Stanislas Polu</span> If you mean by \"replay\" proving the theorem in a different way, then yes. It happens a lot. Actually, machine generated proofs tend to be quite different from human proofs, even if premise selection was trained by imitation only. Also logging (and training on) \"theorems\" (or true statements) produced by the conversions is still useful for training the models that decides which tactic parameters are the most useful, even if the prover process cannot do conversions. That's what we do.</p>\n<p>Also, thanks for the feedback, we will discuss how to update the github repo with the API extensions with minimum effort. The problem is that our internal version diverged so much from the open source that it makes it hard for us to easily submit the changes, but we will look into that.</p>",
+        "id": 186409482,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1579798598
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> thanks!</p>",
+        "id": 186421586,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579805579
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span> I'm a bit surprised by the following:</p>\n<div class=\"codehilite\"><pre><span></span>root@dev-1-0:~# du -h ~/deephol-data/deepmath/deephol/proofs/human/test\n3.3G    /root/deephol-data/deepmath/deephol/proofs/human/test\nroot@dev-1-0:~# du -h ~/deephol-data/deepmath/deephol/proofs/human/valid\n2.4G    /root/deephol-data/deepmath/deephol/proofs/human/valid\nroot@dev-1-0:~# du -h ~/deephol-data/deepmath/deephol/proofs/human/train\n9.2G    /root/deephol-data/deepmath/deephol/proofs/human/train\n</pre></div>\n\n\n<p>vs</p>\n<div class=\"codehilite\"><pre><span></span>root@dev-1-0:~# grep &quot;TEST&quot; ~/deephol-data/deepmath/deephol/theorem_database_v1.1.textpb | wc -l\n14141\nroot@dev-1-0:~# grep &quot;VALIDATION&quot; ~/deephol-data/deepmath/deephol/theorem_database_v1.1.textpb | wc -l\n3668\nroot@dev-1-0:~# grep &quot;TRAINING&quot; ~/deephol-data/deepmath/deephol/theorem_database_v1.1.textpb | wc -l\n11655\n</pre></div>\n\n\n<p>Which gives a bytes/theorem (approximation) of:</p>\n<div class=\"codehilite\"><pre><span></span>TEST: ~233k\nVALIDATION: ~654k\nTRAIN: ~789k\n</pre></div>\n\n\n<p>Which indicates that the size of the proofs in the test set are noticeably smaller vs train/validation? Is that intentional? (or maybe a discrepancy in tf records for the test set?)</p>",
+        "id": 186476176,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579859004
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span> sorry another quick question. It looks like <code>LABEL_TAC</code> is not accepted by the proof assistant. Any reason why they appear in the proof logs?</p>",
+        "id": 186487969,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579870019
+    },
+    {
+        "content": "<p>FInally, while attempting to replay the proof logs with the following procedure: for all tactics taking a theorem argument, call RegisterTheorem on each argument and then for all tactics, call ApplyTactic.</p>\n<p>I often, despite a successful call to RegisterTheorem (the fingerprint I use (the one from the proof logs) is returned to me with no error), I get an eventual error when applying the tactic with message \"No theorem exists with index XXX\". From reading the ML code, I have a hard time seeing how the fingerprint can be returned successfully at RegisterTheorem and then not being hitting that message meaning that the index does not has that fingerprint.</p>\n<p>Example logs:</p>\n<div class=\"codehilite\"><pre><span></span>Replaying /Users/spolu/deephol-data/deepmath/deephol/proofs/human/test/prooflogs-00218-of-00537.jsonl\n&gt; ApplyTactic X_GEN_TAC `(v (fun (cart (real) N) (bool)) s)`\n&lt; ApplyTactic 1 goals\n&gt; ApplyTactic X_GEN_TAC `(v (fun (cart (real) N) (bool)) t)`\n&lt; ApplyTactic 1 goals\n&gt; ApplyTactic DISCH_TAC\n&lt; ApplyTactic 1 goals\n&gt; ApplyTactic RAW_POP_TAC 0\n&lt; ApplyTactic 1 goals\n&gt; RegisterTheorem 3261843337692443473\n&lt; RegisterTheorem 3261843337692443473\n&gt; ApplyTactic REWRITE_TAC [ THM 3261843337692443473 ]\n&lt; ApplyTactic 1 goals\n&gt; RegisterTheorem 3276577123099513888\n&lt; RegisterTheorem 3276577123099513888\n&gt; ApplyTactic MP_TAC THM 3276577123099513888\n!!! Failure(&quot;No theorem exists with index 3276577123099513888&quot;)\n&gt; RegisterTheorem 3550116108290505704\n&lt; RegisterTheorem 3550116108290505704\n&gt; RegisterTheorem 1457252911920550478\n&lt; RegisterTheorem 1457252911920550478\n&gt; RegisterTheorem 4032148915606337071\n&lt; RegisterTheorem 4032148915606337071\n&gt; RegisterTheorem 1358160238249633387\n&lt; RegisterTheorem 1358160238249633387\n&gt; RegisterTheorem 34540287283234494\n&lt; RegisterTheorem 34540287283234494\n&gt; RegisterTheorem 3806712188414811372\n&lt; RegisterTheorem 3806712188414811372\n&gt; ApplyTactic SIMP_TAC [ THM 3550116108290505704 ; THM 1457252911920550478 ; THM 4032148915606337071 ; THM 1358160238249633387 ; THM 34540287283234494 ; THM 3806712188414811372 ]\n!!! Failure(&quot;No theorem exists with index 34540287283234494&quot;)\n&gt; ApplyTactic DISCH_TAC\n&lt; ApplyTactic 1 goals\n&gt; ApplyTactic RAW_POP_TAC 0\n&lt; ApplyTactic 1 goals\n&gt; RegisterTheorem 4441231563045595206\n&lt; RegisterTheorem 4441231563045595206\n&gt; ApplyTactic MP_TAC THM 4441231563045595206\n!!! Failure(&quot;No theorem exists with index 4441231563045595206&quot;)\n&gt; ApplyTactic ANTS_TAC\n&lt; ApplyTactic 2 goals\n&gt; RegisterTheorem 647530560333096154\n&lt; RegisterTheorem 647530560333096154\n&gt; ApplyTactic REWRITE_TAC [ THM 647530560333096154 ]\n&lt; ApplyTactic 1 goals\n</pre></div>\n\n\n<p>As you can see this happens quite often.<br>\ncc <span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span> <span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span></p>",
+        "id": 186491122,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579872350
+    },
+    {
+        "content": "<p>(sorry for all the questions, hope it'll be useful to the community)</p>",
+        "id": 186491176,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579872368
+    },
+    {
+        "content": "<p>I believe I found what is going on from inspecting the logs of the container. It seems that the fingerprint mismatch. Unfortunately the \"api\" does not return the newly computed fingerprint but only the fingerprint passer as argument, but does use the new fingerprint for indexing. This is a bit unfortunate.</p>",
+        "id": 186495853,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579875728
+    },
+    {
+        "content": "<p>(I'll explore as to why there are discrepancies in fingerprints)</p>",
+        "id": 186495865,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579875741
+    },
+    {
+        "content": "<p>Problem solved on my end by fixing discrepancies in the S-Expr I was sending (escaped characters were not handled properly). Replaying logs seems to work properly now \\o/ Hope this is all useful to others.</p>",
+        "id": 186498505,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579877669
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span> in your walkthrough[0], the TRANS_TAC marshalling is a bit wrong. It takes a theorem then a term.<br>\n[0] <a href=\"https://github.com/jasonrute/holist-communication-example/blob/master/walkthrough_of_holist_api.ipynb\" target=\"_blank\" title=\"https://github.com/jasonrute/holist-communication-example/blob/master/walkthrough_of_holist_api.ipynb\">https://github.com/jasonrute/holist-communication-example/blob/master/walkthrough_of_holist_api.ipynb</a></p>",
+        "id": 186506019,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579882410
+    },
+    {
+        "content": "<p>All good questions. Note that the theorem database also includes the flyspeck corpus, but I believe we have not published the proof logs for flyspeck. I believe the flyspeck theorems are all labeled as TESTING. Hence your divisor is off for testing. If you want to be even more precise you should also discount the definitions, as they do not have proofs.</p>\n<p>But still interesting that the size of the training for TESTING is significantly larger than for VALIDATION. I wasn't aware of that.</p>",
+        "id": 186507286,
+        "sender_full_name": "Markus Rabe",
+        "timestamp": 1579883262
+    },
+    {
+        "content": "<p>LABEL_TAC and other unsupported tactics are in the proof logs as we log the proofs as the humans wrote them.</p>",
+        "id": 186507358,
+        "sender_full_name": "Markus Rabe",
+        "timestamp": 1579883306
+    },
+    {
+        "content": "<p>As for the failures of RegisterTheorem: Yes, the fingerprint is unfortunately not the one computed in HOL Light, but just the one that you indicated in the register theorem request. We're fixing this internally as well, so any future releases should not have the problem. Thanks for noticing and for all the work you've put in!</p>",
+        "id": 186507925,
+        "sender_full_name": "Markus Rabe",
+        "timestamp": 1579883699
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span> thanks a lot for all your help. One quite orthogonal question, what is the rationale for the current API (somewhat constrained in term of tactics available) vs directly interacting with a live hol light goal stack (which would accept pretty much anything)?</p>",
+        "id": 186523943,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1579893345
+    },
+    {
+        "content": "<p>Several reasons afaik: we need a stateless API, and we wanted to communicate via proto messages to abstract from the fact that we use HOL Light and to have flexibility in the deployment of the provers.</p>",
+        "id": 186597371,
+        "sender_full_name": "Markus Rabe",
+        "timestamp": 1580002701
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> the original Holist paper[0] states that final results should be shared using the test set (4.2) but it looks like the main result is produced on the validation set (Table 2) and there is no such result for the test set? I believe it is the same for the SoTa paper [1]. Am I missing something?<br>\n[0] <a href=\"https://arxiv.org/pdf/1904.03241.pdf\" target=\"_blank\" title=\"https://arxiv.org/pdf/1904.03241.pdf\">https://arxiv.org/pdf/1904.03241.pdf</a><br>\n[1] <a href=\"https://arxiv.org/pdf/1905.10006.pdf\" target=\"_blank\" title=\"https://arxiv.org/pdf/1905.10006.pdf\">https://arxiv.org/pdf/1905.10006.pdf</a></p>",
+        "id": 186719316,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580155116
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span> Thanks. Arguably you could have created a new GoalStack for each request and have full support of the Tactics? Is there a reason why you didn't go for that?</p>",
+        "id": 186719383,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580155177
+    },
+    {
+        "content": "<p>Finally, the last set of errors I'm getting when \"replaying\" the validation set are related to CONV tactics (which I believe are expected since I can see in the ML code that the CONV passed to CONV_TAC are not supported), example:</p>\n<div class=\"codehilite\"><pre><span></span>&gt; ApplyTactic CONV_TAC REAL_FIELD\n!!! Failure(&quot;Parse failure at :9: expected conv but found REAL_FIELD&quot;)\n--\n&gt; ApplyTactic CONV_TAC COND_ELIM_CONV\n!!! Failure(&quot;Parse failure at :9: expected conv but found COND_ELIM_CONV&quot;)\n</pre></div>\n\n\n<p>I also have a few errors that seem to be due to an erroneous tracing, example:</p>\n<div class=\"codehilite\"><pre><span></span>&gt; ApplyTactic X_CHOOSE_TAC `(v (cart (real) N) y)` THM 1452504403316335102\n!!! Failure(&quot;X_CHOOSE_TAC: expected type :real^M but got :real^N&quot;)\n</pre></div>\n\n\n<p>Are you guys aware of those ^</p>\n<p>Finally, the identify is sometime passed to the GEN_WRITE_TAC as <code>I</code> but it does not seem supported, is that expected?</p>\n<div class=\"codehilite\"><pre><span></span>&gt; ApplyTactic GEN_REWRITE_TAC I [ THM 2993471090521929300 ]\n!!! Failure(&quot;Parse failure at :16: expected convfn but found I&quot;)\n</pre></div>",
+        "id": 186719764,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580155416
+    },
+    {
+        "content": "<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"239426\">Christian Szegedy</span> the original Holist paper[0] states that final results should be shared using the test set (4.2) but it looks like the main result is produced on the validation set (Table 2) and there is no such result for the test set? I believe it is the same for the SoTa paper [1]. Am I missing something?</p>\n</blockquote>\n<p>Yes, I think it is sloppiness on our side. We have verified our results internally with the test set and the results were very close. Also, we got pretty decent results on the Flyspeck corpus which is a completely independent branch from the training set. This is also reported in the HOList paper.</p>\n<p>We will rerun our model from the GNN paper with the test set and update the paper. I am quite confident that the results don't change significantly to the validation set as we did not do a lot of tuning on it.</p>",
+        "id": 186741900,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1580171871
+    },
+    {
+        "content": "<blockquote>\n<p>Finally, the last set of errors I'm getting when \"replaying\" the validation set are related to CONV tactics (which I believe are expected since I can see in the ML code that the CONV passed to CONV_TAC are not supported), example:</p>\n</blockquote>\n<p>All those errors are expected. Currently the API supports only theorem parameters and only the selected set of 42 tactics we have enabled.</p>",
+        "id": 186742113,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1580172055
+    },
+    {
+        "content": "<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"239426\">Christian Szegedy</span> the original Holist paper[0] states that final results should be shared using the test set (4.2) but it looks like the main result is produced on the validation set (Table 2) and there is no such result for the test set? I believe it is the same for the SoTa paper [1]. Am I missing something?<br>\n[0] <a href=\"https://arxiv.org/pdf/1904.03241.pdf\" target=\"_blank\" title=\"https://arxiv.org/pdf/1904.03241.pdf\">https://arxiv.org/pdf/1904.03241.pdf</a><br>\n[1] <a href=\"https://arxiv.org/pdf/1905.10006.pdf\" target=\"_blank\" title=\"https://arxiv.org/pdf/1905.10006.pdf\">https://arxiv.org/pdf/1905.10006.pdf</a></p>\n</blockquote>\n<p>Sarah has rerun the model from the GNN paper for the validation and training set and verified the validation set performance at 49.98% (we proved 1 theorem less with the current code , which is in noise range), the test set performance is 46.89% (1493 theorem proved out of 3184). We will update the paper accordingly. We don't think that the 2% gap is the result of overfitting, since during the test set construction, we needed to deduplicate some simple theorems  that occurred in the validation and test sets and ended up in the validation set.</p>\n<p>Accordingly, the (open sourced) \"Deeper WaveNet\" model proves 30.1% of the test set .</p>\n<p>Thanks a lot for constructive suggestion!</p>",
+        "id": 186750599,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1580182839
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> thanks for the quick answer (and thanks to <span class=\"user-mention\" data-user-id=\"239408\">@Sarah Loos</span> et al for re-running the model on the test set \\o/)</p>",
+        "id": 186760332,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580198515
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> (sorry for the continuous stream of questions) using <code>theorem_database_v1.1.textpb</code> I get the following counts, filtering out <code>\"flyspeck\" in library_tag</code> and considering only <code>tag=THEOREM</code>:</p>\n<div class=\"codehilite\"><pre><span></span>    3618 test_benchmark\n   11654 train_benchmark\n    3666 validation_benchmark\n</pre></div>\n\n\n<p>Any idea where is the discrepancy with the number you report above (3184 theorems for the test set) coming from?</p>",
+        "id": 186777567,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580214500
+    },
+    {
+        "content": "<blockquote>\n<p>All those errors are expected. Currently the API supports only theorem parameters and only the selected set of 42 tactics we have enabled.</p>\n</blockquote>\n<p>Just wanted to note that the (hol-light fork) grpc API do support <code>term</code> parameters as well as a selection of <code>convfn</code> parameters, but not all of them</p>",
+        "id": 186778038,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580214942
+    },
+    {
+        "content": "<p>There are library tags that split core, complex, and flyspeck. The counts you give are for core+complex. However, we need to prove core before our 41 tactics are defined, so proving them again using those 41 tactics could allow circular proofs.  We train on complex + core, but we validate and test on complex alone. That leaves 3225 theorems in validation, and 3184 in test (fewer in test due to the deduplication Christian already mentioned.</p>",
+        "id": 186782109,
+        "sender_full_name": "Sarah Loos",
+        "timestamp": 1580218221
+    },
+    {
+        "content": "<p>Thanks <span class=\"user-mention\" data-user-id=\"239408\">@Sarah Loos</span> that perfectly answers my question!</p>",
+        "id": 186802045,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580230558
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239408\">@Sarah Loos</span> <span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> could you shed some light on the nature of the theorems used as arguments of tactics in the proof logs but that are never proved in the proof logs and do not appear in the theorem database. A good number of such theorems appear to be simple REFL forms <code>t |- t</code> but that's not always true. A couple examples that are never proved and do not appear as immediately trivial (there are number of those):</p>\n<div class=\"codehilite\"><pre><span></span>- 1922886628595100084 used in [&quot;1040308614564293951&quot;, &quot;1068224724366208851&quot;, &quot;1112690888686785731&quot;, &quot;1158014677968443900&quot;, &quot;1164501139575860811&quot;, &quot;130472234907213660&quot;, &quot;1343784825924590900&quot;, &quot;1352911036261694414&quot;, &quot;1418978342581894759&quot;, &quot;1474549535369966656&quot;, &quot;1513888587157156538&quot;, &quot;1572453226266457388&quot;, &quot;1599750970754608282&quot;, &quot;1620034501266471566&quot;, &quot;1769559777913546939&quot;, &quot;205743562540180251&quot;, &quot;2109293764129290517&quot;, &quot;2126361288542869040&quot;, &quot;2277895992876250526&quot;, &quot;2293215433400331757&quot;, &quot;256901751634745145&quot;, &quot;2607920021777763754&quot;, &quot;2756227240911330037&quot;, &quot;2814672109419638476&quot;, &quot;2870558538778029314&quot;, &quot;288796831567879679&quot;, &quot;2926604530781841183&quot;, &quot;294378225568766821&quot;, &quot;2962920115237185377&quot;, &quot;3005304601846519849&quot;, &quot;3017833332354727747&quot;, &quot;3073340668359178974&quot;, &quot;3259640035187228089&quot;, &quot;3295559022993975824&quot;, &quot;3336700799157016006&quot;, &quot;3392958071979927571&quot;, &quot;3417040980091477675&quot;, &quot;3481134151910663053&quot;, &quot;3506191389615981736&quot;, &quot;3604528285204124469&quot;, &quot;360880980515827351&quot;, &quot;3644717466658263822&quot;, &quot;3704608103438291317&quot;, &quot;3714364479833122652&quot;, &quot;3723658874948739190&quot;, &quot;3853086673632578265&quot;, &quot;3886915657877240313&quot;, &quot;3984011009279567911&quot;, &quot;4143882562872306321&quot;, &quot;4166654576449910877&quot;, &quot;4215257151813055174&quot;, &quot;4327049118031780666&quot;, &quot;438205370349448367&quot;, &quot;4527762605576935742&quot;, &quot;4571588623963401944&quot;, &quot;4588263066752175426&quot;, &quot;552208215923821302&quot;, &quot;744097452034251800&quot;, &quot;799704810144038539&quot;, &quot;849058353815678716&quot;, &quot;955717506610167167&quot;, &quot;976594976798091141&quot;]\n- 1557372991274822741 used in [&#39;1710726984666665793&#39;, &#39;1775991960234953438&#39;, &#39;2674137462841098894&#39;, &#39;2814672109419638476&#39;, &#39;3261843337692443473&#39;, &#39;3365009944937700598&#39;, &#39;352808503728591300&#39;, &#39;3780566399882342374&#39;, &#39;3836286049713174388&#39;, &#39;3949756777445235777&#39;, &#39;527345757246532498&#39;, &#39;695832356799713264&#39;, &#39;709680727040550934&#39;]\n- 3887972958511973677 used in [&#39;1671664489604345755&#39;, &#39;2044835932020195874&#39;]\n</pre></div>\n\n\n<p>In particular, since they appear in proof logs as valid premises, do you consider valid the use of these theorems by a prover against your benchmark?</p>",
+        "id": 187261298,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580736375
+    },
+    {
+        "content": "<p>(and if so) under which ordering constraints.</p>",
+        "id": 187263434,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580738001
+    },
+    {
+        "content": "<p>After further exploration I can see 86747 such unproven but used theorems across train/test/valid of which 56726 are trivial \"REFLs\" (which are therefore trivially provable), but it's harder to characterize clearly the 30k others.</p>",
+        "id": 187274148,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580745045
+    },
+    {
+        "content": "<p>There is a difference between the human proofs that we have logged and the synthetic proofs.  </p>\n<p>From your description, I believe you're looking at the human proofs.  We only recorded backward tactics (loosely speaking, steps of type tactic in HOL Light, which convert a goal to a new goalstate).  We did not implement logging for human theorems that are generated via forward steps (e.g. from rules that convert thm-&gt;thm in HOL Light, like SPECL).  Many human proofs are a combination of forward and backward proof steps.  In training, we keep these forward generated theorems as arguments, since they still have semantic meaning that is useful for training, but at present we would not be able to generate these exact proofs, since the forward-derived theorems are not available in our theorem database and we have not yet implemented forward proving steps.  This doesn't mean that the theorem can't be proved via DeepHOL, just that it may need to take more backward steps to close the goal. </p>\n<p>Another place that these theorems can come from is the assumption list in the goal.  I believe around 45% of the theorem arguments in the human training steps come directly from the assumption list in the current goal.  These can come from either being explicitly passed as tactic arguments, or added in bulk via an ASM_* tactic.</p>\n<p>Regarding the synthetic proofs, these arguments should all come from the theorem database as you expected.</p>",
+        "id": 187296782,
+        "sender_full_name": "Sarah Loos",
+        "timestamp": 1580759326
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239408\">@Sarah Loos</span> Thanks! Yes, talking about the human proofs.</p>\n<p>So it would be rather unfair to add these theorems to the theorem database of the prover (they should rather be re-demonstrated (in some backward way) at proof time if needed) since they do carry the forward reasoning steps that produced them (however simple they are).</p>\n<p><span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> mentioned that you had an internal version that would extend support for forward reasoning / conversions, are the proof logs different in that next version how would that change the overall picture here?</p>",
+        "id": 187298282,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580760352
+    },
+    {
+        "content": "<p>(from re-reading earlier posts, I presume it would allow to technically generate these theorems through forward reasoning steps, but your current system does not cover creating the associated proof logs. Aka you added a forward reasoning API to register new theorems through conversions, but the proof logs remain the same?)</p>",
+        "id": 187299056,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580760937
+    },
+    {
+        "content": "<blockquote>\n<p>A good number of such theorems appear to be simple REFL forms <code>t |- t</code> but that's not always true.</p>\n</blockquote>\n<p>Thanks a lot for the insight. BTW, we have part timer looking into adding the capability of applying REFLs or just enhancing the theorem database by equations in the other direction. We try to figure out the best way to go about it.</p>",
+        "id": 187299723,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1580761431
+    },
+    {
+        "content": "<blockquote>\n<p>Another place that these theorems can come from is the assumption list in the goal. I believe around 45% of the theorem arguments in the human training steps come directly from the assumption list in the current goal. These can come from either being explicitly passed as tactic arguments, or added in bulk via an ASM_* tactic.</p>\n</blockquote>\n<p>I will verify how many land in that category, but probably less than 45% given the above?</p>",
+        "id": 187299905,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580761533
+    },
+    {
+        "content": "<blockquote>\n<p>Thanks a lot for the insight. BTW, we have part timer looking into adding the capability of applying REFLs or just enhancing the theorem database by equations in the other direction. We try to figure out the best way to go about it.</p>\n</blockquote>\n<p>The simplest cases (eg REFL) can easily be handled outside of the container; obviously with the associated decrease in trust in the proofs generated.</p>",
+        "id": 187300257,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580761736
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239408\">@Sarah Loos</span> out of curiosity do you have an example hol light theorem whose code picks an assumption argument without the use of an ASM_* tactic?</p>",
+        "id": 187303840,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580763884
+    },
+    {
+        "content": "<blockquote>\n<blockquote>\n<p>Another place that these theorems can come from is the assumption list in the goal. I believe around 45% of the theorem arguments in the human training steps come directly from the assumption list in the current goal. These can come from either being explicitly passed as tactic arguments, or added in bulk via an ASM_* tactic.</p>\n</blockquote>\n<p>I will verify how many land in that category, but probably less than 45% given the above?</p>\n</blockquote>\n<p>A clarification: the assumption list for a goal is a list of theorems.  In many cases, these theorems are of the form <code>t |- t</code>, so they look as if they could be generated via a forward call to REFL, but they could also come from the assumption list.  Here I am referring to the internal HOL Light representations - interactive HOL Light only displays the conclusion of each theorem in a goal's assumption list.  In our proof logging of the goals we were also only keeping the conclusions for brevity.</p>\n<p>Unlike the synthetic proof logs, which serve as a proof witness that can be passed to HOL Light via the proof checker, the human proof logs were not generated to be proof witnesses, but rather to serve as a source of training data.  In many cases they have steps that we can't yet replicate (tactics that require term generation, forward theorem generation, etc.).  However, we wanted to release them as a reference - we haven't yet leveraged all the data that is recorded in the human proof logs, but other people might be able to!  I hope this clarifies their purpose a bit.</p>",
+        "id": 187312402,
+        "sender_full_name": "Sarah Loos",
+        "timestamp": 1580769216
+    },
+    {
+        "content": "<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"239408\">Sarah Loos</span> out of curiosity do you have an example hol light theorem whose code picks an assumption argument without the use of an ASM_* tactic?</p>\n</blockquote>\n<p>Unfortunately I don't know of any examples off hand that I could point you to.  Of course, you could search for one by looking for any tactic that has some but not all of the assumptions passed as theorem arguments, but I'm guessing you'd already thought of that. :)</p>",
+        "id": 187312990,
+        "sender_full_name": "Sarah Loos",
+        "timestamp": 1580769597
+    },
+    {
+        "content": "<p>(simple ASSUME is the canonical way to turn an hypothesis into a tactic theorem argument)</p>",
+        "id": 187391654,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580844710
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239408\">@Sarah Loos</span> thanks for reiterating the purpose of the human vs synthetic proof logs. Very clear <span aria-label=\"+1\" class=\"emoji emoji-1f44d\" role=\"img\" title=\"+1\">:+1:</span></p>",
+        "id": 187393246,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580845622
+    },
+    {
+        "content": "<blockquote>\n<p>(simple ASSUME is the canonical way to turn an hypothesis into a tactic theorem argument)</p>\n</blockquote>\n<p><span class=\"user-mention\" data-user-id=\"249373\">@Stanislas Polu</span> Yes, this is how you'd implement ASM_* rules that are forward proofs on theorems.  However, it's slightly different for ASM_* tactics for backward proving on goals.  In the backward case, you should use the existing theorems in the goal assumption list (see ASM function <a href=\"https://github.com/jrh13/hol-light/blob/b913ffef1ffd16f64a81fe1b783f62e756d33a40/tactics.ml#L304\" target=\"_blank\" title=\"https://github.com/jrh13/hol-light/blob/b913ffef1ffd16f64a81fe1b783f62e756d33a40/tactics.ml#L304\">here</a>).  If you use ASSUME, you'll actually be creating a new theorem.  The new theorem may often (or always, depending on your specific use case) be equivalent to the one in the goal assumption list, but not necessarily.  Not sure if the distinction is relevant for you, and feel free to disregard if not!</p>",
+        "id": 187490923,
+        "sender_full_name": "Sarah Loos",
+        "timestamp": 1580934062
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"249373\">@Stanislas Polu</span></p>\n<blockquote>\n<p>(from re-reading earlier posts, I presume it would allow to technically generate these theorems through forward reasoning steps, but your current system does not cover creating the associated proof logs. Aka you added a forward reasoning API to register new theorems through conversions, but the proof logs remain the same?)</p>\n</blockquote>\n<p>Yes the Proof-Log and proof-checker will be extended. The modification to the proof-logs is relatively minor, though. The checker changes are more work, but will be essential.</p>",
+        "id": 187517473,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1580959978
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239408\">@Sarah Loos</span> <span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> I was able to misuse holist (interacting with the <a href=\"http://gcr.io/deepmath/hol-light\" target=\"_blank\" title=\"http://gcr.io/deepmath/hol-light\">gcr.io/deepmath/hol-light</a> container) to prove false using the RegisterTheorem / ApplyTacticRequest pair as documented in this thread. Could you explain how a user of holist should protect herself from this sequence of actions leading to a proof of false?</p>\n<p><a href=\"https://gist.github.com/spolu/a9672849a8a13469eb20de6553ff016e\" target=\"_blank\" title=\"https://gist.github.com/spolu/a9672849a8a13469eb20de6553ff016e\">https://gist.github.com/spolu/a9672849a8a13469eb20de6553ff016e</a></p>\n<p>The problem comes from the <code>SUBST1_TAC</code> returning an erroneous Goal, or failing to fail properly (the hypothesis of the theorem passed not being part of the goal's hypothesis). How are we supposed to handle this situation?</p>",
+        "id": 187535135,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580983919
+    },
+    {
+        "content": "<p>cc <span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span> if you can reproduce and let me know what you think ^ ?</p>",
+        "id": 187535605,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580984343
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"249373\">@Stanislas Polu</span> Interesting.  I can try to verify later.  Have to tried plugging this into HOL Light?  I assume the problem is that HOL Light returns the goal as <code>p=T |- T =&gt; q</code>, and then HOList ApplyTactic neglects to return the hypothesis.  Is that correct?</p>",
+        "id": 187543215,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1580991999
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span>  As mentioned in the documentation, the tactic is invalid if the goal's assumption does not include the theorem passed as argument's assumptions:</p>\n<div class=\"codehilite\"><pre><span></span># let pth = ASSUME `p = T`;;\nval pth : thm = p &lt;=&gt; T |- p &lt;=&gt; T\n# g `p ==&gt; q`;;\nWarning: Free variables in goal: p, q\nval it : goalstack = 1 subgoal (1 total)\n\n`p ==&gt; q`\n\n# e(SUBST1_TAC pth);;\nException: Failure &quot;VALID: Invalid tactic&quot;.\n</pre></div>\n\n\n<p>(which is slightly more worrying since it means that somewhere SUBST1_TAC, through the API executes where it should fail? it's not just an assumption not being returned)</p>\n<p>For completeness/reference, a valid use of the tactic:</p>\n<div class=\"codehilite\"><pre><span></span># g `p = T ==&gt; (p ==&gt; q)`;;\nWarning: Free variables in goal: p, q\nval it : goalstack = 1 subgoal (1 total)\n\n`(p &lt;=&gt; T) ==&gt; p ==&gt; q`\n\n# e(DISCH_TAC);;\nval it : goalstack = 1 subgoal (1 total)\n\n  0 [`p &lt;=&gt; T`]\n\n`p ==&gt; q`\n\n# e(SUBST1_TAC pth);;\nval it : goalstack = 1 subgoal (1 total)\n\n  0 [`p &lt;=&gt; T`]\n\n`T ==&gt; q`\n</pre></div>",
+        "id": 187544829,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1580993431
+    },
+    {
+        "content": "<p>Thanks for documenting and sharing this example!  I am surprised that the same \"VALID: Invalid tactic\" isn't returned by HOList.  Like Jason, I would have expected HOL Light to return the theorem <code>p=T |- T =&gt; q</code>, which we don't consider to be a valid proof of the original goal (<code>|- p =&gt; q</code>), since hypotheses are added mid-proof.</p>\n<blockquote>\n<p>Could you explain how a user of holist should protect herself from this sequence of actions leading to a proof of false?</p>\n</blockquote>\n<ol>\n<li>We don't allow theorems with hypotheses in our premise set, but this is enforced purely by convention (i.e. there are none in our theorem database) and is not well documented anywhere.</li>\n<li>We rely on the proof checker, which reruns the found proof tree in HOL Light and checks that the resulting theorem object has no hypotheses and the conclusion is alpha-equiv to the original goal term.  <span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span></li>\n</ol>",
+        "id": 187565872,
+        "sender_full_name": "Sarah Loos",
+        "timestamp": 1581008000
+    },
+    {
+        "content": "<blockquote>\n<p>We don't allow theorems with hypotheses in our premise set, but this is enforced purely by convention (i.e. there are none in our theorem database) and is not well documented anywhere.</p>\n</blockquote>\n<p>This is a surprising restriction, especially since the human proof logs don't comply to it.</p>\n<p>So is it fair to say that Holist is not usable today for anything other than <code>TACTIC + theorem arguments coming from the theorem database *only*</code>?</p>",
+        "id": 187569205,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1581010076
+    },
+    {
+        "content": "<blockquote>\n<p>We rely on the proof checker, which reruns the found proof tree in HOL Light and checks that the resulting theorem object has no hypotheses and the conclusion is alpha-equiv to the original goal term. </p>\n</blockquote>\n<p>What are the guarantees / restrictions of the proof checker vs the API? Also it was my understanding from the thread that the new proof checker relied on the same API?</p>",
+        "id": 187569343,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1581010141
+    },
+    {
+        "content": "<p>Thanks for bringing this to our attention. Yes, premises with hypotheses are not fully supported in the tactic API. However, I thought that this always results in some sort of error, which it apparently does not. This looks like a serious enough issue to warrant an update of our open source version.</p>\n<p><strong>The proof checker does not rely on this API</strong>, because we don't want to have to trust any of it. It was designed to catch problems like this one. The proof checker compiles the proof log into OCaml code and runs with the same guarantees that HOL Light does (modulo a couple of lines of book-keeping code written in OCaml). However, we still want the stateless API to be reliable.</p>",
+        "id": 187607645,
+        "sender_full_name": "Markus Rabe",
+        "timestamp": 1581041798
+    },
+    {
+        "content": "<p>Here is my two cents for what it is worth:</p>\n<p>That bug seems troubling and should probably be investigated and fixed.  It is possible that there are other weird side effects out there.  (However, I agree since those theorems with the assumptions are not used in practice (and shouldn't be used) that this probably doesn't present a problem.)</p>\n<p>I also think that the \"safety net\" provided by the external proof checker seems reasonable.  (I don't know what \"bookkeeping\" means, but I assume a reasonable amount of care was put into this.  One can always go down a rabbit hole with stuff like this.)</p>\n<p><span class=\"user-mention\" data-user-id=\"249373\">@Stanislas Polu</span>:</p>\n<blockquote>\n<p>This is a surprising restriction, especially since the human proof logs don't comply to it.</p>\n</blockquote>\n<p>I think it is a reasonable requirement to not use theorems which have assumptions as premises.  I don't recall any human-written proofs in HOL-Light (except maybe at the lowest level, just after the kernel) which use such theorems.  Moreover, they would never be necessary.  If it is not clear, I believe all of these \"refl\" theorems are (1) computer generated and (2) used to prove trivial propositional theorems.  Not only is <code>c = T |- c = T</code> trivial, it is used to prove trivial propositional tautologies like <code>(c ==&gt; a ==&gt; b) ==&gt; a /\\ ~b ==&gt; ~c</code>.</p>\n<p>From a prior investigation I did, it seems that they are automatic intermediate steps in the <code>TAUT</code> tool.  Because they are automatic, they aren't exactly human training data, and moreover, they are used to prove propositional tautologies that MESON could handle instantly.</p>\n<p>Just like we don't include all the intermediate theorems in the MESON tactic, it seems reasonable not to include the intermediate theorems in TAUT, even though it is not a tactic.</p>\n<p>Now, what is tricker is whether to include <code>(c ==&gt; a ==&gt; b) ==&gt; a /\\ ~b ==&gt; ~c</code> as a premise, when it is used in cases like <code>MATCH_MP_TAC(TAUT `(c ==&gt; a ==&gt; b) ==&gt; a /\\ ~b ==&gt; ~c`)</code>.  I think \"no\", but that is debatable.  In Lean and Coq, such quick lemmas would be created through the <code>have</code> tactic, and again in Lean and Coq, I don't think <code>have</code> lemmas should be premises, but that is a matter of style.</p>\n<p>The best of course would be to have the AI find the <code>have</code> or <code>TAUT</code> lemmas, and that would be an amazing step forward!</p>",
+        "id": 187612581,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1581049499
+    },
+    {
+        "content": "<blockquote>\n<p>Thanks for bringing this to our attention. Yes, premises with hypotheses are not fully supported in the tactic API. However, I thought that this always results in some sort of error, which it apparently does not. This looks like a serious enough issue to warrant an update of our open source version.</p>\n</blockquote>\n<p>Thanks <span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span>, looking forward to working with the updated version.</p>\n<p>Maybe related to this issue, the human proof logs contain proof steps that appear as similarly bogus at first sight. As an example if you look at 1239658577412467327 from the validation set, it starts by a <code>DISJ_CASES_TAC</code>, no problem there, but then applies your internal <code>RAW_POP_TAC 0</code> on the two subgoals, which seems to strip the assumptions from the subgoals. The SUBST1_TAC are then applied to goals that don't have any hypothesis and should fail in native hol light.</p>\n<p>Could you describe in more detail the interplay between RAW_POP_TAC and SUBST1_TAC in the human prooflogs? Also and that's what I wanted to bing here, if you fix <code>SUBST1_TAC</code> the human proof logs as they are today may become invalid?</p>",
+        "id": 187621028,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1581063374
+    },
+    {
+        "content": "<p>Thanks <span class=\"user-mention\" data-user-id=\"249373\">@Stanislas Polu</span> for looking into the details of HOList!  I'm enjoying the conversation - hopefully this is helpful for you.</p>\n<blockquote>\n<p>Maybe related to this issue, the human proof logs contain proof steps that appear as similarly bogus at first sight. </p>\n</blockquote>\n<p>I want to come back again to the role of the human proof logs in HOList.  These are distilled automatically from human HOL Light proofs for the purpose of imitation learning on human proofs.  Converting HOL Light proofs (implemented programmatically as a single, compound tactic) to interactive proving steps is hard (see [<a href=\"https://link.springer.com/chapter/10.1007/978-3-662-49224-6_6\" target=\"_blank\" title=\"https://link.springer.com/chapter/10.1007/978-3-662-49224-6_6\">Adams</a>] and discussions in this forum about recording Lean proofs) and is not a research goal of HOList.</p>\n<p>Moreover, to support arbitrary exploration of the interactive proof search tree, we use a stateless prover.  Some features of HOL Light are fundamentally incompatible with a stateless approach (e.g. metavariables), but luckily are only used in a small minority of human proofs.  Other things, like forward derived theorems, are tricky to log: in this case we log the theorem values without any proof.</p>\n<p>I added RAW_POP_TAC specifically to log POP_ASSUM.  If I recall correctly, the original tactic removes a specified assumption from the goal state, but keeps it in the local HOL Light environment; it then applies the next tactic using the former assumption as an argument.  How do we log the same two steps in a stateless prover?  I decided to keep the goal state the same as in the original proof (with the assumption stripped), and log the value of the theorem argument.  Just like with forward-derived theorems, these popped assumption theorems are logged without any proof or tracing of their source.</p>\n<p>While many of the ~20,000 human proofs are not replayable or checkable, they are still a good resource for training, so we don't throw them out just because proof logging was incomplete.  When using deep networks to search for new proofs, the HOList API may not have access to the exact same theorem arguments that were used in the human proofs for the reasons listed above.  However, if the network learns to recognize what makes a theorem useful semantically, then it should still effectively rank the set of theorems that are available.</p>\n<p>Some of our more recent results indicate that imitation learning is useful, but not critical (<a href=\"https://arxiv.org/pdf/1905.10501.pdf\" target=\"_blank\" title=\"https://arxiv.org/pdf/1905.10501.pdf\">Learning to Reason in Large Theories without\nImitation</a>, <a href=\"https://arxiv.org/abs/1909.11851\" target=\"_blank\" title=\"https://arxiv.org/abs/1909.11851\">Mathematical Reasoning in Latent Space</a>).  This suggests that we could greatly simplify the integration of DeepHOL/HOList with new proof assistants like Lean, since we can skip the overhead of converting human proofs in an existing library into a universal proof log format for training.  Instead, we can go straight to reinforcement learning from zero human training data.</p>",
+        "id": 187693080,
+        "sender_full_name": "Sarah Loos",
+        "timestamp": 1581121612
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239408\">@Sarah Loos</span> thanks for the additional context. Really enjoying the conversation as well!</p>\n<p>I do appreciate your points, and I agree the human proofs serve as good training signal. But I also think that it would be very desirable if they could be as replayable as possible. I agree that this is not an easy problem.</p>\n<p>On the RL argument, if we look at the big picture, even the RL approach you mention relies on some form of supervision:  the statements and how they shape the space being searched. So we know that as of today we still need some supervision to make progress in the domain. How much supervision I think is still an open question and I think Holist should try to be the right system even for approaches that rely on direct human supervision for proof steps, or at least aim at being as good of a system for that use case as possible?</p>",
+        "id": 187769611,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1581276002
+    },
+    {
+        "content": "<p>(Thank you so much for all your help!)</p>",
+        "id": 187769627,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1581276020
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239408\">@Sarah Loos</span> concerning RAW_POP_TAC I see the rationale for logging purposes. I will check the logs to convince myself that  that the popped assumptions are used in subsequent proof steps. An approach could be to maintain the popped assumption as valid theorem argument in subsequent steps when sampling proofs that attempt to use this tactic.</p>",
+        "id": 187808089,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1581335039
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239408\">@Sarah Loos</span> On the above and the usability of Holist for as many uses cases as possible. One thing that is highly desirable is that searching for proofs using the API is valid and supported. As an example, the bug above prevents that but do you think holist will be in a position to support that use case eventually?</p>",
+        "id": 187808248,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1581335176
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239408\">@Sarah Loos</span> finally, sorry for the multiple questions, can you shed the same kind of lights on the use of RAW_POP_ALL_TAC ?</p>",
+        "id": 187808401,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1581335374
+    },
+    {
+        "content": "<blockquote>\n<p>On the RL argument, if we look at the big picture, even the RL approach you mention relies on some form of supervision:  the statements and how they shape the space being searched.</p>\n</blockquote>\n<p>Couldn't agree more with this statement!  I think this is all a matter of degree - ultimately we'd like to rely less and less on formal human proofs and formal  human-generated theorem statements, since this comprises a relatively small fraction of natural language mathematics.  Hopefully there are enough of them that they can bootstrap learning from natural language mathematics.</p>",
+        "id": 187938943,
+        "sender_full_name": "Sarah Loos",
+        "timestamp": 1581445512
+    },
+    {
+        "content": "<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"239408\">Sarah Loos</span> finally, sorry for the multiple questions, can you shed the same kind of lights on the use of RAW_POP_ALL_TAC ?</p>\n</blockquote>\n<p>See POP_ASSUM vs. POP_ASSUM_LIST in HOL Light.</p>",
+        "id": 187939406,
+        "sender_full_name": "Sarah Loos",
+        "timestamp": 1581445757
+    },
+    {
+        "content": "<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"239408\">Sarah Loos</span> concerning RAW_POP_TAC I see the rationale for logging purposes. I will check the logs to convince myself that  that the popped assumptions are used in subsequent proof steps. An approach could be to maintain the popped assumption as valid theorem argument in subsequent steps when sampling proofs that attempt to use this tactic.</p>\n</blockquote>\n<p>The goal state already has this - it's the assumption list!  If you look at the POP_ASSUM <a href=\"https://www.cl.cam.ac.uk/~jrh13/hol-light/HTML/POP_ASSUM.html\" target=\"_blank\" title=\"https://www.cl.cam.ac.uk/~jrh13/hol-light/HTML/POP_ASSUM.html\">man page</a>, you'll see that it's really more of a convenience function than absolutely necessary.  It's essentially using an assumption combined with weakening the goal.  If you use a tactic that doesn't include all the assumptions from the assumption list (i.e. don't use ASM_* tactics), then the two should be equivalent steps.  RAW_POP_TAC is still an available tactic, but now it's just the weakening step.</p>",
+        "id": 187940564,
+        "sender_full_name": "Sarah Loos",
+        "timestamp": 1581446433
+    },
+    {
+        "content": "<blockquote>\n<p>The goal state already has this - it's the assumption list! If you look at the POP_ASSUM man page, you'll see that it's really more of a convenience function than absolutely necessary. It's essentially using an assumption combined with weakening the goal. If you use a tactic that doesn't include all the assumptions from the assumption list (i.e. don't use ASM_* tactics), then the two should be equivalent steps. RAW_POP_TAC is still an available tactic, but now it's just the weakening step.</p>\n</blockquote>\n<p><span class=\"user-mention\" data-user-id=\"239408\">@Sarah Loos</span> right, but I still don't quite see how it will impact the proof logs once you fix SUBST1_TAC. As current proof logs won't be valid anymore?</p>\n<p>I think, the most important thing should be that a proof search relying on the API should be guaranteed to be consistent if goals/subgoals are properly handled when talking to the API. And the second thing that I campaign for is for the human proof logs to be as replayable as possible (coqgym's proof logging system seems to achieve that goal as an example)</p>",
+        "id": 188012015,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1581516214
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239408\">@Sarah Loos</span> <span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span> <code>4244727170697809164</code> is also interesting as the last ACCEPT_TAC is, I believe, inconsistent as well (preceded with a RAW_POP_TAC that removes the required hypothesis)</p>",
+        "id": 188020642,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1581521736
+    },
+    {
+        "content": "<blockquote>\n<p>I think, the most important thing should be that a proof search relying on the API should be guaranteed to be consistent if goals/subgoals are properly handled when talking to the API.</p>\n</blockquote>\n<p>I definitely agree here - we want anything that interacts with the API to be reliable.  This is moving a lot of soundness-critical code to be managed faster and more flexibly by the external proof search, so on top of this I would still add a proof checker that ensures correctness of the synthetic proofs purely via the proof assistant.  For example, we can always register a theorem \"False\" and then prove anything, but the proof checker should reject these proofs.</p>",
+        "id": 188064869,
+        "sender_full_name": "Sarah Loos",
+        "timestamp": 1581551101
+    },
+    {
+        "content": "<p>One of the biggest open research questions for automated reasoning about mathematics is figuring out the right level of abstraction.  How do we represent a theorem?  How do we represent a proof step?  This is one of the fundamental differences between reasoning about mathematics and strategizing about steps in a game of Go, where the definition of an action is clearly defined and fixed.</p>\n<p>The \"best\" representation will depend on what's most appropriate for the specific algorithm or human that is driving the search.  For proof search guided by deep networks, I think this question is largely unanswered and unexplored, but hopefully won't be that way for long!</p>\n<p>Our approach with HOList is to mimic a human working with HOL Light in interactive mode.  Additionally, rather than asking a network to distinguish the hundreds of <a href=\"https://www.cl.cam.ac.uk/~jrh13/hol-light/reference.html\" target=\"_blank\" title=\"https://www.cl.cam.ac.uk/~jrh13/hol-light/reference.html\">tactics and rules</a> implemented in HOL Light, we limit it to 41 basic tactics.  These tactics were not chosen arbitrarily, but rather through adding logging systematically by updating the justification type.  To leverage the programmatic human proofs in the HOL Light library as training data for interactive proving, we automatically map them into prooflogs that match our action space of 41 tactics, with some steps (e.g. forward proof derivations) omitted.</p>\n<p>CoqGym is using a higher-level abstraction of a proof step: each step can be an arbitrarily complex (and for human proofs, compound) programmatic tactic, defined by a two-page context-free grammar (ASTactic).  Most of the existing coq proofs already fit this paradigm, so logging the human proofs does not require significant rewriting.  It's worth noting that they also had to throw out some human proofs that use goal selectors and that the action space of ASTactics that can be generated by the trained models is not the full space available in the human proofs. </p>\n<p>Interactive theorem provers typically implement more proving features than can reasonably be learned by current deep learning approaches.  So what should we do with human proofs that use these additional features?  In the release of our human proof logs, we attempt to convert and unroll as many steps as possible from the programmatic tactic language to the 41 interactive tactics in our action space.  Other reasonable approaches are to train on them as-is or to omit them altogether.</p>",
+        "id": 188065156,
+        "sender_full_name": "Sarah Loos",
+        "timestamp": 1581551346
+    },
+    {
+        "content": "<p>I might just add that it seems to me that logging Lean proofs will be quite the task too if we ever decide to do it.  There is a lot of flexibility in Lean proofs; the tactic language is a full programming language and is readily extendible; the community has been quite productive in making custom tactics; one has to deal with tactic parameters which get interpreted according to the context; the behavior of some tactics change as other theorems are proved (for example I believe theorems can be added to the <code>simp</code> tactic); and one can at any point in a proof switch from tactic mode to term mode (forward proving).  (Also implicit parameters, type classes, and private theorems add their own complexities.)  All these things make Lean great as a programming language and theorem prover, but will make tactic logging difficult.</p>",
+        "id": 188067518,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1581553377
+    },
+    {
+        "content": "<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"239408\">Sarah Loos</span> <span class=\"user-mention silent\" data-user-id=\"217806\">Markus Rabe</span> <code>4244727170697809164</code> is also interesting as the last ACCEPT_TAC is, I believe, inconsistent as well (preceded with a RAW_POP_TAC that removes the required hypothesis)</p>\n</blockquote>\n<p>BTW, we are about to release an update to the HOL-Light RPC API, hopefully by end of this week, including:</p>\n<ul>\n<li>Verifying that theorem parameters do not have hypotheses. (This is a bit restrictive, but it seems that they just cause trouble for now. Hypotheses can be replaced by implications, so we can live with that for now.)</li>\n<li>Some experimental forward reasoning support. It is not supported by the proof checker, but feel free to play with it.</li>\n<li>Fixed fingerprinting. (Correct fingerprint returned).</li>\n<li>Better support of goal assumptions.</li>\n</ul>\n<p>We are in the process of verifying that the new API is compatible with the open-sourced DeepHOL code base. We might need to cherry-pick some of the changes if they conflict with the DeepHOL code we have not updated in the open-source version.</p>",
+        "id": 188083341,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1581577715
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span> </p>\n<blockquote>\n<p>I might just add that it seems to me that logging Lean proofs will be quite the task too if we ever decide to do it.  </p>\n</blockquote>\n<p>In the longer term, we are working on a more generic variant of DeepHOL that does not rely on an engineered, internal view of the goal stack.  Basically, the AI  would just interact by normal character sequences, similar to those a human user would produce. Also it could use extra side-information from stored human proofs or interactive interaction instead of structured proof-logs. This would allow us to simplify the system while relying more heavily of current state-of-the-art AI/Deep-Learning methods.</p>\n<p>Also this could mean that it will interface easier with Lean and could utilize sloppier training signals in a more flexible manner.</p>",
+        "id": 188083567,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1581578108
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"249373\">@Stanislas Polu</span>, today we have released our first update to the Holist HOL Light backend on GitHub and the  <a href=\"http://gcr.io/deepmath/hol-light\" target=\"_blank\" title=\"http://gcr.io/deepmath/hol-light\">gcr.io/deepmath/hol-light</a> docker image.</p>\n<p>Changes include:</p>\n<ul>\n<li>Safer theorem registration (hypotheses are disallowed)</li>\n<li>More consistent fingerprint support (correct fingerprint is returned during registration)</li>\n<li>Fingerprinting fixed for goals with assumptions.</li>\n<li>Some limited support for forward reasoning rules.</li>\n</ul>\n<p>Feedback, discussions and external contributions are welcome.</p>",
+        "id": 188264219,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1581731691
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> great news! I will experiment with it next week <span aria-label=\"+1\" class=\"emoji emoji-1f44d\" role=\"img\" title=\"+1\">:+1:</span> A few quick questions:</p>\n<ul>\n<li>the proof logs haven't been updated right? Which means the safer theorem registration breaks most proof replays. I know your position is that it is not a problem but just wanted to get the final state we're in right now?</li>\n<li>Do you have any documentation for the forward reasoning rules support?</li>\n<li>Does the safer theorem registration fixes all inconsistencies in the API? If so can you explain how it fixes it?</li>\n</ul>\n<p>Thanks!</p>",
+        "id": 188277216,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1581760193
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"249373\">@Stanislas Polu</span> </p>\n<ul>\n<li>Prrof logs have not been not updated. Fingerprinting changes affect only theorems with hypotheses, that we disallow in our proofs (not in human proofs though). AFAICR, the proof-logs contain the theorem text for all intermediate  theorems, so their fingerprints could recomputed on the python side easily if necessary. BTW, since the python side fingerprinting did not change, I think that old proof-logs could still be completely valid. We can verify that.</li>\n<li>We have no extra documentation for rules. You have an extra RPC call: ApplyRule and the request should be of the form:<br>\n&lt;RULE&gt; &lt;PRM1&gt; &lt;PRM2&gt; ...<br>\nwhere PRMi can be either a parameter or a list of parameters enclosed in braces (space around braces is mandatory). The theorems are given as THM  &lt;FINGERPRINT&gt;<br>\nFor the possible rules, it is best referred to:<br>\n<a href=\"https://github.com/brain-research/hol-light/blob/35956b7edf34b1ba3fb5c54f4eb108ab08eada03/parse_tactic.ml#L165\" target=\"_blank\" title=\"https://github.com/brain-research/hol-light/blob/35956b7edf34b1ba3fb5c54f4eb108ab08eada03/parse_tactic.ml#L165\">https://github.com/brain-research/hol-light/blob/35956b7edf34b1ba3fb5c54f4eb108ab08eada03/parse_tactic.ml#L165</a><br>\nfore example:<br>\nrule: \"CONJUNCT1 THM 3889194075140062007\"<br>\nor:<br>\nrule: \"ASM_REWRITE_RULE [ ] THM 4453115153695028333\"</li>\n</ul>",
+        "id": 188297032,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1581797849
+    },
+    {
+        "content": "<p>Thanks <span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span>.</p>\n<p>I personally feel (but might be wrong) that these changes make Holist quite specialized towards RL approaches. As I'm still actively investigating \"more\" supervised approaches, I wanted to share as feedback for the Holist project that I may prioritize other systems (because a large fraction of valid predicted proof steps have become invalid through the API at this stage, when trained from the human proof logs).</p>\n<p>Also, what about the third question?</p>\n<p>Thanks again for your help and all the productive exchanges with you and the rest of the team (and looking forward to continuing those!)</p>",
+        "id": 188318573,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1581843337
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"249373\">Stanislas Polu</span></p>\n<blockquote>\n<p>I personally feel (but might be wrong) that these changes make Holist quite specialized towards RL approaches.</p>\n</blockquote>\n<p>Our first focus is soundness. We've known for a long time that using theorems with hypotheses yielded unsound results, that's why we have filtered them out from our theorem database. The recent changes just make those earlier decisions more explicit. We have a definitive proof verifier at the end, but we don't want to rely on that during normal use.</p>\n<p>The new changes just represent a safe-guard that seems necessary at this point in time. We will remove parts of those safe-guards as we start to allow more forward reasoning capabilities. For now, we err on the conservative side.</p>\n<p>I can see several alternatives forward:</p>\n<ul>\n<li>We make sure that all backward tactic applications are completely sound in the presence of theorem parameter hypotheses. (This would require a lot of extra work and validations, as we don't exactly know all the possible causes of unsoundnesses in each tactic.)</li>\n<li>Allow forward rules to create and register theorems with hypotheses, but we would disallow them for being used in all backward rules.</li>\n<li>Every time we try to register a theorem with hypotheses, we would turn it into an implication without hypotheses.</li>\n<li>At every tactic application step we would create a definitive forward proof that the produced goals would imply the input goal.</li>\n</ul>\n<p>However, I think that Instead of allowing theorems with hypotheses, it is much higher priority to make forward rules being utilized and supported fully, since that what makes hypotheses compelling in the first place.</p>",
+        "id": 188319714,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1581846110
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"249373\">Stanislas Polu</span></p>\n<blockquote>\n<ul>\n<li>Does the safer theorem registration fixes all inconsistencies in the API? If so can you explain how it fixes it?<br>\nThanks!</li>\n</ul>\n</blockquote>\n<p>The problem is that some of the tactics can be unsound in the presence of hypotheses. For example, in the case of SUBST the unsoundness is removed by extra checks outside the tactic. In our first RL experiments, the system managed to figure out and utilize those unsound operations, so we removed theorems with hypotheses from our theorem database. Since then, none of our RL loops (which used many thousand CPU years, so far) could not create any unsound proofs (as we verify them with our forward proof-checker that goes through the kernel.) This is a very strong indication that our current backward-reasoning system is sound too with the current setup.</p>\n<p>Checking the soundness of isolated backward reasoning steps is much harder than complete forward proof traces, since individual backward reasoning steps can't be checked easily in the current setup, so we can fully trust only the final proofs if we verify them with the proof-checker, however we do that step rarely as it adds extra complexity.</p>\n<p>The correctness of forward rules can be trusted more, since all the steps are immediately verified with the kernel.</p>\n<p>Therefore I think that the highest priority is to support forward proofs more (in the verifier and DeepHOL) and once we can use them, we can allow theorems with hypotheses to be parameters of selected tactics then.</p>",
+        "id": 188320108,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1581847049
+    },
+    {
+        "content": "<p>I am trying to experiment with changing the NN in the Deephol prover system.  However,  the jupyter notebook example doesn't work for me, and the Dockerfile has issues. Does anyone have a fully functioning environment, where they can compile and train a new network?</p>",
+        "id": 190524330,
+        "sender_full_name": "Grant G",
+        "timestamp": 1584116983
+    },
+    {
+        "content": "<p>I would recommend using the Docker directly, using <span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span> 's notebook as a starting point. Happy to help!</p>",
+        "id": 190526215,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1584117912
+    },
+    {
+        "content": "<p><a href=\"https://github.com/jasonrute/holist-communication-example\" target=\"_blank\" title=\"https://github.com/jasonrute/holist-communication-example\">https://github.com/jasonrute/holist-communication-example</a></p>",
+        "id": 190526330,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1584117964
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"248602\">@Grant G</span> There are two levels of abstraction/API for HOList.  One is a python API which should let you change the neural network model being used.  It is well documented by Aaron Hadley and others in a Jupyter notebook.  (See the first message in this HOList thread for links.)  The is also another gRPC API for connecting directly to HOL Light.  That is documented in another notebook by me.  (Again see the first message for links.)  Can you be more clear about what issues you are facing including which notebook and docker files you are having trouble with and what sort of problems you are facing?  Also, I think you should be using the notebook by Aaron and others.  I think it better fits your use case.  Second, if you are using my notebook, there have been recent changes to the HOList docker. And I don’t know if my notebook still works.  Let me know if it doesn’t (or if it is inaccurate) and I’ll try to update it.</p>",
+        "id": 190599487,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1584196234
+    },
+    {
+        "content": "<p>Thanks for helping me out with the issue. I will give an outline of what is going on, and I will try to get the details later. (I have to work on my other project today). I tried to use Aaron's jupyter notebook first. When I tried to build using bazel I had a compilation error </p>\n<p>external/grpc/src/core/lib/gpr/log_linux.cc:43:13: error: ambiguating new declaration of 'long int gettid()'</p>\n<p>I did some googling and it seems like it is a version issue. Next I tried to build the Docker file, but that also had issues compiling due to  the docker file having non-absolute versioning.  I tried to fix that and was able to compile, but  when I called main it would throw an error  unable to import numpy. </p>\n<p>So I am just trying to bypass all this debugging by getting something stable to work with TBH. </p>\n<p>I also attached the Docker file that works up until the python import error.  I added the lines to reinstall the python dependence in the hope that it would fix things, and I changed the base containers. Otherwise it is the Docker file from deepmath-jupyter.<br>\n<a href=\"/user_uploads/3121/Y-oHgTNqc0lksojKvzDejxy9/Dockerfile\" target=\"_blank\" title=\"Dockerfile\">Dockerfile</a></p>",
+        "id": 190750023,
+        "sender_full_name": "Grant G",
+        "timestamp": 1584377578
+    },
+    {
+        "content": "<p>Can you try with the bazel version 0.24.1 in the Dockerfile instead of latest?</p>\n<p>That is,</p>\n<p>FROM <a href=\"http://l.gcr.io/google/bazel:0.24.1\" target=\"_blank\" title=\"http://l.gcr.io/google/bazel:0.24.1\">l.gcr.io/google/bazel:0.24.1</a></p>",
+        "id": 190758080,
+        "sender_full_name": "Kshitij Bansal",
+        "timestamp": 1584381025
+    },
+    {
+        "content": "<p><a href=\"/user_uploads/3121/EK4c1r75rJVTHAAR9oF8kIlC/Dockerfile\" target=\"_blank\" title=\"Dockerfile\">Dockerfile</a> <br>\nSorry I uploaded the wrong file I used. 0.21.0. I will update the version and give it another run tonight.</p>",
+        "id": 190759968,
+        "sender_full_name": "Grant G",
+        "timestamp": 1584381947
+    },
+    {
+        "content": "<p>Actually I tried with 0.24.1 and still get the import numpy issue. I am not sure what has changed, since the image <a href=\"http://gcr.io/deepmath/deephol\" target=\"_blank\" title=\"http://gcr.io/deepmath/deephol\">gcr.io/deepmath/deephol</a> is still working, which was built using bazel version 0.24.1 (at the time latest) and the provided Dockerfile.</p>",
+        "id": 190783389,
+        "sender_full_name": "Kshitij Bansal",
+        "timestamp": 1584394761
+    },
+    {
+        "content": "<p>So, I don't know what the issue is. But I am able to build a working one if I go back to an older commit in the deepmath repo &amp; also update the bazel version.</p>\n<p>To summarize, I tested the following works:</p>\n<ol>\n<li>Clone the deepmath repo.</li>\n<li>git checkout 882f84a</li>\n<li>Change the first line of the Dockerfile to \"FROM <a href=\"http://l.gcr.io/google/bazel:0.24.1\" target=\"_blank\" title=\"http://l.gcr.io/google/bazel:0.24.1\">l.gcr.io/google/bazel:0.24.1</a>\"</li>\n<li>Built the docker image.</li>\n<li>Tested using the instructions on the website (<a href=\"http://deephol.org\" target=\"_blank\" title=\"http://deephol.org\">deephol.org</a>) using this docker image instead of <a href=\"http://gcr.io/deepmath/deephol\" target=\"_blank\" title=\"http://gcr.io/deepmath/deephol\">gcr.io/deepmath/deephol</a></li>\n</ol>",
+        "id": 190791037,
+        "sender_full_name": "Kshitij Bansal",
+        "timestamp": 1584400018
+    },
+    {
+        "content": "<p>Thanks! It builds and doesn't have the same python errors.</p>",
+        "id": 191258708,
+        "sender_full_name": "Grant G",
+        "timestamp": 1584718408
+    },
+    {
+        "content": "<p>I am  having issues building the proof checking docker image  Dockerfile_check_proofs from the website. I get the following error.</p>\n<p>Step 1/16 : FROM ocaml/opam:ubuntu-16.04_ocaml-4.03.0<br>\npull access denied for ocaml/opam, repository does not exist or may require 'docker login': denied: requested access to the resource is denied</p>\n<p>So I replaced that FROM with FROM ocaml/opam2:ubuntu-16.04-ocaml-4.03.0, and then had a new issue. I think this issue is from around the step of building hashfarm. </p>\n<p>theorem_fingerprint_c.cc:1:25: fatal error: caml/memory.h: No such file or directory<br>\ncompilation terminated. </p>\n<p>However, it is my understanding that the HOList won't allow an agent to produce a false proof.(Ignoring the issue stated above about RegisterTheorem). So verification is unnecessary for training an agent.</p>",
+        "id": 191644723,
+        "sender_full_name": "Grant G",
+        "timestamp": 1585070599
+    },
+    {
+        "content": "<p>Has anyone attempted to turn the HOList system into a openai gym environment?</p>\n<p>I realize that doing that in the most straight forward way would result in some serious downsides, but currently that seems like the most effective way to move my research project forward.</p>",
+        "id": 192425843,
+        "sender_full_name": "Grant G",
+        "timestamp": 1585677262
+    },
+    {
+        "content": "<p>Ignoring the technical challenges, does it even fit the format of an open ai gym environment?  Tactic selection might, but what about premise selection?  Also, can you do a tree search in an open ai gym environment?  For example can the board game go (a la alphago) be made into an open ai gym environment?  I thought those didn’t allow backtracking, but I’m not an expert.</p>",
+        "id": 192462558,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1585694593
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"248602\">@Grant G</span>  I don't know if I can be a huge help, but what is it that you are trying to do accomplish, big picture?  Is the idea that you want to keep the general flavor of the HOList project with its tree search, etc, but to train and use your own ML algorithm?  Were you able to follow the notebook <a href=\"https://github.com/aahadley/deepmath-jupyter/blob/master/HOLJup.ipynb\" title=\"https://github.com/aahadley/deepmath-jupyter/blob/master/HOLJup.ipynb\">here</a> and the tutorial <a href=\"https://github.com/aahadley/deepmath-jupyter/blob/master/TutorialPaper.pdf\" title=\"https://github.com/aahadley/deepmath-jupyter/blob/master/TutorialPaper.pdf\">here</a>?  The proof checker isn't 100% needed.  The problem is that the HOList environment is not a 100% accurate simulation of HOL Light, so in a small percentage of cases your agent can find a proof which won't work in HOList.  (I don't know the details to know if it is unsound or just has issues with timeouts or tactic parameters.)  The proof checker is there to give you 100% confidence that the proofs your agent found do work in HOL Light, because it translates the proofs to HOL Light and runs them.  It is certainly not needed to get started with HOList.</p>",
+        "id": 192465856,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1585697016
+    },
+    {
+        "content": "<blockquote>\n<p>Tactic selection might, but what about premise selection?</p>\n</blockquote>\n<p>I'm not sure how it's handled in their system, but it's indeed probably unwise to be constantly transmitting valid-action masks the size of the entire theorem database; it would seem better to let each agent own a copy of the theorem database and perform the filtering based on the fingerprints themselves.</p>\n<blockquote>\n<p>Also, can you do a tree search in an open ai gym environment?</p>\n</blockquote>\n<p>The environment decides when the episode ends; for example, GQSAT (<a href=\"https://arxiv.org/pdf/1909.11830.pdf\" title=\"https://arxiv.org/pdf/1909.11830.pdf\">link</a>) used a <code>gym</code>-like environment for DPLL search.</p>",
+        "id": 192473242,
+        "sender_full_name": "Jesse Michael Han",
+        "timestamp": 1585703339
+    },
+    {
+        "content": "<p>In the case of HOList, however, I think(?) the tree search is maintained by the agent and not the environment, which is mainly responsible for applying tactics and returning lists of goals.</p>",
+        "id": 192473679,
+        "sender_full_name": "Jesse Michael Han",
+        "timestamp": 1585703798
+    },
+    {
+        "content": "<p>So I guess it would be possible.  The environment would hold the search tree (or at least a list of all visited states).  The <code>step</code> method would be to expand a node in the search tree, namely one would pass the following:</p>\n<ol>\n<li>The id of the node to apply an action to.  (A node would be a goal state where you are trying to solve the first goal in the state.)</li>\n<li>The tactic to apply.</li>\n<li>A list of premises (given by fingerprints) to use as tactic arguments for the tactic.</li>\n</ol>\n<p>The response would describe the new goal state, including its id.  If it ever reaches a solved state then one \"wins\".  (Note, selection of the node id would probably be handled by some standard search algorithm like beam search or MTCS instead of, say, a pointer neural network.)</p>\n<p>One danger of this approach is that the environment would have to keep track of the entire search tree, and would never know when to prune a branch.  I don't know if this is a large deal or not.  Another danger is that the tree search couldn't be easily parallelized.</p>\n<p>One more question, besides how to implement the above, would be if one can specify a certain starting position in an environment.  This would be important for some of the proof exploration that the HOList RL papers use.</p>",
+        "id": 192476720,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1585707138
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"116045\">@Jesse Michael Han</span> Thanks for the link to the Sat paper that should help with the implementation .</p>\n<p><span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span> The goal is to make it agent easier to modify. I would like to try out some of the newer ML algorithms that deal better with long term credit assignment , and I would like to try out a Neural Architecture Search, and I would like to try out new reward structures. </p>\n<p>For my other work I use rllib to make hyperparameter searching easier, and so I don't have to reimplement  various RL baseline algorithms. My lab has some very beefy super computers so NAS maybe doable. Gym environments are easy to use with rllib.</p>\n<p>As for the gym details. It shouldn't be too hard to have the graph search be part of a hidden state that the environment keeps track off. The thm database is an issue. If thinks were stateless then, it would just be a integer set mapping to the thm finger prints, but I really don't know how to deal with that at the moment. The second issue is how to encode the goal/subgoal state space . I don't know how to do something reasonable yet text input to a gym environment where the text can be so long, and have it work well with gym+rllib</p>\n<p>So I am going remove various functionality until I can come up with a better way of doing things. Try something with a fixed number of theorems loaded, and allow deeper proofs to try to compensate, and pick a large enough text embedding space, and just junk anything too long, instead of trying to learn a principled goal embedding in a NN fashion.</p>",
+        "id": 192476853,
+        "sender_full_name": "Grant G",
+        "timestamp": 1585707329
+    },
+    {
+        "content": "<p>Jessie, as for what the \"environment\" in HOList is, there are two APIs for HOList.  The low level one is indeed responsible for just applying tactics and returning goals.  The higher level one is a python API which is also responsible for handling the beam search if I am not mistaken.  In that one, I think the user would only have to specify the NN functions which rank and predict tactics and premises (if I am remembering correctly).  This would be something in-between.</p>",
+        "id": 192476949,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1585707466
+    },
+    {
+        "content": "<p>Much of the code for training an agent has been removed, or doesn't run in the current released code for deephol(According to the notes in the readme files in the repo). If I made a gym environment it would wrap some of the utility code from deephol, and the holist environment and try to simplify everything further down to  something really trivial for most people to use.</p>\n<p>Anyways, sorry about your wedding getting delayed. Thanks for the help.</p>",
+        "id": 192477287,
+        "sender_full_name": "Grant G",
+        "timestamp": 1585707883
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"248602\">@Grant G</span> Theoretically you could build that as a wrapper around the protobuf API for the HOList docker image. You wouldn't have to deal at all with DeepHOL nor look inside the HOList docker.  I've documented the protobuf API <a href=\"https://github.com/jasonrute/holist-communication-example\" title=\"https://github.com/jasonrute/holist-communication-example\">here</a> although it might be slightly out of date.  Note that DeepHOL doesn't currently use the whole protobuf API.  They don't supply term arguments for example, so they can't use EXISTS_TAC for example.  Also, make sure your agent isn't allowed to use CHEAT_TAC. :)  If you are doing entirely supervised learning, (or at least not exploring new theorems or using new premises) then it should be possible to just have a fixed index for all the possible premises.  I might be overlooking something here.</p>",
+        "id": 192477372,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1585708031
+    },
+    {
+        "content": "<p>Although, if you are going to use pre-built RL algorithms, do any of them do model-based RL where they can explore a tree of possible states using a model of the world (like solving a Rubik's cube)?  I ask because you probably are not interested in having tree-search be part of the whole problem right?  (I.e. you are not asking your agent to rediscover a tree/graph search algorithm, right?)</p>",
+        "id": 192477806,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1585708721
+    },
+    {
+        "content": "<p>Also, for the record, if one could unify a number of ITP and ATP setting into a single API, even if that API is not the open ai gym one, then I would be all for it.  I think the barrier to entry is incredibly high to start work on problems like this and that is really unfortunate.</p>",
+        "id": 192478004,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1585709057
+    },
+    {
+        "content": "<p>I looked into rllab.  Note that the HOList and similar RL algorithms would fall most closely under the category of <a href=\"https://spinningup.openai.com/en/latest/spinningup/rl_intro2.html\" title=\"https://spinningup.openai.com/en/latest/spinningup/rl_intro2.html\">model-based RL with a given model</a> of which <a href=\"https://spinningup.openai.com/en/latest/spinningup/keypapers.html#b-model-is-given\" title=\"https://spinningup.openai.com/en/latest/spinningup/keypapers.html#b-model-is-given\">alphago and its variants</a> are the best known examples.  It seems that rllab has at least model of that category, namely <a href=\"https://ray.readthedocs.io/en/latest/rllib-algorithms.html#single-player-alpha-zero-contrib-alphazero\" title=\"https://ray.readthedocs.io/en/latest/rllib-algorithms.html#single-player-alpha-zero-contrib-alphazero\">single-player alpha zero</a>.  Looking at <a href=\"https://github.com/ray-project/ray/tree/master/rllib/contrib/alpha_zero\" title=\"https://github.com/ray-project/ray/tree/master/rllib/contrib/alpha_zero\">the docs for it</a>, the docs specify that the environment needs to have <code>get_state</code> and <code>set_state</code> methods.  If one can implement those (see <a href=\"https://github.com/ray-project/ray/blob/master/rllib/contrib/alpha_zero/environments/cartpole.py\" title=\"https://github.com/ray-project/ray/blob/master/rllib/contrib/alpha_zero/environments/cartpole.py\">their cart pole example</a>), then yes, one can used model-based RL algorithms with a given model.  However, at least for this particular alpha zero algorithm, it requires some other things that I don't think are agreeable to HOList (or interactive theorem proving in general).  For example:</p>\n<ul>\n<li>each observation is \"either the form of a state vector or an image\".  Neither really fits.  The observations in HOList are formulas or lists of formulas.  Observations are more naturally expressed as strings, trees, or graphs.  One would have to use pre-learned formula embeddings taken from HOList (or hand-crafted embeddings).</li>\n<li>the environment \"has a discrete action space\".  As per the discussion above, I just don't know if it makes sense to consider the premises as being part of a fixed size action space.  One would need something like O(T * (P choose N)) actions where T is the number of tactics, P is the number of possible premises, and N is the longest list of premises allowed in a tactic argument.  Even if that is not an issue, premises should not be thought of as categorical.  They have information in them and when this algorithm is applied to a new mathematical domain the premises will change (or at least grow).  They are not fixed axioms.</li>\n</ul>",
+        "id": 192526478,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1585747504
+    },
+    {
+        "content": "<p>Of course one could implement HOList as a model-free environment instead, but in my opinion, the would be miss out on a lot of what makes ITP unique.  Namely that the environment can be perfectly simulated (and that there is nothing wrong with backtracking).  Of course there is also the middle ground approach of model-based RL with a learned model.  The recent <a href=\"https://arxiv.org/abs/1911.08265\" title=\"https://arxiv.org/abs/1911.08265\">muzero work</a> is a great example of this where they learned a model for go (and Atari) instead of using an exact given model.  It would be interesting to apply muzero to HOList or something similar, and <a href=\"https://arxiv.org/abs/1909.11851\" title=\"https://arxiv.org/abs/1909.11851\">this paper by Google</a> seems to hint at that possibility.</p>",
+        "id": 192527486,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1585747955
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"248602\">@Grant G</span> I don't know if it is important for you to compete with the HOList benchmarks or you just want a gym-like environment to try out theorem proving, but if it is the latter, you might want to check out the environment mentioned <a href=\"#narrow/stream/219941-Machine-Learning.20for.20Theorem.20Proving/topic/AITP.202020/near/192603711\" title=\"#narrow/stream/219941-Machine-Learning.20for.20Theorem.20Proving/topic/AITP.202020/near/192603711\">here</a> and see their <a href=\"http://aitp-conference.org/2020/abstract/paper_7.pdf\" title=\"http://aitp-conference.org/2020/abstract/paper_7.pdf\">abstract for AITP 2020</a>.  They seemed to have built a Gym environment for HOL4 (which is similar to HOL-Light).  I don't think it is public yet, but you can ask <span class=\"user-mention\" data-user-id=\"110187\">@Minchao Wu</span> about it since he is the main author and frequents Zulip.</p>",
+        "id": 192604511,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1585783151
+    },
+    {
+        "content": "<p>Thanks. I just sent a message, but I think the benchmarks are going to be the important part in the long run.</p>",
+        "id": 192607712,
+        "sender_full_name": "Grant G",
+        "timestamp": 1585785984
+    },
+    {
+        "content": "<p>Hi everyone! I'm looking for references to theorems that were proved by HOList and whose proof was contributed back to the the HOL Light library? Git commits or email threads are all welcome. My understanding is that there is no automated way to go back from a HOList proof trace to HOL Light's high level tactics language, but maybe that was done manually? (cc <span class=\"user-mention\" data-user-id=\"217806\">@Markus Rabe</span> <span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span>) Thanks thanks!</p>",
+        "id": 207138044,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1597668230
+    },
+    {
+        "content": "<p>We have a proof-verifier that does dump the proof in ocaml and them runs the new proofs whenever they are available:</p>\n<p><a href=\"https://github.com/tensorflow/deepmath/blob/master/deepmath/deephol/utilities/proof_checker.py\">https://github.com/tensorflow/deepmath/blob/master/deepmath/deephol/utilities/proof_checker.py</a></p>",
+        "id": 207142678,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1597670480
+    },
+    {
+        "content": "<p>To be clear: since the proofs have to be processed in order, and all premises needs to be correctly proved before that statement can be proved and verified by the kernel, our strategy is to either use the original proof for each statement, or we inject the new proof instead whenever it is available. Rarely, it happens that the verifier fails to verify some proof due to rare inconsistencies between the interactive and batch-mode. Then it again reverts back to using the pre-existing proof instead. That's why the code is somewhat nifty. Still it is relatively straightforward to generate the proof scripts themselves.</p>",
+        "id": 207143523,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1597670926
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> thanks! I didn't realize that the checker was translating back to ocaml script <span aria-label=\"+1\" class=\"emoji emoji-1f44d\" role=\"img\" title=\"+1\">:+1:</span></p>",
+        "id": 207146852,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1597672695
+    },
+    {
+        "content": "<p>Were any of the proofs generated that way contributed back to HOL Light's library?</p>",
+        "id": 207146912,
+        "sender_full_name": "Stanislas Polu",
+        "timestamp": 1597672737
+    },
+    {
+        "content": "<p>No I don't think we integrated anything back, since the goal of the HOL Light library is not to be of minimal size, but simply to verify correctness. Once correctness is established, the proof is more or less irrelevant, since the HOL Light proofs are not too readable anyways.</p>",
+        "id": 207169116,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1597683830
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> I'm having some difficulty using  the ApplyRule rpc call you referenced in February. I'm currently getting the following error:</p>\n<div class=\"codehilite\"><pre><span></span><code><span class=\"bp\">_</span><span class=\"n\">InactiveRpcError</span><span class=\"o\">:</span> <span class=\"bp\">&lt;_</span><span class=\"n\">InactiveRpcError</span> <span class=\"n\">of</span> <span class=\"n\">RPC</span> <span class=\"n\">that</span> <span class=\"n\">terminated</span> <span class=\"k\">with</span><span class=\"o\">:</span>\n    <span class=\"n\">status</span> <span class=\"bp\">=</span> <span class=\"n\">StatusCode</span><span class=\"bp\">.</span><span class=\"n\">UNIMPLEMENTED</span>\n    <span class=\"n\">details</span> <span class=\"bp\">=</span> <span class=\"s2\">&quot;&quot;</span>\n    <span class=\"n\">debug_error_string</span> <span class=\"bp\">=</span> <span class=\"s2\">&quot;{&quot;</span><span class=\"n\">created</span><span class=\"s2\">&quot;:&quot;</span><span class=\"bp\">@</span><span class=\"mi\">1599760083</span><span class=\"bp\">.</span><span class=\"mi\">945907000</span><span class=\"s2\">&quot;,&quot;</span><span class=\"n\">description</span><span class=\"s2\">&quot;:&quot;</span><span class=\"n\">Error</span> <span class=\"n\">received</span> <span class=\"k\">from</span> <span class=\"n\">peer</span> <span class=\"n\">ipv6</span><span class=\"o\">:[</span><span class=\"bp\">::</span><span class=\"mi\">1</span><span class=\"o\">]:</span><span class=\"mi\">2000</span><span class=\"s2\">&quot;,&quot;</span><span class=\"n\">file</span><span class=\"s2\">&quot;:&quot;</span><span class=\"n\">src</span><span class=\"bp\">/</span><span class=\"n\">core</span><span class=\"bp\">/</span><span class=\"n\">lib</span><span class=\"bp\">/</span><span class=\"n\">surface</span><span class=\"bp\">/</span><span class=\"n\">call</span><span class=\"bp\">.</span><span class=\"n\">cc</span><span class=\"s2\">&quot;,&quot;</span><span class=\"n\">file_line</span><span class=\"s2\">&quot;:1062,&quot;</span><span class=\"n\">grpc_message</span><span class=\"s2\">&quot;:&quot;&quot;,&quot;</span><span class=\"n\">grpc_status</span><span class=\"s2\">&quot;:12}&quot;</span>\n</code></pre></div>\n\n\n<p>I've checked that the HOList image I'm using is the latest (dated to Feb 15) which I expected to have the ApplyRule rpc call. </p>\n<p>To construct a client to issue the RPC call I copied the proof_assistant.proto from the HOList repo and I noticed that although it had the definitions for ApplyRuleRequest and ApplyRuleResponse it was missing the definition of the ApplyRule rpc. Perhaps some changes were accidentally left out of the image?</p>\n<p>For reference, here's the code I used to attempt calling ApplyRule:</p>\n<div class=\"codehilite\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">time</span>\n<span class=\"kn\">import</span> <span class=\"n\">grpc</span>\n<span class=\"kn\">import</span> <span class=\"n\">new_proof_assistant_pb2</span> <span class=\"n\">as</span> <span class=\"n\">proof_assistant_pb2</span>\n<span class=\"kn\">import</span> <span class=\"n\">new_proof_assistant_pb2_grpc</span> <span class=\"n\">as</span> <span class=\"n\">proof_assistant_pb2_grpc</span>\n<span class=\"n\">PORT</span> <span class=\"bp\">=</span> <span class=\"err\">&#39;</span><span class=\"n\">localhost</span><span class=\"o\">:</span><span class=\"mi\">2000</span><span class=\"err\">&#39;</span>\n\n<span class=\"k\">with</span> <span class=\"n\">grpc</span><span class=\"bp\">.</span><span class=\"n\">insecure_channel</span><span class=\"o\">(</span><span class=\"n\">PORT</span><span class=\"o\">)</span> <span class=\"n\">as</span> <span class=\"n\">channel</span><span class=\"o\">:</span>\n    <span class=\"n\">stub</span> <span class=\"bp\">=</span> <span class=\"n\">proof_assistant_pb2_grpc</span><span class=\"bp\">.</span><span class=\"n\">ProofAssistantServiceStub</span><span class=\"o\">(</span><span class=\"n\">channel</span><span class=\"o\">)</span>\n\n    <span class=\"n\">request</span> <span class=\"bp\">=</span> <span class=\"n\">proof_assistant_pb2</span><span class=\"bp\">.</span><span class=\"n\">ApplyRuleRequest</span><span class=\"o\">(</span>\n        <span class=\"n\">rule</span><span class=\"bp\">=</span><span class=\"s2\">&quot;CONJUNCT1 THM 3889194075140062007&quot;</span>\n    <span class=\"o\">)</span>\n\n    <span class=\"kn\">print</span><span class=\"o\">(</span><span class=\"s2\">&quot;Request:&quot;</span><span class=\"o\">)</span>\n    <span class=\"kn\">print</span><span class=\"o\">(</span><span class=\"n\">request</span><span class=\"o\">)</span>\n\n    <span class=\"n\">response</span> <span class=\"bp\">=</span> <span class=\"n\">stub</span><span class=\"bp\">.</span><span class=\"n\">ApplyRule</span><span class=\"o\">(</span><span class=\"n\">request</span><span class=\"o\">)</span>\n    <span class=\"kn\">print</span><span class=\"o\">(</span><span class=\"s2\">&quot;Response:&quot;</span><span class=\"o\">)</span>\n    <span class=\"kn\">print</span><span class=\"o\">(</span><span class=\"n\">response</span><span class=\"o\">)</span>\n</code></pre></div>\n\n\n<p>Thanks!</p>",
+        "id": 209687793,
+        "sender_full_name": "Joe Palermo (S2'17)",
+        "timestamp": 1599761980
+    },
+    {
+        "content": "<p>Hello, I don't think that the exported image is that recent at all. Last time we open-sourced the main branch was in summer 2019.<br>\nWe have another experimental branch on github open-sourced lately for which the ApplyRule works.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"337523\">Joe Palermo (S2'17)</span> <a href=\"#narrow/stream/219941-Machine-Learning.20for.20Theorem.20Proving/topic/HOList/near/209687793\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"239426\">Christian Szegedy</span> I'm having some difficulty using  the ApplyRule rpc call you referenced in February. I'm currently getting the following error:</p>\n<div class=\"codehilite\"><pre><span></span><code><span class=\"bp\">_</span><span class=\"n\">InactiveRpcError</span><span class=\"o\">:</span> <span class=\"bp\">&lt;_</span><span class=\"n\">InactiveRpcError</span> <span class=\"n\">of</span> <span class=\"n\">RPC</span> <span class=\"n\">that</span> <span class=\"n\">terminated</span> <span class=\"k\">with</span><span class=\"o\">:</span>\n    <span class=\"n\">status</span> <span class=\"bp\">=</span> <span class=\"n\">StatusCode</span><span class=\"bp\">.</span><span class=\"n\">UNIMPLEMENTED</span>\n    <span class=\"n\">details</span> <span class=\"bp\">=</span> <span class=\"s2\">&quot;&quot;</span>\n    <span class=\"n\">debug_error_string</span> <span class=\"bp\">=</span> <span class=\"s2\">&quot;{&quot;</span><span class=\"n\">created</span><span class=\"s2\">&quot;:&quot;</span><span class=\"bp\">@</span><span class=\"mi\">1599760083</span><span class=\"bp\">.</span><span class=\"mi\">945907000</span><span class=\"s2\">&quot;,&quot;</span><span class=\"n\">description</span><span class=\"s2\">&quot;:&quot;</span><span class=\"n\">Error</span> <span class=\"n\">received</span> <span class=\"k\">from</span> <span class=\"n\">peer</span> <span class=\"n\">ipv6</span><span class=\"o\">:[</span><span class=\"bp\">::</span><span class=\"mi\">1</span><span class=\"o\">]:</span><span class=\"mi\">2000</span><span class=\"s2\">&quot;,&quot;</span><span class=\"n\">file</span><span class=\"s2\">&quot;:&quot;</span><span class=\"n\">src</span><span class=\"bp\">/</span><span class=\"n\">core</span><span class=\"bp\">/</span><span class=\"n\">lib</span><span class=\"bp\">/</span><span class=\"n\">surface</span><span class=\"bp\">/</span><span class=\"n\">call</span><span class=\"bp\">.</span><span class=\"n\">cc</span><span class=\"s2\">&quot;,&quot;</span><span class=\"n\">file_line</span><span class=\"s2\">&quot;:1062,&quot;</span><span class=\"n\">grpc_message</span><span class=\"s2\">&quot;:&quot;&quot;,&quot;</span><span class=\"n\">grpc_status</span><span class=\"s2\">&quot;:12}&quot;</span>\n</code></pre></div>\n\n\n<p>I've checked that the HOList image I'm using is the latest (dated to Feb 15) which I expected to have the ApplyRule rpc call. </p>\n<p>To construct a client to issue the RPC call I copied the proof_assistant.proto from the HOList repo and I noticed that although it had the definitions for ApplyRuleRequest and ApplyRuleResponse it was missing the definition of the ApplyRule rpc. Perhaps some changes were accidentally left out of the image?</p>\n<p>For reference, here's the code I used to attempt calling ApplyRule:</p>\n<div class=\"codehilite\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">time</span>\n<span class=\"kn\">import</span> <span class=\"n\">grpc</span>\n<span class=\"kn\">import</span> <span class=\"n\">new_proof_assistant_pb2</span> <span class=\"n\">as</span> <span class=\"n\">proof_assistant_pb2</span>\n<span class=\"kn\">import</span> <span class=\"n\">new_proof_assistant_pb2_grpc</span> <span class=\"n\">as</span> <span class=\"n\">proof_assistant_pb2_grpc</span>\n<span class=\"n\">PORT</span> <span class=\"bp\">=</span> <span class=\"err\">&#39;</span><span class=\"n\">localhost</span><span class=\"o\">:</span><span class=\"mi\">2000</span><span class=\"err\">&#39;</span>\n\n<span class=\"k\">with</span> <span class=\"n\">grpc</span><span class=\"bp\">.</span><span class=\"n\">insecure_channel</span><span class=\"o\">(</span><span class=\"n\">PORT</span><span class=\"o\">)</span> <span class=\"n\">as</span> <span class=\"n\">channel</span><span class=\"o\">:</span>\n    <span class=\"n\">stub</span> <span class=\"bp\">=</span> <span class=\"n\">proof_assistant_pb2_grpc</span><span class=\"bp\">.</span><span class=\"n\">ProofAssistantServiceStub</span><span class=\"o\">(</span><span class=\"n\">channel</span><span class=\"o\">)</span>\n\n    <span class=\"n\">request</span> <span class=\"bp\">=</span> <span class=\"n\">proof_assistant_pb2</span><span class=\"bp\">.</span><span class=\"n\">ApplyRuleRequest</span><span class=\"o\">(</span>\n        <span class=\"n\">rule</span><span class=\"bp\">=</span><span class=\"s2\">&quot;CONJUNCT1 THM 3889194075140062007&quot;</span>\n    <span class=\"o\">)</span>\n\n    <span class=\"kn\">print</span><span class=\"o\">(</span><span class=\"s2\">&quot;Request:&quot;</span><span class=\"o\">)</span>\n    <span class=\"kn\">print</span><span class=\"o\">(</span><span class=\"n\">request</span><span class=\"o\">)</span>\n\n    <span class=\"n\">response</span> <span class=\"bp\">=</span> <span class=\"n\">stub</span><span class=\"bp\">.</span><span class=\"n\">ApplyRule</span><span class=\"o\">(</span><span class=\"n\">request</span><span class=\"o\">)</span>\n    <span class=\"kn\">print</span><span class=\"o\">(</span><span class=\"s2\">&quot;Response:&quot;</span><span class=\"o\">)</span>\n    <span class=\"kn\">print</span><span class=\"o\">(</span><span class=\"n\">response</span><span class=\"o\">)</span>\n</code></pre></div>\n\n\n<p>Thanks!</p>\n</blockquote>",
+        "id": 209693248,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1599764390
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> Thanks! I spent some time looking at the changes in introduced in your experimental branch on the DeepMath repository (<a href=\"https://github.com/tensorflow/deepmath/tree/experimental\">https://github.com/tensorflow/deepmath/tree/experimental</a>). However, the issue I'm having above is with your fork of hol-light (<a href=\"https://github.com/brain-research/hol-light\">https://github.com/brain-research/hol-light</a>).  I expected to be able to use ApplyRule as seen above where I'm interacting with a container running the HOList environment. Isn't an update required in hol-light (i.e. the HOList environment) for this to work?</p>",
+        "id": 209800672,
+        "sender_full_name": "Joe Palermo (S2'17)",
+        "timestamp": 1599840440
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"337523\">Joe Palermo (S2'17)</span> <a href=\"#narrow/stream/219941-Machine-Learning.20for.20Theorem.20Proving/topic/HOList/near/209800672\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"239426\">Christian Szegedy</span> Thanks! I spent some time looking at the changes in introduced in your experimental branch on the DeepMath repository (<a href=\"https://github.com/tensorflow/deepmath/tree/experimental\">https://github.com/tensorflow/deepmath/tree/experimental</a>). However, the issue I'm having above is with your fork of hol-light (<a href=\"https://github.com/brain-research/hol-light\">https://github.com/brain-research/hol-light</a>).  I expected to be able to use ApplyRule as seen above where I'm interacting with a container running the HOList environment. Isn't an update required in hol-light (i.e. the HOList environment) for this to work?</p>\n</blockquote>\n<p>Yes, you would need to rebuild the docker image. There are instructions there how to do that.  There is this github repo that can guide you through the compilation process: <a href=\"https://github.com/aahadley/deepmath-jupyter\">https://github.com/aahadley/deepmath-jupyter</a></p>",
+        "id": 210056079,
+        "sender_full_name": "Christian Szegedy",
+        "timestamp": 1600113850
+    },
+    {
+        "content": "<p>Hi, I am trying to figure out which theory are all of the theorems based on( all latter theorems can be proofed by the previous or the core theorems, so they are all the consequences of one theory right? ) <br>\nis it ZFC(first order logic)?  and  I wonder whether deephol can solve the inductive construction problems? or Deephol can only solve the deductive problems like other SMT(in some axiomatizable theory,effectively enumerable)?<br>\nSorry for all these questions, I hope these will be useful to the community</p>",
+        "id": 211882495,
+        "sender_full_name": "LEZHI HU",
+        "timestamp": 1601541622
+    },
+    {
+        "content": "<p>They're all consequences of Lean's dependent type theory which uses the calculus of inductive constructions</p>",
+        "id": 211893874,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1601549981
+    },
+    {
+        "content": "<p>Actually, given the topic, I think <span class=\"user-mention\" data-user-id=\"346045\">@LEZHI HU</span>  is asking about HOList/DeepHOL which is an AI for HOL Light.   HOL Light uses a higher order logic type theory as a foundation plus some axioms for choice and infinity.  (I might be forgetting an axiom.)</p>\n<p>As for part two of the question, I think it is asking what kinds of proofs DeepHOL can find.  I doubt it is easy to quantify.  For example, if a proof follows easily from previously proved lemmas and/or from the powerful HOL Light tactics, then it should be more likely to be found.  My uninformed guess is that the proofs probably make good use of the MESON first order solver tactic as well as the SIMP tactic.  And it should also be able to handle routine tactic steps.</p>\n<p>@szegedy might be able to say more here. Also if you are really curious, you can run DeepHOL and look at the proofs.  The instructions are pretty good: <a href=\"https://sites.google.com/view/holist/home\">https://sites.google.com/view/holist/home</a></p>",
+        "id": 211898000,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1601553049
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110038\">@Kevin Buzzard</span>  Thanks for the quick answer! So I guess Deephol can really solve some inductive construction problems which can not be solved by normal SMT(only useful in deductive searching), right?<br>\n<span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span>  Thanks for your help, your paraphrase of the part two exactly expresses my question, and I am trying to do some experiments in Holist. With regards to the higher order logic type theory used by HOL Light(I am not familiar with type theory, I have learned mathematical logic and use Coq at some basic level), I wonder what it is equivalent to in mathematical logic?(as far as i know, theory consists of a set of axioms, what's the set of axioms in this higher order logic type theory used by HOL loght, where can I find them, books or manual of HOL light or papers?)<br>\nThanks again, I really learn something from this thread</p>",
+        "id": 211903103,
+        "sender_full_name": "LEZHI HU",
+        "timestamp": 1601556175
+    },
+    {
+        "content": "<p>one more question, since HOList can not use 1. terms as arguments of the tactic or 2. theorem with assumptions( maybe can be replaced by the forms of implication), is it possible to find a human forward proof log that can't be solved by backward limited tactics(the limitation 1 and 2) no matter how well the DeepHOL is trained? or to say it  in another way, do currently available tactics satisfy completeness?</p>",
+        "id": 211904477,
+        "sender_full_name": "LEZHI HU",
+        "timestamp": 1601556805
+    },
+    {
+        "content": "<p>As for HOL Light's foundations (which is also the logic in HOL4 and Isabelle/HOL I believe) you can read more about it in <a href=\"https://www.cl.cam.ac.uk/~jrh13/hol-light/manual-1.1.pdf#page=58\">Section 5 of the old HOL Light Manual</a>. Coq and Lean are based on dependent type theory if you are curious.  You can find more about that in <a href=\"https://leanprover.github.io/theorem_proving_in_lean/dependent_type_theory.html\">chapter 2 of Theorem Proving in Lean</a>.  (Coq's foundations are constructive while Lean adds the axiom of choice.)  I think your \"set of axioms\" idea of a foundation is based on how logic is taught at universities.  That is just one approach.  It is usually more practical to use systems that have more inference rules (besides just modus ponens) and fewer axioms.  However, these logics are often practically interchangeable.  More exactly (assuming the axiom of choice), HOL (in HOL Light) is a bit weaker than ZFC, and ZFC is a bit weaker than dependent type theory (in Lean).  A separate practical factor is that many things are just easier to express in dependent type theory than in HOL.</p>",
+        "id": 211906491,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1601557722
+    },
+    {
+        "content": "<p>(I think MetaMath and Mizar's foundations are closer to standard set theory, but I don't know them well enough to be sure.)</p>",
+        "id": 211906582,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1601557773
+    },
+    {
+        "content": "<p>And here's the classic on CIC vs ZFC: <a href=\"https://link.springer.com/chapter/10.1007%2FBFb0014566\">https://link.springer.com/chapter/10.1007%2FBFb0014566</a></p>",
+        "id": 211907914,
+        "sender_full_name": "Minchao Wu",
+        "timestamp": 1601558345
+    },
+    {
+        "content": "<p>As for your completeness question, I highly doubt DeepHOL is complete in the sense that if you let it run forever (and didn't prune branches with beam search) that it would be able to prove any statement provable in HOL Light.  Yes, I think this is because it can't fill in terms.  However, I also think completeness is the wrong goal.  A brute force search is complete but highly impractical.  It's important to prune the search space even at the cost of completeness.  (Also, any non-complete heuristic can be made complete by combining it with a complete brute force search procedure.  For example, 100 steps of DeepHOL and 1 step of brute force, then repeat... ) A more practical question is how to extend the system to be able to handle more likely cases and prove more theorems.  It seems that DeepHOL can prove a lot of theorems without term generation, but maybe it can prove even more if it had a good term generator.  (On the other hand, GPT-f for MetaMath is probably complete since with non-zero probability it can give any proof.  However, again, I think the question is more about practicality than some logical upper bound the system will never get close to achieving.)</p>",
+        "id": 211907995,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1601558382
+    },
+    {
+        "content": "<p>To further prove my point that completeness is a red herring, if we ever expect to develop AI that does real math, not just help with filling in small proof gaps, we need to develop new lemmas, new definitions and concepts, and a whole bunch more.  Because of theorems (like cut elimination), none of this is technically necessary to develop a complete system in HOL, CIC, or ZFC, but it is practically necessary.  (Without lemmas some proofs become exponentially large for example.)</p>",
+        "id": 211909529,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1601558948
+    },
+    {
+        "content": "<p>(Sorry, I might have argued this a bit too strongly based just on the word \"complete\".  I agree asking if DeepHOL is missing any key proof steps which would make some proofs impossible to find, is indeed a good and reasonable question.)</p>",
+        "id": 211910566,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1601559361
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110187\">@Minchao Wu</span> <span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span>  thanks very much for your help, this topic is very cool</p>",
+        "id": 211914743,
+        "sender_full_name": "LEZHI HU",
+        "timestamp": 1601561032
+    },
+    {
+        "content": "<p>The Holist line of research has been very interesting to follow, it's really great stuff. I've been looking more into ML for HOL theorem proving these days, a bit of a shift from my comfort zone of first-order logic theorem proving. Do we know if there's been any work following \"Learning to Reason in Large Theories without Imitation\"?</p>",
+        "id": 212700713,
+        "sender_full_name": "Max Crouse",
+        "timestamp": 1602168487
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 212711892,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1602172869
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"348835\">@Max Crouse</span>  N2Formal team can probably give you a more complete answer, but if you are specifically talking about HOList/DeepHOL on HOL Light, I think <a href=\"https://arxiv.org/abs/1905.10501\">Leaning to Reason in Large Theories without Imitation</a> is the most recent paper.  You may also want to check the <a href=\"https://openreview.net/forum?id=qbRv1k2AcH\">ICRL submission</a> for any updates (and report back if there are any!).</p>",
+        "id": 212714704,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1602174033
+    },
+    {
+        "content": "<p>Also, the paper <a href=\"https://arxiv.org/abs/1905.10006\">Graph Representations for Higher-Order Logic and Theorem Proving</a> is largely parallel to LtRiLTwI, so if the two results were combined, I think it would give even better results.</p>",
+        "id": 212714724,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1602174040
+    },
+    {
+        "content": "<p>There have been <a href=\"https://arxiv.org/search/cs?searchtype=author&amp;query=Szegedy%2C+C\">more recent papers by the N2Formal team</a>, mostly dealing with subproblems of symbolic reasoning with neural networks.  Also, if you haven't read it, I recommend their manifesto paper on Autoformalization which you can find near the top of the <a href=\"https://sites.google.com/view/holist/home\">HOList website</a>.<br>\n<span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span>  also spoke recently at two conferences.  For AITP, you can find the abstract, slides, and video recording here: <a href=\"http://aitp-conference.org/2020/\">http://aitp-conference.org/2020/</a>. I can't remember if the CICM talk was recorded, but there is some discussion <a href=\"#narrow/stream/113488-general/topic/CICM.202020\">here</a>.</p>",
+        "id": 212714742,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1602174051
+    },
+    {
+        "content": "<p>As for rumors, <span class=\"user-mention\" data-user-id=\"239426\">@Christian Szegedy</span> hinted <a href=\"#narrow/stream/219941-Machine-Learning.20for.20Theorem.20Proving/topic/GPT-f.20paper/near/210089700\">here</a> about getting better results (70% accuracy).</p>",
+        "id": 212714756,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1602174059
+    },
+    {
+        "content": "<p>If you are interested in machine learning for Coq, Metamath, or HOL4 there are a number of other projects.  Some like <a href=\"#narrow/stream/219941-Machine-Learning.20for.20Theorem.20Proving/topic/GPT-f.20paper\">GPT-f</a> are very SOTA looking, but they might also be impractical.  Others like TacticToe and <a href=\"#narrow/stream/219941-Machine-Learning.20for.20Theorem.20Proving/topic/Paper.3A.20Tactic.20Learning.20and.20Proving.20for.20the.20Coq.20Proof.20Assista\">Tactician (f.k.a. TacticToe for Coq)</a> seem more practical, even if they don't use neural networks.  If you poke around on this stream or on the <a href=\"http://aitp-conference.org/\">AITP conferences</a>, you will find more references to current work.</p>",
+        "id": 212714990,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1602174148
+    },
+    {
+        "content": "<p>(And this is all Machine Learning based work.  There are of course, really good SMT-solver-based hammers out there for HOL.)</p>",
+        "id": 212715574,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1602174424
+    },
+    {
+        "content": "<p>Ok, I just looked at <a href=\"https://arxiv.org/abs/1905.10501\">Leaning to Reason in Large Theories without Imitation</a> again.  The original arXiv version didn't use graph neural networks and that is what I was remembering, but it looks like it was updated this summer.  I need to read it again.  Now it has much better results, including the 70% accuracy that I quoted from Christian.  The <a href=\"https://sites.google.com/view/holist/home#h.p_q5V1LhhMJGIs\">HOList leaderboard</a> needs to be updated.  <span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span></p>",
+        "id": 212716749,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1602175003
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span> thank you for the very detailed response! I'm familiar with most of those papers but the other links and the forum-related content I was less aware of since I hadn't checked through this forum in detail yet. I wasn't aware they were solving so much (70%) of Holist already. I'd be curious to know what they think the remaining bottlenecks are performance-wise. I'd imagine formula representation could be an issue, perhaps also the premise-selection subproblem they mention in the RL paper. I wonder if using the SINE heuristic for selecting relevant premises would yield better performance than tf-idf</p>",
+        "id": 212744770,
+        "sender_full_name": "Max Crouse",
+        "timestamp": 1602188845
+    },
+    {
+        "content": "<p>Thanks to Jason for the detailed and accurate summary!</p>\n<p><span class=\"user-mention\" data-user-id=\"348835\">@Max Crouse</span>: That's a great question. I don't think anyone has a definite answer on this. In my opinion, the immediate bottlenecks are for HOList are exploration and the constrained action space.</p>\n<p>The paper \"Leaning to Reason in Large Theories without Imitation\" addresses the exploration problem a little bit. There we used TF-IDF to bootstrap premise selection. Later in the training process, the heavy lifting of premise selection is done by the neural networks. Replacing TF-IDF could improve bootstrapping, but I doubt that it changes the result dramatically. The real exploration problem is probably a different one: How to make progress on a <em>long</em> proof, if we are unlikely to simply find a proof by chance? We think that autoformalization is a promising path here, as there may be valuable hints in text books and mathematical papers. But there are plenty of complementary ideas in the space.</p>\n<p>The action space of HOList is currently limited to tactics that use a list of premises as arguments. Tactics that require (free-form) terms as arguments are currently not used. The use of Transformers might allow us to overcome this problem, but it is a non-trivial engineering problem to use them in a reinforcement learning setup (GPT-f used 1k GPU hours per evaluation run ...).</p>\n<p>If you are interested in working with HOList (or the datasets) we're happy to help.</p>",
+        "id": 212950030,
+        "sender_full_name": "Markus Rabe",
+        "timestamp": 1602394423
+    },
+    {
+        "content": "<p>But consider that we're checking this zulip channel only sporadically, so make sure to either notify us through zulip or shoot us a mail.</p>",
+        "id": 212950077,
+        "sender_full_name": "Markus Rabe",
+        "timestamp": 1602394480
+    },
+    {
+        "content": "<p>Hi Everyone! I was curious, I saw the paper for graphs for HOList (<a href=\"https://arxiv.org/pdf/1905.10006.pdf\">https://arxiv.org/pdf/1905.10006.pdf</a>) but I couldn't find the code. In particular I was looking for a description - even if in pseudocode/algorithm - for transforming an abstract syntax tree AST to an abstract binding tree. Is such a description somewhere out there? (wanted to avoid re-inventing the wheel or missing something trivial/nuanced since its already been done)</p>",
+        "id": 239271480,
+        "sender_full_name": "Brando Miranda",
+        "timestamp": 1621350987
+    },
+    {
+        "content": "<p>I think <a href=\"https://github.com/tensorflow/deepmath/blob/master/deepmath/deephol/utilities/sexpression_graphs.py#L41\">this might be the code</a>.  If not, then I would suggest pinging Christian and Markus.  (They don't look at this thread unless mentioned, but are happy to answer questions when they are summoned.)</p>",
+        "id": 239283404,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1621355112
+    },
+    {
+        "content": "<p>Also, I do think the algorithm is pretty simple if I recall, and you can construct it from the examples, but I understand the worry about missing a detail (or screwing up bound variables which is always the hardest part about this sort of thing).</p>",
+        "id": 239283986,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1621355330
+    }
+]

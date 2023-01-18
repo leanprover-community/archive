@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>I just built <a href=\"https://github.com/tydeu/lean4-papyrus\">Papyrus</a> with the latest nightly (09-12) on Ubuntu WSL, and encountered an <code>INTERNAL PANIC: out of memory</code> error when running one of my tests (i.e., the big <a href=\"https://github.com/tydeu/lean4-papyrus/blob/72141229d73e6fe1abb911ddcabab7818699ec49/test/out/script/program.lean\"><code>script/program.lean</code></a> test). </p>\n<p>Since I just ported Papyrus to the new Lean C API, a bug in the port could be the problem, but the fact the other tests run fine is leading me to suspect that something in Lean changed to case this kind of panic. Also, I am curious what causes this error, because I have never seen it appear before -- even when, for example, encountering stack overflow bugs.</p>",
+        "id": 252947686,
+        "sender_full_name": "Mac",
+        "timestamp": 1631408946
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> Lean does generate this error message when it fails to allocate memory.<br>\nDid you try to run the program on gdb? You can interrupt the program at <code>lean_internal_panic_out_of_memory</code>, and traverse the stack trace.</p>",
+        "id": 252949017,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1631410668
+    },
+    {
+        "content": "<p>Ah, thanks for the advice, will do!</p>",
+        "id": 252949091,
+        "sender_full_name": "Mac",
+        "timestamp": 1631410751
+    },
+    {
+        "content": "<p>As it turns out, it was a bug on my end.  <span aria-label=\"upside down\" class=\"emoji emoji-1f643\" role=\"img\" title=\"upside down\">:upside_down:</span> I am still a little surprised I had never encountered an <code>INTERNAL PANIC</code> before with similar bugs. However, fixing that has lead to different error -- this time with the <code>mpz</code> code. </p>\n<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span>, shouldn't the <code>mpz_t</code> of <code>lean_extract_mpz_value</code> be a pointer (or, on the C++, side a reference) like it is for the other <code>mpz_t</code> methods?  I think that may explain the segfault I'm getting (which I have verified is coming from  the use of <code>lean_extract_mpz_value</code>).</p>",
+        "id": 252951544,
+        "sender_full_name": "Mac",
+        "timestamp": 1631413391
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span>  I didn't want to give the pointer to the <code>mpz_t</code> for two reasons. First, the user would be able to modify the value that is stored in the Lean object. Second, if one day we use a different library to implement big nums, we would break the API: we would have to allocate an <code>mpz_t</code> and add function for deleting it. The style I used is the one used by GMP. <a href=\"https://gmplib.org/manual/Assigning-Integers\">https://gmplib.org/manual/Assigning-Integers</a> <br>\nNote that you have to initialize <code>mpz_t</code> values using <code>void mpz_init (mpz_t x)</code> before invoking <code>lean_extract_mpz_value</code>.</p>",
+        "id": 252953499,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1631415623
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> You beat me to the punch! Here was the response I was drafting (which you essentially already answered):</p>\n<blockquote>\n<p>Oops, scratch that, found the bug. It appears that <code>mpz_set</code> (which <code>lean_extract_mpz_value</code>) uses internally requires that the mpz object be initialized first (e.g., with <code>mpz_init</code>). <span aria-label=\"upside down\" class=\"emoji emoji-1f643\" role=\"img\" title=\"upside down\">:upside_down:</span> </p>\n<p>However, part of the reason this is necessary is that it <a href=\"https://stackoverflow.com/questions/9432767/shallow-copy-of-mpz-t\">appears</a> that <code>mpz_set</code> is performing a deep copy. wo copies in a row on the same data (one to get the <code>mpz</code> data from Lean, one to copy it into a LLVM <code>APInt</code>) seems kind of wasteful.  Would it be possible for the API to perform a shallow copy (by assigning the numeric's  <code>mpz_t</code> to a pointer argument via <code>=</code>). Or, alternatively, just to return the numeric's pointer directly?</p>\n</blockquote>",
+        "id": 252953574,
+        "sender_full_name": "Mac",
+        "timestamp": 1631415682
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"112857\">Leonardo de Moura</span> <a href=\"#narrow/stream/270676-lean4/topic/INTERNAL.20PANIC.3A.20out.20of.20memory/near/252953499\">said</a>:</p>\n<blockquote>\n<p>Second, if one day we use a different library to implement big nums, we would break the API: we would have to allocate an <code>mpz_t</code> and add function for deleting it.</p>\n</blockquote>\n<p>Oh well, I guess that makes sense. I am just happy that it works now! <span aria-label=\"wink\" class=\"emoji emoji-1f609\" role=\"img\" title=\"wink\">:wink:</span>  However, you may want to add a note to the <code>lean_extract_mpz_value</code> comment that mentions the <code>mpz_t</code> needs to already be initialized (as the only way an end-user would discover that currently is by inspecting the implementation).</p>",
+        "id": 252953779,
+        "sender_full_name": "Mac",
+        "timestamp": 1631415893
+    },
+    {
+        "content": "<p>(though I guess the fact it uses <code>mpz_set</code> may be implied by the particular word choice of 'set' in the comment.)</p>",
+        "id": 252954055,
+        "sender_full_name": "Mac",
+        "timestamp": 1631416203
+    },
+    {
+        "content": "<p>Not sure if this is the right place to ask this but how much memory does Lean need? I followed the instructions on <a href=\"https://leanprover-community.github.io/install/project.html\">https://leanprover-community.github.io/install/project.html</a> and VSCode slowly use more and more of my (laughable) ~4GB of usable RAM. Once VSCode has around 2048MB of memory used up my computer just starts acting like it's on its deathbed. Is this normal?</p>",
+        "id": 252955598,
+        "sender_full_name": "Kitty Gorey",
+        "timestamp": 1631417996
+    },
+    {
+        "content": "<p>This isn't a question about lean 4 so doesn't go here (please send any further responses to the <a class=\"stream\" data-stream-id=\"113489\" href=\"/#narrow/stream/113489-new-members\">#new members</a>stream so as not to derail this thread any further), but the short answer is that if you want to use lean 3's maths library <code>mathlib</code> then right now you will struggle in practice with anything less than 16 gigs of ram, although some people do get by with 8.</p>",
+        "id": 252965813,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1631430470
+    }
+]

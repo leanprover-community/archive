@@ -1,0 +1,80 @@
+[
+    {
+        "content": "<p>The following example errors unexpectedly:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">syntax</span> <span class=\"n\">bit</span> <span class=\"o\">:=</span> <span class=\"s2\">\"0\"</span> <span class=\"bp\">&lt;|&gt;</span> <span class=\"s2\">\"1\"</span>\n<span class=\"n\">syntax</span> <span class=\"s2\">\"bor\"</span> <span class=\"n\">bit</span> <span class=\"n\">bit</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n<span class=\"n\">macro_rules</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">bor</span> <span class=\"mi\">0</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">true</span><span class=\"o\">)</span> <span class=\"c1\">-- Errors unexpectedly on the 0</span>\n<span class=\"c\">/-</span><span class=\"cm\"></span>\n<span class=\"cm\">  expected '0' or '1'</span>\n<span class=\"cm\">-/</span>\n</code></pre></div>\n<p>What is going on here? (I am running the latest Lean nightly: commit <code>aaca889bea02</code>.)<br>\nThe problem is also not with <code>macro_rules</code> as <code>#check bor 0 1</code> also errors in the same way.</p>",
+        "id": 235388043,
+        "sender_full_name": "Mac",
+        "timestamp": 1618941854
+    },
+    {
+        "content": "<p>User-given tokens are registered in a (currently global) token trie; however, that trie is tried (heh) only after built-in token types such as numerals, so <code>0</code> is never parsed as your new token. I suppose the other way around wouldn't be great either since then <code>(0 : Nat)</code> wouldn't work anymore below your syntax declaration.</p>",
+        "id": 235404986,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1618948495
+    },
+    {
+        "content": "<p>For great DSL support we will eventually need local token sets, including the ability to disable built-in token kinds. There are also parsers such as <code>raw</code> that can circumvent the tokenizer, but these are not exposed to the <code>syntax</code> abstraction yet.</p>",
+        "id": 235405784,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1618948835
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Error.20with.20Digits.20in.20Custom.20Syntax/near/235404986\">said</a>:</p>\n<blockquote>\n<p>User-given tokens are registered in a (currently global) token trie; however, that trie is tried (heh) only after built-in token types such as numerals, so <code>0</code> is never parsed as your new token.</p>\n</blockquote>\n<p>Why not have the user-given tokens and built-in tokens in the same (global) trie?  Or at least merge them into the same trie after bootstrapping? That sounds to me like the easiest fix, but I imagine I am missing some big problem with that.</p>",
+        "id": 235584420,
+        "sender_full_name": "Mac",
+        "timestamp": 1619040061
+    },
+    {
+        "content": "<p>Tokenization needs to be unambiguous, in the end it has to return either the old token kind or the new one, breaking the syntax using the other one. I wouldn't know how to support overloaded tokens, it doesn't really make sense in our architecture.</p>",
+        "id": 235633702,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619077288
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Error.20with.20Digits.20in.20Custom.20Syntax/near/235633702\">said</a>:</p>\n<blockquote>\n<p>Tokenization needs to be unambiguous, in the end it has to return either the old token kind or the new one, breaking the syntax using the other one. I wouldn't know how to support overloaded tokens, it doesn't really make sense in our architecture.</p>\n</blockquote>\n<p>Maybe I am greatly misunderstanding how all of this works under the hood, but aren't tokens already overloaded/overridden? For instance, in my previous example the token <code>bor</code> is now processed as a keyword instead of as identifier, correct? Doesn't that involve some form of token overriding? Why can't the same process be applied to numerals (and potentially other builtin syntax)?</p>",
+        "id": 235704613,
+        "sender_full_name": "Mac",
+        "timestamp": 1619107766
+    },
+    {
+        "content": "<p>Yes, overriding is fine. After you've declared <code>bor</code>, you cannot use it as an identifier anymore because we prioritize keywords over identifiers. Just like you wouldn't be able to use <code>0</code> as a numeral literal anymore after your syntax if we prioritized symbols over them, instead of the reverse as it is right now. In either case, one syntax becomes inaccessible. There is no overloading on the token level.</p>",
+        "id": 235706147,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619108398
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Error.20with.20Digits.20in.20Custom.20Syntax/near/235706147\">said</a>:</p>\n<blockquote>\n<p>Yes, overriding is fine. After you've declared <code>bor</code>, you cannot use it as an identifier anymore because we prioritize keywords over identifiers. Just like you wouldn't be able to use <code>0</code> as a numeral literal anymore after your syntax if we prioritized symbols over them, instead of the reverse as it is right now. In either case, one syntax becomes inaccessible. There is no overloading on the token level.</p>\n</blockquote>\n<p>Ah, well then, why not prioritize symbols over numeral literals? It would only come in to play when the user defines a numeral token, in which case they probably <em>do</em> want to override the standard syntax. And, for instance,  if I want to recover the numeric literal behavior for <code>bit</code> in my example, all I would need do is:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">syntax</span> <span class=\"n\">bit</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n<span class=\"n\">macro_rules</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">b</span><span class=\"o\">:</span><span class=\"n\">bit</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">OfNat.ofNat</span> <span class=\"o\">(</span><span class=\"n\">nat_lit</span> <span class=\"bp\">$</span><span class=\"n\">b</span><span class=\"o\">))</span>\n</code></pre></div>\n<p>Correct?</p>",
+        "id": 235715825,
+        "sender_full_name": "Mac",
+        "timestamp": 1619112185
+    },
+    {
+        "content": "<p>Also, there does seem to be at least some token overloading occurring. The tokens <code>name</code>, <code>kind</code>, <code>priority</code> for parameters in things like <code>notation</code> and <code>macro_rules</code> do not eat up prevent those symbols from being also tokenized as identifiers.</p>",
+        "id": 235723615,
+        "sender_full_name": "Mac",
+        "timestamp": 1619115208
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/270676-lean4/topic/Error.20with.20Digits.20in.20Custom.20Syntax/near/235715825\">said</a>:</p>\n<blockquote>\n<p>And, for instance,  if I want to recover the numeric literal behavior for <code>bit</code> in my example, all I would need do is:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">syntax</span> <span class=\"n\">bit</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n<span class=\"n\">macro_rules</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">b</span><span class=\"o\">:</span><span class=\"n\">bit</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">OfNat.ofNat</span> <span class=\"o\">(</span><span class=\"n\">nat_lit</span> <span class=\"bp\">$</span><span class=\"n\">b</span><span class=\"o\">))</span>\n</code></pre></div>\n<p>Correct?</p>\n</blockquote>\n<p>No, a <code>bit</code> is not a valid <code>num</code>. It could be made to work, but it doesn't help because every nested use of the <code>num</code> parser such as in <code>id.{0}</code> would <em>still</em> break.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/270676-lean4/topic/Error.20with.20Digits.20in.20Custom.20Syntax/near/235723615\">said</a>:</p>\n<blockquote>\n<p>Also, there does seem to be at least some token overloading occurring. The tokens <code>name</code>, <code>kind</code>, <code>priority</code> for parameters in things like <code>notation</code> and <code>macro_rules</code> do not eat up prevent those symbols from being also tokenized as identifiers.</p>\n</blockquote>\n<p>Yes, these are using the <code>nonReserved</code> parser: <a href=\"https://github.com/leanprover/lean4/blob/5902fe17460cf816fe3d8b470f806504569803c4/src/Lean/Parser/Basic.lean#L1146-L1152\">https://github.com/leanprover/lean4/blob/5902fe17460cf816fe3d8b470f806504569803c4/src/Lean/Parser/Basic.lean#L1146-L1152</a>. The analogue in your case would be a parser that parses a <code>num</code> and then raises a parse error if the value of that token is neither <code>0</code> nor <code>1</code>. But you cannot write this in the <code>syntax</code> DSL.</p>",
+        "id": 235742300,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619123185
+    },
+    {
+        "content": "<p>By the way, the main reason for using a separate parser type in <code>syntax</code> is that we do not want to import half of the <code>Lean</code> lib into each file. This may be solved with <a href=\"https://github.com/leanprover/lean4/issues/416\">https://github.com/leanprover/lean4/issues/416</a>, but that is still a pretty big \"may\".</p>",
+        "id": 235744461,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619124230
+    },
+    {
+        "content": "<p>Interesting! Thanks for helping me with my dumb questions. I learned a lot!</p>",
+        "id": 235762746,
+        "sender_full_name": "Mac",
+        "timestamp": 1619133085
+    },
+    {
+        "content": "<p>Oh, these were very justified questions! I wished this part of the system was as flexible and open to users as e.g. the macro system, though I also hope that most people's syntaxes will not run into such edge cases :) .</p>",
+        "id": 235797995,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1619162132
+    }
+]

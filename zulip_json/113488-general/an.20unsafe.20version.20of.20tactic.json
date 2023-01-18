@@ -1,0 +1,122 @@
+[
+    {
+        "content": "<p>Hello all, I've been playing with Lean 3's source a lot recently and I am toying with exposing some of the datastructures that Lean uses to implement the <code>tactic</code> monad. For example <code>metavar_context</code>, <code>local_context</code>, <code>type_context_old</code>.</p>\n<p>Afaik, the reason why these are not available in the Lean VM is:<br>\n1. there are some caching optimisations in <code>tactic</code> that will be hard to get right if you are allowed to see its guts.<br>\n2. the abstraction offered by <code>tactic</code> is that it is very hard for the result expression to be badly typed according to the kernel. That is, if I only use <code>tactic</code> builtins and it succeeds, then it is highly likely that I won't have a strange type error in the declaration.<br>\n3. The user model gets more complicated, you have not only metavariables but temporary metavariables which live in special scopes and so on. <br>\nHowever, some of my automation projects could be made much faster and easier to write by working with these deeper constructs instead of through <code>tactic</code>.  For example I want to hold lots of different metavariable contexts and be able to unify terms within specific contexts, which is what temporary mvars were invented for. At the moment I do this by having lots of <code>tactic_state</code>s flying around, but this is bad for caching since the cache resets every time you use <code>&lt;|&gt;</code> so unification is really slow. I would also love to be able to add locals directly to the context and use delayed abstraction without having to use <code>intro</code>. </p>\n<p>I don't think it is sensible to simply add new builtins on to <code>tactic.lean</code> though, because now we have lost some safety as described in reason 2. I am wondering if there is a demand to do this and if there is, what would be a good way to do it that keeps with the functional paradigm while not breaking <code>tactic</code> and also ideally with some of the same caching that <code>tactic</code> enjoys.</p>\n<p>I've got an experiment going on <a href=\"https://github.com/leanprover-community/lean/tree/ctxt_manip\" target=\"_blank\" title=\"https://github.com/leanprover-community/lean/tree/ctxt_manip\">https://github.com/leanprover-community/lean/tree/ctxt_manip</a><br>\nSee <a href=\"https://github.com/leanprover-community/lean/commit/e63221a527ac485843e1002a3ff98450807092de#diff-49385857c0541f8c567b0d3d000d6665\" target=\"_blank\" title=\"https://github.com/leanprover-community/lean/commit/e63221a527ac485843e1002a3ff98450807092de#diff-49385857c0541f8c567b0d3d000d6665\">this file</a> where I've reimplemented <code>intro</code> as <code>my_intro</code> using some new builtins.</p>\n<p>I recall <span class=\"user-mention\" data-user-id=\"110026\">@Simon Hudon</span> saying that people have already talked about this, but I don't know where I would find this discussion.</p>",
+        "id": 166077591,
+        "sender_full_name": "Edward Ayers",
+        "timestamp": 1558352504
+    },
+    {
+        "content": "<p>Do you think this low-level kind of manipulation could be encapsulated in a different monad than tactic, something unoriginally called <code>lowlevel_tactic</code> for instance?</p>",
+        "id": 166096747,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1558367973
+    },
+    {
+        "content": "<p>was thinking <code>tactic.unsafe</code></p>",
+        "id": 166097814,
+        "sender_full_name": "Edward Ayers",
+        "timestamp": 1558368775
+    },
+    {
+        "content": "<p>But it's a different monad to <code>tactic</code>.</p>",
+        "id": 166097921,
+        "sender_full_name": "Edward Ayers",
+        "timestamp": 1558368844
+    },
+    {
+        "content": "<p>Yeah it would be a monad without <code>alternative</code> so that there are no headscratchers with getting the cache to behave nicely.</p>",
+        "id": 166098360,
+        "sender_full_name": "Edward Ayers",
+        "timestamp": 1558369282
+    },
+    {
+        "content": "<p>That sounds like an interesting idea. How hard will it be to build and what are the benefit beside distinguishing temporary meta-variables?</p>",
+        "id": 166101546,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1558371807
+    },
+    {
+        "content": "<p>Benefits:</p>\n<ul>\n<li>can implement many builtins within Lean. eg <code>intro</code>. An example tactic that I find myself wanting is one that solves the goal <code>Type u</code> with the expression <code>Pi x : X, ?m[x]</code>. Maybe one could even reimplement more complicated ones like <code>simp</code> within lean. Would be interesting to see perf differences.</li>\n<li>can use temporary metavariables.</li>\n<li>can avoid cache resets when speculatively trying to unify things</li>\n<li>can add local constants to the context without going through <code>intro</code>.</li>\n<li>just being able to manipulate the tactic's context directly is so much easier than builtins for some tasks. <br>\n   When I am writing automation I catch myself thinking: \"I really just want to change the type context to look like this, how can I do that only using the library builtins which were not designed for this use case?\". I feel like I am working against the tactic abstraction and I would much rather be able to just explicitly say what I want the metavariable context to look like.</li>\n<li>This wouldn't be solved directly by just making this new module, but I feel like it is important for <code>tactic</code> to not just be this black box where you can't understand how it works without looking at the C++ source code. Eg at the moment it's basically impossible to understand the seemingly contradictory message <code>tactic failed, result contains meta-variables \\n state: no goals</code> without someone explaining what <code>tactic</code> is doing under the hood. You can't discover how <code>tactic</code> works for yourself but it is easy to newcomers to end up with the wrong mental model of it.</li>\n</ul>\n<p>Difficulties: exposing a <code>type_context</code> monad wouldn't be that difficult. All of the machinery is already in the C++ it's just about making it available leanside.  Testing and managing caches might be a little more challenging.</p>",
+        "id": 166174248,
+        "sender_full_name": "Edward Ayers",
+        "timestamp": 1558446929
+    },
+    {
+        "content": "<p>I'm definitely sold, but it sounds like a lot of work</p>",
+        "id": 166174557,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1558447083
+    },
+    {
+        "content": "<p>Your first example can be achieved by <code>refine</code> btw. That doesn't address the rest of it or efficiency though</p>",
+        "id": 166174705,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1558447167
+    },
+    {
+        "content": "<p><code>simp</code> in lean is a non-starter, I think. It's not a question of capabilities, it's an efficiency problem</p>",
+        "id": 166174800,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1558447208
+    },
+    {
+        "content": "<p>You would have to do this via code generation, JIT, or lean 4</p>",
+        "id": 166174825,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1558447229
+    },
+    {
+        "content": "<blockquote>\n<p>Your first example can be achieved by <code>refine</code> btw. That doesn't address the rest of it or efficiency though</p>\n</blockquote>\n<p>I guess you mean something like <code>refine \\lambda x, _</code>? I mean you can't create a local constant on the context without already having your target be a Pi, and you can't create a local constant without also making all of the metavariables and delayed abstractions that go along with using <code>refine</code> or <code>intro</code>.</p>",
+        "id": 166175343,
+        "sender_full_name": "Edward Ayers",
+        "timestamp": 1558447529
+    },
+    {
+        "content": "<p>I mean <code>refine \\Pi x, _</code>, since that's your goal</p>",
+        "id": 166175460,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1558447588
+    },
+    {
+        "content": "<p>Ah no you mean the <code>Pi x, ?m</code> thing</p>",
+        "id": 166175463,
+        "sender_full_name": "Edward Ayers",
+        "timestamp": 1558447589
+    },
+    {
+        "content": "<p>You can use <code>refine</code> with a placeholder</p>",
+        "id": 166175516,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1558447634
+    },
+    {
+        "content": "<p>as in construct <code>\\Pi x, _</code> as a pexpr</p>",
+        "id": 166175544,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1558447653
+    },
+    {
+        "content": "<p>yep</p>",
+        "id": 166175558,
+        "sender_full_name": "Edward Ayers",
+        "timestamp": 1558447661
+    },
+    {
+        "content": "<p>I think your way is better though</p>",
+        "id": 166175636,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1558447697
+    },
+    {
+        "content": "<blockquote>\n<p><code>simp</code> in lean is a non-starter, I think. It's not a question of capabilities, it's an efficiency problem</p>\n</blockquote>\n<p>Yeah you are probably right here. My point was just that you could implement simp within Lean and get the temp-mvars efficiency boost, but that's probably not enough.</p>",
+        "id": 166175970,
+        "sender_full_name": "Edward Ayers",
+        "timestamp": 1558447909
+    },
+    {
+        "content": "<p>I got a minimal prototype working at <a href=\"https://github.com/leanprover-community/lean/tree/ctxt_manip\" target=\"_blank\" title=\"https://github.com/leanprover-community/lean/tree/ctxt_manip\">https://github.com/leanprover-community/lean/tree/ctxt_manip</a><br>\nLook at the <code>tests/lean/tco.lean</code> for some examples.</p>",
+        "id": 166600842,
+        "sender_full_name": "Edward Ayers",
+        "timestamp": 1558919890
+    }
+]

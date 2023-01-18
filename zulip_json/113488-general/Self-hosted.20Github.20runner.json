@@ -1,0 +1,254 @@
+[
+    {
+        "content": "<p>Breaking this out of the <a href=\"#narrow/stream/113488-general/topic/speed-up.20project.20returns\">speed-up project returns thread</a>.</p>\n<p>It seems like it might be beneficial to have a custom Github runner which could build mathlib much faster than Github's runners. I'm currently running some experiments in this direction with initial funding graciously provided by <span class=\"user-mention\" data-user-id=\"252300\">@Jalex Stark</span>.</p>\n<p>To determine what sort of build server we'd want, a key factor is how mathlib scales with additional cores. I'm currently running benchmarks on a dedicated server with 8 cores and a virtual server with 16 cores. <span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span>, could you perhaps run the same benchmark on your machine? Just so that we have a bit more data.</p>\n<p>Here's the benchmark script:</p>\n<div class=\"codehilite\"><pre><span></span><code><span class=\"ch\">#!/bin/bash</span>\n\n<span class=\"k\">function</span> die<span class=\"o\">()</span> <span class=\"o\">{</span>\n  <span class=\"nb\">echo</span> <span class=\"nv\">$1</span>\n  <span class=\"nb\">echo</span> <span class=\"s2\">&quot;Usage: mathlib-bench &lt;mathlib-dir&gt; &lt;n1&gt; [n2 ...]&quot;</span>\n  <span class=\"nb\">exit</span> <span class=\"m\">1</span>\n<span class=\"o\">}</span>\n\n<span class=\"nb\">test</span> -n <span class=\"s2\">&quot;</span><span class=\"nv\">$1</span><span class=\"s2\">&quot;</span> <span class=\"o\">||</span> die <span class=\"s2\">&quot;Mathlib directory not specified.&quot;</span>\n<span class=\"nv\">mathlib_dir</span><span class=\"o\">=</span><span class=\"s2\">&quot;</span><span class=\"nv\">$1</span><span class=\"s2\">&quot;</span>\n<span class=\"nb\">shift</span>\n\n<span class=\"nb\">test</span> -n <span class=\"s2\">&quot;</span><span class=\"nv\">$1</span><span class=\"s2\">&quot;</span> <span class=\"o\">||</span> die <span class=\"s2\">&quot;Thread count not specified&quot;</span>\n\n<span class=\"nb\">echo</span> <span class=\"s2\">&quot;===== Cloning mathlib repo in &#39;</span><span class=\"nv\">$mathlib_dir</span><span class=\"s2\">&#39;&quot;</span>\ngit clone https://github.com/leanprover-community/mathlib <span class=\"s2\">&quot;</span><span class=\"nv\">$mathlib_dir</span><span class=\"s2\">&quot;</span> <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n  <span class=\"nb\">pushd</span> <span class=\"s2\">&quot;</span><span class=\"nv\">$mathlib_dir</span><span class=\"s2\">&quot;</span> <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n  git checkout d0beb496140b5506530e18033591c711030546ad <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n  <span class=\"nb\">popd</span>\n\n<span class=\"nb\">test</span> <span class=\"s2\">&quot;</span><span class=\"nv\">$?</span><span class=\"s2\">&quot;</span> -eq <span class=\"m\">0</span> <span class=\"o\">||</span> die <span class=\"s2\">&quot;Unable to clone mathlib.&quot;</span>\n\n<span class=\"nb\">echo</span> <span class=\"s2\">&quot;===== Installing Lean toolchain&quot;</span>\n<span class=\"nb\">pushd</span> <span class=\"s2\">&quot;</span><span class=\"nv\">$mathlib_dir</span><span class=\"s2\">&quot;</span> <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n  leanpkg configure <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n  <span class=\"nb\">popd</span>\n\n<span class=\"nb\">test</span> <span class=\"s2\">&quot;</span><span class=\"nv\">$?</span><span class=\"s2\">&quot;</span> -eq <span class=\"m\">0</span> <span class=\"o\">||</span> die <span class=\"s2\">&quot;Unable to install Lean toolchain.&quot;</span>\n\n<span class=\"k\">while</span> <span class=\"nb\">test</span> -n <span class=\"s2\">&quot;</span><span class=\"nv\">$1</span><span class=\"s2\">&quot;</span><span class=\"p\">;</span> <span class=\"k\">do</span>\n  <span class=\"nb\">test</span> <span class=\"s2\">&quot;</span><span class=\"nv\">$1</span><span class=\"s2\">&quot;</span> -gt <span class=\"m\">0</span> <span class=\"o\">||</span> die <span class=\"s2\">&quot;Not a positive number: </span><span class=\"nv\">$1</span><span class=\"s2\">.&quot;</span>\n  <span class=\"nv\">n_threads</span><span class=\"o\">=</span><span class=\"s2\">&quot;</span><span class=\"nv\">$1</span><span class=\"s2\">&quot;</span>\n\n  <span class=\"nb\">echo</span> <span class=\"s2\">&quot;===== Building mathlib with </span><span class=\"nv\">$n_threads</span><span class=\"s2\"> threads&quot;</span> <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n    find <span class=\"s2\">&quot;</span><span class=\"nv\">$mathlib_dir</span><span class=\"s2\">&quot;</span> -name <span class=\"s1\">&#39;*.olean&#39;</span> -delete <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n    <span class=\"nb\">pushd</span> <span class=\"s2\">&quot;</span><span class=\"nv\">$mathlib_dir</span><span class=\"s2\">&quot;</span> <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n    <span class=\"nb\">command</span> <span class=\"nb\">time</span> leanpkg build -- --threads<span class=\"o\">=</span><span class=\"s2\">&quot;</span><span class=\"nv\">$n_threads</span><span class=\"s2\">&quot;</span> --memory<span class=\"o\">=</span><span class=\"m\">16000</span> <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n    <span class=\"nb\">popd</span>\n\n  <span class=\"nb\">test</span> <span class=\"nv\">$?</span> -eq <span class=\"m\">0</span> <span class=\"o\">||</span> die <span class=\"s2\">&quot;Error while building mathlib.&quot;</span>\n<span class=\"k\">done</span>\n</code></pre></div>\n\n\n<p>Usage: <code>mathlib-bench &lt;dir&gt; &lt;n1&gt; ... &lt;nm&gt;</code> where <code>dir</code> is the directory where <code>mathlib</code> will be checked out (must be empty or nonexistent) and the <code>ni</code> are thread counts. I'm using <code>mathlib-bench &lt;dir&gt; 1 2 4 6 8 10 12 14 16</code>.</p>",
+        "id": 197556848,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1589464303
+    },
+    {
+        "content": "<p>Also, if anyone knows an organisation that would give us build servers for free/cheap, I'm all ears.</p>",
+        "id": 197558018,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1589464801
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"256311\">Jannis Limperg</span> <a href=\"#narrow/stream/113488-general/topic/Self-hosted.20Github.20runner/near/197558018\">said</a>:</p>\n<blockquote>\n<p>Also, if anyone knows an organisation that would give us build servers for free/cheap, I'm all ears.</p>\n</blockquote>\n<p>We have nothing to lose to try:<br>\n— Nix/NixOS community<br>\n— <a href=\"http://Packet.com\">Packet.com</a><br>\n— University</p>\n<p>Also, thanks for the benchmark script, I'll be able to play around with Packet's EPYC now :-)</p>",
+        "id": 197558421,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1589465005
+    },
+    {
+        "content": "<p>(the same machine is at the moment running two single-threaded builds of old commits of mathlib, which will presumably interfere for the higher core numbers...)</p>",
+        "id": 197558425,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1589465010
+    },
+    {
+        "content": "<p>Running!</p>",
+        "id": 197558707,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1589465177
+    },
+    {
+        "content": "<p>Thanks Scott and Ryan! Those numbers will be very interesting.</p>",
+        "id": 197566168,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1589467884
+    },
+    {
+        "content": "<p>And thanks Jalex and Jannis!</p>",
+        "id": 197566605,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1589468052
+    },
+    {
+        "content": "<p><em>sigh</em> The security issues of self-hosted Github runners are much worse than I thought. Essentially: Anyone can make a PR that changes the GH actions workflow file, then this <em>new</em> file is run (because it can say, 'run me on a self-hosted runner when a PR is created'), and the runner does no sandboxing whatsoever. I was able to create a PR (as a random user with no affiliation with the repo) that changed the workflow file to <code>cat /etc/passwd</code> and this was executed and displayed without a hitch. Whoever thought this was a remotely sensible design deserves to be slapped.</p>\n<p>What this means for the project is that I need to figure out whether I can sandbox the runner myself in a VM or something. Fun times...</p>",
+        "id": 197580403,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1589473358
+    },
+    {
+        "content": "<p>That's quite ridiculous indeed.</p>",
+        "id": 197584235,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1589474989
+    },
+    {
+        "content": "<p>And running it inside some docker sandbox probably hinders the performance</p>",
+        "id": 197584309,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1589475008
+    },
+    {
+        "content": "<p>How about a qemu bare metal VM?</p>",
+        "id": 197584337,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1589475022
+    },
+    {
+        "content": "<p>But it comes with extra maintenance ~~&gt; headaches</p>",
+        "id": 197584419,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1589475067
+    },
+    {
+        "content": "<p>All solutions for CI involve security issues like this to various extents, as well as the reverse issue: how do I know I can trust the binaries produced by your server?</p>",
+        "id": 197584516,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1589475121
+    },
+    {
+        "content": "<p>How about just not building PRs?</p>",
+        "id": 197584593,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1589475140
+    },
+    {
+        "content": "<p>As far as I understand, a PR can say \" let's build PRs\"</p>",
+        "id": 197584657,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1589475172
+    },
+    {
+        "content": "<p>Am I right?</p>",
+        "id": 197584668,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1589475181
+    },
+    {
+        "content": "<p>oh, I don't know about this github self-hosted thing in particular</p>",
+        "id": 197584715,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1589475199
+    },
+    {
+        "content": "<p>Does it run under <code>root</code> user account (otherwise it shouldn't have access to <code>/etc/passwd</code>)?</p>",
+        "id": 197584957,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1589475290
+    },
+    {
+        "content": "<p>I agree if it can't even be configured to only build commits to master, that's an extra level of dumb.</p>",
+        "id": 197585142,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1589475370
+    },
+    {
+        "content": "<p>I think the solution is going to depend on exactly what you want to do with this. Is this supposed to be a replacement for the CI running on Actions right now? Or is it separate, just for benchmarking?</p>",
+        "id": 197585442,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1589475503
+    },
+    {
+        "content": "<p>If it's just for benchmarking, it doesn't have to be tied to the mathlib repo at all.</p>",
+        "id": 197585485,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1589475528
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"214703\">Yury G. Kudryashov</span> <a href=\"#narrow/stream/113488-general/topic/Self-hosted.20Github.20runner/near/197584657\">said</a>:</p>\n<blockquote>\n<p>As far as I understand, a PR can say \" let's build PRs\"</p>\n</blockquote>\n<p>Yes, that's one part of the problem. The workflow itself defines when it is run, and there are no repository-wide configuration options to restrict this. I thought it might be possible to disable Actions for PRs from forks, but no such luck.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"214703\">Yury G. Kudryashov</span> <a href=\"#narrow/stream/113488-general/topic/Self-hosted.20Github.20runner/near/197584957\">said</a>:</p>\n<blockquote>\n<p>Does it run under <code>root</code> user account (otherwise it shouldn't have access to <code>/etc/passwd</code>)?</p>\n</blockquote>\n<p>No, you can run it as an unprivileged user. (<code>/etc/passwd</code> is world-readable by default, at least on this installation.) But then it still has access to any world-readable files as well as the network, which is way too much attack surface.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"110596\">Rob Lewis</span> <a href=\"#narrow/stream/113488-general/topic/Self-hosted.20Github.20runner/near/197585442\">said</a>:</p>\n<blockquote>\n<p>I think the solution is going to depend on exactly what you want to do with this. Is this supposed to be a replacement for the CI running on Actions right now? Or is it separate, just for benchmarking?</p>\n</blockquote>\n<p>No, I want this to be a faster replacement for the default Github Actions runners. The idea is to get mathlib compile times to a more tolerable level for all contributors.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"112680\">Johan Commelin</span> <a href=\"#narrow/stream/113488-general/topic/Self-hosted.20Github.20runner/near/197584337\">said</a>:</p>\n<blockquote>\n<p>How about a qemu bare metal VM?</p>\n</blockquote>\n<p>The problem is that you really want to spin up a new VM/container for every job, to make sure that they can't leave anything behind. This would have to be done by the GH runner, which, as far as I can tell, can't do it.</p>",
+        "id": 197587057,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1589476115
+    },
+    {
+        "content": "<blockquote>\n<p>(/etc/passwd is world-readable by default<br>\nI should read more carefully: it's \"just\" <code>/etc/passwd</code>, not <code>/etc/shadow</code></p>\n</blockquote>",
+        "id": 197587392,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1589476253
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"256311\">Jannis Limperg</span> <a href=\"#narrow/stream/113488-general/topic/Self-hosted.20Github.20runner/near/197587057\">said</a>:</p>\n<blockquote>\n<p>No, I want this to be a faster replacement for the default Github Actions runners. The idea is to get mathlib compile times to a more tolerable level for all contributors.</p>\n</blockquote>\n<p>Have you done the calculations on this?  How many machines would we need to build all PR commits?  (Say one build takes 20 minutes, then we can only do 72 commits per day.  This seems potentially low.)</p>",
+        "id": 197587755,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1589476428
+    },
+    {
+        "content": "<p>An alternative approach: make <code>github</code> just <code>wget</code> some URL on the server. Then a script can checkout the specified commit, compile it using a hardcoded script, publish <code>olean</code>s, and post a status update.</p>",
+        "id": 197587941,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1589476495
+    },
+    {
+        "content": "<p>Please be aware that you can execute arbitrary commands when compiling Lean code.  (See <code>io.cmd</code>.)</p>",
+        "id": 197588267,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1589476630
+    },
+    {
+        "content": "<p>and, for example, you do not want that arbitrary code to have access to your cloud storage credentials</p>",
+        "id": 197588537,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1589476755
+    },
+    {
+        "content": "<p>With that setup, we can at least restrict to people we've offered write access to mathlib branches. External PRs can't access GH secrets, so you just need the script to be called with a stored passphrase.</p>",
+        "id": 197588991,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1589476969
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"256311\">@Jannis Limperg</span> What's wrong with the current Github actions + leanproject setup?</p>",
+        "id": 197588993,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1589476970
+    },
+    {
+        "content": "<p>But, like Gabriel, I'm skeptical about the scalability here. Github gives us a crazy amount of resources for free, even if they aren't blazing fast.</p>",
+        "id": 197589089,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1589477013
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/113488-general/topic/Self-hosted.20Github.20runner/near/197587755\">said</a>:</p>\n<blockquote>\n<p>Have you done the calculations on this?  How many machines would we need to build all PR commits?  (Say one build takes 20 minutes, then we can only do 72 commits per day.  This seems potentially low.)</p>\n</blockquote>\n<p>No, I'm waiting for the benchmark results to see what the numbers are like. I'm also not sure that they're going to be good enough for this whole thing to be worth it. However, on my machine, compilation with 4 threads already takes under 1h (around half the time GH actions  currently needs), so I could run 2 jobs in parallel.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"112680\">Johan Commelin</span> <a href=\"#narrow/stream/113488-general/topic/Self-hosted.20Github.20runner/near/197588993\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"256311\">Jannis Limperg</span> What's wrong with the current Github actions + leanproject setup?</p>\n</blockquote>\n<p>That it takes 2h until you know whether your commit broke anything (and 3h for linting etc.). I was under the impression that people were unhappy with this and would be happier if it took significantly less long. However, if there's no demand for this project, I'll gladly drop it; the compile times don't bother me personally much (because my machine will likely remain faster than CI).</p>",
+        "id": 197590921,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1589477828
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> <span class=\"user-mention\" data-user-id=\"262143\">@Ryan Lahfa</span> The benchmark script was missing a <code>shift</code>, so it'll run the 1-thread benchmark forever. Sorry! (Why is there no facepalm emoji?)</p>\n<p>Corrected script:</p>\n<div class=\"codehilite\"><pre><span></span><code><span class=\"ch\">#!/bin/bash</span>\n\n<span class=\"k\">function</span> die<span class=\"o\">()</span> <span class=\"o\">{</span>\n  <span class=\"nb\">echo</span> <span class=\"nv\">$1</span>\n  <span class=\"nb\">echo</span> <span class=\"s2\">&quot;Usage: mathlib-bench &lt;mathlib-dir&gt; &lt;n1&gt; [n2 ...]&quot;</span>\n  <span class=\"nb\">exit</span> <span class=\"m\">1</span>\n<span class=\"o\">}</span>\n\n<span class=\"nb\">test</span> -n <span class=\"s2\">&quot;</span><span class=\"nv\">$1</span><span class=\"s2\">&quot;</span> <span class=\"o\">||</span> die <span class=\"s2\">&quot;Mathlib directory not specified.&quot;</span>\n<span class=\"nv\">mathlib_dir</span><span class=\"o\">=</span><span class=\"s2\">&quot;</span><span class=\"nv\">$1</span><span class=\"s2\">&quot;</span>\n<span class=\"nb\">shift</span>\n\n<span class=\"nb\">test</span> -n <span class=\"s2\">&quot;</span><span class=\"nv\">$1</span><span class=\"s2\">&quot;</span> <span class=\"o\">||</span> die <span class=\"s2\">&quot;Thread count not specified&quot;</span>\n\n<span class=\"nb\">echo</span> <span class=\"s2\">&quot;===== Cloning mathlib repo in &#39;</span><span class=\"nv\">$mathlib_dir</span><span class=\"s2\">&#39;&quot;</span>\ngit clone https://github.com/leanprover-community/mathlib <span class=\"s2\">&quot;</span><span class=\"nv\">$mathlib_dir</span><span class=\"s2\">&quot;</span> <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n  <span class=\"nb\">pushd</span> <span class=\"s2\">&quot;</span><span class=\"nv\">$mathlib_dir</span><span class=\"s2\">&quot;</span> <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n  git checkout d0beb496140b5506530e18033591c711030546ad <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n  <span class=\"nb\">popd</span>\n\n<span class=\"nb\">test</span> <span class=\"s2\">&quot;</span><span class=\"nv\">$?</span><span class=\"s2\">&quot;</span> -eq <span class=\"m\">0</span> <span class=\"o\">||</span> die <span class=\"s2\">&quot;Unable to clone mathlib.&quot;</span>\n\n<span class=\"nb\">echo</span> <span class=\"s2\">&quot;===== Installing Lean toolchain&quot;</span>\n<span class=\"nb\">pushd</span> <span class=\"s2\">&quot;</span><span class=\"nv\">$mathlib_dir</span><span class=\"s2\">&quot;</span> <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n  leanpkg configure <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n  <span class=\"nb\">popd</span>\n\n<span class=\"nb\">test</span> <span class=\"s2\">&quot;</span><span class=\"nv\">$?</span><span class=\"s2\">&quot;</span> -eq <span class=\"m\">0</span> <span class=\"o\">||</span> die <span class=\"s2\">&quot;Unable to install Lean toolchain.&quot;</span>\n\n<span class=\"k\">while</span> <span class=\"nb\">test</span> -n <span class=\"s2\">&quot;</span><span class=\"nv\">$1</span><span class=\"s2\">&quot;</span><span class=\"p\">;</span> <span class=\"k\">do</span>\n  <span class=\"nb\">test</span> <span class=\"s2\">&quot;</span><span class=\"nv\">$1</span><span class=\"s2\">&quot;</span> -gt <span class=\"m\">0</span> <span class=\"o\">||</span> die <span class=\"s2\">&quot;Not a positive number: </span><span class=\"nv\">$1</span><span class=\"s2\">.&quot;</span>\n  <span class=\"nv\">n_threads</span><span class=\"o\">=</span><span class=\"s2\">&quot;</span><span class=\"nv\">$1</span><span class=\"s2\">&quot;</span>\n\n  <span class=\"nb\">echo</span> <span class=\"s2\">&quot;===== Building mathlib with </span><span class=\"nv\">$n_threads</span><span class=\"s2\"> threads&quot;</span> <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n    find <span class=\"s2\">&quot;</span><span class=\"nv\">$mathlib_dir</span><span class=\"s2\">&quot;</span> -name <span class=\"s1\">&#39;*.olean&#39;</span> -delete <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n    <span class=\"nb\">pushd</span> <span class=\"s2\">&quot;</span><span class=\"nv\">$mathlib_dir</span><span class=\"s2\">&quot;</span> <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n    <span class=\"nb\">command</span> <span class=\"nb\">time</span> leanpkg build -- --threads<span class=\"o\">=</span><span class=\"s2\">&quot;</span><span class=\"nv\">$n_threads</span><span class=\"s2\">&quot;</span> --memory<span class=\"o\">=</span><span class=\"m\">16000</span> <span class=\"o\">&amp;&amp;</span> <span class=\"se\">\\</span>\n    <span class=\"nb\">popd</span>\n\n  <span class=\"nb\">test</span> <span class=\"nv\">$?</span> -eq <span class=\"m\">0</span> <span class=\"o\">||</span> die <span class=\"s2\">&quot;Error while building mathlib.&quot;</span>\n  <span class=\"nb\">shift</span>\n<span class=\"k\">done</span>\n</code></pre></div>",
+        "id": 197597106,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1589480580
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"256311\">@Jannis Limperg</span> It's <code>:face palm:</code>. I've needed it a lot.</p>",
+        "id": 197597404,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1589480702
+    },
+    {
+        "content": "<p>What's the correct reaction when you're too dumb to find an emoji? <span aria-label=\"face palm\" class=\"emoji emoji-1f926\" role=\"img\" title=\"face palm\">:face_palm:</span></p>",
+        "id": 197605884,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1589484461
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"256311\">Jannis Limperg</span> <a href=\"#narrow/stream/113488-general/topic/Self-hosted.20Github.20runner/near/197580403\">said</a>:</p>\n<blockquote>\n<p><em>sigh</em> The security issues of self-hosted Github runners are much worse than I thought. Essentially: Anyone can make a PR that changes the GH actions workflow file, then this <em>new</em> file is run (because it can say, 'run me on a self-hosted runner when a PR is created'), and the runner does no sandboxing whatsoever. I was able to create a PR (as a random user with no affiliation with the repo) that changed the workflow file to <code>cat /etc/passwd</code> and this was executed and displayed without a hitch. Whoever thought this was a remotely sensible design deserves to be slapped.</p>\n<p>What this means for the project is that I need to figure out whether I can sandbox the runner myself in a VM or something. Fun times...</p>\n</blockquote>\n<p>That's why I think we should go for a Hydra (Nix/NixOS) model</p>",
+        "id": 197609338,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1589486203
+    },
+    {
+        "content": "<p>The GH Actions are cool for simple stuff, beyond that, it's becoming annoyingly difficult to do it</p>",
+        "id": 197609375,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1589486225
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"112680\">Johan Commelin</span> <a href=\"#narrow/stream/113488-general/topic/Self-hosted.20Github.20runner/near/197588993\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"256311\">Jannis Limperg</span> What's wrong with the current Github actions + leanproject setup?</p>\n</blockquote>\n<p>That it takes 2h until you know whether your commit broke anything (and 3h for linting etc.). I was under the impression that people were unhappy with this and would be happier if it took significantly less long. However, if there's no demand for this project, I'll gladly drop it; the compile times don't bother me personally much (because my machine will likely remain faster than CI).</p>\n<p>In addition, if it takes 2 hours now, it might slowly getting longer and longer.<br>\nFaster feedback is nice, but also makes it future-proof.</p>",
+        "id": 197609642,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1589486370
+    },
+    {
+        "content": "<p>I see. But maybe we can first focus on detailed and reliable profiling. So that we better understand where the slow bits of code are?</p>",
+        "id": 197610664,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1589486840
+    },
+    {
+        "content": "<p>Still, of course I would love \"instant CI\"</p>",
+        "id": 197610690,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1589486851
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"112680\">Johan Commelin</span> <a href=\"#narrow/stream/113488-general/topic/Self-hosted.20Github.20runner/near/197610664\">said</a>:</p>\n<blockquote>\n<p>I see. But maybe we can first focus on detailed and reliable profiling. So that we better understand where the slow bits of code are?</p>\n</blockquote>\n<p>Agreed, I'm not jumping yet on the running stuff yet, I just want to setup simple experiments</p>",
+        "id": 197610719,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1589486865
+    },
+    {
+        "content": "<p>Ideally, reproducible experiments would be arguably nice</p>",
+        "id": 197610734,
+        "sender_full_name": "Ryan Lahfa",
+        "timestamp": 1589486876
+    },
+    {
+        "content": "<p>I'm running the updated benchmark script.</p>",
+        "id": 197640167,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1589507609
+    }
+]

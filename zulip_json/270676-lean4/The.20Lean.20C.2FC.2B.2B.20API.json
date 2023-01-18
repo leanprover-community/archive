@@ -1,0 +1,230 @@
+[
+    {
+        "content": "<p>So I was in the process of updating <a href=\"https://github.com/tydeu/lean4-papyrus\">Papyrus</a> to the latest Lean nightly and noticed a number of breaking changes had been made in the past few days to the Lean C/C++ API.  For one, it appears that the C++ interface has been completely removed from the distribution. The manner of linking to Lean also appears to have changed. As such, I am a little at a loss on how to update Papyrus. </p>\n<p>Lean 4 devs (e.g., <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span>  and Leo) is there any advice you can give on how to migrate? Also are their any guidelines on how C/C++ bindings should be written going forward to make them more future proof?</p>",
+        "id": 252933266,
+        "sender_full_name": "Mac",
+        "timestamp": 1631392177
+    },
+    {
+        "content": "<p>Two particularly large point pain points are the absence of <code>mpz</code> and <code>utf8</code> (and <code>mpz_object</code> from <code>object</code>), which I needed to convert between Lean <code>Int</code>s and <code>Nat</code>s and LLVM <code>APInt</code>s and between Lean <code>String</code>s and LLVM <code>StringRef</code>s/<code>Twine</code>s.</p>",
+        "id": 252934140,
+        "sender_full_name": "Mac",
+        "timestamp": 1631393037
+    },
+    {
+        "content": "<p>Also the absence of the <code>std::string</code> to <code>lean_object</code> converters hurts.</p>",
+        "id": 252935668,
+        "sender_full_name": "Mac",
+        "timestamp": 1631394572
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> Sorry about that, we assumed nobody was using the C++ .h files in the Lean distribution. These files were originally written to support the Lean implementation. This was not a random decision. It was done to simplify <a href=\"https://github.com/leanprover/lean4/pull/659\">https://github.com/leanprover/lean4/pull/659</a><br>\nThis PR is critical because it will allow us to have a Lean distribution that does not depend on a C compiler in the user machine. We believe Lake + this PR will dramatically improve the user experience.<br>\nI think Papyrus is also an important project. Could you \"survive\" with the C API? If not, do you want to volunteer to maintain a C++ API for Lean.<br>\nBTW, we do hope one day Lean runtime will be pure C, and everything else will be written in Lean.</p>",
+        "id": 252936178,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1631395116
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> Ah, makes sense. I think I can largely do without the C++ API. As you said, most of it used to implement Lean and very little needs to be used by third parties.  Most of the useful C++ helpers can also be rewritten relatively easily.</p>\n<p>The only critical things I am missing are <code>utf8_strlen</code> and <code>mpz</code>. The former is  currently needed to needed to convert things like <code>std::string</code> (i.e., potentially non-null terminated strings with a known size) into a <code>lean_object</code>. However, it could likely be replaced with an alternative C <code>lean_mk_string</code> that takes both a pointer and a size. </p>\n<p>For <code>mpz</code>, I was actually hacking around the existing Lean C++ API to get at the C <code>mpz_t</code>, so if there was C API <code>lean_mpz_value</code> which returned the <code>mpz_t</code>, that would be sufficient. Similar methods could also exist for <code>mpq</code> and <code>mpfp</code> to get at their <code>mpq_t</code> and <code>mpfp_t</code>. They could probably be located in a separate <code>.h</code> that includes <code>gmp</code> so that <code>gmp</code> is only a dependency for those who need such an API.</p>",
+        "id": 252937116,
+        "sender_full_name": "Mac",
+        "timestamp": 1631396184
+    },
+    {
+        "content": "<blockquote>\n<p>The only critical things I am missing are are utf8_strlen </p>\n</blockquote>\n<p>I will this one to the C API.</p>",
+        "id": 252937228,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1631396327
+    },
+    {
+        "content": "<p>Now, the <code>mpz</code>, do you need big numbers?</p>",
+        "id": 252937253,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1631396354
+    },
+    {
+        "content": "<p>Yes, for LLVM's <code>APInt</code>.</p>",
+        "id": 252937267,
+        "sender_full_name": "Mac",
+        "timestamp": 1631396374
+    },
+    {
+        "content": "<p>Would a function that returns the Lean Nat/Int as a string be good enough?<br>\nHow do you create <code>APInt</code>objects in LLVM? Is it based on GMP too?</p>",
+        "id": 252937385,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1631396505
+    },
+    {
+        "content": "<p>LLVM has its own numeric representation for <code>APInt</code> which is also an array of limbs, so I was using <code>mpz_import</code>/<code>mpz_export</code> to convert between the two efficiently (without having to construct and parse an intermediary string).</p>",
+        "id": 252937483,
+        "sender_full_name": "Mac",
+        "timestamp": 1631396609
+    },
+    {
+        "content": "<p>how about an interface to get the nth limb (with a radix of 2^8, 2^32 or 2^64 as convenient)? That would be relatively efficient for this kind of conversion</p>",
+        "id": 252937658,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631396771
+    },
+    {
+        "content": "<p>I would think exposing the already existing<code>mpz_t</code> would be the simplest and most powerful solution.</p>",
+        "id": 252937689,
+        "sender_full_name": "Mac",
+        "timestamp": 1631396826
+    },
+    {
+        "content": "<p>That would also work, but imposes a dependency on <code>gmp</code>, and I'm guessing they are considering alternative backends</p>",
+        "id": 252937715,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631396861
+    },
+    {
+        "content": "<p>Hence why I said splitting it into a separate header. I am more than happy to rewrite my conversion code if the backend representation changes.</p>",
+        "id": 252937770,
+        "sender_full_name": "Mac",
+        "timestamp": 1631396897
+    },
+    {
+        "content": "<p>And its not like C interface doesn't expose implementation details for other types of objects (e.g., arrays, strings, etc.)</p>",
+        "id": 252937816,
+        "sender_full_name": "Mac",
+        "timestamp": 1631396993
+    },
+    {
+        "content": "<p>those are all exposed via structs in lean.h though</p>",
+        "id": 252937877,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631397035
+    },
+    {
+        "content": "<p>I don't know if something similar is possible for mpz unless you leave it as a <code>void *</code></p>",
+        "id": 252937892,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631397063
+    },
+    {
+        "content": "<p>My ideal interface would be <code>lean_object* lean_alloc_mpz(mpz_t)</code> and <code>mpz_t* lean_mpz_value(lean_object*)</code></p>",
+        "id": 252937903,
+        "sender_full_name": "Mac",
+        "timestamp": 1631397083
+    },
+    {
+        "content": "<p>The motivation to eliminate the GMP dependency was PR <a href=\"https://github.com/leanprover/lean4/pull/659\">https://github.com/leanprover/lean4/pull/659</a><br>\n<span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> told me Zig was having trouble finding <code>gmp.h</code>. We don't want to re-distribute <code>gmp.h</code> with Lean. It would be great to just avoid <code>gmp.h</code> in the header, and as <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> suggested, it would allow us to use different bignum libraries in the future without affecting user code.</p>",
+        "id": 252938065,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1631397269
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> my confusion is thus. Couldn't a separate header providing these methods <code>#include &lt;gmp.h&gt;</code> without Lean actually distributing <code>gmp.h</code>? That way it would not bloat Lean and would only be usable to libraries that need to be manually built with a separate C/C++ compiler anyway.</p>",
+        "id": 252938273,
+        "sender_full_name": "Mac",
+        "timestamp": 1631397513
+    },
+    {
+        "content": "<p>However, the limb indexing method <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> suggested would probably work too. But that would need at multiple API methods. That is, allocating a number of a given bit width, setting limbs, getting the bit width of a number and getting limbs.</p>",
+        "id": 252938548,
+        "sender_full_name": "Mac",
+        "timestamp": 1631397796
+    },
+    {
+        "content": "<p>Also, in that cast, it would probably be helpful to mention that LLVM uses a 64-bit limb size, so that would be the most pertinent size of limb to set (at least for me).</p>",
+        "id": 252938619,
+        "sender_full_name": "Mac",
+        "timestamp": 1631397876
+    },
+    {
+        "content": "<p>Yes, <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> 's solution is the best long-term solution, but just adding an extra <code>lean_gmp.h</code> is an easier fix for now.</p>",
+        "id": 252938658,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1631397949
+    },
+    {
+        "content": "<p>I wouldn't be surprised if GMP uses 32 bit limbs on 32 bit and 64 bit limbs on 64 bit</p>",
+        "id": 252938705,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631397971
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> that's a good point, I did not check if LLVM's is also architecture dependent.</p>",
+        "id": 252938724,
+        "sender_full_name": "Mac",
+        "timestamp": 1631398015
+    },
+    {
+        "content": "<p>On closer examination, <a href=\"https://llvm.org/doxygen/APInt_8h_source.html#l00077\">it does not appear to be </a>.</p>",
+        "id": 252938755,
+        "sender_full_name": "Mac",
+        "timestamp": 1631398073
+    },
+    {
+        "content": "<p>gmp's <code>mp_limb_t</code> is apparently one of <code>unsigned int</code>, <code>unsigned long int</code> and <code>unsigned long long int</code>, which I think puts it somewhere between 8 and 64 bits</p>",
+        "id": 252939054,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1631398405
+    },
+    {
+        "content": "<p>Ah</p>",
+        "id": 252939477,
+        "sender_full_name": "Mac",
+        "timestamp": 1631398905
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> Just to clarify, the relevant <code>utf8_strlen</code> for me is the one that takes both a pointer and a size (though the one that takes a pointer may be useful to have for other users of the API).</p>",
+        "id": 252939544,
+        "sender_full_name": "Mac",
+        "timestamp": 1631398962
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> One other utility that seems to be missing from the C API that feels like it would fit is <code>decode_io_error</code> (as, for one, it is using C errnums).</p>",
+        "id": 252939984,
+        "sender_full_name": "Mac",
+        "timestamp": 1631399436
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> Pushed the missing APIs.</p>",
+        "id": 252940655,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1631400264
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> Thank you so much!</p>",
+        "id": 252942190,
+        "sender_full_name": "Mac",
+        "timestamp": 1631402059
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> Two final notes I have from porting the Papyrus C/C++ lib to the new API:</p>\n<ol>\n<li>You might want to expose <code>mk_io_user_error</code> somewhere now that the convenience methods for constructing an <code>IO</code> from string error messages are gone (i.e., expose it through a <code>lean_mk_io_user_error</code>).</li>\n<li>It also might be worth renaming <code>lean_mpz_value</code> to  something like<code>lean_extract_mpz_value</code> due to its signature being very different from other <code>lean_*_value</code> functions.</li>\n</ol>",
+        "id": 252943813,
+        "sender_full_name": "Mac",
+        "timestamp": 1631404126
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> Oh, and on a related note, today's nightly (09-12) is missing a Windows binary because the CI build failed with timeout on one of the tests.</p>",
+        "id": 252946085,
+        "sender_full_name": "Mac",
+        "timestamp": 1631406917
+    },
+    {
+        "content": "<p>(it is the editor completion test which seems to hang non-deterministically on Windows leading to some nightlies missing a Windows binary.)</p>",
+        "id": 252946143,
+        "sender_full_name": "Mac",
+        "timestamp": 1631406983
+    },
+    {
+        "content": "<p>I personally found the C++ API super useful for quickly interfacing with C++ libraries, which in turn I think is one of the fastest ways to add useful non-trivial library functionality. I was able to modify the C++ bindings I'm working on to not use it,  but using List, Tuples now is harder. Regarding Zig integration, the zig compiler contains a 1:1 copy of the clang driver, could one not \"just\" distribute clang with Lean, or is that unreasonable.</p>",
+        "id": 253137286,
+        "sender_full_name": "Christian Pehle",
+        "timestamp": 1631557829
+    },
+    {
+        "content": "<p>Compare <a href=\"https://github.com/ziglang/zig/blob/master/src/zig_clang_driver.cpp\">https://github.com/ziglang/zig/blob/master/src/zig_clang_driver.cpp</a>, with <a href=\"https://github.com/llvm/llvm-project/blob/main/clang/tools/driver/driver.cpp\">https://github.com/llvm/llvm-project/blob/main/clang/tools/driver/driver.cpp</a></p>",
+        "id": 253138187,
+        "sender_full_name": "Christian Pehle",
+        "timestamp": 1631558208
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"130511\">@Christian Pehle</span> See <a href=\"https://andrewkelley.me/post/zig-cc-powerful-drop-in-replacement-gcc-clang.html\">https://andrewkelley.me/post/zig-cc-powerful-drop-in-replacement-gcc-clang.html</a> for why Zig is a great choice for what C compiler to ship with a language. </p>\n<p>Regarding the C++ API, we didn't really have one. They were just a bunch of helper files we used in the Lean implementation. Moreover,  one of our ambitions is to have a Lean repo that does not use C++. The runtime will be written in C and everything else in Lean. I can see the C++ API may be useful for some users, but we don't have cycles to maintain a solid C++ API for Lean.</p>",
+        "id": 253416604,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1631713797
+    }
+]

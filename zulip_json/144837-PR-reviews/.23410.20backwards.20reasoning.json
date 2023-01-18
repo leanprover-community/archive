@@ -1,0 +1,1052 @@
+[
+    {
+        "content": "<p>I've just made a <code>[WIP]</code> pull request for the backwards reasoning tactic which has been discussed in &lt;<a href=\"#narrow/stream/113488-general/topic/proposal.20for.20.60backwards_reasoning.60\" title=\"#narrow/stream/113488-general/topic/proposal.20for.20.60backwards_reasoning.60\">https://leanprover.zulipchat.com/#narrow/stream/113488-general/topic/proposal.20for.20.60backwards_reasoning.60</a>&gt;.</p>",
+        "id": 135520408,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1539150100
+    },
+    {
+        "content": "<p>It still needs some work (possibly not all of it before merging):<br>\n1. Verify that this can be used as a replacement for <code>backwards_reasoning</code> currently in <code>lean-tidy</code>, for applications in <code>lean-category-theory</code>.<br>\n2. Combine the <code>back</code> and <code>elim</code> attributes into just <code>back</code>, and <code>back!</code>, using <code>!</code> as a parameter.<br>\n3. Indexing, to make it fun fast. (It's not slow on small examples, but...?)<br>\n4. Refactor, and cleanup, as it's not the nicest code at the moment.</p>",
+        "id": 135520452,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1539150147
+    },
+    {
+        "content": "<p>I am going to get on with 1. If anyone is interested in helping with 2/3/4 (<span class=\"user-mention\" data-user-id=\"110026\">@Simon Hudon</span> ? <span class=\"user-mention\" data-user-id=\"110032\">@Reid Barton</span> ?) that would be amazing. :-)</p>",
+        "id": 135520471,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1539150214
+    },
+    {
+        "content": "<p>Sure, I'll have a look at 3</p>",
+        "id": 135520517,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1539150262
+    },
+    {
+        "content": "<p>Currently the example <code>tests/back.lean</code> seems to be broken.</p>",
+        "id": 136460194,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1540451466
+    },
+    {
+        "content": "<p>Here are the constraints:</p>\n<ul>\n<li>We want to do backtracking search using the \"finishing\" lemmas, but we don't want to backtrack past the application of a \"progress\" lemma</li>\n<li>Prioritising the application of different lemmas is a bit complicated, and I don't know what is best!</li>\n</ul>",
+        "id": 148342156,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543199391
+    },
+    {
+        "content": "<p>You might think we want to apply \"progress\" lemmas first (because they've been selected as lemmas which \"it's always helpful to apply\"!). However it's easy to find situations where you really want to apply a local hypothesis with even higher priority. The current hack is to call <code>solve_by_elim</code> with all the lemmas, and then if that fails, try applying a progress lemma and restart <code>back</code>. This is horribly inefficient (in particular, it can uselessly call <code>solve_by_elim</code> over and over again).</p>",
+        "id": 148342157,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543199393
+    },
+    {
+        "content": "<p>Okay, mostly talking to myself here, but I think this is the behaviour I want from <code>back</code> (and will need to rewrite to actually achieve).</p>\n<p>Given lists of lemmas <code>P</code> and <code>F</code> (for \"progress\" and \"finishing\"), I want to produce a maximal tree of applications, possibly still with metavariables (i.e. remaining subgoals), subject to the condition that no metavariable appears inside an application of a lemma from <code>F</code>. (It might seem that this means if you use any <code>F</code> lemma, you have to discharge the original goal, but that is not the case --- a <code>P</code> lemma might produce multiple subgoals, and then we use <code>F</code> lemmas to completely discharge some but not all of these.)</p>\n<p>Now, in general there are many possible such maximal trees. I want to do a depth first search of the space of possible applications, where at each stage the lemmas as sorted according to their \"number of open arguments\", where \"open arguments\" just means an argument that would create a subgoal when the lemma is applied. (This is more or less the same as the number of arguments which could not be made implicit!) This ensures that if it is ever possible to actually close a goal immediately, we will investigate that before applying lemmas that would create a further subgoal. It also means it's possible to use transitivity lemmas (e.g. <code>category.comp</code>) in <code>back</code>, but as these typically produce at least 3 new subgoals, they will only be explored \"as last resorts\".</p>",
+        "id": 148352552,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543219319
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110111\">@Keeley Hoek</span>, do you think computing that \"number of open arguments\" for a lemma is easy? I was thinking you'd have to inspect each binder in a Pi type, and just check whether the corresponding <code>var</code> actually occurs in the result.</p>",
+        "id": 148352634,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543219400
+    },
+    {
+        "content": "<p>there is a function that does this in <code>expr</code></p>",
+        "id": 148353043,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543219974
+    },
+    {
+        "content": "<p>it is used for pretty printing exprs, since nondependent pis look different</p>",
+        "id": 148353057,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543219995
+    },
+    {
+        "content": "<p>Sure<br>\nJust to make sure I understand: the number of \"open arguments\" of each lemma isn't something that can change throughout the iterations, is it?<br>\nSeems like an afternoon-doable thing I guess<br>\nSo with unwinding, what are we meant to do if we never actually fully discharge the goal?<br>\nSay I have a list of \"terminal\" goals in the search, which one do I actually decide the goal state should be?<br>\n---perhaps this backtracking could be a pain</p>",
+        "id": 148353836,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543221193
+    },
+    {
+        "content": "<p>By the way, here is another problem I had when writing <code>#where</code>; since <code>data.list.basic</code> imports <code>data.nat.basic</code>, you can't use any code which, say implements sorting lists (as we will want here) which is defined in that file unless you want your tactic to be unusable there.<br>\nBut, particularly in <code>data.list.basic</code>, there are a whole bunch of useful functions which are just algorithms, but the proofs which are listed alongside them carry the burden of knowing facts about nats, for example. Is there any scope for separating what is a program/routine and what is a proof about a program?</p>",
+        "id": 148354826,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543222636
+    },
+    {
+        "content": "<p>yes, this is reasonable. For the most part we have gotten away without it because all the defs are in <code>init.data.list.basic</code>, but we should probably have a file for additional functions on lists added in mathlib</p>",
+        "id": 148355649,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543223712
+    },
+    {
+        "content": "<blockquote>\n<p>So with unwinding, what are we meant to do if we never actually fully discharge the goal?<br>\nSay I have a list of \"terminal\" goals in the search, which one do I actually decide the goal state should be?<br>\n---perhaps this backtracking could be a pain</p>\n</blockquote>",
+        "id": 148356627,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543225003
+    },
+    {
+        "content": "<p>I'm not really sure what you meant here. (Also, I wasn't trying (too hard) to pressure you into doing any of this, Keeley. I think I will rewrite the main algorithm, but without the \"sorting by number of open arguments\" part at first.)</p>",
+        "id": 148356653,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543225060
+    },
+    {
+        "content": "<p>Ok sure that's cool<br>\nBut yeah if we just count non-implicit arguments working out that number is totally not a big deal</p>\n<p>What I was trying to say is if we work out some \"tree\" with some leaves, none of which actually end up closing all of the goals and giving a proof, we're meant to return control back to the user (and not fail), right? If I understood what the tree was right then wouldn't we have to pick a leaf to leave the goal state in? (if so and I don't misunderstood, I was wondering how to pick this leaf)</p>",
+        "id": 148356800,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543225275
+    },
+    {
+        "content": "<p>Oh, I see, you mean what order should the goals be returned in?</p>",
+        "id": 148356883,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543225369
+    },
+    {
+        "content": "<p>The safe option is probably just to backtrack, and don't pick a leaf.</p>",
+        "id": 148356891,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1543225382
+    },
+    {
+        "content": "<p>I guess just the order they pop out of <code>apply</code> in.</p>",
+        "id": 148356894,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543225384
+    },
+    {
+        "content": "<p>No, that's not what he meant.</p>",
+        "id": 148356899,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1543225392
+    },
+    {
+        "content": "<p>Ah!</p>",
+        "id": 148356904,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543225401
+    },
+    {
+        "content": "<p>Okay :-) Sorry, two different trees going on here.</p>",
+        "id": 148356906,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543225407
+    },
+    {
+        "content": "<p>My idea was just to never backtrack back pass the successful application of a <code>progress</code> lemma</p>",
+        "id": 148356918,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543225439
+    },
+    {
+        "content": "<p>So it matters how they get ordered!</p>",
+        "id": 148356961,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543225452
+    },
+    {
+        "content": "<p>What I would like to have in the future is that (if the number of leaves is reasonable), I can just cycle through them interactively, and tell the computer: \"Hey, this one looks interesting, let's keep it around.\" or \"Mwahh, this one's going nowhere. We can toss it out.\"</p>",
+        "id": 148356976,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1543225478
+    },
+    {
+        "content": "<p>It may be necessary to give the user a way to specify both progress and finishing lemmas directly.</p>",
+        "id": 148356982,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543225487
+    },
+    {
+        "content": "<p>Ok gotcha<br>\nI guess the \"maximal trees\" were psyching me out</p>",
+        "id": 148356988,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543225497
+    },
+    {
+        "content": "<p>I was wondering if we can actually write something like: <code>back [foo!, bar, baz!]</code>, and use the exclamation marks to distinguish between the two sorts of lemmas.</p>",
+        "id": 148357002,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543225534
+    },
+    {
+        "content": "<p>yep that's a thing</p>",
+        "id": 148357004,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543225545
+    },
+    {
+        "content": "<p>(like an easy thing I mean, supported functionality even!) :D</p>",
+        "id": 148357009,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543225557
+    },
+    {
+        "content": "<p>I think actually it might be worth swapping the meaning of <code>!</code> and no-<code>!</code>, so <code>!</code> is for decorating the \"progress lemmas\". As in \"this lemma is a really good idea, apply it whenever you can!\"</p>",
+        "id": 148357060,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543225588
+    },
+    {
+        "content": "<p>How about <code>:commitment:</code> for <code>commit</code>ed xd</p>",
+        "id": 148357129,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543225690
+    },
+    {
+        "content": "<p>We don't really care about <code>commit</code>s though... only about <code>push</code> and <code>merge</code>... but I don't know good emoji's for those either...</p>",
+        "id": 148357522,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1543226252
+    },
+    {
+        "content": "<p>Hi <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>, do you recall the name of this function:</p>\n<blockquote>\n<p>Mario Carneiro: there is a function that does this in expr<br>\nMario Carneiro: it is used for pretty printing exprs, since nondependent pis look different</p>\n</blockquote>\n<p>I've had a look but can't identify it.</p>",
+        "id": 148407774,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543275968
+    },
+    {
+        "content": "<p>Recall this is inspecting a lemma, and deciding how many arguments it has that are not fixed by the return type. Hopefully this is the same number as the number of new goals that will be created when we <code>apply</code> the lemma.</p>",
+        "id": 148407791,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543276022
+    },
+    {
+        "content": "<p>I think maybe there is a little subtlety with dependence here scott which has to be accounted for because of the following situation:<br>\nsay a big 2-layer Pi binder has type <code>var 0</code> (nice and simple), but the inner pi binder defining <code>var 0</code> has type depending itself on <code>var 0</code> (which now refers to the outer Pi binder)<br>\nThen we should observe that both arguments will have to be accounted for, right?</p>",
+        "id": 148410955,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543280434
+    },
+    {
+        "content": "<p>Oof, I'm not sure I follow. Can you give an example?</p>",
+        "id": 148411034,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543280591
+    },
+    {
+        "content": "<p>I've just pushed a major revision of <code>back</code>. It's more efficient, has better user interface, and entirely subsumes <code>apply_rules</code>. (And possibly also <code>solve_by_elim</code>, I'd have to think a bit.)</p>",
+        "id": 148411274,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543280983
+    },
+    {
+        "content": "<p>When making an example I realised my original point was just something that you'd make an implicit arg, but here is a variant.</p>\n<div class=\"codehilite\"><pre><span></span>def my_type (n : ℕ) := Type\n\ndef my_identity {n : ℕ} (t : my_type n) : Type := t\n</pre></div>\n\n\n<p>Imagine applying <code>my_identity</code> to the goal. The nat <code>n</code> will be deduced when the goal associated with <code>t</code> is cleared, but the var associated to <code>n</code> does not appear in the type and will be considered explicit. I guess changing this is just an improvement to the goal-estimator.</p>",
+        "id": 148412008,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543282105
+    },
+    {
+        "content": "<p>Also super sick tactic</p>",
+        "id": 148412018,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543282131
+    },
+    {
+        "content": "<p>I think I'm happy for <code>apply my_identity</code> to count as creating two goals. Unfortunately I haven't yet worked out how to do this accounting, and I can see playing with examples that it will be really helpful. You'll be able to tag more ambitious lemmas as <code>[back]</code> without worrying about them derailing quick and otherwise successful searches.</p>",
+        "id": 148617753,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543295691
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> Just reading the docs for <code>back</code> that you wrote. So in the list <code>hs</code> there is no distinction between <code>foo</code> and <code>foo!</code>?</p>",
+        "id": 148617836,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1543295852
+    },
+    {
+        "content": "<p>There is! (Or there should be... docs aren't finished.)</p>",
+        "id": 148617841,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543295873
+    },
+    {
+        "content": "<p>first, in the list you have to write it as <code>!foo</code> for now, as I couldn't get the parser to accept trailing punctuation in a list.</p>",
+        "id": 148617885,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543295900
+    },
+    {
+        "content": "<p>second, using <code>!foo</code> will include <code>foo</code> in the list of lemmas whose successful application qualifies as an overall success, even if we don't end up discharging all subgoals.</p>",
+        "id": 148617895,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543295934
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110026\">@Simon Hudon</span>, do you know this one? How do I tell ahead of time how many goals <code>apply L</code> will create, if <code>L</code> is some expr? I want to count how many Pi binders there are, that aren't determined by the result type.</p>",
+        "id": 148618030,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543296150
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> This is really cool! I'm looking forward to having this in my toolkit <span class=\"emoji emoji-1f528\" title=\"hammer\">:hammer:</span></p>",
+        "id": 148618035,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1543296173
+    },
+    {
+        "content": "<p>Said another way, if you pretty-printed the type, some arguments would be shown as Pi's and some just as function arrows (because nothing later depends on that argument). I want to know the number that will appear as function arrows.</p>",
+        "id": 148618045,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543296205
+    },
+    {
+        "content": "<p>Mario said that this exists somewhere in <code>expr</code>, for the sake of pretty-printing, but I haven't been able to find it.</p>",
+        "id": 148618052,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543296225
+    },
+    {
+        "content": "<p><code>is_arrow</code> will give you that information for the first pi type. If you want to count the arrows, you can do it like this:</p>",
+        "id": 148618121,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1543296341
+    },
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span><span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">count_arrows</span> <span class=\"o\">:</span> <span class=\"n\">expr</span> <span class=\"bp\">-&gt;</span> <span class=\"bp\">ℕ</span>\n<span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"n\">expr</span><span class=\"bp\">.</span><span class=\"n\">pi</span> <span class=\"n\">n</span> <span class=\"n\">bi</span> <span class=\"n\">d</span> <span class=\"n\">b</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n   <span class=\"k\">if</span> <span class=\"n\">b</span><span class=\"bp\">.</span><span class=\"n\">has_var_idx</span> <span class=\"mi\">0</span> <span class=\"k\">then</span> <span class=\"n\">count_arrows</span> <span class=\"n\">b</span>\n                      <span class=\"k\">else</span> <span class=\"mi\">1</span> <span class=\"bp\">+</span> <span class=\"n\">count_arrows</span> <span class=\"n\">b</span>\n<span class=\"bp\">|</span> <span class=\"bp\">_</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span>\n</pre></div>",
+        "id": 148618228,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1543296529
+    },
+    {
+        "content": "<p>You can modify this code to list their types but you'll need to take better care of bound variables.</p>",
+        "id": 148618237,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1543296564
+    },
+    {
+        "content": "<p>I really just need the count for my application, so this is perfect.</p>",
+        "id": 148618242,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543296583
+    },
+    {
+        "content": "<p><span class=\"emoji emoji-1f44d\" title=\"+1\">:+1:</span></p>",
+        "id": 148618245,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1543296601
+    },
+    {
+        "content": "<p>err... while you're here, do you know how to sort lists by the value of a function in Lean?</p>",
+        "id": 148618307,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543296640
+    },
+    {
+        "content": "<p>Please let me know if it works. I haven't used <code>has_var_idx</code> before and I'd like to make sure I used it properly</p>",
+        "id": 148618308,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1543296644
+    },
+    {
+        "content": "<p>Does that really work simon? Like what if <code>b</code> is another <code>expr.pi</code>, so that a <code>var 0</code> bound under this other <code>pi</code> changes the meaning of <code>var 0</code><br>\nDoes <code>has_var_idx</code> actually account for that? (I guess I should just read its implementation)</p>",
+        "id": 148618310,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543296650
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110111\">@Keeley Hoek</span> I think so. The correct way of implementing it would be that every time you encounter a binder, instead of calling recursively <code>has_var_idx n</code> you call <code>has_var_idx $ n+1</code> so that when you use the function, you're actually looking for variables bound exactly where the call originated from.</p>",
+        "id": 148618370,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1543296775
+    },
+    {
+        "content": "<p>Actually, according to line 303 of src/library/vm/vm_expr.cpp is seems that <code>expr.has_var_idx _ 0</code> always returns false?</p>",
+        "id": 148618378,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543296784
+    },
+    {
+        "content": "<p>sure makes sense</p>",
+        "id": 148618389,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543296827
+    },
+    {
+        "content": "<p>From a little test I'm definitely wrong<br>\nBut I totally don't understand why :D</p>",
+        "id": 148618504,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543296981
+    },
+    {
+        "content": "<p>Oh <code>auto n</code> is a pointer, all g</p>",
+        "id": 148618510,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543297015
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> If you import <code>data.list.sort</code>, you can choose your sorting algorithm (say <code>merge_sort</code>) and you have to provide a relation. What you can do if you want to sort according to <code>f</code> is to use <code>inv_image (&lt;) f</code> as the relation you're going to sort with.</p>",
+        "id": 148618520,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1543297044
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110111\">@Keeley Hoek</span> Thanks for looking into it. I'm reassured :)</p>",
+        "id": 148618570,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1543297125
+    },
+    {
+        "content": "<p>Note though that then you can't use <code>back</code> in the stuff which <code>data.list.sort</code> imports, which includes <code>tactic.interactive</code> and <code>algebra.group</code>. If anyone more confident could come up with some \"official\" names for an algorithm file and a proof file, I'll de-splice like mario suggested/claimed non-opposition-in-principle above</p>",
+        "id": 148618638,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543297256
+    },
+    {
+        "content": "<p>Is the issue that you're putting <code>back</code> in <code>tactic.interactive</code>?</p>",
+        "id": 148618777,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1543297540
+    },
+    {
+        "content": "<p>it's not an issue per-se<br>\nIt's just that if you ever want to prove something with back in any of those files it includes<br>\nwell<br>\nyou can't</p>",
+        "id": 148618830,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543297593
+    },
+    {
+        "content": "<p>Oh, this is beautiful. <code>count_arrows</code> does exactly what I wanted (after I remembered to <code>infer_type</code> on the lemma .... duh!), and moreover sorting the lemmas by <code>count_arrows</code> has exactly the desired effect, and <code>back</code> is no longer distracted when you give it dumb lemmas (e.g. transitivity style lemmas).</p>",
+        "id": 148618831,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543297597
+    },
+    {
+        "content": "<p>whooooooooooooooooooooooooooooooooooo</p>",
+        "id": 148618833,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543297614
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110111\">@Keeley Hoek</span> To reduce the size of the dependency, you can use <code>qsort</code> which is defined in core</p>",
+        "id": 148618979,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1543297912
+    },
+    {
+        "content": "<p>Thanks simon I didn't know about that</p>",
+        "id": 148619022,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543297938
+    },
+    {
+        "content": "<p>Oh, it turns out I need one little tweak to <code>count_arrows</code>. Since I automatically try applying <code>iff</code> statements in both directions, I need to add one if the statement ends with an <code>iff</code>.</p>",
+        "id": 148619080,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543298101
+    },
+    {
+        "content": "<p>how about <code>data.list.defs</code>?</p>",
+        "id": 148619260,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543298494
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> Try</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"err\">%%</span><span class=\"n\">a</span> <span class=\"bp\">&lt;-&gt;</span> <span class=\"err\">%%</span><span class=\"n\">b</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"mi\">2</span> <span class=\"bp\">+</span> <span class=\"n\">count_arrows</span> <span class=\"n\">a</span> <span class=\"bp\">+</span> <span class=\"n\">count_arrows</span> <span class=\"n\">b</span>\n</pre></div>\n\n\n<p>as an additional branch</p>",
+        "id": 148619410,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1543298784
+    },
+    {
+        "content": "<p>ooh, I'm not sure that's actually the counting I want.</p>",
+        "id": 148619417,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543298824
+    },
+    {
+        "content": "<p>I think <code>1 + min (count_arrows a) (count_arrows b)</code> is actually what I need.</p>",
+        "id": 148619466,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543298895
+    },
+    {
+        "content": "<p>In any case, thanks. I see that handling <code>iff</code>s requires a bit more work, but I'll have to pause for now.</p>",
+        "id": 148619531,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543299040
+    },
+    {
+        "content": "<p>Good luck :) I've been meaning to look more closely at your project but I've been pretty absorbed by something else ... plus three other projects. In any case, don't hesitate to call on me if you need to.</p>",
+        "id": 148619591,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1543299216
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> Is back going to kill this goal for me?</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"err\">⊢</span> <span class=\"n\">X</span><span class=\"bp\">.</span><span class=\"n\">left</span> <span class=\"err\">⟶</span> <span class=\"n\">X</span><span class=\"bp\">.</span><span class=\"n\">left</span>\n</pre></div>\n\n\n<p>I currently have</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"o\">{</span> <span class=\"n\">app</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">X</span><span class=\"o\">,</span> <span class=\"k\">by</span> <span class=\"o\">{</span><span class=\"n\">tidy</span><span class=\"o\">,</span> <span class=\"n\">exact</span> <span class=\"mi\">𝟙</span> <span class=\"bp\">_</span><span class=\"o\">,</span> <span class=\"n\">tidy</span><span class=\"o\">,</span> <span class=\"n\">exact</span> <span class=\"mi\">𝟙</span> <span class=\"bp\">_</span><span class=\"o\">,</span> <span class=\"n\">tidy</span><span class=\"o\">,</span> <span class=\"o\">}</span> <span class=\"o\">},</span>\n</pre></div>",
+        "id": 148622890,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1543305309
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112680\">@Johan Commelin</span>: If you tag <code>category.id</code> with <code>back</code> then <code>tidy</code> will kill this goal.</p>\n<p>However this would be a bad idea. Better would be to define an attribute <code>[fyn]</code>, and tag <code>category.id</code>, <code>category.comp</code>, and a few other things with <code>[fyn]</code>, and then define <code>meta def follow_your_nose : tactic unit := `[back [fyn]]</code>, and then <code>local attribute [tidy] follow_your_nose</code> will result in <code>tidy</code> being able to kill goals like this.</p>",
+        "id": 148665760,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543350726
+    },
+    {
+        "content": "<p>I've now removed <code>apply_rules</code>, moving its test cases into the test cases for <code>back</code>.</p>\n<p>My todo list is now:</p>\n<ul>\n<li>[ ] Decide if <code>solve_by_elim</code> should be subsumed by <code>back</code>; they are very close.</li>\n<li>[X] Switch to using <code>back [lemma] using [attr]</code> instead of <code>back [lemma, attr]</code>.</li>\n<li>[X] Add support for <code>back using [!attr]</code>.</li>\n<li>[ ] Can we use postfix <code>!</code> for lemmas, e.g. <code>back [attr!]</code> instead of the current <code>back [!attr]</code>?</li>\n<li>[ ] Add a mechanism to locally include an attribute in all calls to <code>back</code>, so we can write something like <code>local attribute [back] dvd</code>, where <code>dvd</code> is itself an attribute. (Not sure about the best implementation here.)</li>\n</ul>\n<p>Any suggestions about the implementation of the last two points appreciated.</p>",
+        "id": 148678798,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543364133
+    },
+    {
+        "content": "<p>Okay, <code>back</code> is getting more awesome. :-) How about this:</p>\n<div class=\"codehilite\"><pre><span></span>theorem infinitude_of_primes&#39;&#39; (N : ℕ) : ∃ p ≥ N, prime p :=\nbegin\n  let M := fact N + 1,\n  let p := min_fac M,\n  use p,\n  have pp : prime p, back,\n  -- Goal is `∃ (H : p ≥ N), prime p`\n  split; try { assumption },\n  -- Goal is `p ≥ N`.\n  by_contradiction h, simp at h,\n  back,\nend\n</pre></div>",
+        "id": 148741472,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543437649
+    },
+    {
+        "content": "<p>(That is, <code>back</code> successfully, and quickly, runs the whole \"<code>p | fact N</code>, and <code>p | M</code> so <code>p | 1</code>, but that's nonsense\" argument by itself.)</p>",
+        "id": 148741603,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543437753
+    },
+    {
+        "content": "<p>how is <code>back</code> performance looking at this point?</p>",
+        "id": 148741618,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543437774
+    },
+    {
+        "content": "<p>And if you write <code>back?</code> there, it prints:</p>\n<div class=\"codehilite\"><pre><span></span>exact prime.not_dvd_one pp\n  ((nat.dvd_add_iff_right (dvd_fact (prime.pos pp) (le_of_lt h)).mpr)\n     (min_fac_dvd M))\n</pre></div>",
+        "id": 148741653,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543437808
+    },
+    {
+        "content": "<p>nice short proof there</p>",
+        "id": 148741680,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543437837
+    },
+    {
+        "content": "<p>It seems fast to me. :-)</p>\n<div class=\"codehilite\"><pre><span></span>example {a b c d e : nat} (h1 : a ≤ b) (h2 : c ≤ d) (h3 : 0 ≤ e) :\na + c * e + a + c + 0 ≤ b + d * e + b + d + e :=\nby back [add_le_add, mul_le_mul_of_nonneg_right]\n</pre></div>\n\n\n<p>takes 0.259s, producing the proof <code>add_le_add (add_le_add (add_le_add (add_le_add h1 (mul_le_mul_of_nonneg_right h2 h3)) h1 ) h2) h3</code>.<br>\nThe proof above about primes takes 0.189s.</p>",
+        "id": 148741809,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543437939
+    },
+    {
+        "content": "<p>I think the basic performance point here is: Leo made <code>apply</code> incredibly fast, and so if you don't do anything dumb with it, tactics based on it are fast.</p>",
+        "id": 148741914,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543438011
+    },
+    {
+        "content": "<p>I recall you mentioning that there were some known inefficiencies, are those fixed now?</p>",
+        "id": 148741926,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543438024
+    },
+    {
+        "content": "<p>(And I should say, of course, <code>back</code> is really just tweaks and improvements on the already awesome <code>solve_by_elim</code>, by <span class=\"user-mention\" data-user-id=\"110026\">@Simon Hudon</span>).</p>",
+        "id": 148741964,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543438060
+    },
+    {
+        "content": "<p>Yes, the efficiency problems are gone. It's a complete rewrite.</p>",
+        "id": 148741980,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543438076
+    },
+    {
+        "content": "<p>A big todo list item remaining is the decide whether to replace <code>solve_by_elim</code> with <code>back</code>. There are two reasons I don't want to do this immediately:<br>\n1) I'd have to check that <code>back</code> really is just as fast in all the applications in mathlib. (I suspect it is.)<br>\n2) There's a fair bit of code in <code>back</code>, and I'd prefer to get some review of it before going to the effort of making replacements. :-)</p>",
+        "id": 148742097,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543438158
+    },
+    {
+        "content": "<p>What does <code>back</code> do? I know people talk about it but I have no idea what it is supposed to do.</p>",
+        "id": 148742202,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1543438220
+    },
+    {
+        "content": "<p>That proof of the infinitude of primes makes me wish for a few things:<br>\n1) <code>split</code> would try <code>assumption</code> on each propositional goal it produces (or perhaps even <code>back</code>!)</p>",
+        "id": 148742207,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543438228
+    },
+    {
+        "content": "<p>2) <code>by_contradiction h</code> would automatically try <code>simp at h</code> afterwards?</p>",
+        "id": 148742229,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543438247
+    },
+    {
+        "content": "<blockquote>\n<p>That proof of the infinitude of primes makes me wish for a few things:<br>\n1) <code>split</code> would try <code>assumption</code> on each propositional goal it produces (or perhaps even <code>back</code>!)</p>\n</blockquote>\n<p>you can write a <code>split'</code> tactic that does that! :D</p>",
+        "id": 148742296,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543438278
+    },
+    {
+        "content": "<p>3) For a tactic <code>have' p : Q</code>, which is just <code>have p : Q, back</code>, for some better name for <code>have'</code>. :-)</p>",
+        "id": 148742307,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543438279
+    },
+    {
+        "content": "<blockquote>\n<p>2) <code>by_contradiction h</code> would automatically try <code>simp at h</code> afterwards?</p>\n</blockquote>\n<p>you can write <code>by_contradiction'</code>! :D</p>",
+        "id": 148742339,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543438289
+    },
+    {
+        "content": "<p>in the limit, our proofs will be entirely <code>'</code>s</p>",
+        "id": 148742351,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1543438304
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110038\">@Kevin Buzzard</span>, to a first approximation, <code>back</code> is just <code>solve_by_elim</code>. It repeatedly `apply's hypotheses against the goal, succeeding if it discharges the goal.</p>",
+        "id": 148742606,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543438493
+    },
+    {
+        "content": "<p>You can also pass it extra lemmas to use. You can also pass it attributes to use (so all lemmas with that attribute are applied). You can (soon) give it \"hints\", saying, for the rest of this file, always use all the lemmas marked with this attribute.</p>",
+        "id": 148742718,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543438563
+    },
+    {
+        "content": "<p>You can also mark a lemma or hypothesis with <code>!</code> (as in <code>back [!foo]</code>, or <code>attribute [back!] foo</code>), and then <code>back</code> will act as an \"interactive tactic\" --- if it manages to apply a <code>!</code> lemma, it will return successfully even if it didn't complete every resulting subgoal.</p>",
+        "id": 148742774,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543438642
+    },
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span><span class=\"kn\">import</span> <span class=\"n\">tactic</span><span class=\"bp\">.</span><span class=\"n\">interactive</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">tactic</span><span class=\"bp\">.</span><span class=\"n\">interactive</span>\n<span class=\"kn\">open</span> <span class=\"n\">lean</span><span class=\"bp\">.</span><span class=\"n\">parser</span> <span class=\"n\">tactic</span> <span class=\"n\">interactive</span>\n<span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">split&#39;</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span>\n<span class=\"bp\">`</span><span class=\"o\">[</span><span class=\"n\">split</span><span class=\"bp\">;</span> <span class=\"n\">try</span> <span class=\"o\">{</span><span class=\"n\">assumption</span><span class=\"o\">}]</span>\n<span class=\"kn\">end</span> <span class=\"n\">tactic</span><span class=\"bp\">.</span><span class=\"n\">interactive</span>\n\n<span class=\"kn\">example</span> <span class=\"o\">{</span><span class=\"n\">p</span> <span class=\"n\">q</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span><span class=\"o\">}</span> <span class=\"o\">{</span><span class=\"n\">hp</span> <span class=\"o\">:</span> <span class=\"n\">p</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">p</span> <span class=\"bp\">∧</span> <span class=\"n\">q</span> <span class=\"o\">:=</span> <span class=\"k\">by</span> <span class=\"n\">split&#39;</span>\n<span class=\"kn\">example</span> <span class=\"o\">{</span><span class=\"n\">p</span> <span class=\"n\">q</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span><span class=\"o\">}</span> <span class=\"o\">{</span><span class=\"n\">hp</span> <span class=\"o\">:</span> <span class=\"n\">q</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">p</span> <span class=\"bp\">∧</span> <span class=\"n\">q</span> <span class=\"o\">:=</span> <span class=\"k\">by</span> <span class=\"n\">split&#39;</span>\n</pre></div>",
+        "id": 148742850,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543438688
+    },
+    {
+        "content": "<p>It's also clever enough to accept <code>iff</code> lemmas. (Although the current implementation says: if you apply an iff lemma, never apply it again.)</p>",
+        "id": 148742856,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543438694
+    },
+    {
+        "content": "<blockquote>\n<p>in the limit, our proofs will be entirely <code>'</code>s</p>\n</blockquote>\n<p><a href=\"https://en.wikipedia.org/wiki/Iota_and_Jot\" target=\"_blank\" title=\"https://en.wikipedia.org/wiki/Iota_and_Jot\">https://en.wikipedia.org/wiki/Iota_and_Jot</a></p>",
+        "id": 148742863,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1543438702
+    },
+    {
+        "content": "<p>I vote <code>then</code> for <code>have, back</code></p>",
+        "id": 148743562,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543439228
+    },
+    {
+        "content": "<p>can't wait for <code>thus</code>, <code>hence</code> and <code>therefore</code></p>",
+        "id": 148743606,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1543439281
+    },
+    {
+        "content": "<p>Actually I don't think you can use <code>then</code></p>",
+        "id": 148743728,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1543439367
+    },
+    {
+        "content": "<p>oh, if then?</p>",
+        "id": 148743738,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543439380
+    },
+    {
+        "content": "<p>Yeah, it's complaining about \"invalid expression\"</p>",
+        "id": 148743760,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1543439395
+    },
+    {
+        "content": "<p><code>thither</code></p>",
+        "id": 148743841,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1543439432
+    },
+    {
+        "content": "<p>nope, it's fine</p>",
+        "id": 148743895,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543439508
+    },
+    {
+        "content": "<div class=\"codehilite\"><pre><span></span><span class=\"kn\">namespace</span> <span class=\"n\">tactic</span><span class=\"bp\">.</span><span class=\"n\">interactive</span>\n<span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"err\">«</span><span class=\"k\">then</span><span class=\"err\">»</span> <span class=\"o\">:=</span> <span class=\"err\">«</span><span class=\"k\">have</span><span class=\"err\">»</span>\n<span class=\"kn\">end</span> <span class=\"n\">tactic</span><span class=\"bp\">.</span><span class=\"n\">interactive</span>\n\n<span class=\"kn\">example</span> <span class=\"o\">:</span> <span class=\"n\">true</span> <span class=\"o\">:=</span>\n<span class=\"k\">begin</span>\n  <span class=\"k\">then</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">true</span> <span class=\"o\">:=</span> <span class=\"n\">trivial</span><span class=\"o\">,</span>\n<span class=\"kn\">end</span>\n</pre></div>",
+        "id": 148743904,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543439518
+    },
+    {
+        "content": "<p>you have to quote it since it's keywordish</p>",
+        "id": 148743969,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543439549
+    },
+    {
+        "content": "<p><code>have</code> is also defined like this</p>",
+        "id": 148743979,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543439567
+    },
+    {
+        "content": "<p>although it's a bit weird that it shows up purple in the highlighting</p>",
+        "id": 148744041,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543439636
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> how would you convert my <code>split; try {assumption}</code> to tactic notation?</p>",
+        "id": 148744085,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543439649
+    },
+    {
+        "content": "<p>?</p>",
+        "id": 148744093,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543439658
+    },
+    {
+        "content": "<p>I wrote this:</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">split&#39;</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span>\n<span class=\"bp\">`</span><span class=\"o\">[</span><span class=\"n\">split</span><span class=\"bp\">;</span> <span class=\"n\">try</span> <span class=\"o\">{</span><span class=\"n\">assumption</span><span class=\"o\">}]</span>\n</pre></div>",
+        "id": 148744104,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543439670
+    },
+    {
+        "content": "<p>and I wonder how to write it using ... how do you call it</p>",
+        "id": 148744123,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543439691
+    },
+    {
+        "content": "<p>monads and what not</p>",
+        "id": 148744128,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543439697
+    },
+    {
+        "content": "<p>because once I <code>tactic.split</code> it's hard to keep track of the newly added goals</p>",
+        "id": 148744152,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543439720
+    },
+    {
+        "content": "<p>I could get the goals before and after and just compare the length</p>",
+        "id": 148744160,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543439727
+    },
+    {
+        "content": "<p>but I don't think that's very safe nor the best way to do it</p>",
+        "id": 148744175,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543439747
+    },
+    {
+        "content": "<p>a straight translation:</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"kn\">namespace</span> <span class=\"n\">tactic</span>\n<span class=\"n\">meta</span> <span class=\"n\">def</span> <span class=\"n\">split&#39;</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span>\n<span class=\"o\">(</span><span class=\"n\">split</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"n\">return</span> <span class=\"o\">())</span><span class=\"bp\">;</span> <span class=\"n\">try</span> <span class=\"n\">assumption</span>\n<span class=\"kn\">end</span> <span class=\"n\">tactic</span>\n</pre></div>",
+        "id": 148744244,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543439784
+    },
+    {
+        "content": "<p>I have much to learn</p>",
+        "id": 148744267,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543439805
+    },
+    {
+        "content": "<p>the semicolon operator is <code>tactic.seq_focus</code></p>",
+        "id": 148744325,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543439859
+    },
+    {
+        "content": "<p>you can see what it does for goal management</p>",
+        "id": 148744333,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543439871
+    },
+    {
+        "content": "<p>I see that the unsafe option (actually it's safe, it just seems weird) is used</p>",
+        "id": 148744378,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543439884
+    },
+    {
+        "content": "<p>well technically it is different</p>",
+        "id": 148744384,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543439891
+    },
+    {
+        "content": "<p>I've learnt, thanks</p>",
+        "id": 148744388,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543439897
+    },
+    {
+        "content": "<p>unsafe?</p>",
+        "id": 148744393,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543439902
+    },
+    {
+        "content": "<p>I don't feel very comfortable messing with the goals</p>",
+        "id": 148744406,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1543439918
+    },
+    {
+        "content": "<p>you can often just get away with using the built in tactic combinators like <code>and_then</code> if it suffices</p>",
+        "id": 148744440,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543439954
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> So we can now also do the following?</p>\n<div class=\"codehilite\"><pre><span></span><span class=\"kn\">theorem</span> <span class=\"n\">infinitude_of_primes&#39;&#39;</span> <span class=\"o\">(</span><span class=\"n\">N</span> <span class=\"o\">:</span> <span class=\"bp\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"bp\">∃</span> <span class=\"n\">p</span> <span class=\"bp\">≥</span> <span class=\"n\">N</span><span class=\"o\">,</span> <span class=\"n\">prime</span> <span class=\"n\">p</span> <span class=\"o\">:=</span>\n<span class=\"k\">by</span> <span class=\"n\">use</span> <span class=\"n\">min_fac</span> <span class=\"o\">(</span><span class=\"n\">fact</span> <span class=\"n\">N</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"bp\">;</span> <span class=\"n\">tidy</span>\n</pre></div>\n\n\n<p>Or will <code>tidy</code> not (yet) try the proof by contradiction? If we want to golf this proof, I suggest we introduce <code>N!</code> notation for factorials <span class=\"emoji emoji-1f923\" title=\"rolling on the floor laughing\">:rolling_on_the_floor_laughing:</span></p>",
+        "id": 148767152,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1543470243
+    },
+    {
+        "content": "<p>One thing to remember is that part of the philosophy of <code>tidy</code> is that it does no backtracking. So if we wanted to add <code>by_contradiction</code> to tidy, it would be because we're committing to \"when all else fails, actually go ahead and try contradiction (returning to the user the goals produced by <code>by_contradiction</code>\", which I don't think is a good idea.</p>",
+        "id": 148767171,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543470353
+    },
+    {
+        "content": "<p>Right... so we need a bigger hammer (-;<br>\nIs it possible to write something like <code>tidy [by_contradiction]</code> so that <code>tidy</code> knows it can use that tactic for this proof?</p>",
+        "id": 148767280,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1543470511
+    },
+    {
+        "content": "<p>It's a reasonable idea. So far <code>tidy</code> doesn't take many configuration arguments.</p>",
+        "id": 148767291,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543470552
+    },
+    {
+        "content": "<p>Wouldn't <code>tidy { tactics := [by_contradiction &gt;&gt; return \"by_contradiction\"] }</code> work</p>",
+        "id": 148767651,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543471236
+    },
+    {
+        "content": "<p>Oh, hmm, yeah :-)</p>",
+        "id": 148767905,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543471787
+    },
+    {
+        "content": "<blockquote>\n<p>Wouldn't <code>tidy { tactics := [by_contradiction &gt;&gt; return \"by_contradiction\"] }</code> work</p>\n</blockquote>\n<p>Cool! So the functionality is there. Now we only need to make it a bit more user-friendly. I guess the <code>&gt;&gt; return \"by_contradiction\"</code> is needed for the trace output, right? How hard is it to write a function that takes a <code>tactic</code> and stringifies its name?</p>",
+        "id": 148773132,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1543481160
+    },
+    {
+        "content": "<p>Well, Scott, if we use the fancy configurator then we could parse <code>tactic unit</code>s and <code>tactic strings</code> at the same time ;)<br>\nBut there is the dreaded <code>{}</code> requirement.<br>\nMaybe an extra character? <code>tidy</code> or <code>tidy@{ my_config }</code>? I suspect this won't be approved :P</p>\n<p>Unfortunately, Johan, the only way to obtain the name of a tactic you are passing is to use a <code>parser</code>, which is some work to set up the most convenient way.</p>",
+        "id": 148777157,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543486590
+    },
+    {
+        "content": "<p>what about <code>tidy with [stuff]</code>?</p>",
+        "id": 148777208,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543486673
+    },
+    {
+        "content": "<p>Rather than trying to guess the tactic script, you should just have some additional tidy tactics that are enabled explicitly via some tags</p>",
+        "id": 148777280,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1543486769
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> What is the status of this PR? I got the impression you made quite some nice improvements. Do you have more up your sleeve?</p>",
+        "id": 150909827,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1543994725
+    },
+    {
+        "content": "<p>It's a bit rough, but could be made usable with not much effort. However, I'd also like to put in a larger amount of effort, to make it better. :-)</p>",
+        "id": 150910787,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543996276
+    },
+    {
+        "content": "<p>Essentially, at the moment it does a depth-first search of possible uses of <code>apply</code> (with a simple heuristic to order the branches, and one or two rules for cutting off the search). I'd really like to restructure the core code a bit, to make the type of search configurable, as once you make \"too many\" rules available to <code>back</code> the depth first search starts being too dumb.</p>",
+        "id": 150910852,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543996379
+    },
+    {
+        "content": "<p>I'd really like to have it more robust to having \"too many\" rules, so that it's possible to just set and forget large groups of rules, and still have <code>back</code> performant enough.</p>",
+        "id": 150910861,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543996413
+    },
+    {
+        "content": "<p>Given <code>back?</code> produces proof terms that you can copy and paste, it's potentially a good hammer.</p>",
+        "id": 150910916,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543996472
+    },
+    {
+        "content": "<p>I have a question about this PR. How is it related to the core library <a href=\"https://github.com/leanprover/lean/blob/master/library/init/meta/backward.lean\" target=\"_blank\" title=\"https://github.com/leanprover/lean/blob/master/library/init/meta/backward.lean\">back_chaining tactic</a>?</p>",
+        "id": 150913149,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1543999697
+    },
+    {
+        "content": "<p>And, since <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> is here: what is the status of this tactic? What is only a tech demo, or is it meant to be ready for use? I discovered it while reading demo slides (POPL 2017)</p>",
+        "id": 150913185,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1543999789
+    },
+    {
+        "content": "<p>I suppose it's just as ready to use as <code>rcases</code>. Which you people probably have more experience with and opinions about than me.</p>",
+        "id": 150913344,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1544000005
+    },
+    {
+        "content": "<p>Is it possible to use custom tags, or does it have to be <code>intro</code>?</p>",
+        "id": 150913352,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1544000031
+    },
+    {
+        "content": "<p>It looks like only two things are tagged with <code>intro</code> in core+mathlib</p>",
+        "id": 150913402,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1544000052
+    },
+    {
+        "content": "<p>but still we could want several sets of lemmas depending on the kind of statement we'd like to prove</p>",
+        "id": 150913412,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1544000080
+    },
+    {
+        "content": "<p>That's a great question, Patrick. It looks closely related (and both to solve_by_elim). This one is implemented in C, and does two extra things --- allows you to specify a \"simp\" tactic to apply at each step, and allows you to specify a \"leaf\" tactic to apply once you run out of lemmas but haven't closed the goal.</p>",
+        "id": 150913533,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1544000282
+    },
+    {
+        "content": "<p>It doesn't seem to give you that much control over which lemmas to use (i.e. just the one attribute [intro])</p>",
+        "id": 150913577,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1544000303
+    },
+    {
+        "content": "<p>and <code>back</code> additionally gives you the idea of \"progress\" lemmas, i.e. lemmas whose successful application will result in the tactic being considered a success, even if it doesn't finish the proof. I've found this very useful in practice (and as part of <code>tidy</code>).</p>",
+        "id": 150913604,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1544000361
+    },
+    {
+        "content": "<p>(I had no idea this one existed!)</p>",
+        "id": 150913611,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1544000380
+    },
+    {
+        "content": "<p>I found it yesterday!</p>",
+        "id": 150913948,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1544000817
+    },
+    {
+        "content": "<p>I have a riddle now. Download <a href=\"https://github.com/leanprover/lean/blob/master/library/init/meta/backward.lean\" target=\"_blank\" title=\"https://github.com/leanprover/lean/blob/master/library/init/meta/backward.lean\">https://github.com/leanprover/lean/blob/master/library/init/meta/backward.lean</a> It works. Now add <code>import data.multiset</code> on top. It doesn't work anymore.</p>",
+        "id": 150917059,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1544004621
+    },
+    {
+        "content": "<p><code>backward.lean</code> is in <code>init</code> so it will be loaded automatically. <code>data.multiset</code> will import it.</p>",
+        "id": 150917106,
+        "sender_full_name": "Johannes Hölzl",
+        "timestamp": 1544004695
+    },
+    {
+        "content": "<p><code>prelude</code> means to _not_ load <code>init</code></p>",
+        "id": 150917161,
+        "sender_full_name": "Johannes Hölzl",
+        "timestamp": 1544004733
+    },
+    {
+        "content": "<p>Oops, I copied the wrong link. I meant <a href=\"https://github.com/leanprover/presentations/blob/master/20170116_POPL/backchain/builtin.lean\" target=\"_blank\" title=\"https://github.com/leanprover/presentations/blob/master/20170116_POPL/backchain/builtin.lean\">https://github.com/leanprover/presentations/blob/master/20170116_POPL/backchain/builtin.lean</a></p>",
+        "id": 150918133,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1544006053
+    },
+    {
+        "content": "<p>I'm sorry about this confusion</p>",
+        "id": 150918141,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1544006073
+    },
+    {
+        "content": "<p>Mario, did you try this little puzzle? Were you aware of <code>back_chaining</code>?</p>",
+        "id": 150927154,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1544016412
+    },
+    {
+        "content": "<p>as I thought, it's a notation ambiguity problem</p>",
+        "id": 150927485,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1544016700
+    },
+    {
+        "content": "<p><code>in_tail</code> and <code>in_head</code> break because the <code>::</code> is overloaded notation that means <code>multiset.cons</code> and <code>list.cons</code></p>",
+        "id": 150927577,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1544016767
+    },
+    {
+        "content": "<p>In this case you can fix it by putting a type ascription around <code>a::l</code></p>",
+        "id": 150927611,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1544016814
+    },
+    {
+        "content": "<p>Thanks. Are you sure this notation overloading was a good idea?</p>",
+        "id": 150927729,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1544016905
+    },
+    {
+        "content": "<p>no, it's avoided almost everywhere because lean is flaky about it</p>",
+        "id": 150928365,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1544017442
+    },
+    {
+        "content": "<p>but in this case <code>::</code> is already overloaded in core so there isn't much we can do about it</p>",
+        "id": 150928445,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1544017490
+    },
+    {
+        "content": "<p>Sorry, I didn't realize this was in core</p>",
+        "id": 150928495,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1544017546
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> Any updates with regards to <code>back</code>? Are there big issues, or just little things that need to be done? I still don't have the time to seriously learn how to write tactics, but I would love to see this one land in mathlib. If you are to busy with real-world maths, then I completely understand (it is eating my time as well).</p>",
+        "id": 156933827,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1548523640
+    }
+]

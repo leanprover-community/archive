@@ -1,0 +1,80 @@
+[
+    {
+        "content": "<p>In <a href=\"https://github.com/leanprover-community/mathlib/issues/8783\">#8783</a> I have a lemma that produces the error message</p>\n<blockquote>\n<p>not a rfl-lemma, even though marked as rfl</p>\n</blockquote>\n<p>If I change the proof from <code>:= rfl</code> to <code>:= by exact rfl</code> the error goes away. Is this a bug?</p>",
+        "id": 250177124,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1629496426
+    },
+    {
+        "content": "<p>Or does \"a rfl-lemma\" have more meaning behind it than just \"has a proof of rfl\"</p>",
+        "id": 250177188,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1629496453
+    },
+    {
+        "content": "<p>relevant c++ code: <a href=\"https://github.com/leanprover-community/lean/blob/ef197a6a83aa1a157a941c72151a09ce807f2867/src/library/tactic/simp_lemmas.cpp#L810\">https://github.com/leanprover-community/lean/blob/ef197a6a83aa1a157a941c72151a09ce807f2867/src/library/tactic/simp_lemmas.cpp#L810</a></p>",
+        "id": 250177468,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1629496693
+    },
+    {
+        "content": "<p>my guess would be that this code isn't expecting a <code>let</code> in the definition,  but I'm then not sure why the <code>by exact</code> hack fixes it</p>",
+        "id": 250177539,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1629496753
+    },
+    {
+        "content": "<p>I couldn't work out how to eliminate the <code>let</code> here without a very large amount of verbosity, since I'm having to fight typeclass inference</p>",
+        "id": 250178481,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1629497408
+    },
+    {
+        "content": "<p>I pushed a commit on that PR to remove the offending lemma, but the behavior's still visible in an old commit if anyone is interested.</p>",
+        "id": 250207516,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1629537769
+    },
+    {
+        "content": "<p>This is enough to repro it:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">lemma</span> <span class=\"n\">foo</span> <span class=\"o\">:</span> <span class=\"k\">let</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span> <span class=\"k\">in</span> <span class=\"n\">x</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span> <span class=\"n\">rfl</span>\n</code></pre></div>",
+        "id": 250207527,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1629537806
+    },
+    {
+        "content": "<p>yeah, so if I just run this sort of stuff in my local debug lean, there's actually an assertion violation of <code>is_eq(type, lhs, rhs)</code>, so i'd assume this <code>is_eq</code> doesn't ‹_›-reduce, where ‹_› is whatever greek letter is used for let binder reductions</p>",
+        "id": 250207853,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1629538293
+    },
+    {
+        "content": "<p>so in <code>util.cpp:104</code>, <code>is_app_of</code> doesn't unfold past <code>let</code> binders, which then cascades to <code>is_eq</code> returning false</p>",
+        "id": 250208235,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1629538773
+    },
+    {
+        "content": "<p>meanwhile, the <code>by exact rfl</code> doesn't go through the same check (my breakpoint at <code>is_rfl_lemma</code> didn't pop), so it's checked for being <code>rfl</code> somewhere else</p>",
+        "id": 250208310,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1629538875
+    },
+    {
+        "content": "<p>so there's two different ways of checking if something is <code>rfl</code>, it seems</p>",
+        "id": 250208312,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1629538885
+    },
+    {
+        "content": "<p>I don't know who to CC but this shouldn't be a big fix, if you know where the other <code>rfl</code> check is</p>",
+        "id": 250208314,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1629538901
+    },
+    {
+        "content": "<p>This sounds like it shouldn't be a refl-lemma, and we should just add a check <code>if (is_let(type)) return false;</code> to the function.<br>\n<code>simp</code> isn't able to look under <code>let</code>'s anyway (and I think <code>_refl_lemma</code> is used by <code>dsimp</code>?):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">bar</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span>\n<span class=\"kd\">@[simp]</span> <span class=\"kd\">lemma</span> <span class=\"n\">foo</span> <span class=\"o\">:</span> <span class=\"k\">let</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span> <span class=\"k\">in</span> <span class=\"n\">bar</span> <span class=\"bp\">=</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">exact</span> <span class=\"n\">rfl</span>\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">bar</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">simp</span>\n</code></pre></div>\n<p>I believe the <code>by exact rfl</code> hack work since the code for <code>_refl_lemma</code> checks that the proof is actually just <code>rfl</code> or <code>eq.refl _</code>, not produced by a tactic.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">bar</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span>\n<span class=\"kd\">lemma</span> <span class=\"n\">baz</span> <span class=\"o\">:</span> <span class=\"n\">bar</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">refl</span>\n<span class=\"k\">#print</span> <span class=\"n\">baz</span> <span class=\"c1\">-- not a _refl_lemma</span>\n</code></pre></div>",
+        "id": 250231504,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1629571701
+    }
+]

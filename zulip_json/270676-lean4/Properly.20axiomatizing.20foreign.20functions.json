@@ -1,0 +1,38 @@
+[
+    {
+        "content": "<p>Currently trying to learn how to build reasonable FFIs (in my case, for not-dynamic arrays).</p>\n<p>I came across the definition of <code>USize.ofNat</code> (here)[https://github.com/leanprover/lean4/blob/da4ad465d0a8a1267268def14af779ea0244f78e/src/Init/Data/UInt.lean#L285] and am a bit confused by it</p>\n<ul>\n<li>The Lean definition mods by the system usize (which I don't think is ever the desired use-case here?)</li>\n<li>I'm pretty sure the C definition panics if the nat can't fit in a usize (which I think <em>is</em> the desired behavior)</li>\n</ul>\n<p>Why was this definition chosen instead of making an opaque constant or, at most, an unsafe function which panics on too-large inputs? Right now the behaviors just don't match up, which seems like a recipe for issues</p>",
+        "id": 277779919,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1649099453
+    },
+    {
+        "content": "<p>The C definition is across a few places:<br>\n<a href=\"https://github.com/leanprover/lean4/blob/35e623fca0b949b373fac42063881f606c7abbe0/src/include/lean/lean.h#L1661\">https://github.com/leanprover/lean4/blob/35e623fca0b949b373fac42063881f606c7abbe0/src/include/lean/lean.h#L1661</a><br>\n<a href=\"https://github.com/leanprover/lean4/blob/412691c9581138028e9a98e1b7c99dd136cefed8/src/runtime/object.cpp#L1521\">https://github.com/leanprover/lean4/blob/412691c9581138028e9a98e1b7c99dd136cefed8/src/runtime/object.cpp#L1521</a><br>\nand here I get stuck, since I don't know where these definitions came from. Maybe this does actually mod?</p>",
+        "id": 277781184,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1649100158
+    },
+    {
+        "content": "<p>Okay, I guess my actual question is whether there's a different function somewhere I can use that unsafe converts <code>Nat</code> to <code>USize</code>, panicking if it is too large</p>",
+        "id": 277783035,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1649101079
+    },
+    {
+        "content": "<p>You can define your own function that does that:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">Nat.toUSize</span><span class=\"bp\">!</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">USize</span> <span class=\"o\">:=</span>\n  <span class=\"k\">if</span> <span class=\"n\">n</span> <span class=\"bp\">&lt;</span> <span class=\"n\">USize.size</span> <span class=\"k\">then</span>\n    <span class=\"n\">n.toUSize</span>\n  <span class=\"k\">else</span>\n    <span class=\"n\">panic</span><span class=\"bp\">!</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"Integer {n} is to larget for usize\"</span>\n\n<span class=\"k\">#eval</span> <span class=\"o\">(</span><span class=\"n\">USize.size</span><span class=\"bp\">-</span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">toUSize</span><span class=\"bp\">!</span> <span class=\"c1\">-- PANIC at toUSize doodle:9:4: Integer 18446744073709551616 is to larget for usize</span>\n<span class=\"k\">#eval</span> <span class=\"o\">(</span><span class=\"n\">USize.size</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">toUSize</span><span class=\"bp\">!</span>   <span class=\"c1\">-- 18446744073709551615</span>\n</code></pre></div>\n<p>If you want to have something that is really safe, I would expect to always provide a proof that provided Nat fits to usize</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">Nat.toUSizeSafe</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">n</span> <span class=\"bp\">&lt;</span> <span class=\"n\">USize.size</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">USize</span> <span class=\"o\">:=</span> <span class=\"o\">⟨</span><span class=\"n\">n</span><span class=\"o\">,</span><span class=\"n\">h</span><span class=\"o\">⟩</span>\n\n<span class=\"k\">#eval</span> <span class=\"o\">(</span><span class=\"n\">USize.size</span> <span class=\"bp\">-</span> <span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">toUSizeSafe</span> <span class=\"o\">(</span><span class=\"kd\">by</span> <span class=\"n\">native_decide</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>But I have a feeling I'm misunderstanding your question.</p>",
+        "id": 277792201,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1649105668
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"346070\">Tomas Skrivan</span> <a href=\"#narrow/stream/270676-lean4/topic/Properly.20axiomatizing.20foreign.20functions/near/277792201\">said</a>:</p>\n<blockquote>\n<p>You can define your own function that does that:</p>\n</blockquote>\n<p>Yeah, I can write my own, but was wondering why the disparity on this definition</p>",
+        "id": 277801118,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1649110436
+    },
+    {
+        "content": "<p>I believe it should be possible to bind to those functions directly, but it doesn't seem to be working:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[extern \"lean_usize_of_nat\"]</span>\n<span class=\"kd\">def</span> <span class=\"n\">Nat.toUSize</span><span class=\"bp\">!</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"bp\">@&amp;</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">USize</span> <span class=\"o\">:=</span>\n  <span class=\"k\">if</span> <span class=\"n\">n</span> <span class=\"bp\">&lt;</span> <span class=\"n\">USize.size</span> <span class=\"k\">then</span>\n    <span class=\"n\">n.toUSize</span>\n  <span class=\"k\">else</span>\n    <span class=\"n\">panic</span><span class=\"bp\">!</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"Integer {n} is to larget for usize\"</span>\n\n<span class=\"k\">#eval</span> <span class=\"o\">(</span><span class=\"n\">USize.size</span><span class=\"bp\">-</span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">toUSize</span><span class=\"bp\">!</span>\n<span class=\"c1\">-- could not find native implementation of external declaration 'Nat.toUSize!' (symbols 'l_Nat_toUSize_x21___boxed' or 'l_Nat_toUSize_x21')</span>\n<span class=\"k\">#eval</span> <span class=\"o\">(</span><span class=\"n\">USize.size</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">toUSize</span><span class=\"bp\">!</span>\n</code></pre></div>",
+        "id": 277803454,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1649111938
+    }
+]

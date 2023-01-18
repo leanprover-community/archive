@@ -1,0 +1,98 @@
+[
+    {
+        "content": "<p>My mental model of discrimination trees used to be that if you insert a key expression <code>k</code> into the tree and then query it with <code>getUnify q</code>, the returned array will include the value associated to <code>k</code> whenever <code>k</code> unifies with <code>q</code>. However, this does not seem to be the case. A concrete example from Aesop, where I use discr trees with <code>default</code> transparency for indexing: if <code>k = _ ++ _</code> and <code>q = [a] ++ l</code>, then the first thing <code>getUnify</code> does is <code>whnf q</code>, which reduces <code>q</code> to <code>a :: l</code> and so the <code>++</code> branch of the tree is never explored and <code>k</code> is not found. I can whip up an MWE if desired.</p>\n<p>Is this expected or a bug? I guess if you wanted to fix this, you'd have to perform two traversals, one before <code>whnf</code> which explores the <code>++</code> branch and one after <code>whnf</code> which explores the <code>::</code> branch (and similar recursively, for every iteration of the lookup loop). But this may not even be enough: <code>q</code> may have additional reducts with different head symbols(?). So this fix sounds quite expensive.</p>\n<p>cc <span class=\"user-mention\" data-user-id=\"121058\">@Jasmin Blanchette</span></p>",
+        "id": 299298828,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1663409568
+    },
+    {
+        "content": "<blockquote>\n<p>where I use discr trees with <code>default</code> transparency for indexing:</p>\n</blockquote>\n<p>This is the problem.  We always use reducible transparency for discrimination trees.</p>",
+        "id": 299303193,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1663411922
+    },
+    {
+        "content": "<p>As you've observed, extending this to default transparency requires extra work.  We would indeed need to store multiple reductions in the discrimination tree.</p>",
+        "id": 299303438,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1663412041
+    },
+    {
+        "content": "<p>Okay, but the problem remains when I use <code>reducible</code> transparency, doesn't it? For example, I can make <code>++</code> reducible and get the same behaviour with stock discr trees.</p>\n<p>I also don't see how I could put more information into the tree to fix this. At the point where I put a lemma with conclusion, say, <code>l ++ l' = l'</code> in the tree, it seems really hard to anticipate all the possible instances of <code>l</code> and <code>l'</code> that would lead to a different reduction (e.g. <code>l = [a]</code>).</p>",
+        "id": 299306823,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1663413422
+    },
+    {
+        "content": "<blockquote>\n<p>I can make <code>++</code> reducible and get the same behaviour with stock discr trees.</p>\n</blockquote>\n<p>You shouldn't and we don't.</p>",
+        "id": 299307330,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1663413664
+    },
+    {
+        "content": "<p>The general rule being that recursive definitions are not reducible.</p>",
+        "id": 299307414,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1663413710
+    },
+    {
+        "content": "<p>We have lots of non-recursive reducible definitions, but those are fine because they can just be expanded as a preprocessing.</p>",
+        "id": 299307519,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1663413745
+    },
+    {
+        "content": "<p>Okay, thanks. I guess for the moment I'll go back to using reducible transparency for indexing; that's also an unfortunate restriction but at least it provides predictable behaviour. Longer-term I'd like to see whether this can be fixed properly without tanking performance too much.</p>",
+        "id": 299308835,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1663414414
+    },
+    {
+        "content": "<p>I feel like this is a bit of an <a href=\"https://en.wikipedia.org/wiki/XY_problem\">#xy</a> question.  Many other parts of Lean also work with reducible transparency, in particular all other proof search procedures: <code>simp</code>, type-class synthesis, etc.  Using the same transparency setting is a consistency feature, not a bug.™</p>",
+        "id": 299309175,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1663414552
+    },
+    {
+        "content": "<p>I see the argument, but I'm really not sure about this in the context of Aesop. When I do indexing with <code>reducible</code> transparency, <code>apply</code> rules don't work like the <code>apply</code> tactic any more; they work like <code>apply</code>with <code>reducible</code> transparency. So a rule which concludes <code>P (a :: l)</code> doesn't apply to the goal <code>P ([a] ++ l)</code>. I guess the Lean way is to let <code>simp</code> compensate for this by registering all the reduction rules as <code>simp</code> lemmas.</p>\n<p>One particular application where this will be problematic is using Aesop to emulate tactics such as <code>measurability</code>. The banged version, which uses <code>default</code> transparency, cannot easily be expressed as an Aesop call if Aesop is effectively restricted to <code>reducible</code>.</p>",
+        "id": 299313096,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1663416565
+    },
+    {
+        "content": "<p>AFAICT <code>measurability!</code> is never used in mathlib. And <code>continuity!</code> is only used five times, which would be easy to fix.</p>",
+        "id": 299321833,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1663421338
+    },
+    {
+        "content": "<p>From a high-level point of view, I think it would be better to use reducible transparency exclusively and add extra lemmas to bridge the gaps.</p>",
+        "id": 299322054,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1663421452
+    },
+    {
+        "content": "<p>Looking at some of the uses of <code>continuity!</code> in mathlib, this would imho be an improvement: e.g. in <code>unit_interval.lean</code>, we can just replace <code>continuity!</code> with <code>unfold symm; continuity</code>.</p>",
+        "id": 299322529,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1663421716
+    },
+    {
+        "content": "<p>As an end user I've seen this <code>unfold thing; high-powered-tactic</code> idiom before and I always wish that the tactic was that bit more powerful; you can see why things like <code>continiity!</code> have ended up existing</p>",
+        "id": 299344914,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1663434318
+    },
+    {
+        "content": "<p>Jannis, I think your mental model was very simplistic. I'd expect the current behavior to be a feature, not a bug -- doing lookup up to computation must be very difficult.</p>",
+        "id": 299523992,
+        "sender_full_name": "Jasmin Blanchette",
+        "timestamp": 1663576848
+    },
+    {
+        "content": "<p>Oh, I just discovered the rest of the thread. Just ignore my comment. ;)</p>",
+        "id": 299524194,
+        "sender_full_name": "Jasmin Blanchette",
+        "timestamp": 1663576936
+    }
+]

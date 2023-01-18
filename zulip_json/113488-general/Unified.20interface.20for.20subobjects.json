@@ -1,0 +1,134 @@
+[
+    {
+        "content": "<p>Indeed, I think you point to the right issue: there's no functionality in Lean that allows you to be parametric in <em>declarations</em> in the correct way that ML-ish functors would allow you to be. Typeclasses come close, but you can't write down which implicits are allowed to differ: you can't do <code>to_additive</code> with them because there's no way to say \"let <code>X</code> be either an <code>add_comm_monoid</code> or a <code>comm_monoid</code> and <code>Y</code> the same (but not <code>X</code> additive and <code>Y</code> multiplicative)\". Or we'd have to completely unbundle the data from the proofs, but then you lose the head symbols as a result.</p>",
+        "id": 263126398,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1638268830
+    },
+    {
+        "content": "<p>So I think the best way with the current architecture of Lean is duplicating the <code>mem_carrier</code>, <code>ext</code>, <code>copy</code> parts of <code>set_like</code>, either manually or programmatically. But that's just a constant amount of work per subobject, and what I'm interested in is that we have a multiplicative amount of duplication of lemmas of the form <code>subfoo.bar_mem</code>: (number of subobject types extending <code>subfoo</code>) × (number of operations closed under <code>subfoo</code>): currently we (incompletely and ad-hoc) copy over each of these per subobject type extending <code>subfoo</code>. And for that issue typeclasses can be useful.</p>",
+        "id": 263127163,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1638269301
+    },
+    {
+        "content": "<p>More specifically, for each</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">subfoo</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">foo</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">:=</span>\n<span class=\"o\">(</span><span class=\"n\">carrier</span> <span class=\"o\">:</span> <span class=\"n\">set</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n<span class=\"o\">(</span><span class=\"n\">op_mem'</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">{</span><span class=\"n\">x</span><span class=\"o\">},</span> <span class=\"n\">x</span> <span class=\"bp\">∈</span> <span class=\"n\">carrier</span> <span class=\"bp\">→</span> <span class=\"n\">foo.op</span> <span class=\"n\">x</span> <span class=\"bp\">∈</span> <span class=\"n\">carrier</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>we create a</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">subfoo_class</span> <span class=\"o\">(</span><span class=\"n\">S</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"n\">out_param</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">foo</span> <span class=\"n\">α</span><span class=\"o\">]</span>\n  <span class=\"kd\">extends</span> <span class=\"n\">set_like</span> <span class=\"n\">S</span> <span class=\"n\">α</span> <span class=\"o\">:=</span>\n<span class=\"o\">(</span><span class=\"n\">op_mem</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">{</span><span class=\"n\">s</span> <span class=\"o\">:</span> <span class=\"n\">S</span><span class=\"o\">}</span> <span class=\"o\">{</span><span class=\"n\">x</span><span class=\"o\">},</span> <span class=\"n\">x</span> <span class=\"bp\">∈</span> <span class=\"n\">s</span> <span class=\"bp\">→</span> <span class=\"n\">foo.op</span> <span class=\"n\">x</span> <span class=\"bp\">∈</span> <span class=\"n\">s</span>\n</code></pre></div>\n<p>and then every subobject coercible to a <code>subfoo</code> can get an instance of <code>subfoo_class</code>.</p>",
+        "id": 263127560,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1638269563
+    },
+    {
+        "content": "<p>Since the class is parametrized only by types and other instances, we don't have any issues with equalities requiring transport of instances. We keep the head symbols <code>∈</code> and <code>(coe : subfoo α → set α)</code> from the bundled subobjects so no issues with <code>rw</code>/<code>simp</code>. And no more duplication of <code>_mem</code> lemmas: for each operation <code>op₂</code> that <code>subfoo</code>s are closed under, we can define <code>op₂_mem</code> as follows:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">lemma</span> <span class=\"n\">op₂_mem</span> <span class=\"o\">{</span><span class=\"n\">S</span> <span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">foo</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">subfoo_class</span> <span class=\"n\">S</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">{</span><span class=\"n\">s</span> <span class=\"o\">:</span> <span class=\"n\">S</span><span class=\"o\">}</span>\n  <span class=\"o\">{</span><span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">hx</span> <span class=\"o\">:</span> <span class=\"n\">x</span> <span class=\"bp\">∈</span> <span class=\"n\">s</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">hy</span> <span class=\"o\">:</span> <span class=\"n\">y</span> <span class=\"bp\">∈</span> <span class=\"n\">s</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">op₂</span> <span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"bp\">∈</span> <span class=\"n\">s</span> <span class=\"o\">:=</span>\n<span class=\"gr\">sorry</span>\n</code></pre></div>\n<p>And for each <code>structure subbar α extends subfoo α</code> with a corresponding <code>subfoo_class (subbar α) α</code> instance gets immediate access to <code>op₂_mem</code>, no need for hacks like <code>subbar.to_subfoo.op₂_mem</code>.</p>",
+        "id": 263128157,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1638269966
+    },
+    {
+        "content": "<p>(Shall we move this discussion to a separate thread in #general?)</p>",
+        "id": 263128336,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1638270026
+    },
+    {
+        "content": "<p>In my PR I was trying to generalize over <code>op2</code> as well, but perhaps that was greedy</p>",
+        "id": 263128432,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1638270081
+    },
+    {
+        "content": "<p>This topic was moved here from <a class=\"stream-topic\" data-stream-id=\"113489\" href=\"/#narrow/stream/113489-new-members/topic/Show.20specific.20set.20forms.20a.20subspace.20iff.20some.20condition.20holds\">#new members &gt; Show specific set forms a subspace iff some condition holds</a> by <span class=\"user-mention silent\" data-user-id=\"238446\">Anne Baanen</span></p>",
+        "id": 263128435,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1638270084
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/113488-general/topic/Unified.20interface.20for.20subobjects/near/263128432\">said</a>:</p>\n<blockquote>\n<p>In my PR I was trying to generalize over <code>op2</code> as well, but perhaps that was greedy</p>\n</blockquote>\n<p>I was going to check out your PR last night but grocery shopping intervened. Thanks for the reminder!</p>",
+        "id": 263128591,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1638270168
+    },
+    {
+        "content": "<p>Also I want to point out everything said in this thread goes, mutatis mutandis, for homomorphisms: we have a <code>coe_fn : foo_hom A B → (A → B)</code> taking the place of <code>coe : subfoo A → set A</code>, <code>map_op</code> taking the place of <code>op_mem</code>, etc.</p>",
+        "id": 263128728,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1638270256
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/113488-general/topic/Unified.20interface.20for.20subobjects/near/263128432\">said</a>:</p>\n<blockquote>\n<p>In my PR I was trying to generalize over <code>op2</code> as well, but perhaps that was greedy</p>\n</blockquote>\n<p>Indeed, looking at the defeq trace, the issue is really that the inference for the <code>has_zero β</code> instance will only be attempted after the defeq check for the instance to be applied, <code>measurable.subtype.closed_under_zero</code>. So it can't figure out <code>semiring.zero =?= @has_zero.zero β ?</code>. Maybe that's changed in Lean 4 now that the elaborator can postpone goals, but here the only way I can find to force the <code>has_zero β</code> instance to be there already is through including it in one of the types.</p>",
+        "id": 263130824,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1638271571
+    },
+    {
+        "content": "<p>(Or you can make it an <code>out_param</code> I guess, but that brings with it a whole other host of issues!)</p>",
+        "id": 263130918,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1638271654
+    },
+    {
+        "content": "<p>After exactly 100 commits, the subobject refactor builds! <span aria-label=\"tada\" class=\"emoji emoji-1f389\" role=\"img\" title=\"tada\">:tada:</span> I created PR <a href=\"https://github.com/leanprover-community/mathlib/pull/11545\">#11545</a> while I waited for the linter results to come in.</p>",
+        "id": 268437927,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1642531756
+    },
+    {
+        "content": "<p>Remember when GitHub would create a squashed commit with 100 lines of <code>* fix things</code>?</p>",
+        "id": 268438103,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1642531821
+    },
+    {
+        "content": "<p>I'm having trouble with <a href=\"https://github.com/leanprover-community/mathlib/runs/4938022490?check_suite_focus=true\">a timeout in the <code>fails_quickly</code> linter</a> for <a href=\"https://leanprover-community.github.io/mathlib_docs/find/measure_theory.Lp_meas.complete_space\">docs#measure_theory.Lp_meas.complete_space</a>. The weird thing is that I get the same timeout on master, even though the linter seems happy enough there:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">measure_theory.function.conditional_expectation</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">measure_theory</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">foo₂</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"n\">F</span> <span class=\"bp\">𝕜</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">p</span> <span class=\"o\">:</span> <span class=\"n\">ennreal</span><span class=\"o\">)</span>\n  <span class=\"o\">[</span><span class=\"n\">_inst_1</span> <span class=\"o\">:</span> <span class=\"n\">is_R_or_C</span> <span class=\"bp\">𝕜</span><span class=\"o\">]</span>\n  <span class=\"o\">[</span><span class=\"n\">_inst_13</span> <span class=\"o\">:</span> <span class=\"n\">normed_group</span> <span class=\"n\">F</span><span class=\"o\">]</span>\n  <span class=\"o\">[</span><span class=\"n\">_inst_14</span> <span class=\"o\">:</span> <span class=\"n\">normed_space</span> <span class=\"bp\">𝕜</span> <span class=\"n\">F</span><span class=\"o\">]</span>\n  <span class=\"o\">[</span><span class=\"n\">_inst_15</span> <span class=\"o\">:</span> <span class=\"n\">measurable_space</span> <span class=\"n\">F</span><span class=\"o\">]</span>\n  <span class=\"o\">[</span><span class=\"n\">_inst_16</span> <span class=\"o\">:</span> <span class=\"n\">borel_space</span> <span class=\"n\">F</span><span class=\"o\">]</span>\n  <span class=\"o\">[</span><span class=\"n\">_inst_17</span> <span class=\"o\">:</span> <span class=\"n\">topological_space.second_countable_topology</span> <span class=\"n\">F</span><span class=\"o\">]</span>\n  <span class=\"o\">[</span><span class=\"n\">_inst_37</span> <span class=\"o\">:</span> <span class=\"n\">opens_measurable_space</span> <span class=\"bp\">𝕜</span><span class=\"o\">]</span>\n  <span class=\"o\">(</span><span class=\"n\">m</span> <span class=\"n\">m0</span> <span class=\"o\">:</span> <span class=\"n\">measurable_space</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n  <span class=\"o\">(</span><span class=\"n\">μ</span> <span class=\"o\">:</span> <span class=\"n\">measure_theory.measure</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n  <span class=\"o\">[</span><span class=\"n\">hm</span> <span class=\"o\">:</span> <span class=\"n\">fact</span> <span class=\"o\">(</span><span class=\"n\">m</span> <span class=\"bp\">≤</span> <span class=\"n\">m0</span><span class=\"o\">)]</span>\n  <span class=\"o\">[</span><span class=\"n\">hp</span> <span class=\"o\">:</span> <span class=\"n\">fact</span> <span class=\"o\">(</span><span class=\"mi\">1</span> <span class=\"bp\">≤</span> <span class=\"n\">p</span><span class=\"o\">)]</span> <span class=\"o\">:</span>\n  <span class=\"n\">complete_space</span> <span class=\"bp\">↥</span><span class=\"o\">(</span><span class=\"n\">measure_theory.Lp_meas</span> <span class=\"n\">F</span> <span class=\"bp\">𝕜</span> <span class=\"n\">m</span> <span class=\"n\">p</span> <span class=\"n\">μ</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n<span class=\"kd\">by</span> <span class=\"n\">apply_instance</span>\n\n<span class=\"kd\">end</span> <span class=\"n\">measure_theory</span>\n</code></pre></div>",
+        "id": 269442474,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643215554
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"350992\">@Rémy Degenne</span> , it looks like you defined this instance, would you have any tips for how to resolve the issue?</p>",
+        "id": 269442750,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643215663
+    },
+    {
+        "content": "<p>Actually hang on, if I replace <code>Type*</code> with universe variables, the linter passes on both master and my branch?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">all</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">tactic</span>\n\n<span class=\"kd\">run_cmd</span> <span class=\"n\">get_decl</span> <span class=\"bp\">`</span><span class=\"n\">measure_theory.Lp_meas.complete_space</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">fails_quickly</span> <span class=\"mi\">15000</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">tactic.trace</span> <span class=\"c1\">-- none</span>\n\n<span class=\"kd\">universes</span> <span class=\"n\">u</span> <span class=\"n\">v</span> <span class=\"n\">w</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">measure_theory</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">foo₂</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">F</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">v</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"bp\">𝕜</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">w</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">p</span> <span class=\"o\">:</span> <span class=\"n\">ennreal</span><span class=\"o\">)</span>\n  <span class=\"o\">[</span><span class=\"n\">_inst_1</span> <span class=\"o\">:</span> <span class=\"n\">is_R_or_C</span> <span class=\"bp\">𝕜</span><span class=\"o\">]</span>\n  <span class=\"o\">[</span><span class=\"n\">_inst_13</span> <span class=\"o\">:</span> <span class=\"n\">normed_group</span> <span class=\"n\">F</span><span class=\"o\">]</span>\n  <span class=\"o\">[</span><span class=\"n\">_inst_14</span> <span class=\"o\">:</span> <span class=\"n\">normed_space</span> <span class=\"bp\">𝕜</span> <span class=\"n\">F</span><span class=\"o\">]</span>\n  <span class=\"o\">[</span><span class=\"n\">_inst_15</span> <span class=\"o\">:</span> <span class=\"n\">measurable_space</span> <span class=\"n\">F</span><span class=\"o\">]</span>\n  <span class=\"o\">[</span><span class=\"n\">_inst_16</span> <span class=\"o\">:</span> <span class=\"n\">borel_space</span> <span class=\"n\">F</span><span class=\"o\">]</span>\n  <span class=\"o\">[</span><span class=\"n\">_inst_17</span> <span class=\"o\">:</span> <span class=\"n\">topological_space.second_countable_topology</span> <span class=\"n\">F</span><span class=\"o\">]</span>\n  <span class=\"o\">[</span><span class=\"n\">_inst_37</span> <span class=\"o\">:</span> <span class=\"n\">opens_measurable_space</span> <span class=\"bp\">𝕜</span><span class=\"o\">]</span>\n  <span class=\"o\">(</span><span class=\"n\">m</span> <span class=\"n\">m0</span> <span class=\"o\">:</span> <span class=\"n\">measurable_space</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n  <span class=\"o\">(</span><span class=\"n\">μ</span> <span class=\"o\">:</span> <span class=\"n\">measure_theory.measure</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n  <span class=\"o\">[</span><span class=\"n\">hm</span> <span class=\"o\">:</span> <span class=\"n\">fact</span> <span class=\"o\">(</span><span class=\"n\">m</span> <span class=\"bp\">≤</span> <span class=\"n\">m0</span><span class=\"o\">)]</span>\n  <span class=\"o\">[</span><span class=\"n\">hp</span> <span class=\"o\">:</span> <span class=\"n\">fact</span> <span class=\"o\">(</span><span class=\"mi\">1</span> <span class=\"bp\">≤</span> <span class=\"n\">p</span><span class=\"o\">)]</span> <span class=\"o\">:</span>\n  <span class=\"n\">complete_space</span> <span class=\"bp\">↥</span><span class=\"o\">(</span><span class=\"n\">measure_theory.Lp_meas</span> <span class=\"n\">F</span> <span class=\"bp\">𝕜</span> <span class=\"n\">m</span> <span class=\"n\">p</span> <span class=\"n\">μ</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n<span class=\"kd\">by</span> <span class=\"n\">apply_instance</span> <span class=\"c1\">-- works</span>\n\n<span class=\"kd\">end</span> <span class=\"n\">measure_theory</span>\n</code></pre></div>",
+        "id": 269445642,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643216698
+    },
+    {
+        "content": "<p>I saw that a linter complained at some point, but did not manage to fix it, and it did not prevent me from making PRs in that file or anything else, so I did not try much. Glad you found a solution!<br>\nNow I am curious to know why that fix changes anything :) .</p>",
+        "id": 269460356,
+        "sender_full_name": "Rémy Degenne",
+        "timestamp": 1643222399
+    },
+    {
+        "content": "<p>Sorry, let me be clearer: in both my branch and on master, manually invoking the <code>fails_quickly</code> linter does not fail (even when I do <code>import all</code>), while the manual examples time out iff the universes are implicit (in the form of <code>Type*</code>). The full lint script fails only on my branch.</p>",
+        "id": 269579056,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643293501
+    },
+    {
+        "content": "<p>Ok, from a bit of binary search looks like the <code>max_steps</code> goes from about 10 000 on master to 13 000 on my branch. If the linters don't completely empty their caches or something like that, then I can believe this barely pushes the search over the limit of 15 000 in the actual linting run. I'll try bumping the limit to 20 000, since the actual time it takes to fail is not so different: ~2.6s for master vs ~2.9s on my branch.</p>",
+        "id": 269584459,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643295604
+    },
+    {
+        "content": "<p>Split off the first part of the refactor into <a href=\"https://github.com/leanprover-community/mathlib/pull/11750\">#11750</a> which only introduces the new definitions (and does a bit of fixing)</p>",
+        "id": 270037670,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643638687
+    },
+    {
+        "content": "<p>Second part of the refactor, moving the generic <code>_mem</code> lemmas to the root namespace, is now PR <a href=\"https://github.com/leanprover-community/mathlib/pull/11758\">#11758</a>.</p>",
+        "id": 270192237,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643714773
+    },
+    {
+        "content": "<p>Third part, deleting all the duplicate <code>subgroup.to_group</code> (etc.) instances in favour of <code>subgroup_class.to_group</code>: <a href=\"https://github.com/leanprover-community/mathlib/pull/11759\">#11759</a></p>",
+        "id": 270229091,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1643729217
+    }
+]

@@ -1,0 +1,176 @@
+[
+    {
+        "content": "<p>I'm wondering what the plans are for adapting the lean3 export format (<a href=\"https://github.com/leanprover-community/lean/blob/master/doc/export_format.md\">https://github.com/leanprover-community/lean/blob/master/doc/export_format.md</a>) to lean4 to facilitate independent checkers? I'm guessing the way to do this would be to write a library in Lean that takes either the <a href=\"https://github.com/leanprover/lean4/blob/245d36147e879a485e6dcbc383cbf2f4dc0ecd5f/src/Lean/Environment.lean#L59\"><code>Environment</code></a> or a list of <a href=\"https://github.com/leanprover/lean4/blob/245d36147e879a485e6dcbc383cbf2f4dc0ecd5f/src/Lean/Declaration.lean#L147\"><code>Declaration</code></a> and writes it to a file? </p>\n<p>I'd be happy to help contribute on this if that would be useful. I've written a parser for the lean3 format in Rust: <a href=\"https://github.com/yatima-inc/radiya/tree/main/src/parse\">https://github.com/yatima-inc/radiya/tree/main/src/parse</a>, as well as a way to embed the export format as a hash-linked graph in IPFS's <a href=\"https://ipld.io/\">https://ipld.io/</a> format.</p>",
+        "id": 254282868,
+        "sender_full_name": "John Burnham",
+        "timestamp": 1632260525
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"432681\">@John Burnham</span> I believe that nanoda_lib has a parser for the lean 3 export format at <a href=\"https://github.com/ammkrn/nanoda/blob/master/src/parser.rs\">https://github.com/ammkrn/nanoda/blob/master/src/parser.rs</a> which has been adapted to include lean 4 kernel features, so you could consider it a de-facto specification of the lean 4 export format, but to my knowledge an actual exporter has not been written (cc: <span class=\"user-mention\" data-user-id=\"228466\">@Chris B</span>, is this true?). I believe this to be a fairly simple project that can be done in user space (which is part of why a standard exporter doesn't ship with the lean 4 distribution, unlike lean 3).</p>\n<p>In particular, it might be advantageous to not standardize the format and instead have an exporter written in lean 4 using standard API functions that can be adapted to suit the needs of the importer (for example, logging different information or using a different interchange format).</p>",
+        "id": 254299275,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1632271258
+    },
+    {
+        "content": "<p>I referred to nanoda_lib extensively while writing my parser in radiya (<a href=\"https://github.com/yatima-inc/radiya/tree/main/src/parse\">https://github.com/yatima-inc/radiya/tree/main/src/parse</a>), but nanoda parses directly into it's particular <code>Env</code> type as opposed to an export syntax representation, and does not include error handling if the export format is malformed. Those are reasonable design decisions for <code>nanoda</code>, but I wanted to something a little safer/more general for my case, so I rewrote it using the <a href=\"https://docs.rs/nom/7.0.0/nom/index.html\"><code>nom</code></a> parser combinator library. Likely that's slower than nanoda's approach, but doesn't seem too bad in practice, since radiya still parses the lean3 standard library in  1.2 seconds in testing.</p>\n<p>Also, there are some declarations in lean4 which are missing from the export syntax, like theorems, opaques and mutual definitions. It should be fairly easy to add the first two as <code>#THEO</code> and <code>#OPAQ</code> and we could do mutuals as <code>#MUT &lt;number-of-definitions&gt; &lt;def-1&gt; &lt;def-2&gt;</code>. There are also new Expr constructors in Lean4 like MData and Proj, but I'm not entirely sure what those are and if they're kernel relevant.</p>\n<p>But I also am thinking about other possibilities, like replacing the numerical name, universe and expression indices with hashes, to allow AST fragments to be shared over IPFS, like in Yatima. That probably is mainly relevant to my use case though, and shouldn't be the standard, so I'll take a look at implementing that in Lean4 userspace.</p>\n<p>Is there documentation somewhere on Lean's C FFI? For my content-addressing concept I've been using <a href=\"https://github.com/BLAKE3-team/BLAKE3\">https://github.com/BLAKE3-team/BLAKE3</a>, and it'd be cool to use that here</p>",
+        "id": 254301485,
+        "sender_full_name": "John Burnham",
+        "timestamp": 1632273360
+    },
+    {
+        "content": "<p>To clarify, I know we can do</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[extern \"lean_nat_add\"]</span>\n<span class=\"kd\">def</span> <span class=\"n\">add</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span>\n  <span class=\"bp\">|</span> <span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">Nat.zero</span>   <span class=\"bp\">=&gt;</span> <span class=\"n\">a</span>\n  <span class=\"bp\">|</span> <span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">Nat.succ</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Nat.succ</span> <span class=\"o\">(</span><span class=\"n\">add</span> <span class=\"n\">a</span> <span class=\"n\">b</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>as described here: <a href=\"https://leanprover.github.io/lean4/doc/lean3changes.html\">https://leanprover.github.io/lean4/doc/lean3changes.html</a>, but what i'm specifically wondering about is how to provide the C definition in the build. Presumably there's a way to use <a href=\"https://github.com/leanprover/lake\">lake</a> for this?</p>",
+        "id": 254301831,
+        "sender_full_name": "John Burnham",
+        "timestamp": 1632273682
+    },
+    {
+        "content": "<p>I don't know of any documentation for the C FFI (cc: <span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> ?), but my understanding is that you just include <code>lean.h</code> and link with the generated C files. If you are using rust then you probably want to use bindgen in there but otherwise it should be the same process.</p>\n<p>I could have sworn that nanoda supported opaque definitions and mutuals, and it almost certainly supports theorems since those are present in the lean 3 format as well</p>",
+        "id": 254301849,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1632273702
+    },
+    {
+        "content": "<p>Personally, I think we should move away from the lean 3 export format style. It requires a custom parser implementation, and it is not very well hardened against weird inputs. Something standard like JSON seems like a better choice to me</p>",
+        "id": 254302057,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1632273885
+    },
+    {
+        "content": "<p>I could be wrong, but nanoda appears to have theorem and opaque in their internal representation (<a href=\"https://github.com/ammkrn/nanoda_lib/blob/998ef68742d2ccc9f82442d70ae16802f44e33f2/src/env.rs#L65\">https://github.com/ammkrn/nanoda_lib/blob/998ef68742d2ccc9f82442d70ae16802f44e33f2/src/env.rs#L65</a>), but not in the parser <a href=\"https://github.com/ammkrn/nanoda_lib/blob/998ef68742d2ccc9f82442d70ae16802f44e33f2/src/parser.rs#L56\">https://github.com/ammkrn/nanoda_lib/blob/998ef68742d2ccc9f82442d70ae16802f44e33f2/src/parser.rs#L56</a> I don't see mutuals, but maybe I'm not looking at the right thing.</p>\n<p>I agree that exporting via JSON would be better than a bespoke format though. Actually the IPFS/IPLD stuff I was talking about is essentially just JSON (plus hash-links encoded as singleton maps,<code>{ \"/\": &lt;hash-string&gt; }</code>).</p>",
+        "id": 254302183,
+        "sender_full_name": "John Burnham",
+        "timestamp": 1632274008
+    },
+    {
+        "content": "<p>There is no documentation of the C FFI as far as know. However, the entire C API is now contained within <code>lean.h</code> (outside a few GMP dependent functions in <code>lean_gmp.h</code>) and the file is not <em>that</em> big, so I think just quickly skimming through the signatures should be informative enough in many cases.</p>\n<p>Also, <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> , isn't a <code>theorem</code> just a <code>def</code> without codegen?</p>",
+        "id": 254302271,
+        "sender_full_name": "Mac",
+        "timestamp": 1632274089
+    },
+    {
+        "content": "<p>I think the main difference post-elaboration is that theorems are irreducible by default</p>",
+        "id": 254302316,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1632274159
+    },
+    {
+        "content": "<p>but the distinction is valuable to downstream consumers regardless of the direct effect of the label</p>",
+        "id": 254302341,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1632274195
+    },
+    {
+        "content": "<p>Does the distinction between <code>def/theorem/opaque</code> or the presence of <code>ReduciblityHints</code> matter in the kernel semantics? The comment at <a href=\"https://github.com/leanprover/lean4/blob/0bea52d1b535559e3f77e257d4afad5af87be54e/stage0/src/Lean/Declaration.lean#L27\">https://github.com/leanprover/lean4/blob/0bea52d1b535559e3f77e257d4afad5af87be54e/stage0/src/Lean/Declaration.lean#L27</a> says they only affect performance, but perhaps that's still useful to export to third-party checkers?</p>",
+        "id": 254303043,
+        "sender_full_name": "John Burnham",
+        "timestamp": 1632274777
+    },
+    {
+        "content": "<p>You are probably right about the parser being less comprehensive than the internal representation in nanoda. I have the distinct memory of working out a syntax for mutual inductives along your proposed lines, but I can't remember enough of the context to find it now. In any case, the lean 4 data structures to export are fairly clear about their grammar (see <a href=\"https://github.com/leanprover/lean4/blob/42561bb93f49151cc398d2d86e388c293d50ef0c/src/Lean/Declaration.lean#L147-L154\"><code>Declaration</code></a>), so I would just do a straightforward serialization of that in your syntax of choice. (But keep in mind that you have to do exporting of expr, level and possibly name in a way that supports backreferences, or else you can get exponential blowup.)</p>",
+        "id": 254303059,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1632274792
+    },
+    {
+        "content": "<p>Yes, both <code>def/theorem/opaque</code> and <code>ReducibilityHints</code> are directly relevant to external verification</p>",
+        "id": 254303158,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1632274826
+    },
+    {
+        "content": "<p>well, it's possible that <code>def/theorem</code> is equivalent to some different <code>ReducibilityHints</code> setting</p>",
+        "id": 254303199,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1632274860
+    },
+    {
+        "content": "<p><code>opaque</code> is different from both <code>def</code> and <code>theorem</code> because opaque defs never unfold, they are more like axiomatic constants with a proof of inhabitedness of the type to justify the addition</p>",
+        "id": 254303292,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1632274929
+    },
+    {
+        "content": "<p>The comment says they only affect performance, but don't underestimate by just how much. If you leave the garden path of unfolding the way the original proof did, you can hit an absolutely terrible worst case. <em>In principle</em>, all unfolding paths are equivalent because you will eventually hit a normal form; <em>in practice</em> the difference between those can be more than the age of the universe</p>",
+        "id": 254303423,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1632275049
+    },
+    {
+        "content": "<p>That probably won't happen most of the time, but on any corpus as large as mathlib you will hit enough edge cases that it's likely to make the difference between checking in a reasonable time frame and timing out after spending more than 100x more time than lean</p>",
+        "id": 254303606,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1632275197
+    },
+    {
+        "content": "<p>That makes sense, haha, that in practice performance is actually semantics <span aria-label=\"smiling face\" class=\"emoji emoji-263a\" role=\"img\" title=\"smiling face\">:smiling_face:</span>. Adding all the top level declarations from the Lean source seems pretty straightforward though.</p>\n<p>What I'm thinking about for the JSON/IPLD design is not that different  from the existing format, actually, I think, but I want to replace the indices with hashes like, </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">{</span> <span class=\"bp\">&lt;</span><span class=\"n\">hash</span><span class=\"bp\">-</span><span class=\"mi\">1</span><span class=\"bp\">&gt;</span> <span class=\"o\">:</span> <span class=\"o\">[</span><span class=\"s2\">\"#NS\"</span><span class=\"o\">,</span> <span class=\"n\">null</span><span class=\"o\">,</span> <span class=\"s2\">\"u\"</span><span class=\"o\">],</span>\n  <span class=\"bp\">&lt;</span><span class=\"n\">hash</span><span class=\"bp\">-</span><span class=\"mi\">2</span><span class=\"bp\">&gt;</span> <span class=\"o\">:</span> <span class=\"o\">[</span><span class=\"s2\">\"#UP\"</span><span class=\"o\">,</span> <span class=\"bp\">&lt;</span><span class=\"n\">hash</span><span class=\"bp\">-</span><span class=\"mi\">1</span><span class=\"bp\">&gt;</span><span class=\"o\">],</span>\n  <span class=\"bp\">...</span>\n<span class=\"o\">}</span>\n</code></pre></div>\n<p>The neat thing about this is that it would give every Lean environment a unique content-id. One thing I'm wondering though is whether the hashing could operate over Constants rather Declarations. That way each ConstantInfo could get it's own hash (which could be cached across typechecking sessions, potentially). I saw a comment in nanoda somewhere that it might be interesting to have the export format do more of the work for representing each of the <code>QuotKind</code>s rather than having to re-compile them when we import the export format.</p>",
+        "id": 254304481,
+        "sender_full_name": "John Burnham",
+        "timestamp": 1632275964
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"432681\">@John Burnham</span>, what kind of hashes are we talking about here? If you are talking about an ordinary 32-bit/64-bit hash, I think collisions in a large library like mathlib would be a big concern.</p>",
+        "id": 254305801,
+        "sender_full_name": "Mac",
+        "timestamp": 1632277080
+    },
+    {
+        "content": "<p>If you are talking about a cryptographically secure hash, speed could potentially be an issue.</p>",
+        "id": 254305875,
+        "sender_full_name": "Mac",
+        "timestamp": 1632277133
+    },
+    {
+        "content": "<p>Also, even with cryptographically secure hashes, you are now basing the soundness of your proof on the soundness of the hashing function. As soon as a collision for the hashing function has been found, all proofs checked by your checker could become unsound (depending on how much you are trusting the hash).</p>",
+        "id": 254306055,
+        "sender_full_name": "Mac",
+        "timestamp": 1632277320
+    },
+    {
+        "content": "<p>What we've been doing in <a href=\"https://github.com/yatima-inc/yatima\">Yatima</a> is hashing expressions and definitions with a 256-bit Blake3 hash, so negligible collision risk. Speed might be an issue, but Blake3 is very fast, and can be computed in parallel. I agree that the hash function then becomes part of the trusted code base, which certainly wouldn't be appropriate for every use case. But my specific use-case is verifying theorems inside of a blockchain's state-transition function, and this already assumes a sound cryptographic hash function.</p>",
+        "id": 254306546,
+        "sender_full_name": "John Burnham",
+        "timestamp": 1632277766
+    },
+    {
+        "content": "<p>I'm not 100% sure about this idea though, so I will try it both ways as I write an exporter in Lean and see what I learn</p>",
+        "id": 254307658,
+        "sender_full_name": "John Burnham",
+        "timestamp": 1632278798
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"432681\">John Burnham</span> <a href=\"#narrow/stream/270676-lean4/topic/Export.20format/near/254302183\">said</a>:</p>\n<blockquote>\n<p>I could be wrong, but nanoda appears to have theorem and opaque in their internal representation (<a href=\"https://github.com/ammkrn/nanoda_lib/blob/998ef68742d2ccc9f82442d70ae16802f44e33f2/src/env.rs#L65\">https://github.com/ammkrn/nanoda_lib/blob/998ef68742d2ccc9f82442d70ae16802f44e33f2/src/env.rs#L65</a>), but not in the parser <a href=\"https://github.com/ammkrn/nanoda_lib/blob/998ef68742d2ccc9f82442d70ae16802f44e33f2/src/parser.rs#L56\">https://github.com/ammkrn/nanoda_lib/blob/998ef68742d2ccc9f82442d70ae16802f44e33f2/src/parser.rs#L56</a> I don't see mutuals, but maybe I'm not looking at the right thing.</p>\n</blockquote>\n<p>I haven't read the whole thread so this may have been addressed to some extent, but those aren't in the parser because (at least when I wrote it) I didn't know what those were supposed to look like, and then we figured out we'd have to write the export format ourselves. I would assume theorems and opaque/abbrev will look exactly like a definition but with #OPQ/#THM prefixes, and mutual inductives will be like inductives with one more integer indicating the number of inductive specs in the block.</p>",
+        "id": 254311054,
+        "sender_full_name": "Chris B",
+        "timestamp": 1632282127
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Export.20format/near/254299275\">said</a>:</p>\n<blockquote>\n<p>In particular, it might be advantageous to not standardize the format and instead have an exporter written in lean 4 using standard API functions that can be adapted to suit the needs of the importer (for example, logging different information or using a different interchange format).</p>\n</blockquote>\n<p>Verifiers will need to get different outputs depending on whether (and how) they want to support the native reduction stuff for bool, nat, and string, so I think at least some degree of configurability would be required for a standard format.</p>",
+        "id": 254311528,
+        "sender_full_name": "Chris B",
+        "timestamp": 1632282698
+    },
+    {
+        "content": "<p>But I like the mmz idea of letting scripts include data that the verifier can ignore in a principled way (input/output in mmz). There might be a good path to code re-use by following that kind of pattern.</p>",
+        "id": 254311630,
+        "sender_full_name": "Chris B",
+        "timestamp": 1632282824
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"228466\">@Chris B</span> I've started implementing an <a href=\"http://ipld.io\">IPLD</a> serialization library in Lean: <a href=\"https://github.com/yatima-inc/radiya/blob/jcb/kernel/Radiya/Ipld.lean\">https://github.com/yatima-inc/radiya/blob/jcb/kernel/Radiya/Ipld.lean</a>, which just a JSON superset:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">inductive</span> <span class=\"n\">Ipld</span> <span class=\"n\">where</span>\n<span class=\"bp\">|</span> <span class=\"n\">null</span>\n<span class=\"bp\">|</span> <span class=\"n\">bool</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Bool</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"n\">num</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">UInt64</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"n\">str</span> <span class=\"o\">(</span><span class=\"n\">s</span> <span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"n\">byt</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">ByteArray</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"n\">arr</span> <span class=\"o\">(</span><span class=\"n\">elems</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Ipld</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"n\">obj</span> <span class=\"o\">(</span><span class=\"n\">kvPairs</span> <span class=\"o\">:</span> <span class=\"n\">RBNode</span> <span class=\"n\">String</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Ipld</span><span class=\"o\">))</span>\n<span class=\"bp\">|</span> <span class=\"n\">link</span> <span class=\"o\">(</span><span class=\"n\">cid</span><span class=\"o\">:</span> <span class=\"n\">Cid</span><span class=\"o\">)</span>\n<span class=\"n\">deriving</span> <span class=\"n\">Inhabited</span>\n</code></pre></div>\n<p>It think being able to persist and share the export format over IPFS will be really interesting, particularly because of the growing <a href=\"https://blog.ipfs.io/2020-09-08-nix-ipfs-milestone-1/\">Nix &lt;-&gt; IPFS integration</a>.</p>\n<p>One question I have though is about how the map of Constants in the <a href=\"https://github.com/leanprover/lean4/blob/d506b8a5ed6d499129ed6f3e4e453ab3f70e9795/src/Lean/Environment.lean#L59\">Environment</a> is built from the list <a href=\"https://github.com/leanprover/lean4/blob/d506b8a5ed6d499129ed6f3e4e453ab3f70e9795/src/Lean/Declaration.lean#L147\">Declaration</a> sent to the kernel. Since the ConstMap is keyed on Names, I'm assuming that mutual definitions and inductives are flattened, so that the graph of Expr.Const references forms cycles? It looks like the mutual inductives are no longer compiled to a single large inductive <a href=\"https://leanprover.github.io/reference/declarations.html#mutual-and-nested-inductive-definitions\">as in lean3</a>? </p>\n<p>There was a comment on the <a href=\"https://github.com/ammkrn/nanoda/blob/04c0b5e5ddf73f6bae55ca17da1a320d239d8147/src/quot.rs#L17\">old <code>nanoda</code> which said</a>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">///</span> <span class=\"n\">This</span> <span class=\"n\">module</span> <span class=\"n\">is</span> <span class=\"n\">pretty</span> <span class=\"n\">much</span> <span class=\"n\">just</span> <span class=\"s2\">\"by hand\"</span> <span class=\"n\">assembly</span> <span class=\"n\">of</span> <span class=\"n\">Quot.</span> <span class=\"n\">I'm</span> <span class=\"n\">not</span> <span class=\"n\">sure</span>\n<span class=\"bp\">///</span> <span class=\"n\">why</span> <span class=\"n\">the</span> <span class=\"kn\">export</span> <span class=\"n\">file</span> <span class=\"n\">doesn't</span> <span class=\"n\">lend</span> <span class=\"n\">more</span> <span class=\"n\">help</span> <span class=\"k\">in</span> <span class=\"n\">putting</span> <span class=\"n\">this</span> <span class=\"n\">together.</span>\n</code></pre></div>\n<p>So what I'm wondering is whether we can directly export the constants instead of the declarations, so that instead of a single <code>#QUOT</code>, we'd have in the export file an already compiled constant for <code>Quot</code>, <code>Quot.mk</code>, <code>Quot.lift</code>, <code>Quot.ind</code>. And for the inductives could w have the InductiveVals, ConstructorVals, RecursorVals directly, rather than having to compile the specs?</p>\n<p>On the other hand, maybe the exporting is based on Declaration rather Constant so that each object in the export format is self-contained, rather than potentially having cyclical reference spaghetti.</p>",
+        "id": 254447840,
+        "sender_full_name": "John Burnham",
+        "timestamp": 1632348915
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"432681\">John Burnham</span> <a href=\"#narrow/stream/270676-lean4/topic/Export.20format/near/254447840\">said</a>:</p>\n<blockquote>\n<p>Since the ConstMap is keyed on Names, I'm assuming that mutual definitions and inductives are flattened, so that the graph of Expr.Const references forms cycles? It looks like the mutual inductives are no longer compiled to a single large inductive <a href=\"https://leanprover.github.io/reference/declarations.html#mutual-and-nested-inductive-definitions\">as in lean3</a>? </p>\n</blockquote>\n<p>You're right that they're no longer flattened, but everything should still be acyclic because mutual declarations are only going to refer to each others components by name (using an <code>Expr.Const</code>, which is more primitive than the actual declaration), where the name is able to unfold/reduce to the mutual item by fishing it out of the environment. In a meta sense you could say that it has cycles in that A is allowed to refer to B by name and vice versa, but this shouldn't result in there being \"actual\" cycles from the program's perspective.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"432681\">John Burnham</span> <a href=\"#narrow/stream/270676-lean4/topic/Export.20format/near/254447840\">said</a>:</p>\n<blockquote>\n<p>So what I'm wondering is whether we can directly export the constants instead of the declarations, so that instead of a single <code>#QUOT</code>, we'd have in the export file an already compiled constant for <code>Quot</code>, <code>Quot.mk</code>, <code>Quot.lift</code>, <code>Quot.ind</code>. And for the inductives could w have the InductiveVals, ConstructorVals, RecursorVals directly, rather than having to compile the specs?</p>\n<p>On the other hand, maybe the exporting is based on Declaration rather Constant so that each object in the export format is self-contained, rather than potentially having cyclical reference spaghetti.</p>\n</blockquote>\n<p>The problem with doing this for the recursors is that they're supposed to be derived from the inductive spec and the constructors according to a very specific procedure laid out in the kernel. If you were to be given completed recursors by the proof script, you would either need a separate procedure to check that they're the \"proper\" recursors for that inductive spec, or you would need to be okay with the risk that the script gives you fugazi recursors.</p>\n<p>To some extent this is probably the motivation for wanting to assemble quot manually. Especially in Lean 4 where the quot recursors are hard-coded in the kernel, you don't necessarily want to have to trust the definition of quot that gets passed by the script since the kernel is actually making assumptions about how it behaves. There's a little bit of asymmetry in that the Lean 4 kernel receives Eq as components, but then it <a href=\"https://github.com/leanprover/lean4/blob/d506b8a5ed6d499129ed6f3e4e453ab3f70e9795/src/kernel/quot.cpp#L19\">does a check to make sure that it matches expectations</a>. I think this is justified in that Eq is declared in core, whereas Quot is primitive. There's a branch of nanod_lib with this check and some other additions, but I ran into weird rustc issues that freaked me out and <a href=\"https://github.com/rust-lang/rust/issues/85839\">never got addressed</a> so I haven't pushed it. For Quot I think this is mostly a measure of how paranoid you want to be since you can just verify it by eye if you want to, but that's definitely not the case for recursors in the large. For inductive declarations and constructors, there's very little that happens during compilation, it's mostly just checks that they play by the rules, so there's not much to be gained there.</p>\n<p>The approach you mentioned would work with metamath0's Lean verification, where the kernel verifier's steps are recorded alongside the actual data. There are a lot of attractive aspects to this approach, but the downsides are that a) it's not done, and b) the proof scripts become extremely long, probably way too long to put on a distributed system.</p>",
+        "id": 254476788,
+        "sender_full_name": "Chris B",
+        "timestamp": 1632369519
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"228466\">@Chris B</span> Sorry, I didn't see your message earlier (still figuring out Zulip). This is really helpful info, thank you! I think I have a pretty good understanding of how to do an IPLD/JSON based export format now, so will report back when I have something more substantial implemented</p>",
+        "id": 255902184,
+        "sender_full_name": "John Burnham",
+        "timestamp": 1633212724
+    }
+]

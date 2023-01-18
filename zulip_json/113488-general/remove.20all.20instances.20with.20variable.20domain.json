@@ -1,0 +1,92 @@
+[
+    {
+        "content": "<p>We need to remove all <code>has_coe</code> instances with variable domain, like:</p>\n<div class=\"codehilite\"><pre><span></span>#print uniform_space.completion.has_coe\n#print localization.has_coe\n#print filter.filter_product.coe_filterprod\n</pre></div>\n\n\n<p>All these instances go from a variable to a specific type, e.g. <code>has_coe α (uniform_space.completion α)</code>. The problem is, that together with </p>\n<div class=\"codehilite\"><pre><span></span>coe_trans [_inst_1 : has_coe a b] [_inst_2 : has_coe_t b c] : has_coe_t a c\n</pre></div>\n\n\n<p>these instances will just loop forever. If <code>coe_trans</code> applies, then all of these instances always apply for <code>_inst_1</code> and then <code>_inst_2</code> can again be inferred using <code>coe_trans</code>.</p>\n<p>Consider the following, when importing all of mathlib:</p>\n<div class=\"codehilite\"><pre><span></span>set_option class.instance_max_depth 10\ndef foo : has_coe_t name nat := by apply_instance\n</pre></div>\n\n\n<p>This will timeout with instance max depth (it is expected to fail).</p>\n<p>The actual problem I ran into was:</p>\n<div class=\"codehilite\"><pre><span></span>def foo : list name := [`x]\n</pre></div>\n\n\n<p>Since the notation <code>[ ... ]</code> is overloaded (see <a href=\"https://github.com/leanprover-community/mathlib/issues/1502\" target=\"_blank\" title=\"https://github.com/leanprover-community/mathlib/issues/1502\">#1502</a>), it then tries to find an instance <code>(vector3 name 1) (list name)</code>, which fails. The total elaboration time took 49s(!) for me.</p>\n<p>Here is another example:</p>\n<div class=\"codehilite\"><pre><span></span>constant A : Type\nconstant B : Type\nconstant C : Type\n@[priority 999] instance : has_coe A B := sorry\n@[priority 999] instance : has_coe B C := sorry\ndef foo : has_coe_t A C :=\nby apply_instance -- fails\n</pre></div>\n\n\n<p>The <code>priority 999</code> is just to mimic any instance that was declared before <code>filter.filter_product.coe_filterprod</code>. Since type-class inference reaches an infinite loop, it fails, while it it expected to succeed.</p>",
+        "id": 177084142,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1569954710
+    },
+    {
+        "content": "<p>Here is the full list of instances which will have to be removed:</p>\n<div class=\"codehilite\"><pre><span></span>uniform_space.completion.has_coe : Π (α : Type u_1) [_inst_1 : uniform_space α], has_coe α (uniform_space.completion α)\nlocalization.has_coe : Π {α : Type u} [_inst_1 : comm_ring α] {S : set α} [_inst_2 : is_submonoid S], has_coe α (localization α S)\nfilter.filter_product.coe_filterprod : Π {α : Type u} {β : Type v} {φ : filter α}, has_coe β (filter.filterprod β φ)\ncomputation.has_coe : Π {α : Type u}, has_coe α (computation α)\nquotient_group.has_coe : Π {α : Type u_1} [_inst_1 : group α] {s : set α} [_inst_2 : is_subgroup s], has_coe α (quotient_group.quotient s)\n</pre></div>",
+        "id": 177084539,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1569954963
+    },
+    {
+        "content": "<p>Yikes. Good find. I hope these won't be too painful to remove.</p>",
+        "id": 177087742,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1569957029
+    },
+    {
+        "content": "<p>I'm not sure if we should make them localized instances, or remove them altogether.</p>",
+        "id": 177088065,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1569957244
+    },
+    {
+        "content": "<p>If we make them localized instances then some theorems will be stated with the coercions, and could end up being inconvenient to use without the locale open. We probably don't want to force people to open locales with dangerous instances.</p>",
+        "id": 177088768,
+        "sender_full_name": "Rob Lewis",
+        "timestamp": 1569957750
+    },
+    {
+        "content": "<p>That's fair.</p>",
+        "id": 177089004,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1569957922
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"230999\">@Daniel Selsam</span> Did you see that thread? Will we be able to keep those instances in Lean 4?</p>",
+        "id": 177090379,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1569958870
+    },
+    {
+        "content": "<p>Getting rid of those instances really sounds bad from a mathematical point of view.</p>",
+        "id": 177090395,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1569958898
+    },
+    {
+        "content": "<p>The standard practice for these is to make them <code>has_coe_t</code></p>",
+        "id": 177093188,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1569960739
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110031\">@Patrick Massot</span> Yes, in addition to diamonds, cycles will be handled correctly in Lean4. You don't even need the <code>has_coe_t</code> anymore:</p>\n<p><a href=\"https://github.com/dselsam/lean4/blob/tabled_typeclasses/tests/lean/run/typeclass_coerce.lean#L16-L17\" target=\"_blank\" title=\"https://github.com/dselsam/lean4/blob/tabled_typeclasses/tests/lean/run/typeclass_coerce.lean#L16-L17\">https://github.com/dselsam/lean4/blob/tabled_typeclasses/tests/lean/run/typeclass_coerce.lean#L16-L17</a></p>\n<p>These four  tests take ~10ms in total:</p>\n<p><a href=\"https://github.com/dselsam/lean4/blob/tabled_typeclasses/tests/lean/run/typeclass_coerce.lean#L49-L77\" target=\"_blank\" title=\"https://github.com/dselsam/lean4/blob/tabled_typeclasses/tests/lean/run/typeclass_coerce.lean#L49-L77\">https://github.com/dselsam/lean4/blob/tabled_typeclasses/tests/lean/run/typeclass_coerce.lean#L49-L77</a></p>",
+        "id": 177101266,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1569966788
+    },
+    {
+        "content": "<p>Thanks. Maybe I should try to learn how install Lean 4. Is this documented anywhere?</p>",
+        "id": 177102789,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1569968161
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110031\">@Patrick Massot</span> Same instructions as Lean3. Note: Lean4 is still a long way from being ready for use. The typeclass procedure hasn't even been merged yet.</p>",
+        "id": 177103473,
+        "sender_full_name": "Daniel Selsam",
+        "timestamp": 1569968865
+    },
+    {
+        "content": "<blockquote>\n<p>The standard practice for these is to make them <code>has_coe_t</code></p>\n</blockquote>\n<p>Oh yes, thanks for reminding us. That is the correct way to go. </p>\n<p><span class=\"user-mention\" data-user-id=\"110031\">@Patrick Massot</span>: this will mean in practice is that the coercion <code>α -&gt; quotient_group.quotient s</code> will still work, but you cannot go further (e.g. it will not go from <code>α</code> to a quotient of a quotient of <code>α</code>).</p>",
+        "id": 177105655,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1569970626
+    },
+    {
+        "content": "<p>It sounds fine.</p>",
+        "id": 177186020,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1570046131
+    },
+    {
+        "content": "<p>Why is this library note in <a href=\"https://tqft.net/mathlib/group_theory/coset\">file#group_theory/coset</a>?</p>",
+        "id": 315855438,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1671034144
+    }
+]

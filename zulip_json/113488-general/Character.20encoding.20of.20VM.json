@@ -1,0 +1,170 @@
+[
+    {
+        "content": "<p>Does anyone know the internal character encoding of strings after a to_char_buffer? It seems to not be UTF-8.</p>",
+        "id": 132047636,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1534167905
+    },
+    {
+        "content": "<p><code>init.data.string.basic</code> says that it is</p>",
+        "id": 132047850,
+        "sender_full_name": "Simon Hudon",
+        "timestamp": 1534168115
+    },
+    {
+        "content": "<p><code>char</code> is a Unicode code point, so a <code>char_buffer</code> is not encoded at all</p>",
+        "id": 132056801,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1534176914
+    },
+    {
+        "content": "<p>I think there is a serious problem in fs_write() in vm_io.cpp in the frozen final version of Lean 3.</p>\n<p>Inside, there is a static_cast to &lt;unsigned char&gt;, which is just wrong when the passed char_buffer has some multibyte unicode characters.</p>\n<p>The effect is that nonsense is written by io.fs.write when a char_buffer containing a character such as \"𝟙\" is passed. e.g. when you execute the following lean program the single byte 0xD9 is written.</p>\n<div class=\"codehilite\"><pre><span></span>def write_file (fn : string) (cnts : string) (mode := io.mode.write) : io unit := do\nh ← io.mk_file_handle fn io.mode.write,\nio.fs.write h cnts.to_char_buffer,\nio.fs.close h\n\ndef main : io unit := do\n  write_file &quot;test.txt&quot; &quot;𝟙&quot;\n</pre></div>\n\n\n<p>I'm sure the fix won't be a big deal. Does anyone know of a workaround in the meantime?</p>",
+        "id": 132250034,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1534436571
+    },
+    {
+        "content": "<p>Hmm, perhaps a <code>char_buffer</code> is supposed to be encoded in UTF-8 then after all. In that case, the bug is in <code>buffer.append_string</code>, which you could reimplement to do proper UTF-8 encoding</p>",
+        "id": 132250668,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1534437224
+    },
+    {
+        "content": "<p>It looks to me like every time the vm needs to turn an honest std::string into a list of chars it does a utf8_decode (on purpose) to make sure a \"char\" is a single unicode character, so because char_buffer = buffer char I think that would be breaking the rules!</p>",
+        "id": 132251650,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1534438361
+    },
+    {
+        "content": "<p>I would expect that fs_write should call some variant of push_unicode_scalar which pushes char into the temporary buffer it is building. Do you think it'd be okay if I made it do that?</p>",
+        "id": 132251818,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1534438576
+    },
+    {
+        "content": "<p>Do you really want to change the Lean binary instead of fixing the issue in Lean code? This also won't work for <code>fs_read</code> since reading a fixed amount of bytes does not necessarily result in a correctly terminated UTF-8 string.</p>",
+        "id": 132252378,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1534439143
+    },
+    {
+        "content": "<p>I suppose you are right. But certainly the current behaviour is broken. It seems that there is some confusion as to whether a <code>char_buffer</code> should morally be a buffer of characters of text, or of bytes. Much effort is currently gone to to ensure that a <code>char</code> is a text-character, so that things like string.length can be the length of the underlying list of chars, etc.</p>\n<p>I suppose in an ideal world io.fs.write would produce a <code>buffer byte</code>, and io.fs.read should return such a buffer (of course the latter of these actually happens currently, but everything is still called a <code>char</code>). And there would be <code>char_buffer.decode</code> or something.</p>\n<p>One can only dream!</p>",
+        "id": 132252969,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1534439727
+    },
+    {
+        "content": "<p>Yes, it should look pretty much like this in Lean 4 :)</p>",
+        "id": 132259214,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1534446211
+    },
+    {
+        "content": "<p>Hi again <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span>  sorry to resurrect this thread<br>\nAt the original time of this thread I implemented the UTF-8 decoding you suggested, and we began to use it:<br>\n<a href=\"https://github.com/khoek/lean-tidy/blob/1fb088df379285f1d9cd303b129331f60c097fd9/src/tidy/lib/utf8.lean#L17\" target=\"_blank\" title=\"https://github.com/khoek/lean-tidy/blob/1fb088df379285f1d9cd303b129331f60c097fd9/src/tidy/lib/utf8.lean#L17\">https://github.com/khoek/lean-tidy/blob/1fb088df379285f1d9cd303b129331f60c097fd9/src/tidy/lib/utf8.lean#L17</a><br>\nHowever we found that the decoder was slowing down the tactic it was part of (part of the visualizer for <code>rewrite_search</code>, so we just dropped labels altogether</p>\n<p>However, now coming back to caching work for lean I'm having to serialize very large buffers of unicode characters to disk, to preserve the symbols in the names typed in various files, and the slowness has reared its head once again; encoding and saving an 11mb character buffer to disk takes under 1 second if I let lean corrupt it when writing normally, or more than five minutes (I didn't let it finish) if I map the UTF-8 decoder over it. Moreover, it's not the decoder implementation being slow---just asking that each <code>char</code> be replaced by its <code>nat</code> value as a string via mapping <code>char.val</code> over it (and trying to be efficient, appending each resulting <code>char</code> one-at-a-time and not doing list joins) takes this long too.</p>\n<p>In comparison, parsing such a buffer into the <code>expr</code> it represents takes milliseconds.</p>\n<p>This makes me very sad---would you at all consider merging a patch to lean which by default transcodes UTF-8 characters when reading and writing, when the file stream was opened in non-binary mode? The patch is under 100 lines. We address your <code>fs_read</code> problem above by reading the UTF-8 characters, making the length argument a number of UTF-8 characters, not just bytes (and again, this would only be in non-binary mode).</p>",
+        "id": 148225244,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1542974823
+    },
+    {
+        "content": "<p>I see. Do you have the patch somewhere?</p>",
+        "id": 148226040,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1542975951
+    },
+    {
+        "content": "<p>I'll extract a nice commit for you</p>",
+        "id": 148228670,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1542979132
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> Sorry about the delay, here you go:<br>\n<a href=\"https://github.com/khoek/klean/commit/7d7abf9064297cd34186fad4a043fb7229bed9e8\" target=\"_blank\" title=\"https://github.com/khoek/klean/commit/7d7abf9064297cd34186fad4a043fb7229bed9e8\">https://github.com/khoek/klean/commit/7d7abf9064297cd34186fad4a043fb7229bed9e8</a><br>\nI've stress-tested the read/write io calls on 100mb of utf8 nonsense, and everything was reproduced correctly without crashing</p>",
+        "id": 148267458,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543045895
+    },
+    {
+        "content": "<p>Exciting! (especially if you know what comes next :-)</p>",
+        "id": 148267991,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1543046888
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> Sorry to keep bugging you<br>\nI have a tiny little puzzle you might be interested in. If you clone <a href=\"https://github.com/khoek/leandemo-for-sebastian\" target=\"_blank\" title=\"https://github.com/khoek/leandemo-for-sebastian\">https://github.com/khoek/leandemo-for-sebastian</a> and run <code>lean --make test.lean</code> (a program which just reads the accompanying file in the repo into memory) lean will finish executing essentially instantly.<br>\nOn the other hand, try opening up <code>test.lean</code> in vscode. I observe a multiple-second pause when lean reads in the file in \"interactive mode\". Why could this discrepancy be happening?</p>",
+        "id": 148362422,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543233065
+    },
+    {
+        "content": "<p>I measure less than 100ms in the first case</p>",
+        "id": 148362472,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543233127
+    },
+    {
+        "content": "<p>Are you sure it's actually rebuilding the file?</p>\n<div class=\"codehilite\"><pre><span></span>$ time lean +3.4.1 test.lean\nrunning\ndone\n0.93user 0.58system 0:04.35elapsed 34%CPU (0avgtext+0avgdata 176204maxresident)k\n0inputs+200outputs (77major+66430minor)pagefaults 0swaps\n</pre></div>",
+        "id": 148362685,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1543233573
+    },
+    {
+        "content": "<p>Did you have any olean floating around Keeley?</p>",
+        "id": 148362744,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1543233625
+    },
+    {
+        "content": "<p>I got embarrassed for a second, but I don't think its an olean problem<br>\nWhat does \"rebuilding\" mean Sebastian?<br>\nBut on my computer at the terminal I get</p>\n<div class=\"codehilite\"><pre><span></span>running\n/home/khoek/code/lean/leandemo-for-sebastian/test.lean: parsing at line 145803226\ndone\n\nreal    0m0.876s\nuser    0m0.774s\nsys 0m0.100s\n</pre></div>\n\n\n<p>(I made it print the number of bytes <code>5803226</code> read in there)<br>\nBut in vscode I can comfortably count one-thousand-and-one one-thousand-and-two after I perturb the file<br>\nAnd if you make the file bigger (more MB) then it takes longer, too</p>",
+        "id": 148362996,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543234054
+    },
+    {
+        "content": "<p>copy-and-pasting the contents of the <code>test.dat</code> file a few times to get the file size up to 87mb, at the terminal it takes 1.967seconds to run, while in vscode it is more than 10</p>",
+        "id": 148363371,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543234565
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110111\">@Keeley Hoek</span> What do you get if you use <code>--server</code> like this?</p>\n<div class=\"codehilite\"><pre><span></span>echo &#39;{&quot;seq_num&quot;: 0, &quot;command&quot;: &quot;sync&quot;, &quot;file_name&quot;: &quot;test.lean&quot;}&#39; | time lean +3.4.1 --server\n</pre></div>\n\n\n<p>For me, it's about as fast after the first run (i.e. after the file cache is hot, probably)</p>",
+        "id": 148367812,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1543240238
+    },
+    {
+        "content": "<p>When I run that it starts/finishes really quick without printing <code>running</code> and <code>done</code>, so I don't think its actually running<br>\nI made sure to delete the olean file</p>",
+        "id": 148368092,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543240537
+    },
+    {
+        "content": "<p>Ah, you should probably use <code>-j0</code> to force it into serial mode. I don't even remember half of these things.</p>",
+        "id": 148368796,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1543241231
+    },
+    {
+        "content": "<p>Yep that worked</p>",
+        "id": 148369274,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543241729
+    },
+    {
+        "content": "<p>14.14 seconds for the file in my repository (now updated, I made it way bigger)<br>\n2.348 from the terminal</p>",
+        "id": 148369357,
+        "sender_full_name": "Keeley Hoek",
+        "timestamp": 1543241797
+    },
+    {
+        "content": "<blockquote>\n<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> Sorry about the delay, here you go:<br>\n<a href=\"https://github.com/khoek/klean/commit/7d7abf9064297cd34186fad4a043fb7229bed9e8\" target=\"_blank\" title=\"https://github.com/khoek/klean/commit/7d7abf9064297cd34186fad4a043fb7229bed9e8\">https://github.com/khoek/klean/commit/7d7abf9064297cd34186fad4a043fb7229bed9e8</a><br>\nI've stress-tested the read/write io calls on 100mb of utf8 nonsense, and everything was reproduced correctly without crashing</p>\n</blockquote>\n<p>merged</p>",
+        "id": 151237681,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1544392391
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110111\">@Keeley Hoek</span> did you see this?</p>",
+        "id": 151268884,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1544444982
+    }
+]

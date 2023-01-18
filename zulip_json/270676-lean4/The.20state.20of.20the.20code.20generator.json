@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>From the recent thread <span aria-label=\"upside down\" class=\"emoji emoji-1f643\" role=\"img\" title=\"upside down\">:upside_down:</span>:</p>\n<blockquote>\n<p>this is a workaround for the fact that there are two lean compilers</p>\n</blockquote>\n<p>Can someone explain some of the end-to-end details behind what is happening with the code generator? I've been able to piece things together by going to dev meetings, looking at the PR history, and scanning the compiler code base, so I have ~some idea of what's going on. However, I've never heard the \"full story\" and would appreciate any insight!</p>",
+        "id": 320097286,
+        "sender_full_name": "Hanting Zhang",
+        "timestamp": 1673196520
+    },
+    {
+        "content": "<p>There exists a 2 part old code generator, the first part is written in C++ in <code>src/library/compiler</code>, the 2nd part is written in Lean in <code>src/Lean/Compiler/IR</code>. The Lean part implements the lambda RC part of the pipeline, most notably the garbage collection optimizations + outputting C or LLVM code based on that. This part is written in Lean due to historical reasons.</p>\n<p><code>src/Lean/Compiler/LCNF</code> is right now a reimplementation of <code>src/library/compiler</code> in Lean and better. It is not fully functional because we cannot generate actual executable code with it yet but basically all relevant parts of the old C++ part are already ported here and I do have a branch laying around that gets 90% the way there to attach the LCNF Lean implementation to the IR implementation so that we can produce executable code, we're probably gonna integrate that soon <span aria-label=\"tm\" class=\"emoji emoji-2122\" role=\"img\" title=\"tm\">:tm:</span> Once that works we can basically drop the C++ part of the compiler.</p>\n<p>The next step from there would be to port <code>src/Lean/Compiler/IR</code> to the LCNF representation, this involves two major things:</p>\n<ol>\n<li>We will need to port the new LLVM backend that is available for the IR part right now. I don't know if we want to port the C backend that is in use right now as well.</li>\n<li>We will need to port the lambda rc optimizations</li>\n</ol>\n<p>Once we have that tackled we can also drop <code>src/Lean/Compiler/IR</code>, then the entire compiler will live in <code>src/Lean/Compiler/LCNF</code> and we can be happy at last <span aria-label=\"octopus\" class=\"emoji emoji-1f419\" role=\"img\" title=\"octopus\">:octopus:</span></p>",
+        "id": 320099352,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1673197902
+    },
+    {
+        "content": "<p>Does it look something like this?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Lean</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">LCNF</span> <span class=\"o\">(</span><span class=\"n\">originally</span> <span class=\"k\">in</span> <span class=\"bp\">`</span><span class=\"n\">library</span><span class=\"bp\">/</span><span class=\"n\">compiler</span><span class=\"bp\">`</span><span class=\"o\">,</span> <span class=\"n\">rewritten</span> <span class=\"k\">in</span> <span class=\"bp\">`</span><span class=\"n\">Lean</span><span class=\"bp\">/</span><span class=\"n\">Compiler</span><span class=\"bp\">/</span><span class=\"n\">LCNF</span><span class=\"bp\">`;</span> <span class=\"n\">theoretically</span> <span class=\"n\">done</span><span class=\"o\">,</span> <span class=\"n\">but</span> <span class=\"n\">untested</span><span class=\"o\">)</span>\n<span class=\"n\">LCNF</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">LCNF.IR</span> <span class=\"o\">(</span><span class=\"n\">originally</span> <span class=\"bp\">???</span><span class=\"o\">,</span> <span class=\"n\">rewritten</span> <span class=\"k\">in</span> <span class=\"n\">Lean</span> <span class=\"n\">soon</span><span class=\"bp\">?;</span> <span class=\"n\">not</span> <span class=\"n\">done</span><span class=\"o\">,</span> <span class=\"n\">but</span> <span class=\"n\">should</span> <span class=\"n\">be</span> <span class=\"n\">soon</span><span class=\"o\">)</span>\n                <span class=\"o\">(</span><span class=\"n\">afaiu</span> <span class=\"n\">Perceus</span> <span class=\"n\">is</span> <span class=\"n\">written</span> <span class=\"k\">in</span> <span class=\"n\">Lean</span><span class=\"o\">)</span>\n<span class=\"n\">LCNF.IR</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">LLVM</span> <span class=\"o\">(</span><span class=\"n\">originally</span> <span class=\"bp\">`</span><span class=\"n\">C</span><span class=\"bp\">/</span><span class=\"n\">C</span><span class=\"bp\">++`</span> <span class=\"k\">in</span> <span class=\"bp\">`</span><span class=\"n\">EmitC.lean</span><span class=\"bp\">`?</span><span class=\"o\">,</span> <span class=\"n\">rewritten</span> <span class=\"k\">in</span> <span class=\"bp\">`</span><span class=\"n\">EmitLLVM.lean</span><span class=\"bp\">`?;</span> <span class=\"n\">theoretically</span> <span class=\"n\">done</span><span class=\"bp\">?</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 320100212,
+        "sender_full_name": "Hanting Zhang",
+        "timestamp": 1673198466
+    },
+    {
+        "content": "<p>What does \"porting the LLVM/C backend\" mean?</p>",
+        "id": 320100329,
+        "sender_full_name": "Hanting Zhang",
+        "timestamp": 1673198567
+    },
+    {
+        "content": "<p>Yes it does look like that pretty much</p>\n<p>Right now <code>IR</code> supports outputting the final code as both LLVM and C, if we want to get rid off <code>IR</code> we have to reimplement that for the LCNF format.</p>",
+        "id": 320100386,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1673198614
+    },
+    {
+        "content": "<p>By get rid of <code>IR</code>, do you mean removing the <code>LCNF.IR</code> type? Or is the plan to move LCNF.IR into Compiler/LCNF and reimplement it, porting the lowering/Perceus/EmitLLVM</p>\n<p>Also <code>src/runtime</code> will remain, right? Then we will link against its binaries as normal</p>",
+        "id": 320101357,
+        "sender_full_name": "Hanting Zhang",
+        "timestamp": 1673199331
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 320101454,
+        "sender_full_name": "Hanting Zhang",
+        "timestamp": 1673199386
+    },
+    {
+        "content": "<p>We want to drop all of the old code generator and implement it completely with the LCNF type in one pipeline and yes that involves porting perceus and EmitLLVM to LCNF.</p>\n<p>I am not aware of plans to touch the runtime, however we might end up eventually reimplementing the C++ based interpeter while we are at it.</p>",
+        "id": 320101981,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1673199796
+    },
+    {
+        "content": "<p>Ah so the new pipeline should be</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Lean</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">LCNF</span>\n<span class=\"n\">LCNF</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">LCNF</span> <span class=\"o\">(</span><span class=\"n\">base</span> <span class=\"n\">phase</span><span class=\"o\">,</span> <span class=\"n\">mono</span> <span class=\"n\">phase</span><span class=\"o\">)</span>\n<span class=\"n\">LCNF</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">LCNF</span> <span class=\"o\">(</span><span class=\"n\">refcounting</span> <span class=\"n\">here</span><span class=\"bp\">?</span><span class=\"o\">)</span>\n<span class=\"n\">LCNF</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">LLVM</span>\n</code></pre></div>",
+        "id": 320102414,
+        "sender_full_name": "Hanting Zhang",
+        "timestamp": 1673200096
+    },
+    {
+        "content": "<p>Yes</p>",
+        "id": 320102923,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1673200444
+    },
+    {
+        "content": "<p>:O ok interesting, thank you!</p>",
+        "id": 320103032,
+        "sender_full_name": "Hanting Zhang",
+        "timestamp": 1673200547
+    }
+]

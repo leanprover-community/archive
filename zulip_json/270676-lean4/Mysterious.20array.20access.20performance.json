@@ -1,0 +1,560 @@
+[
+    {
+        "content": "<p>I haven't yet managed to isolate the problem into an MWE, but I can roughly describe it: For some particular array <code>arr</code> I have observed that <code>readArray</code> is slow (~7 s) here:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">generateArray</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Expr</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n<span class=\"kd\">def</span> <span class=\"n\">readArray</span> <span class=\"o\">(</span><span class=\"n\">arr</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">show</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"k\">from</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">arr</span> <span class=\"o\">:=</span> <span class=\"n\">generateArray</span>\n  <span class=\"n\">timeit</span> <span class=\"s2\">\"slow\"</span> <span class=\"o\">(</span><span class=\"n\">readArray</span> <span class=\"n\">arr</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>but fast (~0.2 ms) here:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">freshen</span> <span class=\"o\">[</span><span class=\"n\">Inhabited</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">arr</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"n\">arr</span>\n  <span class=\"n\">for</span> <span class=\"n\">i</span> <span class=\"k\">in</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"o\">:</span><span class=\"n\">out.size</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n    <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"n\">out.setD</span> <span class=\"n\">i</span> <span class=\"n\">out</span><span class=\"o\">[</span><span class=\"n\">i</span><span class=\"o\">]</span>\n  <span class=\"n\">out</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">show</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"k\">from</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">arr</span> <span class=\"o\">:=</span> <span class=\"n\">generateArray</span>\n  <span class=\"k\">let</span> <span class=\"n\">arr</span> <span class=\"bp\">←</span> <span class=\"n\">freshen</span> <span class=\"n\">arr</span>\n  <span class=\"n\">timeit</span> <span class=\"s2\">\"fast\"</span> <span class=\"o\">(</span><span class=\"n\">readArray</span> <span class=\"n\">arr</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>What could cause this behavior? <code>readArray</code> is supposed to be fast and basically calls <code>arr[i]</code> for various values of <code>i</code> (it does not modify the array). <code>freshen</code> is a value level no-op but may do something interesting to the reference counts, but I don't see how that would affect the performance of <code>Array.get</code> so dramatically.</p>",
+        "id": 250877394,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630035259
+    },
+    {
+        "content": "<p>Oh, even adding <code>let arr &lt;- if false then freshen arr else arr</code> makes it fast, so this seems like a compiler bug</p>",
+        "id": 250878822,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630036756
+    },
+    {
+        "content": "<p>I seem to remember that the implementation of Perceus in Lean 4 takes a conservative approach for global variables (i.e., ones that might be shared between threads), where these always take the slow path for the reference count check. The <code>freshen</code> function certainly makes a local copy of <code>generateArray</code>, so it would avoid this, and perhaps <code>if arr &lt;- if false then freshen arr else arr</code> does too (though I'm somewhat dubious).  Maybe it'd be worth taking a look at the generated C code?</p>",
+        "id": 250885304,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630042133
+    },
+    {
+        "content": "<p>Finally got a self contained example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">freshen</span> <span class=\"o\">(</span><span class=\"n\">arr</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">arr.setD</span> <span class=\"mi\">0</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">build</span> <span class=\"o\">(</span><span class=\"n\">es</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n  <span class=\"n\">for</span> <span class=\"n\">e</span> <span class=\"k\">in</span> <span class=\"n\">es</span> <span class=\"k\">do</span>\n    <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"n\">out.push</span> <span class=\"o\">()</span>\n  <span class=\"n\">out</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">bench</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">},</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">())</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">out</span> <span class=\"bp\">←</span> <span class=\"n\">freshen</span> <span class=\"bp\">$</span> <span class=\"n\">Array.mkArray</span> <span class=\"mi\">50000</span> <span class=\"o\">()</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">arr</span> <span class=\"o\">:=</span> <span class=\"n\">build</span> <span class=\"n\">out</span>\n  <span class=\"c1\">-- arr ← freshen arr</span>\n  <span class=\"n\">timeit</span> <span class=\"s2\">\"time\"</span> <span class=\"bp\">$</span> <span class=\"k\">do</span>\n    <span class=\"n\">for</span> <span class=\"n\">_</span> <span class=\"k\">in</span> <span class=\"o\">[:</span><span class=\"mi\">30</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n      <span class=\"n\">f</span> <span class=\"bp\">$</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">2</span><span class=\"o\">,</span> <span class=\"mi\">3</span><span class=\"o\">,</span> <span class=\"mi\">4</span><span class=\"o\">]</span><span class=\"bp\">.</span><span class=\"n\">map</span> <span class=\"k\">fun</span> <span class=\"n\">ty</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">arr</span><span class=\"o\">[</span><span class=\"n\">ty</span><span class=\"o\">]</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">bench</span>\n</code></pre></div>",
+        "id": 250886340,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630043277
+    },
+    {
+        "content": "<p>Note that all of the tests I've been doing so far have been in the interpreter, not the generated C code. For all I know things are completely different in the compiled version</p>",
+        "id": 250886717,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630043594
+    },
+    {
+        "content": "<p>Here's a weird data point to add. If you change <code>freshen</code> to not be in the <code>IO</code> monad, then it runs fast again:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">freshen</span> <span class=\"o\">[</span><span class=\"n\">Inhabited</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">arr</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"n\">arr</span>\n  <span class=\"n\">for</span> <span class=\"n\">i</span> <span class=\"k\">in</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"o\">:</span><span class=\"n\">out.size</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n    <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"n\">out.setD</span> <span class=\"n\">i</span> <span class=\"n\">out</span><span class=\"o\">[</span><span class=\"n\">i</span><span class=\"o\">]</span>\n  <span class=\"n\">out</span>\n</code></pre></div>",
+        "id": 250886817,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630043682
+    },
+    {
+        "content": "<p>Here <code>out &lt;- freshen ...</code> is just there to ensure that it and <code>arr</code> aren't hoisted into globals</p>",
+        "id": 250886884,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630043747
+    },
+    {
+        "content": "<p>(It's kind of a nice surprise that <code>let out &lt;- freshen ...</code> or <code>let out := freshen ...</code> both work when <code>freshen</code> is using the identity monad.) I wonder why the <code>IO</code> monad slows things down so much later...</p>",
+        "id": 250887191,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630044015
+    },
+    {
+        "content": "<p>This version of <code>freshen</code> also shows this slow/fast behavior depending on whether or not the <code>IO $</code> is present:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">freshen</span> <span class=\"o\">[</span><span class=\"n\">Inhabited</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">arr</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"bp\">$</span> <span class=\"n\">Array</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"n\">Array.empty</span>\n  <span class=\"n\">for</span> <span class=\"n\">i</span> <span class=\"k\">in</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"o\">:</span><span class=\"n\">arr.size</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n    <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"n\">out.push</span> <span class=\"n\">arr</span><span class=\"o\">[</span><span class=\"n\">i</span><span class=\"o\">]</span>\n  <span class=\"n\">out</span>\n</code></pre></div>",
+        "id": 250887625,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630044387
+    },
+    {
+        "content": "<p>I think the only constraints on <code>freshen</code> to reproduce the bug are that it modifies the array and it is in the IO monad</p>",
+        "id": 250887766,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630044500
+    },
+    {
+        "content": "<p>This is a version where <code>freshen</code> doesn't modify the array, but the original array is global.  Removing <code>IO</code> makes it run fast.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">freshen</span> <span class=\"o\">(</span><span class=\"n\">arr</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">arr</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">build</span> <span class=\"o\">(</span><span class=\"n\">es</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n  <span class=\"n\">for</span> <span class=\"n\">e</span> <span class=\"k\">in</span> <span class=\"n\">es</span> <span class=\"k\">do</span>\n    <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"n\">out.push</span> <span class=\"o\">()</span>\n  <span class=\"n\">out</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">arr</span> <span class=\"o\">:=</span> <span class=\"n\">freshen</span> <span class=\"bp\">$</span> <span class=\"n\">Array.mkArray</span> <span class=\"mi\">50000</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">bench</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">},</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">())</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">out</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">arr</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">arr</span> <span class=\"o\">:=</span> <span class=\"n\">build</span> <span class=\"n\">out</span>\n  <span class=\"c1\">-- arr ← freshen arr</span>\n  <span class=\"n\">timeit</span> <span class=\"s2\">\"time\"</span> <span class=\"bp\">$</span> <span class=\"k\">do</span>\n    <span class=\"n\">for</span> <span class=\"n\">_</span> <span class=\"k\">in</span> <span class=\"o\">[:</span><span class=\"mi\">30</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n      <span class=\"n\">f</span> <span class=\"bp\">$</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">2</span><span class=\"o\">,</span> <span class=\"mi\">3</span><span class=\"o\">,</span> <span class=\"mi\">4</span><span class=\"o\">]</span><span class=\"bp\">.</span><span class=\"n\">map</span> <span class=\"k\">fun</span> <span class=\"n\">ty</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">arr</span><span class=\"o\">[</span><span class=\"n\">ty</span><span class=\"o\">]</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">bench</span>\n</code></pre></div>",
+        "id": 250888042,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630044777
+    },
+    {
+        "content": "<p>in that version uncommenting the <code>arr ← freshen arr</code> doesn't make it fast though</p>",
+        "id": 250888131,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630044857
+    },
+    {
+        "content": "<p>but I guess that's not super relevant, there are a bunch of things that make it fast (i.e. dodge the bug conditions)</p>",
+        "id": 250888163,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630044894
+    },
+    {
+        "content": "<p>I didn't mean to leave that in.  I just thought it's weird that removing <code>IO</code> makes it fast, but this is still enough to make it slow.</p>",
+        "id": 250888199,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630044931
+    },
+    {
+        "content": "<p>it looks like <code>@[inline]</code> on <code>arr</code> in your version also makes it fast</p>",
+        "id": 250888282,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630044994
+    },
+    {
+        "content": "<p>With this one, removing <code>timeit \"time1\"</code> makes it slow. Nice to see a Heisenbug...</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">build</span> <span class=\"o\">(</span><span class=\"n\">es</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n  <span class=\"n\">for</span> <span class=\"n\">e</span> <span class=\"k\">in</span> <span class=\"n\">es</span> <span class=\"k\">do</span>\n    <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"n\">out.push</span> <span class=\"o\">()</span>\n  <span class=\"n\">out</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">arr</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">Array.mkArray</span> <span class=\"mi\">50000</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">bench</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">},</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">())</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">arr</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">arr</span>\n  <span class=\"k\">let</span> <span class=\"n\">arr</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">timeit</span> <span class=\"s2\">\"time1\"</span> <span class=\"bp\">$</span> <span class=\"n\">build</span> <span class=\"n\">arr</span>\n  <span class=\"n\">timeit</span> <span class=\"s2\">\"time2\"</span> <span class=\"bp\">$</span> <span class=\"k\">do</span>\n    <span class=\"n\">for</span> <span class=\"n\">_</span> <span class=\"k\">in</span> <span class=\"o\">[:</span><span class=\"mi\">30</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n      <span class=\"n\">f</span> <span class=\"bp\">$</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">2</span><span class=\"o\">,</span> <span class=\"mi\">3</span><span class=\"o\">,</span> <span class=\"mi\">4</span><span class=\"o\">]</span><span class=\"bp\">.</span><span class=\"n\">map</span> <span class=\"k\">fun</span> <span class=\"n\">ty</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">arr</span><span class=\"o\">[</span><span class=\"n\">ty</span><span class=\"o\">]</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">bench</span>\n</code></pre></div>",
+        "id": 250888492,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630045178
+    },
+    {
+        "content": "<p>I also can't seem to outline any part of the <code>time2</code> body without making it fast</p>",
+        "id": 250888737,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630045363
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Mysterious.20array.20access.20performance/near/250888492\">said</a>:</p>\n<blockquote>\n<p>With this one, removing <code>timeit \"time1\"</code> makes it slow. Nice to see a Heisenbug...</p>\n</blockquote>\n<p>This one I can explain.</p>",
+        "id": 250889244,
+        "sender_full_name": "Mac",
+        "timestamp": 1630045828
+    },
+    {
+        "content": "<p>Removing the <code>timeit</code> makes the line --- i.e.,<code>let arr &lt;- build arr</code> -- reduce to <code>let arr := build arr</code>.</p>",
+        "id": 250889328,
+        "sender_full_name": "Mac",
+        "timestamp": 1630045916
+    },
+    {
+        "content": "<p>Whereas otherwise, the line reduces to <code>timeit \"time1\" $ build arr &gt;&gt;= fun arr =&gt; ...</code> (i.e., the rest of the code is in a function and is thus lazy).</p>",
+        "id": 250889420,
+        "sender_full_name": "Mac",
+        "timestamp": 1630045972
+    },
+    {
+        "content": "<p>I suspect that all these performances issues probably have to do with the absence/presence of laziness.</p>",
+        "id": 250889437,
+        "sender_full_name": "Mac",
+        "timestamp": 1630045990
+    },
+    {
+        "content": "<p>Even making the most pessimistic assumptions, I don't see how 120 array accesses could take 2-6 seconds</p>",
+        "id": 250889527,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630046064
+    },
+    {
+        "content": "<p>Because the <code>let arr := build arr</code> line results in the next line becoming:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">timeit</span> <span class=\"s2\">\"time2\"</span> <span class=\"bp\">$</span> <span class=\"k\">do</span>\n    <span class=\"n\">for</span> <span class=\"n\">_</span> <span class=\"k\">in</span> <span class=\"o\">[:</span><span class=\"mi\">30</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n      <span class=\"n\">f</span> <span class=\"bp\">$</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">2</span><span class=\"o\">,</span> <span class=\"mi\">3</span><span class=\"o\">,</span> <span class=\"mi\">4</span><span class=\"o\">]</span><span class=\"bp\">.</span><span class=\"n\">map</span> <span class=\"k\">fun</span> <span class=\"n\">ty</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">(</span><span class=\"n\">build</span> <span class=\"n\">arr</span><span class=\"o\">)[</span><span class=\"n\">ty</span><span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 250889555,
+        "sender_full_name": "Mac",
+        "timestamp": 1630046100
+    },
+    {
+        "content": "<p>i..e., it is rebuilding the array each step instead of using the same array across all steps.</p>",
+        "id": 250889609,
+        "sender_full_name": "Mac",
+        "timestamp": 1630046142
+    },
+    {
+        "content": "<p>whoa, it does that? That seems like a really bad optimization under most circumstances</p>",
+        "id": 250889620,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630046157
+    },
+    {
+        "content": "<p>It would be great if we could spot that in the IR</p>",
+        "id": 250889680,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630046189
+    },
+    {
+        "content": "<p>This isn't an optimization. Lean is a strict language, that is what that <em>means</em> in a strict language.</p>",
+        "id": 250889696,
+        "sender_full_name": "Mac",
+        "timestamp": 1630046218
+    },
+    {
+        "content": "<p>A <code>let</code> definition is just an alias if its definition and use are in the same closure.</p>",
+        "id": 250889735,
+        "sender_full_name": "Mac",
+        "timestamp": 1630046248
+    },
+    {
+        "content": "<p>Though one could argue the problem is that <code>let arr &lt;- build arr</code> (monadic) becomes <code>let arr := build arr</code> (non-monadic), which is not great.</p>",
+        "id": 250889862,
+        "sender_full_name": "Mac",
+        "timestamp": 1630046344
+    },
+    {
+        "content": "<p>I believe <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> mentioned that the <code>Id</code> monad may become lazy at some point. If so, this problem would vanish.</p>",
+        "id": 250889905,
+        "sender_full_name": "Mac",
+        "timestamp": 1630046383
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/270676-lean4/topic/Mysterious.20array.20access.20performance/near/250889328\">said</a>:</p>\n<blockquote>\n<p>Removing the <code>timeit</code> makes the line --- i.e.,<code>let arr &lt;- build arr</code> -- reduce to <code>let arr := build arr</code>.</p>\n</blockquote>\n<p>Could you explain this again? I'm not sure I follow.  Wouldn't this predict that the following would run fast?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">build</span> <span class=\"o\">(</span><span class=\"n\">es</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n  <span class=\"n\">for</span> <span class=\"n\">e</span> <span class=\"k\">in</span> <span class=\"n\">es</span> <span class=\"k\">do</span>\n    <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"n\">out.push</span> <span class=\"o\">()</span>\n  <span class=\"n\">out</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">arr</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">Array.mkArray</span> <span class=\"mi\">50000</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">bench</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">},</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">())</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">arr</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">arr</span>\n  <span class=\"k\">let</span> <span class=\"n\">arr</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">pure</span> <span class=\"bp\">$</span> <span class=\"n\">build</span> <span class=\"n\">arr</span> <span class=\"c1\">-- slow even if you add the IO annotations</span>\n  <span class=\"n\">timeit</span> <span class=\"s2\">\"time2\"</span> <span class=\"bp\">$</span> <span class=\"k\">do</span>\n    <span class=\"n\">for</span> <span class=\"n\">_</span> <span class=\"k\">in</span> <span class=\"o\">[:</span><span class=\"mi\">30</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n      <span class=\"n\">f</span> <span class=\"bp\">$</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">2</span><span class=\"o\">,</span> <span class=\"mi\">3</span><span class=\"o\">,</span> <span class=\"mi\">4</span><span class=\"o\">]</span><span class=\"bp\">.</span><span class=\"n\">map</span> <span class=\"k\">fun</span> <span class=\"n\">ty</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">arr</span><span class=\"o\">[</span><span class=\"n\">ty</span><span class=\"o\">]</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">bench</span>\n</code></pre></div>",
+        "id": 250889906,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630046384
+    },
+    {
+        "content": "<p>Even for non-monadic values, I don't think there is any situation that mandates that a computation should be duplicated</p>",
+        "id": 250889977,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630046423
+    },
+    {
+        "content": "<p>the compiler is permitted to duplicate computation (in the sense that this will still produce correct results), but I would generally consider that a (performance) bug</p>",
+        "id": 250889998,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630046455
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span>  The IO annotation means nothing, <code>IO.pure</code> is not <code>noninline</code> (and IO is not opaque currently).</p>",
+        "id": 250890057,
+        "sender_full_name": "Mac",
+        "timestamp": 1630046523
+    },
+    {
+        "content": "<p><code>IO</code> is just short for <code>EStateM IO.Error Unit</code> which can easily be reduced away.</p>",
+        "id": 250890129,
+        "sender_full_name": "Mac",
+        "timestamp": 1630046576
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/270676-lean4/topic/Mysterious.20array.20access.20performance/near/250889905\">said</a>:</p>\n<blockquote>\n<p>I believe <span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> mentioned that the <code>Id</code> monad may become lazy at some point. If so, this problem would vanish.</p>\n</blockquote>\n<p>Well no, not if it's hoisting <code>:=</code> let statements in a monadic block</p>",
+        "id": 250890157,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630046599
+    },
+    {
+        "content": "<p>In fact, the <code>pure</code> of <code>EStateM</code> is marked <code>@[inline]</code> so it will be forcibly inlined.</p>",
+        "id": 250890184,
+        "sender_full_name": "Mac",
+        "timestamp": 1630046633
+    },
+    {
+        "content": "<p>Then shouldn't this <code>noinline</code> version of <code>pure</code> circumvent that?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">build</span> <span class=\"o\">(</span><span class=\"n\">es</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n  <span class=\"n\">for</span> <span class=\"n\">e</span> <span class=\"k\">in</span> <span class=\"n\">es</span> <span class=\"k\">do</span>\n    <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"n\">out.push</span> <span class=\"o\">()</span>\n  <span class=\"n\">out</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">arr</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">Array.mkArray</span> <span class=\"mi\">50000</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">@[noinline]</span>\n<span class=\"kd\">def</span> <span class=\"n\">mypure</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"n\">pure</span> <span class=\"n\">x</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">bench</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">},</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">())</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">arr</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">arr</span>\n  <span class=\"k\">let</span> <span class=\"n\">arr</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">mypure</span> <span class=\"bp\">$</span> <span class=\"n\">build</span> <span class=\"n\">arr</span>\n  <span class=\"n\">timeit</span> <span class=\"s2\">\"time2\"</span> <span class=\"bp\">$</span> <span class=\"k\">do</span>\n    <span class=\"n\">for</span> <span class=\"n\">_</span> <span class=\"k\">in</span> <span class=\"o\">[:</span><span class=\"mi\">30</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n      <span class=\"n\">f</span> <span class=\"bp\">$</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">2</span><span class=\"o\">,</span> <span class=\"mi\">3</span><span class=\"o\">,</span> <span class=\"mi\">4</span><span class=\"o\">]</span><span class=\"bp\">.</span><span class=\"n\">map</span> <span class=\"k\">fun</span> <span class=\"n\">ty</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">arr</span><span class=\"o\">[</span><span class=\"n\">ty</span><span class=\"o\">]</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">bench</span>\n</code></pre></div>",
+        "id": 250890233,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630046654
+    },
+    {
+        "content": "<p>It actually does for me</p>",
+        "id": 250890316,
+        "sender_full_name": "Mac",
+        "timestamp": 1630046761
+    },
+    {
+        "content": "<p>I've confirmed <span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> 's theory: starting from <a href=\"#narrow/stream/270676-lean4/topic/Mysterious.20array.20access.20performance/near/250886340\">this version</a>, among the outputs of <code>set_option trace.compiler.ir.result true</code> is:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">Array.mapMUnsafe.map._at.bench._spec_2</span> <span class=\"o\">(</span><span class=\"n\">x_1</span> <span class=\"o\">:</span> <span class=\"n\">obj</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">x_2</span> <span class=\"o\">:</span> <span class=\"n\">usize</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">x_3</span> <span class=\"o\">:</span> <span class=\"n\">usize</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">x_4</span> <span class=\"o\">:</span> <span class=\"n\">obj</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">obj</span> <span class=\"o\">:=</span>\n  <span class=\"n\">inc</span> <span class=\"n\">x_1</span><span class=\"bp\">;</span>\n  <span class=\"k\">let</span> <span class=\"n\">x_5</span> <span class=\"o\">:</span> <span class=\"n\">obj</span> <span class=\"o\">:=</span> <span class=\"n\">build</span> <span class=\"n\">x_1</span><span class=\"bp\">;</span>\n  <span class=\"k\">let</span> <span class=\"n\">x_6</span> <span class=\"o\">:</span> <span class=\"n\">u8</span> <span class=\"o\">:=</span> <span class=\"n\">USize.decLt</span> <span class=\"n\">x_3</span> <span class=\"n\">x_2</span><span class=\"bp\">;</span>\n  <span class=\"n\">case</span> <span class=\"n\">x_6</span> <span class=\"o\">:</span> <span class=\"n\">u8</span> <span class=\"n\">of</span>\n  <span class=\"n\">Bool.false</span> <span class=\"bp\">→</span>\n    <span class=\"n\">dec</span> <span class=\"n\">x_5</span><span class=\"bp\">;</span>\n    <span class=\"n\">dec</span> <span class=\"n\">x_1</span><span class=\"bp\">;</span>\n    <span class=\"k\">let</span> <span class=\"n\">x_7</span> <span class=\"o\">:</span> <span class=\"n\">obj</span> <span class=\"o\">:=</span> <span class=\"n\">unsafeCast</span> <span class=\"bp\">◾</span> <span class=\"bp\">◾</span> <span class=\"n\">x_4</span><span class=\"bp\">;</span>\n    <span class=\"n\">ret</span> <span class=\"n\">x_7</span>\n  <span class=\"n\">Bool.true</span> <span class=\"bp\">→</span>\n    <span class=\"k\">let</span> <span class=\"n\">x_8</span> <span class=\"o\">:</span> <span class=\"n\">obj</span> <span class=\"o\">:=</span> <span class=\"n\">Array.uget</span> <span class=\"bp\">◾</span> <span class=\"n\">x_4</span> <span class=\"n\">x_3</span> <span class=\"bp\">◾;</span>\n    <span class=\"k\">let</span> <span class=\"n\">x_9</span> <span class=\"o\">:</span> <span class=\"n\">obj</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span><span class=\"bp\">;</span>\n    <span class=\"k\">let</span> <span class=\"n\">x_10</span> <span class=\"o\">:</span> <span class=\"n\">obj</span> <span class=\"o\">:=</span> <span class=\"n\">Array.uset</span> <span class=\"bp\">◾</span> <span class=\"n\">x_4</span> <span class=\"n\">x_3</span> <span class=\"n\">x_9</span> <span class=\"bp\">◾;</span>\n    <span class=\"k\">let</span> <span class=\"n\">x_11</span> <span class=\"o\">:</span> <span class=\"n\">obj</span> <span class=\"o\">:=</span> <span class=\"n\">unsafeCast</span> <span class=\"bp\">◾</span> <span class=\"bp\">◾</span> <span class=\"n\">x_8</span><span class=\"bp\">;</span>\n    <span class=\"k\">let</span> <span class=\"n\">x_12</span> <span class=\"o\">:</span> <span class=\"n\">obj</span> <span class=\"o\">:=</span> <span class=\"n\">instInhabitedPUnit</span><span class=\"bp\">;</span>\n    <span class=\"k\">let</span> <span class=\"n\">x_13</span> <span class=\"o\">:</span> <span class=\"n\">obj</span> <span class=\"o\">:=</span> <span class=\"n\">Array.get</span><span class=\"bp\">!</span> <span class=\"bp\">◾</span> <span class=\"n\">x_12</span> <span class=\"n\">x_5</span> <span class=\"n\">x_11</span><span class=\"bp\">;</span>\n    <span class=\"n\">dec</span> <span class=\"n\">x_11</span><span class=\"bp\">;</span>\n    <span class=\"n\">dec</span> <span class=\"n\">x_5</span><span class=\"bp\">;</span>\n    <span class=\"k\">let</span> <span class=\"n\">x_14</span> <span class=\"o\">:</span> <span class=\"n\">usize</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span><span class=\"bp\">;</span>\n    <span class=\"k\">let</span> <span class=\"n\">x_15</span> <span class=\"o\">:</span> <span class=\"n\">usize</span> <span class=\"o\">:=</span> <span class=\"n\">USize.add</span> <span class=\"n\">x_3</span> <span class=\"n\">x_14</span><span class=\"bp\">;</span>\n    <span class=\"k\">let</span> <span class=\"n\">x_16</span> <span class=\"o\">:</span> <span class=\"n\">obj</span> <span class=\"o\">:=</span> <span class=\"n\">unsafeCast</span> <span class=\"bp\">◾</span> <span class=\"bp\">◾</span> <span class=\"n\">x_13</span><span class=\"bp\">;</span>\n    <span class=\"k\">let</span> <span class=\"n\">x_17</span> <span class=\"o\">:</span> <span class=\"n\">obj</span> <span class=\"o\">:=</span> <span class=\"n\">Array.uset</span> <span class=\"bp\">◾</span> <span class=\"n\">x_10</span> <span class=\"n\">x_3</span> <span class=\"n\">x_16</span> <span class=\"bp\">◾;</span>\n    <span class=\"k\">let</span> <span class=\"n\">x_18</span> <span class=\"o\">:</span> <span class=\"n\">obj</span> <span class=\"o\">:=</span> <span class=\"n\">Array.mapMUnsafe.map._at.bench._spec_2</span> <span class=\"n\">x_1</span> <span class=\"n\">x_2</span> <span class=\"n\">x_15</span> <span class=\"n\">x_17</span><span class=\"bp\">;</span>\n    <span class=\"n\">ret</span> <span class=\"n\">x_18</span>\n</code></pre></div>\n<p>This is the inner loop for the map operation in <code>#[1, 2, 3, 4].map fun ty =&gt; arr[ty]</code>, and you can see <code>let x_5 : obj := build x_1</code>, so <code>build</code> will get called 120 times.</p>",
+        "id": 250890386,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630046801
+    },
+    {
+        "content": "<p>(It looks like I had something like 16 versions running simultaneously after editing, and of course the slow ones reported their times last.  My last example does run in less than a second.)</p>",
+        "id": 250890533,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630046914
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> Also note that <code>mypure</code> <em>requires</em> the <code>@[noinline]</code> annotation, it will run slow without it (i.e., it will get inlined).</p>",
+        "id": 250890754,
+        "sender_full_name": "Mac",
+        "timestamp": 1630047097
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> Yes, I'm agreeing with you. That's why I put <code>@[noinline]</code> there in the first place, and I misinterpreted how VS Code outputs to the console.</p>",
+        "id": 250890862,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630047176
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span>  Sorry, I realized that <span aria-label=\"laughing\" class=\"emoji emoji-1f606\" role=\"img\" title=\"laughing\">:laughing:</span> . I was just elaborating that simply removing the <code>@[inline]</code> from the existing pure is insufficient, it will still get inlined.</p>",
+        "id": 250890961,
+        "sender_full_name": "Mac",
+        "timestamp": 1630047250
+    },
+    {
+        "content": "<p>Note that, I believe, the following works (fast):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">bench</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">},</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">())</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">arr</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">arr</span>\n  <span class=\"k\">let</span> <span class=\"n\">arr</span> <span class=\"bp\">&lt;-</span> <span class=\"k\">do</span> <span class=\"n\">build</span> <span class=\"n\">arr</span>\n  <span class=\"n\">timeit</span> <span class=\"s2\">\"time2\"</span> <span class=\"k\">do</span>\n    <span class=\"n\">for</span> <span class=\"n\">_</span> <span class=\"k\">in</span> <span class=\"o\">[:</span><span class=\"mi\">30</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n      <span class=\"n\">f</span> <span class=\"bp\">$</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">2</span><span class=\"o\">,</span> <span class=\"mi\">3</span><span class=\"o\">,</span> <span class=\"mi\">4</span><span class=\"o\">]</span><span class=\"bp\">.</span><span class=\"n\">map</span> <span class=\"k\">fun</span> <span class=\"n\">ty</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">arr</span><span class=\"o\">[</span><span class=\"n\">ty</span><span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 250890995,
+        "sender_full_name": "Mac",
+        "timestamp": 1630047294
+    },
+    {
+        "content": "<p>From what I can tell, it goes wrong somewhere around when <code>mapMUnsafe</code> is specialized, where the function argument <code>fun ty =&gt; arr[ty]</code> has its dependencies inlined to <code>fun ty =&gt; (build n)[ty]</code></p>",
+        "id": 250891004,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630047301
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>  imo, this is the expected behavior.</p>",
+        "id": 250891258,
+        "sender_full_name": "Mac",
+        "timestamp": 1630047500
+    },
+    {
+        "content": "<p>Computations should be wrapped in monads, that is the point of them.</p>",
+        "id": 250891307,
+        "sender_full_name": "Mac",
+        "timestamp": 1630047553
+    },
+    {
+        "content": "<p>executing let statements multiple times when they were not written that way is not expected behavior. Executing them not at all is okay, as well as lowering them over <code>case</code> statements, but lowering them into a loop is not okay</p>",
+        "id": 250891352,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630047595
+    },
+    {
+        "content": "<p>Going back to <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>'s earlier example, inserting a <code>do</code> makes it fast, as @Mac would expect. But also does replacing the line with <code>let arr := build 50000</code>.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">build</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n  <span class=\"n\">for</span> <span class=\"n\">_</span> <span class=\"k\">in</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"o\">:</span><span class=\"n\">n</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n    <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"n\">out.push</span> <span class=\"o\">()</span>\n  <span class=\"n\">out</span>\n\n<span class=\"kd\">@[noinline]</span> <span class=\"kd\">def</span> <span class=\"n\">size</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"n\">pure</span> <span class=\"mi\">50000</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">bench</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">},</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">())</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">arr</span> <span class=\"bp\">&lt;-</span> <span class=\"k\">do</span> <span class=\"n\">build</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">size</span><span class=\"o\">)</span>\n  <span class=\"n\">timeit</span> <span class=\"s2\">\"time\"</span> <span class=\"bp\">$</span>\n    <span class=\"n\">for</span> <span class=\"n\">_</span> <span class=\"k\">in</span> <span class=\"o\">[:</span><span class=\"mi\">30</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n      <span class=\"n\">f</span> <span class=\"bp\">$</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">2</span><span class=\"o\">,</span> <span class=\"mi\">3</span><span class=\"o\">,</span> <span class=\"mi\">4</span><span class=\"o\">]</span><span class=\"bp\">.</span><span class=\"n\">map</span> <span class=\"k\">fun</span> <span class=\"n\">ty</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">arr</span><span class=\"o\">[</span><span class=\"n\">ty</span><span class=\"o\">]</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">bench</span>\n</code></pre></div>",
+        "id": 250891469,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630047630
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> To me, a <code>let x := </code> should be inlined at every <code>x</code> -- that is the expected behavior to me. I think of <code>let</code> as an alias.</p>",
+        "id": 250891566,
+        "sender_full_name": "Mac",
+        "timestamp": 1630047653
+    },
+    {
+        "content": "<p>There are lots of optimizations that can lead to a monadic computation being turned into a pure computation after inlining, so using <code>&lt;-</code> does not help</p>",
+        "id": 250891571,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630047655
+    },
+    {
+        "content": "<p>Re what Mario is saying, this is the basis for Haskell's monomorphism restriction, to prevent runtime blowup like this.</p>",
+        "id": 250891573,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630047658
+    },
+    {
+        "content": "<p>So at least Philip Wadler finds this sort of thing to be unexpected (I believe he was the one who pushed for it)</p>",
+        "id": 250891613,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630047700
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/270676-lean4/topic/Mysterious.20array.20access.20performance/near/250891566\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> To me, a <code>let x := </code> should be inlined at every <code>x</code>, that is the expected behavior to me. I think of <code>let</code> as an alias.</p>\n</blockquote>\n<p>That is how things work in a lazy language, not a strict language. In ML <code>let</code> statements are executed in the order you wrote them</p>",
+        "id": 250891615,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630047703
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> And the monomorphism restriction is probably one of the most frustrating (and probably hated) parts of Haskell. <span aria-label=\"laughing\" class=\"emoji emoji-1f606\" role=\"img\" title=\"laughing\">:laughing:</span>  Many of the language extensions in GHC are explicitly designed to get around it.</p>",
+        "id": 250891713,
+        "sender_full_name": "Mac",
+        "timestamp": 1630047757
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> Wait, not quite, in a lazy language like Haskell each variable has a secret reference cell that gets overwritten with the evaluated value. So it preserves the evaluate-once semantics.</p>",
+        "id": 250891752,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630047796
+    },
+    {
+        "content": "<p>If you want alias-like behavior, you should use <code>let f () := ...</code> and then use <code>f ()</code> where needed</p>",
+        "id": 250891856,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630047880
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> You literally inverted that.</p>",
+        "id": 250891882,
+        "sender_full_name": "Mac",
+        "timestamp": 1630047903
+    },
+    {
+        "content": "<p><code>let f () := ...</code> is how you create a lazy reference.</p>",
+        "id": 250891914,
+        "sender_full_name": "Mac",
+        "timestamp": 1630047924
+    },
+    {
+        "content": "<p>yes</p>",
+        "id": 250891921,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630047932
+    },
+    {
+        "content": "<p>A lazy reference is not an alias. It is the exact opposite of an alias.</p>",
+        "id": 250891941,
+        "sender_full_name": "Mac",
+        "timestamp": 1630047952
+    },
+    {
+        "content": "<p>although as kyle says, this differs from a haskell style lazy value because it isn't memoizing</p>",
+        "id": 250892006,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630047978
+    },
+    {
+        "content": "<p>If by alias you mean the entire body of the definition is executed when the value is used, then <code>f () := </code> has the right behavior for this in lean</p>",
+        "id": 250892059,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630048032
+    },
+    {
+        "content": "<p>In fact, I would argue the point of the invention of <code>let</code> expressions in most programming languages was to create aliases (as previous kinds of assignment created stack variables).</p>",
+        "id": 250892132,
+        "sender_full_name": "Mac",
+        "timestamp": 1630048084
+    },
+    {
+        "content": "<p>I'm very confused by your usage of the word 'alias'</p>",
+        "id": 250892179,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630048106
+    },
+    {
+        "content": "<p>most languages have a <code>let x := e</code> statement that actually runs the code on the right and stores it on the left</p>",
+        "id": 250892216,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630048140
+    },
+    {
+        "content": "<p>I haven't seen true call by name outside algol and haskell</p>",
+        "id": 250892237,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630048159
+    },
+    {
+        "content": "<p>To me, an alias <code>x := y</code> means that everywhere the syntax <code>x</code> appears it is replaced with <code>y</code> (i.e., substituted, macro expanded, inline, whatever term you like).</p>",
+        "id": 250892246,
+        "sender_full_name": "Mac",
+        "timestamp": 1630048166
+    },
+    {
+        "content": "<p>yes, that's not what <code>let</code> means in almost any language</p>",
+        "id": 250892290,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630048198
+    },
+    {
+        "content": "<p>What Mario says</p>",
+        "id": 250892348,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1630048210
+    },
+    {
+        "content": "<p>That is, x is just an convenient abbreviation for y</p>",
+        "id": 250892349,
+        "sender_full_name": "Mac",
+        "timestamp": 1630048212
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> By bringing up the monomorphism restriction, I just mean to say that having <code>let</code>s that evaluate multiple times is surprising. The point is that typeclass-polymorphic functions have an implicit instance argument, which inhibits being able to memoize the value of a typeclass-polymorphic variable.  One way or another you have to make a decision how you're going to handle that (either way is fine, so long as it's documented).</p>\n<p>Mario's example of <code>let f () := ...</code> is sort of simulating what the monomorphism restriction is supposed to prevent.  Even when there's the basic sort of Haskell-style memoization, this ensures that each use of <code>f ()</code> is evaluated afresh every time, so it's like the body of the <code>let</code> was substituted in at each point.</p>",
+        "id": 250892360,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630048217
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> Maybe I was a bit strict in my definition, I don't mean to say it has to be replaced with  <em>exactly</em>  y. It can also be replaced with some reduced/optimized form of <code>y</code>, but it shouldn't guarantee new storage.</p>",
+        "id": 250892523,
+        "sender_full_name": "Mac",
+        "timestamp": 1630048324
+    },
+    {
+        "content": "<p>It doesn't guarantee new storage, but it should at least guarantee that the right hand side is evaluated at most once for every evaluation of the surrounding context</p>",
+        "id": 250892580,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630048374
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> I disagree. I think the amount of times it evaluates its expression should be undefined.</p>",
+        "id": 250892707,
+        "sender_full_name": "Mac",
+        "timestamp": 1630048457
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> How do you do <em>any</em> practical functional programming in the pure part of a program that way?</p>",
+        "id": 250892809,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630048549
+    },
+    {
+        "content": "<p>well, the number of times a pure expression is evaluated is not an \"observable property\", so it isn't subject to any guarantees really, but as a quality-of-implementation matter it seems like a good principle to stick to to ensure predictable performance</p>",
+        "id": 250892812,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630048552
+    },
+    {
+        "content": "<p>That is, I don't think let should be use for computationally sensitive tasks (that should be the domain of monads).</p>",
+        "id": 250892817,
+        "sender_full_name": "Mac",
+        "timestamp": 1630048557
+    },
+    {
+        "content": "<p>that sounds perverse for a pure functional language</p>",
+        "id": 250892882,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630048584
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> I am not saying it can't, I am just saying it shouldn't be required.</p>",
+        "id": 250892893,
+        "sender_full_name": "Mac",
+        "timestamp": 1630048596
+    },
+    {
+        "content": "<p>This is a bug. Could you please create an issue using the smallest example that exposes the problem?</p>",
+        "id": 250892940,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1630048644
+    },
+    {
+        "content": "<p>Well, there is the second verdict (after Sebastian's).  <span aria-label=\"laughing\" class=\"emoji emoji-1f606\" role=\"img\" title=\"laughing\">:laughing:</span></p>",
+        "id": 250893023,
+        "sender_full_name": "Mac",
+        "timestamp": 1630048689
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> is the bug impacting mathport?</p>",
+        "id": 250893055,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1630048720
+    },
+    {
+        "content": "<p>it is, but the discussion here has unearthed a half dozen workarounds (it's a fragile bug), so I don't think it will be a problem</p>",
+        "id": 250893108,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630048755
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> Anyway, to me,  pure code should be pure -- it should not care about side effects (and I consider runtime / number of computations to be a side-effect). Obviously, the goal is to none-the-less run it as fast as possible, but the computational aspect should not be part of the pure code's specification.</p>",
+        "id": 250893247,
+        "sender_full_name": "Mac",
+        "timestamp": 1630048846
+    },
+    {
+        "content": "<p>That is, pure code should not have defined runtime behaviors.</p>",
+        "id": 250893324,
+        "sender_full_name": "Mac",
+        "timestamp": 1630048913
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/issues/646\">leanprover/lean4#646</a></p>",
+        "id": 250893418,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630048949
+    },
+    {
+        "content": "<p>This is already to an extent true for Lean as the interpreter, kernel, and compiler all produce very different code with different runtime behaviors.</p>",
+        "id": 250893431,
+        "sender_full_name": "Mac",
+        "timestamp": 1630048960
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Mysterious.20array.20access.20performance/near/250893418\">said</a>:</p>\n<blockquote>\n<p><a href=\"https://github.com/leanprover/lean4/issues/646\">leanprover/lean4#646</a></p>\n</blockquote>\n<p>Thanks. I will take a look when I wake up</p>",
+        "id": 250893520,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1630049030
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Mysterious.20array.20access.20performance/near/250892237\">said</a>:</p>\n<blockquote>\n<p>I haven't seen true call by name outside algol and haskell</p>\n</blockquote>\n<p>It took me a while to remember what it was called, but Kernel (a scheme variant) has <code>$vau</code>, a primitive that lets you implement special forms, though it's not quite call-by-name since you do have to use an <code>eval</code> form to evaluate the passed-in expressions.  The interesting thing is that it makes it so that things that are traditionally macros can be used as first-class functions.</p>",
+        "id": 250894619,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1630049723
+    },
+    {
+        "content": "<p>it's true that in languages with a macro functionality like C / Rust / Lisp / Scheme you can implement call by name as a call to a macro (where \"let\" is a macro definition and use is a call to the macro)</p>",
+        "id": 250895025,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1630049991
+    },
+    {
+        "content": "<p>Pushed a temporary fix for issue <a href=\"https://github.com/leanprover-community/mathlib/issues/646\">#646</a>.<br>\nThe perfect fix will only happen when we port the remaining parts of the compiler (still written in C++) to Lean.</p>",
+        "id": 250972207,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1630088175
+    }
+]

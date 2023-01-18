@@ -1,0 +1,134 @@
+[
+    {
+        "content": "<p>For what I'm working on, I'd like to attempt a user-provided autoparam during elaboration, and if it fails, create a nicely-named goal. I'm not sure if this is actually possible during elaboration, as I'm not sure exactly when tactics are run.</p>\n<p>If it's not possible, I'd maybe like to \"add onto\" the tactic at the expression level somehow (not the syntax level). Currently the code elaborates <code>`(by $tacticSyntax)</code>, then uses the resulting expression. If I could build on that resulting expression appropriately, I'd be good—but I'm not sure how this would work, or what I should use.</p>\n<p>An expression version of things like <code>first</code> and <code>refine</code> might be useful, as would the ability to combine tactics at the expression level.</p>\n<p>Or, if I could at least refer to some hole via syntax with a particular identity, e.g. <code>`(by first | $tacticSyntax | refine $hole)</code> where I know that hole's mvarId (and could then assign it to what I want later), that would be useful too.</p>\n<p>Any pointers are appreciated! :)</p>",
+        "id": 308887400,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1668033309
+    },
+    {
+        "content": "<p>at the expression level, you can do <code>try ... catch</code> to catch failure and <code>let s &lt;- saveState; ... ; s.restore</code> to undo any modifications caused by the tactic. These can be used separately or together, and I think there is also an or-else combinator <code>&lt;|&gt;</code> which you can use to do the same thing as the <code>first</code> syntax</p>",
+        "id": 308904140,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668043680
+    },
+    {
+        "content": "<p>hmm, when I say at the expression level, I mean directly building <code>Expr</code>s that correspond to (elaborated) tactics. this seems like what I'd write if I were writing a tactic directly, as opposed to building expressions. how do you turn these into <code>Expr</code>s? (or am I missing something obvious)</p>",
+        "id": 308928192,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1668062333
+    },
+    {
+        "content": "<p>ooh, actually your and Gabriel Ebner's  comments in <a href=\"#narrow/stream/270676-lean4/topic/existsi.20for.20already.20elaborated.20Expr\">existsi for already elaborated Expr</a> might cover what I need! That's what I was grasping for with \"if I could at least refer to some hole via syntax with a particular identity\" in the last part. I'll try doing something like that and seeing what happens.</p>",
+        "id": 308928408,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1668062483
+    },
+    {
+        "content": "<p>I had the same question with <code>zify</code> and I am starting to wonder whether one possible answer to this general problem is 'create several helper-tactics and make your high level tactic a macro'?</p>",
+        "id": 308929064,
+        "sender_full_name": "Moritz Doll",
+        "timestamp": 1668062978
+    },
+    {
+        "content": "<p>I’m having a little trouble using tactics during elaboration because of their relationship with metavariables. Metavariables created during the course of elaboration via <code>mkFreshExprMVar</code> are able to be assigned, e.g. by <code>isDefEq</code> in <code>rfl</code>, in contrast to metavariables that appeared directly in top-level syntax. Here, <code>rfl</code> is trying to prove something like <code>?x = ?y</code>, and is unfortunately succeeding. (tracing <code>isDefEq</code> confirms that it regards the metavariables as assignable during elaboration.)</p>\n<p>I thought this might be due to the metavariable context depth, and tried solving it by using <code>withNewMCtxDepth do</code> before <code>by</code>, but that doesn’t end well.</p>\n<p>Is this actually a depth issue? Or can something else affect assignability?</p>\n<p>Additional context: the code proceeds by extracting the tactic syntax, then:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">...</span>\n<span class=\"k\">let</span> <span class=\"n\">val</span> <span class=\"bp\">←</span> <span class=\"n\">elabTermEnsuringType</span> <span class=\"o\">(</span><span class=\"bp\">←`</span><span class=\"o\">(</span><span class=\"kd\">by</span> <span class=\"bp\">$</span><span class=\"n\">tacticSyntax</span><span class=\"o\">))</span> <span class=\"n\">d</span>\n<span class=\"c1\">-- val is then used somewhere within the final expression</span>\n<span class=\"bp\">...</span>\n</code></pre></div>",
+        "id": 309113213,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1668129215
+    },
+    {
+        "content": "<p>I could potentially make these metavariables synthetic opaque, but I’m guessing then I’d have to somehow turn them back at the end after running the tactic (as these metavariables are going to go on to become goals), and I’m not totally sure how to do that either.</p>\n<p>I guess if I could mimic the way that metavariables appearing in top-level syntax don’t get assigned, that would be best.</p>",
+        "id": 309114879,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1668130163
+    },
+    {
+        "content": "<p>Here's a minimal working example of the problem. Note that <code>by rfl</code> unifies <code>?x</code> and <code>?y</code> and leaves us with only one case, <code>y</code>, when I would hope for two cases and a tactic failure.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">frefl</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"bp\">=</span> <span class=\"n\">y</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">()</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"tryRfl\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">match</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">inferType</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">frefl</span><span class=\"o\">))</span> <span class=\"k\">with</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">forallE</span> <span class=\"n\">_</span> <span class=\"n\">a</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">forallE</span> <span class=\"n\">_</span> <span class=\"n\">b</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">forallE</span> <span class=\"n\">_</span> <span class=\"n\">c</span> <span class=\"n\">_</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"k\">let</span> <span class=\"n\">x</span> <span class=\"bp\">←</span> <span class=\"n\">mkFreshExprMVar</span> <span class=\"n\">a</span> <span class=\"bp\">.</span><span class=\"n\">synthetic</span> <span class=\"bp\">`</span><span class=\"n\">x</span>\n    <span class=\"k\">let</span> <span class=\"n\">y</span> <span class=\"bp\">←</span> <span class=\"n\">mkFreshExprMVar</span> <span class=\"n\">b</span> <span class=\"bp\">.</span><span class=\"n\">synthetic</span> <span class=\"bp\">`</span><span class=\"n\">y</span>\n    <span class=\"k\">let</span> <span class=\"n\">c</span> <span class=\"o\">:=</span> <span class=\"n\">c.instantiate</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">y</span><span class=\"o\">,</span> <span class=\"n\">x</span><span class=\"o\">]</span>\n    <span class=\"n\">mkAppM</span> <span class=\"bp\">``</span><span class=\"n\">frefl</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">y</span><span class=\"o\">,</span> <span class=\"bp\">←</span> <span class=\"n\">elabTermEnsuringType</span> <span class=\"o\">(</span><span class=\"bp\">←`</span><span class=\"o\">(</span><span class=\"kd\">by</span> <span class=\"n\">rfl</span><span class=\"o\">))</span> <span class=\"n\">c</span><span class=\"o\">]</span>\n  <span class=\"bp\">|</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">unreachable</span><span class=\"bp\">!</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">refine</span> <span class=\"n\">tryRfl</span><span class=\"bp\">;</span> <span class=\"n\">case</span> <span class=\"n\">y</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">exact</span> <span class=\"mi\">0</span>\n</code></pre></div>\n<p>Contrast with using explicit metavariables in syntax:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">refine</span> <span class=\"n\">frefl</span> <span class=\"bp\">?</span><span class=\"n\">x</span> <span class=\"bp\">?</span><span class=\"n\">y</span> <span class=\"o\">(</span><span class=\"kd\">by</span> <span class=\"n\">rfl</span><span class=\"o\">)</span>\n<span class=\"c1\">-- tactic 'rfl' failed, equality lhs ?x is not definitionally equal to rhs ?y ⊢ @Eq.{1} Nat ?x ?y</span>\n</code></pre></div>\n<p>What's causing the difference here?</p>",
+        "id": 309124820,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1668138532
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> <a href=\"#narrow/stream/270676-lean4/topic/Can.20I.20try.20a.20tactic.20during.20elaboration.3F/near/309114879\">said</a>:</p>\n<blockquote>\n<p>I could potentially make these metavariables synthetic opaque, but I’m guessing then I’d have to somehow turn them back at the end after running the tactic (as these metavariables are going to go on to become goals), and I’m not totally sure how to do that either.</p>\n</blockquote>\n<p>Metavariables that are going to be goals should generally be synthetic-opaque, unless you are okay with them being solved en passant</p>",
+        "id": 309127241,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668140488
+    },
+    {
+        "content": "<p>to change the kind of a metavariable, you can always make a new one with a different kind and assign the old one to it</p>",
+        "id": 309127403,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668140640
+    },
+    {
+        "content": "<p>(for that specific modification I think you can just update the metavar context, but that technique works in general)</p>",
+        "id": 309127489,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668140685
+    },
+    {
+        "content": "<p>ooh, ok, great! I had somehow acquired the belief that that shouldn’t be the case and didn’t realize it. 🙃 (I think I had just gotten a vague impression from the metaprogramming book saying “most goals are synthetic” or something and not talking about opaque ones much, but now that I look closely, i think one of the examples uses a syntheticOpaque metavariable as a goal without comment…!)</p>",
+        "id": 309127756,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1668140909
+    },
+    {
+        "content": "<p>Also, for \"what's causing the difference here\", <code>?x</code> is concrete syntax for synthetic opaque metavariables</p>",
+        "id": 309127765,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668140937
+    },
+    {
+        "content": "<p>That would do it! Lol</p>",
+        "id": 309127797,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1668140966
+    },
+    {
+        "content": "<p>syntheticOpaque means \"this will be assigned by a tactic, not by unification\"</p>",
+        "id": 309127800,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668140970
+    },
+    {
+        "content": "<p>Ah, ok. So when the metaprogramming book talks about synthetic metavariables, they don’t just mean <code>synthetic</code> metavariables—they also mean <code>syntheticOpaque</code>? I’m guessing the opacity is independent info from the <code>SyntheticMVarKind</code> info that the book talks about, then…!</p>",
+        "id": 309128101,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1668141242
+    },
+    {
+        "content": "<p>Actually, wait. Are opaque synthetic mvars <em>only</em> tactic-solvable re: their <code>SyntheticMVarKind</code>? (Or is your comment more of a heuristic, because, well, nothing else is probably going to assign them?)</p>",
+        "id": 309128175,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1668141326
+    },
+    {
+        "content": "<p>synthetic opaque mvars <em>cannot</em> be assigned by the usual methods. <code>(rfl : ?_ = ?_)</code> does not typecheck</p>",
+        "id": 309175103,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668166748
+    },
+    {
+        "content": "<p>synthetic mvars are used by typeclass inference, they are fairly rare otherwise. They are <em>discouraged</em> from solving by unification, in the sense that if you have a defeq <code>?m1 =?= ?m2</code> where <code>?m1</code> is natural and <code>?m2</code> is synthetic, then <code>?m1 := ?m2</code> is preferred over <code>?m2 := ?m1</code>.</p>",
+        "id": 309175845,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668167068
+    },
+    {
+        "content": "<p>In the book, I discuss mvar kinds under <code>isDefEq</code>: <code>natural</code> = <code>isDefEq</code> is free to assign it; <code>synthetic</code> = <code>isDefEq</code> can assign it but avoids it if possible; <code>synthetic opaque</code> = <code>isDefEq</code> never assigns it. That's correct, right? Are any functions besides <code>isDefEq</code> affected by the mvar kinds (except, of course, all the functions that call <code>isDefEq</code>)?</p>",
+        "id": 309197414,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1668175087
+    },
+    {
+        "content": "<p>there are lots of places the check is used (search for <code>isReadOnlyOrSyntheticOpaque</code>), but they are all morally equivalent to <code>isDefEq</code> or trying to predict whether it will work</p>",
+        "id": 309198530,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1668175452
+    },
+    {
+        "content": "<p>Okay thanks, then the text is morally correct.</p>",
+        "id": 309203423,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1668177135
+    }
+]

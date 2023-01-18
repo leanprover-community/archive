@@ -1,0 +1,302 @@
+[
+    {
+        "content": "<p>Are there any techniques for dealing with inductive types which contain a large recursion? The issue is that I have an almost acyclic collection of types A ... Z that all build on one another, but A needs to refer to Z, and this causes all the types in between to end up in one giant mutual inductive block, which causes problems for the kernel. I'm considering using <code>unsafe</code> to avoid all the theorem generation because I don't need anything to be verified, I just want long distance mutual recursion like one would find in C / haskell / etc. Lean 4 core has a couple file-spanning mutual recursions, but they generally seem to go via <code>builtin_initialize</code> which isn't available to user code.</p>",
+        "id": 246505712,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626724618
+    },
+    {
+        "content": "<p>oftentimes, what the F# folks do is being parametric in the type you would have to be recursive on otherwise. Maybe that could work for you?</p>",
+        "id": 246507699,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1626725552
+    },
+    {
+        "content": "<p>You still have to close the loop at the end, though. Is lean able to handle nested inductives like that?</p>",
+        "id": 246507980,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626725677
+    },
+    {
+        "content": "<p>I think <span class=\"user-mention\" data-user-id=\"235513\">@Daniel Fabian</span>  means something like this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">inductive</span> <span class=\"n\">BaseFoo</span> <span class=\"n\">a</span>\n<span class=\"bp\">|</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">foobar</span> <span class=\"o\">:</span> <span class=\"n\">a</span><span class=\"o\">)</span>\n\n<span class=\"kd\">inductive</span> <span class=\"n\">BaseBar</span> <span class=\"n\">a</span>\n<span class=\"bp\">|</span> <span class=\"n\">bar</span> <span class=\"o\">(</span><span class=\"n\">foobar</span> <span class=\"o\">:</span> <span class=\"n\">a</span><span class=\"o\">)</span>\n\n<span class=\"kd\">inductive</span> <span class=\"n\">Foobar</span>\n<span class=\"bp\">|</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">foo</span> <span class=\"o\">:</span> <span class=\"n\">BaseFoo</span> <span class=\"n\">Foobar</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"n\">bar</span> <span class=\"o\">(</span><span class=\"n\">bar</span> <span class=\"o\">:</span> <span class=\"n\">BaseBar</span> <span class=\"n\">Foobar</span><span class=\"o\">)</span>\n\n<span class=\"n\">abbrev</span> <span class=\"n\">Foo</span> <span class=\"o\">:=</span> <span class=\"n\">BaseFoo</span> <span class=\"n\">Foobar</span>\n<span class=\"n\">abbrev</span> <span class=\"n\">Bar</span> <span class=\"o\">:=</span> <span class=\"n\">BaseBar</span> <span class=\"n\">Foobar</span>\n</code></pre></div>\n<p>which works like the following mutual block:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">mutual</span>\n\n<span class=\"kd\">inductive</span> <span class=\"n\">Foo</span>\n<span class=\"bp\">|</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">foobar</span> <span class=\"o\">:</span> <span class=\"n\">Foobar</span><span class=\"o\">)</span>\n\n<span class=\"kd\">inductive</span> <span class=\"n\">Bar</span>\n<span class=\"bp\">|</span> <span class=\"n\">bar</span> <span class=\"o\">(</span><span class=\"n\">foobar</span> <span class=\"o\">:</span> <span class=\"n\">Foobar</span><span class=\"o\">)</span>\n\n<span class=\"kd\">inductive</span> <span class=\"n\">Foobar</span>\n<span class=\"bp\">|</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">foo</span> <span class=\"o\">:</span> <span class=\"n\">Foo</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"n\">bar</span> <span class=\"o\">(</span><span class=\"n\">bar</span> <span class=\"o\">:</span> <span class=\"n\">Bar</span><span class=\"o\">)</span>\n\n<span class=\"kd\">end</span>\n</code></pre></div>\n<p>I've used this pattern myself in the past. For example, I used it to model LLVM's type hierarchy, which you can see <a href=\"https://github.com/tydeu/lean4-papyrus/blob/master/Papyrus/IR/Type.lean\">here</a> if you want.</p>",
+        "id": 246527370,
+        "sender_full_name": "Mac",
+        "timestamp": 1626736829
+    },
+    {
+        "content": "<p>doesn't this incur just as much complexity internally as the mutual block? In order to prove that the nested inductive is okay it has to work out all the intermediate inductives</p>",
+        "id": 246530040,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626739600
+    },
+    {
+        "content": "<p>it's not so bad here but imagine there are 6 more defs and structures between <code>BaseFoo</code> and the thing that shows up in <code>Foobar</code></p>",
+        "id": 246530067,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626739647
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Breaking.20up.20large.20mutual.20inductives/near/246530040\">said</a>:</p>\n<blockquote>\n<p>In order to prove that the nested inductive is okay it has to work out all the intermediate inductives</p>\n</blockquote>\n<p>What do you mean by okay? I don't think any special checking is going on in the non-<code>mutual</code> example. I know that, at the very least, some of the checking that goes on in a <code>mutual</code> block does not occur, since you can mix structures and inductives with this pattern but you can't do so in <code>mutual</code> blocks.</p>",
+        "id": 246530748,
+        "sender_full_name": "Mac",
+        "timestamp": 1626740335
+    },
+    {
+        "content": "<p>I think that's just <code>mutual</code> being stingy</p>",
+        "id": 246530877,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626740436
+    },
+    {
+        "content": "<p><code>structure</code> is just an inductive under the hood</p>",
+        "id": 246530887,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626740452
+    },
+    {
+        "content": "<p>there are lots of other things that could be supported in <code>mutual</code> but aren't like <code>variable</code>, <code>set_option</code>, and especially <code>def</code> and <code>structure</code></p>",
+        "id": 246530989,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626740536
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Breaking.20up.20large.20mutual.20inductives/near/246530887\">said</a>:</p>\n<blockquote>\n<p><code>structure</code> is just an inductive under the hood</p>\n</blockquote>\n<p>You've mentioned this before and it has always struck me as odd. As, at the very least, structures support <code>extends</code> which behaves specially in many cases. So, I would not say they are all that identical.</p>",
+        "id": 246530994,
+        "sender_full_name": "Mac",
+        "timestamp": 1626740543
+    },
+    {
+        "content": "<p>structures have lots of elaborator magic layered on top but from the kernel's perspective they are just inductives</p>",
+        "id": 246531039,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626740587
+    },
+    {
+        "content": "<p>they generate all the usual inductive gizmos like <code>noConfusion</code>, plus some more things specific to structures like projections and parent instances</p>",
+        "id": 246531158,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626740671
+    },
+    {
+        "content": "<p>Ah, that's it. I tend to think at the Lean level, not the kernel level. For me,  that's what matters.</p>",
+        "id": 246531170,
+        "sender_full_name": "Mac",
+        "timestamp": 1626740684
+    },
+    {
+        "content": "<p>when asking whether a nested inductive is okay the check is in terms of kernel concepts</p>",
+        "id": 246531199,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626740711
+    },
+    {
+        "content": "<p>I am confused though about what part of this you would expect to error. In the non-<code>mutual</code> pattern there isn't really any nested inductives (in the sense that they are mutually referring to one another).</p>",
+        "id": 246531285,
+        "sender_full_name": "Mac",
+        "timestamp": 1626740779
+    },
+    {
+        "content": "<p><code>mutual</code> blocks are part of the elaborator layered on top, which is why it's possible for <code>mutual</code> to reject something that would be perfectly fine if it made it to the kernel</p>",
+        "id": 246531291,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626740790
+    },
+    {
+        "content": "<p><code>Foobar</code> is a nested inductive</p>",
+        "id": 246531341,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626740844
+    },
+    {
+        "content": "<p>in order to validate a nested inductive that has a constructor like <code>mk : Foo T -&gt; T</code>, you have to inspect and unfold <code>Foo</code> down to basic parts, because not every type operator <code>Foo</code> is sound in that position</p>",
+        "id": 246531416,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626740904
+    },
+    {
+        "content": "<p>specifically, <code>Foo := \\lam X, X -&gt; False</code> would cause a contradiction</p>",
+        "id": 246531441,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626740934
+    },
+    {
+        "content": "<p>The check that has to be done is that <code>Foo</code> unfolds to a nested combination of inductive type operators</p>",
+        "id": 246531468,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626740980
+    },
+    {
+        "content": "<p>and this process entails essentially building that whole mutual inductive block under the hood</p>",
+        "id": 246531520,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626741006
+    },
+    {
+        "content": "<p>It might be a bit faster since this construction is happening at a lower level where the elaborator doesn't have to get involved, but from a pure complexity standpoint they should be about the same</p>",
+        "id": 246531565,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626741061
+    },
+    {
+        "content": "<p>Ah. Makes sense. Sadly, I don't know much about how the kernel works.</p>",
+        "id": 246531570,
+        "sender_full_name": "Mac",
+        "timestamp": 1626741065
+    },
+    {
+        "content": "<p>Plus, the recursor for a nested inductive explicitly references all those intermediates, and lean also wants to prove a bunch of injectivity lemmas about the inductive, and I think this is what costs most of the processing time</p>",
+        "id": 246531647,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626741130
+    },
+    {
+        "content": "<p>I'm sure you have noticed that if you put <code>unsafe</code> on a large mutual or nested inductive it runs a lot faster</p>",
+        "id": 246531676,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626741176
+    },
+    {
+        "content": "<p>That's weird, because I said, I used this pattern to represent LLVM type hierarchy (i.e. <a href=\"https://github.com/tydeu/lean4-papyrus/blob/master/Papyrus/IR/Type.lean\">here</a>) which had a decent number of different nested inductives and I didn't really notice any overhead. But maybe that wasn't enough nesting?</p>",
+        "id": 246531707,
+        "sender_full_name": "Mac",
+        "timestamp": 1626741228
+    },
+    {
+        "content": "<p>you should try playing with the nested inductive <a href=\"https://github.com/dselsam/mathport/blob/master/Mathport/AST3.lean\">here</a>. I gave up trying to fold <code>Command</code> into the big mutual inductive and instead I'm storing the backreferences in an external data structure and storing <code>CommandId</code> in the inductive instead</p>",
+        "id": 246532430,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626742167
+    },
+    {
+        "content": "<p>It's already enough to exceed maxHeartbeats if you add a few more of those inductives into the mutual block</p>",
+        "id": 246532605,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626742305
+    },
+    {
+        "content": "<p>Do you think you could try the parameterized pattern there and see if this might be an elaborator issue  with <code>mutual</code> blocks rather than a kernel issue with nested inductives?</p>",
+        "id": 246532672,
+        "sender_full_name": "Mac",
+        "timestamp": 1626742332
+    },
+    {
+        "content": "<p>Because while I haven't experienced slowdowns with the parametrized  pattern, I definitely have encountered many a problem with using <code>mutual</code> blocks (including processing time).</p>",
+        "id": 246532720,
+        "sender_full_name": "Mac",
+        "timestamp": 1626742391
+    },
+    {
+        "content": "<p>Though I guess it might be wise to probe the Lean developers further to see if that could really be a solution before engaging in such a large refactor.</p>",
+        "id": 246533178,
+        "sender_full_name": "Mac",
+        "timestamp": 1626742764
+    },
+    {
+        "content": "<p>I do suspect though that the problem may be that <code>mutual</code> blocks have to do a lot more checking because they don't know a priori if the inductives are merely nested or if they are fully mutually recursive.</p>",
+        "id": 246534385,
+        "sender_full_name": "Mac",
+        "timestamp": 1626743675
+    },
+    {
+        "content": "<p>Just for fun, here's a plot of the dependency graph between all the inductives (only counting the ones in the SCC) <a href=\"/user_uploads/3121/4UYIqY0dvZz-H2lO7MVs5_pX/lean3-mutual.png\">lean3-mutual.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/4UYIqY0dvZz-H2lO7MVs5_pX/lean3-mutual.png\" title=\"lean3-mutual.png\"><img src=\"/user_uploads/3121/4UYIqY0dvZz-H2lO7MVs5_pX/lean3-mutual.png\"></a></div>",
+        "id": 246535137,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626744344
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Breaking.20up.20large.20mutual.20inductives/near/246531565\">said</a>:</p>\n<blockquote>\n<p>It might be a bit faster since this construction is happening at a lower level where the elaborator doesn't have to get involved, but from a pure complexity standpoint they should be about the same</p>\n</blockquote>\n<p>have you verified this? I'd expect that you can do the check locally for each parametrized inductive as opposed to having to do it for the whole SCC. The fact that you are parametric breaks the loop after all.</p>",
+        "id": 246541681,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1626752349
+    },
+    {
+        "content": "<p>I actually don't know that much about what it's doing; my paper on the lean kernel was pre-nested inductives and I haven't looked at it since beyond observational testing like this</p>",
+        "id": 246542376,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626753318
+    },
+    {
+        "content": "<p>as in does adding the type parameter fix your perf problem or not?</p>",
+        "id": 246542437,
+        "sender_full_name": "Daniel Fabian",
+        "timestamp": 1626753386
+    },
+    {
+        "content": "<p>I haven't tried it yet; one type parameter wouldn't be enough to untangle that graph, maybe 3 would get it into a collection of reasonably small mutual inductives but there are little cycles all over</p>",
+        "id": 246542829,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626753855
+    },
+    {
+        "content": "<p>Now I'm glad that <code>Syntax</code> is stringly-typed... it does avoid this whole bunch of issues</p>",
+        "id": 246554348,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1626767037
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Breaking.20up.20large.20mutual.20inductives/near/246531647\">said</a>:</p>\n<blockquote>\n<p>Plus, the recursor for a nested inductive explicitly references all those intermediates, and lean also wants to prove a bunch of injectivity lemmas about the inductive, and I think this is what costs most of the processing time</p>\n</blockquote>\n<p>You could try <code>set_option genInjectivity false</code> for that</p>",
+        "id": 246554405,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1626767068
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Breaking.20up.20large.20mutual.20inductives/near/246505712\">said</a>:</p>\n<blockquote>\n<p>but they generally seem to go via <code>builtin_initialize</code> which isn't available to user code.</p>\n</blockquote>\n<p>I think <code>initialize</code> should work there instead</p>",
+        "id": 246554483,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1626767142
+    },
+    {
+        "content": "<p>That graph is nicely formatted btw, how'd you make it?</p>",
+        "id": 246614271,
+        "sender_full_name": "Chris B",
+        "timestamp": 1626797998
+    },
+    {
+        "content": "<p>mathematica, no special settings, just <code>Graph[data, VertexLabels -&gt; All]</code>. I was originally hoping that one of the embeddings would help find good cut points in the graph, but it's pretty interconnected</p>",
+        "id": 246620790,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626801030
+    },
+    {
+        "content": "<p>I don't suppose anyone knows whether there is an algorithm for finding a permutation of vertices of a directed graph that minimizes the number of backward edges (like topological sort, but for non-dags)</p>",
+        "id": 246621099,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626801190
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Breaking.20up.20large.20mutual.20inductives/near/246621099\">said</a>:</p>\n<blockquote>\n<p>I don't suppose anyone knows whether there is an algorithm for finding a permutation of vertices of a directed graph that minimizes the number of backward edges (like topological sort, but for non-dags)</p>\n</blockquote>\n<p>According to section 9.4 of di Battista et al., \"Graph Drawing: Algorithms for the Visualization of Graphs,\" this is an NP-complete problem.  They give a greedy linear time algorithm, and they claim it works relatively well for sparse digraphs.  (The formulation of the problem is to find the subset of edges to reverse to form a DAG.)</p>",
+        "id": 246657829,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1626819305
+    },
+    {
+        "content": "<p>The greedy algorithm calculates a permutation of the vertices (as a list) that tries to minimize the set of leftward edges.  Pseudocode:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>let L and R be initialized as empty lists.\nwhile there are still vertices:\n  remove all sinks, prepending them to the list R\n  remove all sources, appending them to the list L\n  if G is nonempty,\n    choose and remove a vertex maximizing outdeg - indeg, and append it to the list L\nthe result is L concatenated with R.\n</code></pre></div>",
+        "id": 246658178,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1626819575
+    },
+    {
+        "content": "<p>is the vertex chosen in the last step also removed from the graph?</p>",
+        "id": 246658287,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1626819657
+    },
+    {
+        "content": "<p>Oh, I made a big mistake translating it.  Hold on.</p>",
+        "id": 246658397,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1626819748
+    },
+    {
+        "content": "<p>Ok, fixed.  I was reading the notation too quickly, sorry.</p>",
+        "id": 246658514,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1626819846
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Breaking.20up.20large.20mutual.20inductives/near/246542376\">said</a>:</p>\n<blockquote>\n<p>my paper on the lean kernel</p>\n</blockquote>\n<p>What paper is that?</p>",
+        "id": 246825975,
+        "sender_full_name": "Marcus Rossel",
+        "timestamp": 1626946535
+    }
+]
