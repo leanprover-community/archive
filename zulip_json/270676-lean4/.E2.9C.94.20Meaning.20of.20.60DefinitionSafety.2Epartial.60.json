@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>Hi, I was wondering what the intended use of <code>DefinitionSafety.partial</code> is, given that it allows you to prove <code>False</code> without displaying as an axiom or being infectious like <code>unsafe</code>.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean.CoreM</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">Lean.addDecl</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">.</span><span class=\"n\">mutualDefnDecl</span> <span class=\"o\">[{</span>\n  <span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"bp\">`</span><span class=\"n\">False_intro</span>\n  <span class=\"n\">levelParams</span> <span class=\"o\">:=</span> <span class=\"o\">[]</span>\n  <span class=\"n\">type</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">const</span> <span class=\"bp\">``</span><span class=\"n\">False</span> <span class=\"o\">[]</span>\n  <span class=\"n\">value</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">const</span> <span class=\"bp\">`</span><span class=\"n\">False_intro</span> <span class=\"o\">[]</span>\n  <span class=\"n\">hints</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">opaque</span>\n  <span class=\"n\">safety</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">partial</span>\n<span class=\"o\">}]</span>\n\n<span class=\"kd\">theorem</span> <span class=\"n\">False.intro</span> <span class=\"o\">:</span> <span class=\"n\">False</span> <span class=\"o\">:=</span> <span class=\"n\">False_intro</span>\n\n<span class=\"k\">#check</span> <span class=\"n\">False.intro</span> <span class=\"c1\">-- False.intro : False</span>\n<span class=\"k\">#print</span> <span class=\"kd\">axioms</span> <span class=\"n\">False.intro</span> <span class=\"c1\">-- 'False.intro' does not depend on any axioms</span>\n</code></pre></div>",
+        "id": 324107351,
+        "sender_full_name": "Parth Shastri",
+        "timestamp": 1674839230
+    },
+    {
+        "content": "<p>Hm, that's a soundness bug (cc: <span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span>). In the elaborator you can't create partial definitions without proving separately that the definition's type is inhabited. I don't think that we want the kernel to do typeclass search so this would have to be a separate input.</p>",
+        "id": 324113328,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1674840729
+    },
+    {
+        "content": "<p>I suppose another possibility here is to have the <code>value</code> field of a partial definition not actually be the definition but rather the inhabited proof, and use <code>implemented_by</code> to supply the actual definition body</p>",
+        "id": 324113915,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1674840876
+    },
+    {
+        "content": "<p>Isn't that what <code>opaque</code> is for? From what I can tell, <code>DefinitionSafety.partial</code> is only used to generate the \"unsafe\" implementations of partial functions.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">partial</span> <span class=\"kd\">def</span> <span class=\"n\">loop</span> <span class=\"o\">[</span><span class=\"n\">Inhabited</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"n\">loop</span>\n\n<span class=\"k\">#print</span> <span class=\"n\">loop</span> <span class=\"c1\">-- opaque loop.{u_1} : {α : Sort u_1} → [inst : Inhabited α] → α</span>\n<span class=\"k\">#print</span> <span class=\"n\">loop._unsafe_rec</span>\n<span class=\"c1\">-- partial def loop._unsafe_rec.{u_1} : {α : Sort u_1} → [inst : Inhabited α] → α :=</span>\n<span class=\"c1\">--   fun {α} [Inhabited α] =&gt; loop._unsafe_rec</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">show</span> <span class=\"n\">Lean.Elab.Command.CommandElabM</span> <span class=\"n\">_</span> <span class=\"k\">from</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"bp\">.</span><span class=\"n\">opaqueInfo</span> <span class=\"n\">ci</span> <span class=\"bp\">←</span> <span class=\"n\">Lean.getConstInfo</span> <span class=\"bp\">``</span><span class=\"n\">loop</span>\n    <span class=\"bp\">|</span> <span class=\"n\">return</span>\n  <span class=\"n\">Lean.logInfo</span> <span class=\"n\">ci.value</span>\n<span class=\"c1\">-- fun {α} [Inhabited α] =&gt; default</span>\n</code></pre></div>\n<p>So making the kernel treat partial (not opaque) definitions as unsafe would solve the issue.</p>",
+        "id": 324115936,
+        "sender_full_name": "Parth Shastri",
+        "timestamp": 1674841374
+    },
+    {
+        "content": "<p>Pushed a fix for this issue.</p>",
+        "id": 324146817,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1674850895
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"497571\">Parth Shastri</span> has marked this topic as resolved.</p>",
+        "id": 324156498,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1674854633
+    },
+    {
+        "content": "<p>Is this the fix? <a href=\"https://github.com/leanprover/lean4/commit/decb08858f4d426918d719feba04563869cfd0fe\">https://github.com/leanprover/lean4/commit/decb08858f4d426918d719feba04563869cfd0fe</a></p>\n<blockquote>\n<p>fix: kernel must ensure that safe functions cannot use partial ones.</p>\n</blockquote>\n<p>Does it mean that <code>partial</code> will become viral?</p>",
+        "id": 324350476,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1674941634
+    },
+    {
+        "content": "<p>No, see above:<br>\n<span class=\"user-mention silent\" data-user-id=\"497571\">Parth Shastri</span> <a href=\"#narrow/stream/270676-lean4/topic/.E2.9C.94.20Meaning.20of.20.60DefinitionSafety.2Epartial.60/near/324115936\">said</a>:</p>\n<blockquote>\n<p>From what I can tell, <code>DefinitionSafety.partial</code> is only used to generate the \"unsafe\" implementations of partial functions.</p>\n</blockquote>",
+        "id": 324351039,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1674942055
+    },
+    {
+        "content": "<p>Hmm, so a partial function uses the default instance for typechecking but also generates an unsafe implementation for execution purposes? And the fix is about preventing other safe functions from using the unsafe one?</p>",
+        "id": 324351676,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1674942613
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"451983\">Arthur Paulino</span> <a href=\"#narrow/stream/270676-lean4/topic/.E2.9C.94.20Meaning.20of.20.60DefinitionSafety.2Epartial.60/near/324351676\">said</a>:</p>\n<blockquote>\n<p>Hmm, so a partial function uses the default instance for typechecking but also generates an unsafe implementation for execution purposes? And the fix is about preventing other safe functions from using the unsafe one?</p>\n</blockquote>\n<p>Yes, this example no longer typechecks.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">partial</span> <span class=\"kd\">def</span> <span class=\"n\">inf</span> <span class=\"o\">(</span><span class=\"n\">u</span> <span class=\"o\">:</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"n\">u</span> <span class=\"o\">::</span> <span class=\"n\">inf</span> <span class=\"n\">u</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">False</span> <span class=\"o\">:=</span> <span class=\"n\">nomatch</span> <span class=\"o\">(⟨</span><span class=\"n\">inf._unsafe_rec</span> <span class=\"o\">(),</span> <span class=\"n\">rfl</span><span class=\"o\">⟩</span> <span class=\"o\">:</span> <span class=\"bp\">∃</span> <span class=\"n\">l</span><span class=\"o\">,</span> <span class=\"n\">l</span> <span class=\"bp\">=</span> <span class=\"o\">()</span> <span class=\"o\">::</span> <span class=\"n\">l</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 324357397,
+        "sender_full_name": "Parth Shastri",
+        "timestamp": 1674946819
+    }
+]

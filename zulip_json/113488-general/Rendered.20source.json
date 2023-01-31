@@ -526,5 +526,65 @@
         "id": 277958119,
         "sender_full_name": "Mario Carneiro",
         "timestamp": 1649201591
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/113488-general/topic/Rendered.20source/near/277957956\">said</a>:</p>\n<blockquote>\n<p><code>elaborate_proof</code> has a whole bunch of arguments that are all passed by value because the caller puts all that data in a closure as part of a \"proof elaboration\" task that can outlive the parser itself</p>\n</blockquote>\n<p>Hi Mario, </p>\n<p>I just ran into a bug potentially related to the proof elaboration task outliving the parser.  The parser's destructor calls <code>m_tactic_log-&gt;detach()</code>, which makes the proof elaboration tasks unable to log the tactic states, since the <code>get_tactic_log</code> function returns <code>nullptr</code> if the tactic log is detached. Any idea of how to fix this? Thank you!</p>",
+        "id": 324488920,
+        "sender_full_name": "Kaiyu Yang",
+        "timestamp": 1675026240
+    },
+    {
+        "content": "<p>Another related bug: Sometimes <code>lean --ast --tsast</code> fails to log the tactic states because the <code>export_ast</code> task in <code>src/library/module_mgr.cpp</code> is executed before the <code>log_tactic</code> function is called in <code>src/library/tactic/tactic_state.cpp</code>. The problem disappears if I add a <code>sleep(5)</code> at the beginning of the <code>export_ast</code> task to make it slower.</p>",
+        "id": 324489212,
+        "sender_full_name": "Kaiyu Yang",
+        "timestamp": 1675026464
+    },
+    {
+        "content": "<p>it's been a while since I looked at this code, but IIRC the idea is that <code>m_tactic_log</code> is a shared pointer shared between the parser and the elaborator tasks, and <code>m_detached</code> is true if the parser's copy of the shared pointer has been released</p>",
+        "id": 324489283,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1675026517
+    },
+    {
+        "content": "<p>the <code>get_tactic_log()</code> function in <code>tactic_log.cpp</code> is only callable within the context of a <code>scope_tactic_log()</code> call</p>",
+        "id": 324489479,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1675026664
+    },
+    {
+        "content": "<p>Thanks for the explanation! The problem is, when <code>get_tactic_log()</code> is called in the proof elaboration task (within the context of <code>scope_tactic_log()</code>), it returns <code>nullptr</code> because the parser has been destructed (<code>m_detached == true</code>). Is there anything in the code preventing this scenario from happening?</p>",
+        "id": 324489786,
+        "sender_full_name": "Kaiyu Yang",
+        "timestamp": 1675026896
+    },
+    {
+        "content": "<p>An unrelated question: I'm wondering if there are any reasons <code>--tsast</code> only record the tactic states of <code>theorem</code> and <code>lemma</code> but not <code>example</code>. I see <code>scope_tactic_log</code> is only called in <code>elaborate_proof</code> in <code>definition_cmds.cpp</code> but not in the <code>check_example</code> function.</p>",
+        "id": 324490037,
+        "sender_full_name": "Kaiyu Yang",
+        "timestamp": 1675027097
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"584504\">Kaiyu Yang</span> <a href=\"#narrow/stream/113488-general/topic/Rendered.20source/near/324489786\">said</a>:</p>\n<blockquote>\n<p>Thanks for the explanation! The problem is, when <code>get_tactic_log()</code> is called in the proof elaboration task (within the context of <code>scope_tactic_log()</code>), it returns <code>nullptr</code> because the parser has been destructed (<code>m_detached == true</code>). Is there anything in the code preventing this scenario from happening?</p>\n</blockquote>\n<p>No, this is an expected situation, related to your second issue - once the parser is gone, it's not clear where or why to keep collecting data</p>",
+        "id": 324490179,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1675027218
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"584504\">Kaiyu Yang</span> <a href=\"#narrow/stream/113488-general/topic/Rendered.20source/near/324490037\">said</a>:</p>\n<blockquote>\n<p>An unrelated question: I'm wondering if there are any reasons <code>--tsast</code> only record the tactic states of <code>theorem</code> and <code>lemma</code> but not <code>example</code>. I see <code>scope_tactic_log</code> is only called in <code>elaborate_proof</code> in <code>definition_cmds.cpp</code> but not in the <code>check_example</code> function.</p>\n</blockquote>\n<p>Note that <code>--tsast</code> is not very well supported, since it is not used by anything that gets daily testing, and the original reason it was implemented is no longer relevant (it was used for some ML training but that project is done)</p>",
+        "id": 324490259,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1675027299
+    },
+    {
+        "content": "<p>I see. I was trying to modify <code>check_example</code> to record tactic states for the code below:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">open</span> <span class=\"n\">nat</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">n</span><span class=\"bp\">+</span><span class=\"mi\">1</span> <span class=\"bp\">≠</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span>\n<span class=\"kd\">begin</span>\n  <span class=\"n\">exact</span> <span class=\"n\">succ_ne_zero</span> <span class=\"n\">n</span>\n<span class=\"kd\">end</span>\n</code></pre></div>\n<p>Then I ran <code>lean --ast --tsast</code> but couldn't find the recorded states in the output files (using Lean 3.50.3). Then I found the reason was that the parser is gone too quickly. But the problem doesn't happen if I replace <code>example</code> with <code>theorem my_thm</code>. I guess it's because <code>example</code> has no effects on the environment, so there was no need to keep the parser around?</p>",
+        "id": 324490894,
+        "sender_full_name": "Kaiyu Yang",
+        "timestamp": 1675027737
+    },
+    {
+        "content": "<p>I basically had to do two things for the tactic states in the code above to be recorded correctly.</p>\n<ol>\n<li>Remove <code>if (m_tactic_log) m_tactic_log-&gt;detach();</code> in the parser's destructor.</li>\n<li>Add <code>sleep (5)</code> in the <code>export_ast</code> task in <code>module_mgr.cpp</code></li>\n</ol>",
+        "id": 324491060,
+        "sender_full_name": "Kaiyu Yang",
+        "timestamp": 1675027860
     }
 ]
