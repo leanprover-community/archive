@@ -1,0 +1,362 @@
+[
+    {
+        "content": "<p>I did some analysis of the DiscrTree that’s stored for <code>library_search</code>. The <code>.extra</code> file is 237M large. According to my calculations, we have:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>    <span class=\"n\">Number</span> <span class=\"n\">of</span> <span class=\"n\">entries</span><span class=\"o\">:</span> <span class=\"mi\">227051</span>\n\n    <span class=\"n\">Status</span> <span class=\"n\">Quo</span><span class=\"o\">:</span>\n    <span class=\"n\">Nodes</span><span class=\"o\">:</span>             <span class=\"mi\">2828803</span>\n    <span class=\"n\">Maximum</span> <span class=\"n\">depth</span><span class=\"o\">:</span>     <span class=\"mi\">2596</span>\n    <span class=\"n\">Words</span><span class=\"o\">:</span>             <span class=\"mi\">28495285</span>\n    <span class=\"n\">MBs</span><span class=\"o\">:</span>               <span class=\"mi\">217</span>\n\n    <span class=\"n\">New</span> <span class=\"n\">data</span> <span class=\"kd\">structure</span><span class=\"o\">:</span>\n    <span class=\"n\">Nodes</span><span class=\"o\">:</span>             <span class=\"mi\">2823363</span>\n    <span class=\"n\">Maximum</span> <span class=\"n\">depth</span><span class=\"o\">:</span>     <span class=\"mi\">27</span>\n    <span class=\"n\">Words</span><span class=\"o\">:</span>             <span class=\"mi\">5450286</span>\n    <span class=\"n\">MBs</span><span class=\"o\">:</span>               <span class=\"mi\">41</span>\n</code></pre></div>\n<p>The depth reduction should fix the stack problems (which, incidentially, I had to work-around in my analysis code using <code>@[inline]</code>).</p>\n<p>Presumably, this size reduction will also turn into a speed up, if not only because of less RAM transfer needed.</p>\n<p>My proposal for the trie would be </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">inductive</span> <span class=\"n\">Trie</span> <span class=\"n\">α</span> <span class=\"bp\">ß</span> <span class=\"n\">where</span>\n <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">empty</span>\n <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">values</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"bp\">ß</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">Trie</span> <span class=\"n\">α</span> <span class=\"bp\">ß</span><span class=\"o\">)</span>\n <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">path</span> <span class=\"o\">(</span><span class=\"n\">Array</span>  <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">Trie</span> <span class=\"n\">α</span> <span class=\"bp\">ß</span><span class=\"o\">)</span>\n <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">branch</span>  <span class=\"o\">(</span><span class=\"n\">Array</span>  <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"bp\">×</span> <span class=\"n\">Trie</span> <span class=\"n\">α</span> <span class=\"bp\">ß</span><span class=\"o\">))</span>\n</code></pre></div>\n<p>This is my analysis code, I hope I didn’t make too many mistakes in my understanding of Lean’s heap layout.<br>\nPlease do be mean and tell me all the things I did wrong here:</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<div class=\"codehilite\"><pre><span></span><code>import Mathlib.Tactic.LibrarySearch\nimport Mathlib.Tactic.RunCmd\n\nset_option autoImplicit false\n\n@[inline] -- else we run out of stack space :-)\ndef Array.max {α} (a : Array α) (f : α → Nat) : Nat :=\n  a.foldl (init := 0) (fun m x =&gt; m.max (f x))\n\n@[inline]\ndef Array.sum {α} (a : Array α) (f : α → Nat) : Nat :=\n  a.foldl (init := 0) (fun s x =&gt; s + (f x))\n\nnamespace Lean.Meta\n\nvariable (α : Type _)\nvariable (b : Bool)\n\npartial\ndef DiscrTree.Trie.nodes : DiscrTree.Trie α b → Nat := fun (.node _vs children) =&gt;\n  1 + children.sum (·.2.nodes)\n\npartial\ndef DiscrTree.Trie.maxDepth : DiscrTree.Trie α b → Nat := fun (.node _vs children) =&gt;\n  children.max (1 + ·.2.maxDepth)\n\npartial\ndef DiscrTree.Trie.words : DiscrTree.Trie α b → Nat := fun (.node vs children) =&gt;\n  3 +\n  (if vs.size = 0 then 0 else (3 + vs.size)) +\n  (if children.size = 0 then 0 else (3 + 4 * children.size)) +\n  children.sum (·.2.words)\n\npartial\ndef DiscrTree.Trie.singletonChain (t : DiscrTree.Trie α b) : (Nat × DiscrTree.Trie α b) :=\n  match t with\n  | .node vs cs =&gt;\n    if vs.isEmpty &amp;&amp; cs.size = 1\n    then\n      let (n, t&#39;) := (cs.get! 0).2.singletonChain\n      (n + 1, t&#39;)\n    else\n      (0, t)\n\npartial\ndef DiscrTree.Trie.newNodes (t : DiscrTree.Trie α b) : Nat :=\n  let (n, .node vs cs) := t.singletonChain\n  -- one constructor for compressed series\n  (if n = 0 then 0 else 1) +\n  -- one constructor for possible values\n  (if vs.size = 0 then 0 else 1) +\n  -- branching node\n  (if cs.size = 0 then 0 else 1) +\n  cs.sum (·.2.nodes)\n\npartial\ndef DiscrTree.Trie.newWords (t : DiscrTree.Trie α b) : Nat :=\n  let (n, .node vs cs) := t.singletonChain\n  -- one constructor for compressed series\n  (if n = 0 then 0 else 2 + 3 + n) +\n  -- one constructor for possible values\n  (if vs.size = 0 then 0 else (2 + 3 + vs.size)) +\n  -- branching node\n  (if cs.size = 0 then 0 else (2 + 3 + 4 * cs.size)) +\n  cs.sum (·.2.newWords)\n\npartial\ndef DiscrTree.Trie.newDepth (t : DiscrTree.Trie α b) : Nat :=\n  let (n, .node vs cs) := t.singletonChain\n  -- one constructor for compressed series\n  (if n = 0 then 0 else 1) +\n  -- one constructor for possible values\n  (if vs.size = 0 then 0 else 1) +\n  -- branching node\n  (if cs.size = 0 then 0 else 1) +\n  cs.max (·.2.newDepth)\n\ndef DiscrTree.nodes (t : DiscrTree α b) : Nat :=\n  t.root |&gt;.toArray |&gt;.sum (fun p =&gt; p.2.nodes)\n\ndef DiscrTree.maxDepth (t : DiscrTree α b) : Nat :=\n  t.root |&gt;.toArray |&gt;.max (fun p =&gt; p.2.maxDepth)\n\ndef DiscrTree.words (t : DiscrTree α b) : Nat :=\n  t.root |&gt;.toArray |&gt;.sum (fun p =&gt; p.2.words)\n\ndef DiscrTree.newNodes (t : DiscrTree α b) : Nat :=\n  t.root |&gt;.toArray |&gt;.sum (fun p =&gt; p.2.newNodes)\n\ndef DiscrTree.newDepth (t : DiscrTree α b) : Nat :=\n  t.root |&gt;.toArray |&gt;.max (fun p =&gt; p.2.newDepth)\n\ndef DiscrTree.newWords (t : DiscrTree α b) : Nat :=\n  t.root |&gt;.toArray |&gt;.sum (fun p =&gt; p.2.newWords)\n\nend Lean.Meta\n\ndef test := Lean.Elab.Command.liftTermElabM $ do\n  let (_, t) ← Mathlib.Tactic.LibrarySearch.cachedData.val.get\n  let w := t.words\n  let w&#39; := t.newWords\n  IO.println f!&quot;\n    Number of entries: {t.size}\n\n    Status Quo:\n    Nodes:             {t.nodes}\n    Maximum depth:     {t.maxDepth}\n    Words:             {w}\n    MBs:               {w*8/(1024*1024)}\n\n    New data structure:\n    Nodes:             {t.newNodes}\n    Maximum depth:     {t.newDepth}\n    Words:             {w&#39;}\n    MBs:               {w&#39;*8/(1024*1024)}\n\n    &quot;\n\n#eval test\n</code></pre></div>\n</div></div>",
+        "id": 392843740,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695569256
+    },
+    {
+        "content": "<p>WIP at <a href=\"https://github.com/leanprover/lean4/pull/2577\">lean4#2577</a>. I’m gonna be curious about the bench result (once I weed out all the bugs).</p>",
+        "id": 392856000,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695579082
+    },
+    {
+        "content": "<p>I guess it would be cool if we had built-in support for measuring the size in words of a thing? That should be doable easily from within C modulo custom external classes right?</p>",
+        "id": 392861727,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1695584063
+    },
+    {
+        "content": "<p>Yes, I was wondering the same. Probably the compactification code can spit that out easily. But then, at least in this example, I would probably have needed some more domain-specific values (depths etc.) anyways, so writing a quick traversal was fine.</p>",
+        "id": 392861913,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695584207
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"mi\">100</span><span class=\"bp\">%</span> <span class=\"n\">tests</span> <span class=\"n\">passed</span><span class=\"o\">,</span> <span class=\"mi\">0</span> <span class=\"n\">tests</span> <span class=\"n\">failed</span> <span class=\"n\">out</span> <span class=\"n\">of</span> <span class=\"mi\">1727</span>\n</code></pre></div>\n<p>That was a pleasant sunday night hacking session. Let's see if CI agrees… and what the speedcenter will say.</p>",
+        "id": 392864204,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695586159
+    },
+    {
+        "content": "<p>Oh, and I clicked the wrong stream; this should of course be <a class=\"stream\" data-stream-id=\"341532\" href=\"/#narrow/stream/341532-lean4-dev\">#lean4 dev</a> .</p>",
+        "id": 392864285,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695586229
+    },
+    {
+        "content": "<p>CI is happy. Can someone <code>!bench</code> <a href=\"https://github.com/leanprover/lean4/pull/2577\">lean4#2577</a></p>",
+        "id": 392867241,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695588939
+    },
+    {
+        "content": "<p>(Deleted)</p>",
+        "id": 392869228,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695590799
+    },
+    {
+        "content": "<p>These savings look great! I just want to caution that modifications to such a core data structure might take some time to get reviewed. In fact, it is not clear whether this should be the same data structure as the use cases are a bit different - instance and simp discr trees are built at the beginning of the file, extended dynamically afterwards, and queried thousands and maybe even millions of times. Meanwhile the library_search cache is built once in CI and its query frequency is probably measured in seconds or minutes.</p>",
+        "id": 392933075,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1695627103
+    },
+    {
+        "content": "<p>Absolutely! I’d hope that this change is an improvement for all use cases, but that doesn’t prevent further specialization later on.</p>",
+        "id": 392947293,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695631589
+    },
+    {
+        "content": "<p>But I should also mention, I'm still not sure whether it makes sense to have keys of this length in practice! I suspect no-one knows an answer to that question right now.</p>",
+        "id": 392947600,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1695631658
+    },
+    {
+        "content": "<p>The library search cache went down in size from 237 to 58MB.<br>\nI'm curious if mathlib build times will be affected; what needs to happen for this to show up in the speedcenter?</p>\n<p>Storing only shorter keys would be orthogonal to a more performant data structure, right?</p>",
+        "id": 392991526,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695643371
+    },
+    {
+        "content": "<p>Wow, okay, 237mb to 58mb is great even if just for the speed-up in <code>lake exe cache get</code>.</p>",
+        "id": 393006999,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1695646923
+    },
+    {
+        "content": "<p>I am working on my own version of DiscrTree, based on the one in Lean. My understanding is that since the keys in the Tree also store an arity, For any given sequence of keys one can determine whether it is a completed sequence, or needs to be continued, and values are only stored at the end of a completed sequence. This means that in the .values constructor, the additional Trie would be redundant?</p>",
+        "id": 393010342,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695647640
+    },
+    {
+        "content": "<p>You are saying that values will always be at leafs only? That could be a mild simplification indeed; also the <code>.empty</code> constructor could go.</p>",
+        "id": 393011992,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695648070
+    },
+    {
+        "content": "<p>Yes, indeed</p>",
+        "id": 393012179,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695648121
+    },
+    {
+        "content": "<p>How does your version differ from the one in lean?</p>",
+        "id": 393013170,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695648341
+    },
+    {
+        "content": "<p>I added the key constructors .bvar, .forall and .lam, and replacing .arrow. This allows the DiscrTree to look under binders, and for example it can match the left side of the library result that <code>∑ n in Finset.range N, n  = N * (N - 1) / 2</code>,</p>",
+        "id": 393014842,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695648722
+    },
+    {
+        "content": "<p>Nice. Sounds orthogonal to the tweaks to <code>Trie</code> that I worked on?</p>",
+        "id": 393015264,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695648829
+    },
+    {
+        "content": "<p>And do you know the “Triemaps that match” paper by SPJ and <span class=\"user-mention\" data-user-id=\"130195\">@Sebastian Graf</span>? Might be relevant.</p>",
+        "id": 393015518,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695648881
+    },
+    {
+        "content": "<p>(A quick traversal of the <code>library_search</code> DiscrTree confirms your observation that values are always at the leafs.</p>",
+        "id": 393015878,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695648954
+    },
+    {
+        "content": "<p>Additionally I want to add the possibility for duplicate metavariables/stars, so that a result like a + a = 2*a does not match with an expression 1 + 2. And so that homogeneous multiplication results do not show up when searching with a heterogenous multiplication.</p>",
+        "id": 393016021,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695648981
+    },
+    {
+        "content": "<p>I also keep track of a score for how good a match is. The score increases by 1 for each succesful match of two non-star keys.</p>",
+        "id": 393016177,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695649023
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/More.20compact.20DiscrTree/near/393015264\">said</a>:</p>\n<blockquote>\n<p>Nice. Sounds orthogonal to the tweaks to <code>Trie</code> that I worked on?</p>\n</blockquote>\n<p>Yes, the changes can be combined</p>",
+        "id": 393016304,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695649058
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/More.20compact.20DiscrTree/near/393015518\">said</a>:</p>\n<blockquote>\n<p>And do you know the “Triemaps that match” paper by SPJ and <span class=\"user-mention silent\" data-user-id=\"130195\">Sebastian Graf</span>? Might be relevant.</p>\n</blockquote>\n<p>I'll have a look</p>",
+        "id": 393016619,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695649117
+    },
+    {
+        "content": "<p>Another observation I made was that when inserting a value into a node of a DiscrTree, where the values are stored in an Array, it loops through the whole Array to check if the new value is equal to any present value. If the Array is long this can be quite inefficient. I think it could save some time if this check is avoided, or if a set structure is used instead for the lookup. But if the cache is already built then it makes no difference, so maybe this doesn't matter.</p>",
+        "id": 393025905,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695651328
+    },
+    {
+        "content": "<p>Do we even expect a large number of values at the same position in the tree?</p>",
+        "id": 393030736,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695652465
+    },
+    {
+        "content": "<p>The most general patterns of [*] and {Eq, *, *, *] should be filtered out before insertion in the tree, but I decided to remove this filter in my case, so then I do get a large number of values there. I guess for other patterns it wouldn't be that large.</p>",
+        "id": 393034341,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695653396
+    },
+    {
+        "content": "<p>I guess patience isn't always my greatest strength :-)… can I somehow get a speedcenter comparison for mathlib for this refactoring (&lt;<a href=\"https://github.com/leanprover-community/mathlib4/compare/nightly-testing...lean-pr-testing-2577\">https://github.com/leanprover-community/mathlib4/compare/nightly-testing...lean-pr-testing-2577</a>&gt;)? <br>\nIf the DiscrTree is used by type class search, and type class search is where lots of time is spent, I wonder if it will be visible.</p>",
+        "id": 393035738,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695653725
+    },
+    {
+        "content": "<p>Both of those commits can't be reached from a tracked branch (only <code>master</code> is tracked for mathlib4) and must be added to the queue manually before they can be compared</p>",
+        "id": 393036728,
+        "sender_full_name": "Joscha Mennicken",
+        "timestamp": 1695653984
+    },
+    {
+        "content": "<p>Do I need to open a PR so that one can type <code>!bench</code>, or can commits be added otherwise easily?</p>",
+        "id": 393036966,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695654034
+    },
+    {
+        "content": "<p>With admin access to the velcom instance, you can add them via the web UI</p>",
+        "id": 393037088,
+        "sender_full_name": "Joscha Mennicken",
+        "timestamp": 1695654066
+    },
+    {
+        "content": "<p>(Guess <code>a477df946a0648231b66e5a7f0f04839546ebf25</code> is the base commit and <code>0ab85118a8f9528bab204b96b914851803d27bd8</code> is the feature commit.)</p>",
+        "id": 393037114,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695654071
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306577\">@Matthew Ballard</span> I think you know how to get speedcenter to run against alternate versions of core like Joachim is wanting. Can you point him to the relevant process or describe it for him?</p>",
+        "id": 393049284,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1695656809
+    },
+    {
+        "content": "<p>Of course. </p>\n<ol start=\"0\">\n<li>Assume you have a toolchain released from your fork </li>\n<li>Open mathlib4 PR with your modified toolchain </li>\n<li>Wait for CI to finish </li>\n<li>Comment <code>!bench</code> and the bot will take it from there</li>\n</ol>",
+        "id": 393054435,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1695658044
+    },
+    {
+        "content": "<p>(Read fast so assuming this is to benchmark the effect of a toolchain change on mathlib)</p>",
+        "id": 393054623,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1695658088
+    },
+    {
+        "content": "<p>Ah, that's it? For some reason I thought that <code>!bench</code> is a privileged command</p>",
+        "id": 393056829,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695658591
+    },
+    {
+        "content": "<p>Thankfully it is still available to the masses</p>",
+        "id": 393057148,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1695658666
+    },
+    {
+        "content": "<p>And if the base commit that I want to compare against is on branch <code>nightly-testing</code>, do I have to <code>!bench</code> that explicitly, or is <code>nightly-testing</code> benched anyways?</p>",
+        "id": 393057466,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695658732
+    },
+    {
+        "content": "<p>Branches are not benched automatically.</p>",
+        "id": 393057742,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1695658786
+    },
+    {
+        "content": "<p>So you if you want two commits outside master you will want to do each</p>",
+        "id": 393057904,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1695658809
+    },
+    {
+        "content": "<p>Great, thanks, got the into the queue</p>",
+        "id": 393059296,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695659152
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/More.20compact.20DiscrTree/near/393056829\">said</a>:</p>\n<blockquote>\n<p>Ah, that's it? For some reason I thought that <code>!bench</code> is a privileged command</p>\n</blockquote>\n<p>It is in the lean4 repo, but not in mathlib4.</p>",
+        "id": 393061464,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1695659840
+    },
+    {
+        "content": "<p>3.5% compile time improvement:<br>\n<a href=\"http://speed.lean-fro.org/mathlib4/compare/e7b27246-a3e6-496a-b552-ff4b45c7236e/to/ee9e4caf-7a54-4dc1-a6d9-19101bc7d2d9?hash1=a477df946a0648231b66e5a7f0f04839546ebf25\">http://speed.lean-fro.org/mathlib4/compare/e7b27246-a3e6-496a-b552-ff4b45c7236e/to/ee9e4caf-7a54-4dc1-a6d9-19101bc7d2d9?hash1=a477df946a0648231b66e5a7f0f04839546ebf25</a><br>\nNot sure how stable these numbers are, if that's a significant difference, and generally how to get a sense of these changes.</p>",
+        "id": 393073884,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695663752
+    },
+    {
+        "content": "<p>That is definitely outside general noise though you can look through the significant runs on the benchmark page to see isolated jumps and drops in compile time.</p>",
+        "id": 393074822,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1695664079
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"470149\">@Joachim Breitner</span>, in your new design, you split the original .node constructor into separate .values and .branch constructor, whereas the original design had the values and branches in the same constructor, (and always exactly one of these was an empty Array). This choice for splitting seems independent from the performance improvement that comes with the use of paths. One can have paths without multiple contructors like this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">inductive</span> <span class=\"n\">Trie</span> <span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"n\">where</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">node</span> <span class=\"o\">(</span><span class=\"n\">path</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">values</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">children</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"bp\">×</span> <span class=\"n\">Trie</span> <span class=\"n\">α</span> <span class=\"n\">β</span><span class=\"o\">))</span>\n</code></pre></div>\n<p>Is any reason for your design over this one?</p>",
+        "id": 393080841,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695665960
+    },
+    {
+        "content": "<p>Just my intuition that most nodes have no values, so it seems more compact that way, and less to check for on non-value nodes.</p>",
+        "id": 393081118,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695666059
+    },
+    {
+        "content": "<p>In the lookup algorithm, we always know whether the Trie we are considering is a leaf or not, so we never actually look in the values of a non-leaf, and we never look in the children of a leaf. In your design, when you reach a leaf, you need check that the constructor is .values, and otherwise throw a panic! message. And when you are not at a leaf, you need to panic! if the constructor is .values. But I don't know if having panic! exceptions is considered a bad thing.</p>",
+        "id": 393082361,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695666513
+    },
+    {
+        "content": "<p>Not sure I follow; no panics in my code?<br>\nYou walk down the path, and if there is no .value, then <code>vs = #[]</code> and you return that.</p>\n<p>I wrote the trie to support values in inner nodes - is that causing confusion?</p>",
+        "id": 393083127,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695666778
+    },
+    {
+        "content": "<p>If you have the invariant that in .node, always either values or children is empty, then isn't that a clear indication that two separate constructors would be more natural, wouldn't it?</p>",
+        "id": 393083477,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695666923
+    },
+    {
+        "content": "<p>I suppose that my suggestion also supports values in inner nodes, but since these never appear, we get the invariant that either values or children is empty.</p>",
+        "id": 393084827,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695667416
+    },
+    {
+        "content": "<p>returning that <code>vs = #[]</code> also works, but this should be unreachable code.</p>",
+        "id": 393084966,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695667461
+    },
+    {
+        "content": "<p>With the values in leafs invariant (and the all-Tries-nonempty), I'd still keep .values separate from inner nodes (.branch and .path), but drop .empty and remove the child from .values.</p>",
+        "id": 393085659,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695667707
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/More.20compact.20DiscrTree/near/393083477\">said</a>:</p>\n<blockquote>\n<p>If you have the invariant that in .node, always either values or children is empty, then isn't that a clear indication that two separate constructors would be more natural, wouldn't it?</p>\n</blockquote>\n<p>I'm not entirely certain, because I feel like if there are multiple constructors, then matching on them must give us some information, but in this case we already know which constructor should come up, so it feels like a waste of time to match on the constructor of the Trie. For a the path the same thing holds: in stead of having to match on whether there is a path or not, we simply always loop through the path, and if there should be no path then it is the empty Array, so looping doesn't cost any extra time.</p>",
+        "id": 393086087,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695667850
+    },
+    {
+        "content": "<p>But maybe storing an empty array for each node is a worse thing than doing an extra match.</p>",
+        "id": 393086464,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695667978
+    },
+    {
+        "content": "<p>I see what you mean. Guess one would have to measure it!</p>",
+        "id": 393086785,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695668089
+    },
+    {
+        "content": "<p>With the introduction of paths, one would have to check anyways on inner nodes, and these are the majority of nodes traversed, so I'm not bothered about the constructors. (Putting paths and branches in one constructor means you have to check many <code>ks</code> if it's empty, which is likely more expensive than checking the constructor tag.</p>",
+        "id": 393087140,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695668212
+    },
+    {
+        "content": "<p>I suggest that for paths we also put them in the same constructor. In the case where there is no path this would mean doing a loop through an empty Array. Do you mean that traversing an empty array could be more expensive?</p>",
+        "id": 393091670,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695669613
+    },
+    {
+        "content": "<p>But from a readability standpoint, the multiple constructors approach seems easier to understand.</p>",
+        "id": 393093531,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1695670257
+    },
+    {
+        "content": "<p>Yes, I expect its more efficient to do a branch on the constructor tag (directly present) instead of having larger nodes (one extra word) and traversing empty arrays (one pointer away, possibly a non-inlined function calls). The difference is probably very small, though.</p>",
+        "id": 393104328,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695673498
+    }
+]

@@ -1,0 +1,452 @@
+[
+    {
+        "content": "<p>Participants here may be interested in two PRs I just made for mathlib4:</p>\n<ul>\n<li><a href=\"https://github.com/leanprover-community/mathlib4/pull/3785\">!4#3785</a>, which adds a simple ChatGPT API written in Lean</li>\n<li><a href=\"https://github.com/leanprover-community/mathlib4/pull/3786\">!4#3786</a>, which uses this to implement a <code>#formalize</code> command.</li>\n</ul>\n<p>Very little thought went into the prompting for <code>#formalize</code>, so very happy to take suggestions. Typical usage:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">formalize</span> <span class=\"s2\">\"The sum of the first n natural numbers.\"</span>\n</code></pre></div>\n<p>producing</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"sd\">/-- The sum of the first `n` natural numbers is equal to n * (n + 1) / 2. -/</span>\n<span class=\"kd\">theorem</span> <span class=\"n\">sum_of_first_n_natural_numbers</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">))</span> <span class=\"bp\">/</span> <span class=\"mi\">2</span> <span class=\"bp\">=</span> <span class=\"bp\">∑</span> <span class=\"n\">i</span> <span class=\"k\">in</span> <span class=\"n\">Finset.range</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">),</span> <span class=\"n\">i</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n</code></pre></div>\n<p>It is intended as a demo that it is easy to write GPT backed tools in Lean, not to be a good autoformalizer.</p>",
+        "id": 355634630,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683162674
+    },
+    {
+        "content": "<p>There will be a monadic API wrapper that keeps track of the conversation added later.</p>",
+        "id": 355634653,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683162697
+    },
+    {
+        "content": "<p>If anyone would like to point me to accessible API for other LLMs, I would love to have a swappable backend. :-)</p>",
+        "id": 355634720,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683162735
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/3785\">!4#3785</a> tries to use the \"gpt-4\" model, and automatically falls back to \"gpt-3.5-turbo\" if you don't have access. But in either case you'll need an OpenAI API key to use these.</p>",
+        "id": 355634977,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683162922
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> what do you think about allowing for a default model? I think something like the following should do it:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">ChatConfig</span> <span class=\"n\">where</span>\n  <span class=\"sd\">/-- Model temperature.</span>\n<span class=\"sd\">  0 is close to deterministic, selecting the most probably token,</span>\n<span class=\"sd\">  while 1 samples from the predicted probability density on tokens. -/</span>\n  <span class=\"n\">temperature</span> <span class=\"o\">:</span> <span class=\"n\">Float</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span><span class=\"bp\">.</span><span class=\"mi\">7</span>\n  <span class=\"sd\">/-- Specify a default model to use. -/</span>\n  <span class=\"n\">defaultModel</span> <span class=\"o\">:</span> <span class=\"n\">Option</span> <span class=\"n\">Model</span> <span class=\"o\">:=</span> <span class=\"n\">none</span>\n  <span class=\"sd\">/-- Specify a list of models to use.</span>\n<span class=\"sd\">  Within each file, if one model fails with an access denied message,</span>\n<span class=\"sd\">  subsequent attempts will ignore that model. -/</span>\n  <span class=\"n\">models</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">Model</span> <span class=\"o\">:=</span> <span class=\"o\">[</span><span class=\"bp\">.</span><span class=\"n\">gpt_4</span><span class=\"o\">,</span> <span class=\"bp\">.</span><span class=\"n\">gpt_35_turbo</span><span class=\"o\">]</span>\n  <span class=\"sd\">/-- Retry after server errors. -/</span>\n  <span class=\"n\">attempts</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"mi\">3</span>\n  <span class=\"sd\">/-- Log JSON messages to and from https://api.openai.com/ on stdout. -/</span>\n  <span class=\"n\">trace</span> <span class=\"o\">:</span> <span class=\"n\">Bool</span> <span class=\"o\">:=</span> <span class=\"n\">false</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">ChatConfig</span>\n\n<span class=\"sd\">/-- Select the first model from a list of models, which has not been marked as unavailable. -/</span>\n<span class=\"kd\">def</span> <span class=\"n\">selectModel</span> <span class=\"o\">(</span><span class=\"n\">cfg</span> <span class=\"o\">:</span> <span class=\"n\">ChatConfig</span><span class=\"o\">)</span> <span class=\"o\">:</span>\n    <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Option</span> <span class=\"n\">Model</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">match</span> <span class=\"n\">cfg.defaultModel</span> <span class=\"k\">with</span>\n  <span class=\"bp\">|</span> <span class=\"n\">some</span> <span class=\"n\">e</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"n\">some</span> <span class=\"n\">e</span>\n  <span class=\"bp\">|</span> <span class=\"n\">none</span> <span class=\"bp\">=&gt;</span>\n      <span class=\"k\">let</span> <span class=\"n\">unavailable</span> <span class=\"bp\">←</span> <span class=\"n\">unavailableModels.get</span>\n      <span class=\"n\">return</span> <span class=\"n\">cfg.models.filter</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">m</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">¬</span> <span class=\"n\">unavailable.contains</span> <span class=\"n\">m</span><span class=\"o\">)</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">head</span><span class=\"bp\">?</span>\n</code></pre></div>",
+        "id": 355641773,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1683167441
+    },
+    {
+        "content": "<p>Since GPT4 is so much more expensive than 3.5, I think having such an option would be worthwhile.</p>",
+        "id": 355641808,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1683167471
+    },
+    {
+        "content": "<p>I think we should also have at least one open source model / model you can run on your local machine, even if it is not very good</p>",
+        "id": 355642072,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683167680
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"243562\">Adam Topaz</span> <a href=\"#narrow/stream/219941-Machine-Learning-for-Theorem-Proving/topic/GPT.20frontend.20for.20mathlib4/near/355641808\">said</a>:</p>\n<blockquote>\n<p>Since GPT4 is so much more expensive than 3.5, I think having such an option would be worthwhile.</p>\n</blockquote>\n<p>Oh, my intent was just that you set <code>models := [.gpt_35_turbo]</code> to change the default.</p>",
+        "id": 355642222,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683167780
+    },
+    {
+        "content": "<p>Ah I see.</p>",
+        "id": 355642237,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1683167797
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/219941-Machine-Learning-for-Theorem-Proving/topic/GPT.20frontend.20for.20mathlib4/near/355642072\">said</a>:</p>\n<blockquote>\n<p>I think we should also have at least one open source model / model you can run on your local machine, even if it is not very good</p>\n</blockquote>\n<p>If someone points me to one, I will try to write the wrapper for it. :-)</p>",
+        "id": 355642285,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683167838
+    },
+    {
+        "content": "<p>Are there any locally-runnable LLM's where the API matches openai's?</p>",
+        "id": 355642293,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1683167848
+    },
+    {
+        "content": "<p>I don't think it is important for the API to match OpenAI's</p>",
+        "id": 355642407,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683167893
+    },
+    {
+        "content": "<p>Well, I'm asking just because the types that Scott wrote would work out of the box if that's the case.</p>",
+        "id": 355642503,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1683167935
+    },
+    {
+        "content": "<p>I ask because I'm not really comfortable landing this in mathlib4 with only openai options. That's just an ad</p>",
+        "id": 355642656,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683168019
+    },
+    {
+        "content": "<p>Sure, I agree it is problematic. :-) How would you feel if the backend were a separate project, but then allow uses of it e.g <code>#formalize</code> or <code>sagredo</code> from within mathlib4?</p>",
+        "id": 355642774,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683168122
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"284997\">@Zhangir Azerbayev</span> might have some idea about how to do local models</p>",
+        "id": 355642812,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683168129
+    },
+    {
+        "content": "<p>I suspect <a href=\"https://github.com/ggerganov/llama.cpp\">https://github.com/ggerganov/llama.cpp</a> is a good place to start. Their documentation looks nice.</p>",
+        "id": 355642840,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683168146
+    },
+    {
+        "content": "<p>that name came up in discussion</p>",
+        "id": 355642853,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683168159
+    },
+    {
+        "content": "<p>I don't think the exact API matters much. It is easy to parse some text or JSON.</p>",
+        "id": 355642926,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683168185
+    },
+    {
+        "content": "<p>yeah I can't imagine there is much complexity to the API for a transformer model</p>",
+        "id": 355643084,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683168250
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/219941-Machine-Learning-for-Theorem-Proving/topic/GPT.20frontend.20for.20mathlib4/near/355642774\">said</a>:</p>\n<blockquote>\n<p>Sure, I agree it is problematic. :-) How would you feel if the backend were a separate project, but then allow uses of it e.g <code>#formalize</code> or <code>sagredo</code> from within mathlib4?</p>\n</blockquote>\n<p>Would it work to have said external project as an optional dependency for mathlib? That way you could switch some option in the lakefile and get access to a <code>#formalize</code> command defined elsewhere</p>",
+        "id": 355643775,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683168638
+    },
+    {
+        "content": "<p>I guess it could. Why make it an option, though? The dependency would presumably be tiny.</p>",
+        "id": 355643872,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683168690
+    },
+    {
+        "content": "<p>not if it includes llama.cpp and/or a cached local model</p>",
+        "id": 355643945,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683168730
+    },
+    {
+        "content": "<p>I think it has sufficiently different requirements from mathlib that it could go as a separate project even if it is small. Most of mathlib's dependencies are small projects</p>",
+        "id": 355644016,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683168800
+    },
+    {
+        "content": "<p>there is also the maintenance angle, I'm not sure we want mathlib maintainers to become ML researchers</p>",
+        "id": 355644220,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683168886
+    },
+    {
+        "content": "<p>llama.cpp is the way to go for local inference. Although a limitation of using llama is that the gpl3 license doesn't allow us to redistribute the weights, so we'd have to ask the users to download the weights and compile the model binary manually.</p>",
+        "id": 355644231,
+        "sender_full_name": "Zhangir Azerbayev",
+        "timestamp": 1683168898
+    },
+    {
+        "content": "<p>Oh, I was assuming that using llama.cpp would require a user to do their own setup.</p>",
+        "id": 355644250,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683168907
+    },
+    {
+        "content": "<p>So a putative <code>LLM</code> interface in mathlib4, or a project which mathlib4 imports, would be small, plus require the user to do one of:</p>\n<ul>\n<li>have an OpenAI key</li>\n<li>download weights and build llama.cpp locally</li>\n<li>some other equivalent</li>\n</ul>",
+        "id": 355644444,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683168989
+    },
+    {
+        "content": "<p>In principle you're supposed to download the weights by applying to meta's access program. In practice, most people get the weights via a torrent.</p>",
+        "id": 355644456,
+        "sender_full_name": "Zhangir Azerbayev",
+        "timestamp": 1683169000
+    },
+    {
+        "content": "<p>But it needs at least some foothold in mathlib4 or people will never use it.</p>",
+        "id": 355644517,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683169071
+    },
+    {
+        "content": "<p>i.e. if adding an LLM interface as a dependency for mathlib4 is a no go, then I won't bother.</p>",
+        "id": 355644698,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683169195
+    },
+    {
+        "content": "<p>we could make it as easy as <code>lake exe install-sagredo</code> or so, which enables the dependency and calls to a script in the external dependency which walks the user through the openai key / weights downloading stuff</p>",
+        "id": 355644861,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683169278
+    },
+    {
+        "content": "<p>Okay, I could live with that. It feels like the code to enable the dependency might be more complicated than the current PR. :-)</p>",
+        "id": 355644892,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683169319
+    },
+    {
+        "content": "<p>Also it seems strange to have <code>polyrith</code> in mathlib4 but draw the line at this. Both are just curl to a JSON API...</p>",
+        "id": 355644960,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683169355
+    },
+    {
+        "content": "<p>well, I expect that this won't be the extent of the ML stuff we will see</p>",
+        "id": 355644998,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683169369
+    },
+    {
+        "content": "<p>I would prefer to put this stuff in a separate project to make it easier for ML folks to play with it</p>",
+        "id": 355645066,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683169400
+    },
+    {
+        "content": "<p>At the moment we have none, which is sad, because people keep writing proof of principle demos that the rest of us can't use.</p>",
+        "id": 355645070,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683169403
+    },
+    {
+        "content": "<p>so our (mathlib's) main focus should be on enabling that interface and otherwise getting out of the way</p>",
+        "id": 355645139,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683169446
+    },
+    {
+        "content": "<p>I guess I have the opposite perspective: the ML folks don't seem interested in writing tools that mathematicians actually get to use. Where is our premise selection? I want to be able to write tactics, in mathlib, that call a premise selection function. I'm happy if mathlib has the dumbest possible implementation of that function, if there is an easy way for a user to hook into someone else's function that requires downloading a model.</p>",
+        "id": 355645245,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683169554
+    },
+    {
+        "content": "<p>But if you can only write something the relies on having premise selection code in a place that can never be run from mathlib, what is the point?</p>",
+        "id": 355645343,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683169612
+    },
+    {
+        "content": "<p>I'm not saying it can never be run from mathlib, just the opposite</p>",
+        "id": 355645373,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683169638
+    },
+    {
+        "content": "<p>it being a dependency of mathlib means it can be used anywhere</p>",
+        "id": 355645422,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683169663
+    },
+    {
+        "content": "<p>it being optional means you have to be able to live without it though</p>",
+        "id": 355645481,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683169679
+    },
+    {
+        "content": "<p>because there will be people who can't be bothered to get an openai key or download some big binary blob</p>",
+        "id": 355645579,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1683169723
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/219941-Machine-Learning-for-Theorem-Proving/topic/GPT.20frontend.20for.20mathlib4/near/355645579\">said</a>:</p>\n<blockquote>\n<p>because there will be people who can't be bothered to get an openai key or download some big binary blob</p>\n</blockquote>\n<p>And for whom <code>#formalize</code> could give a helpful error message explaining that it isn't available unless they do one of those things?</p>",
+        "id": 355645624,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683169763
+    },
+    {
+        "content": "<p>Okay. Sometime later I will move those two PRs to a new repo, and maybe then you can explain to me how you'd like to make them available from mathlib. :-) I will have to move one or two functions to Std first.</p>",
+        "id": 355645633,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683169777
+    },
+    {
+        "content": "<p>First by-hand attempt at running #formalize on LLaMA: </p>\n<blockquote>\n<p>This is not possible because the language Lean does not exist yet.</p>\n</blockquote>\n<p>:-)</p>",
+        "id": 355664164,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683178956
+    },
+    {
+        "content": "<p>Maybe LLaMa can invent the language Lean for us? <span aria-label=\"grinning\" class=\"emoji emoji-1f600\" role=\"img\" title=\"grinning\">:grinning:</span></p>",
+        "id": 355664273,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1683179022
+    },
+    {
+        "content": "<p>Okay, the two PRs mentioned above have now been replaced by <a href=\"https://github.com/leanprover-community/mathlib4/pull/3808\">#formalize, backed by a choice of LLMs</a>.</p>\n<p>All the LLM interaction code is in a separate repository <a href=\"https://github.com/leanprover-community/llm\">https://github.com/leanprover-community/llm</a>, and it supports talking to GPT, or locally running models via <code>pygpt4all</code> or <code>llama.cpp</code>. You can select which model you want to use from a downstream project, or just call <code>findChatBot</code> which attempts to find the first that works (in the order I listed the models above), and if it finds none fails with an error message explaining how to set one up.</p>\n<p>The mathlib4 code is just a prompt, and a couple of lines to implement the <code>#formalize</code> command. Example outputs <a href=\"https://github.com/leanprover-community/mathlib4/pull/3808/files#diff-aa0bc9f0892525c99cc69a0bc129e16b2884d918bb47f8fa5140724885faea0d\">here</a>. The summary is that you would not want to use a local model for <code>#formalize</code>. :-)</p>",
+        "id": 356025018,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683286146
+    },
+    {
+        "content": "<p>And the same philosophy applies as before: <code>#formalize</code> may just be a toy, entertaining for spoiling traditional homework problems when teaching Lean, but hopefully it is a good demo of how to use LLMs from within mathlib.</p>",
+        "id": 356026707,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683286556
+    },
+    {
+        "content": "<p>Hi all. I hacked together a few little tools using some vector embeddings and GPT (using Scott's GPT frontend). Here's a demo:<br>\n<a href=\"/user_uploads/3121/sXo8aPiz5T968ROKuRoqEGSA/find-with-gpt-demo.gif\">find-with-gpt-demo.gif</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/sXo8aPiz5T968ROKuRoqEGSA/find-with-gpt-demo.gif\" title=\"find-with-gpt-demo.gif\"><img src=\"/user_uploads/3121/sXo8aPiz5T968ROKuRoqEGSA/find-with-gpt-demo.gif\"></a></div><p>There are four new commands:</p>\n<ol>\n<li><code>#find_name</code> searches theorems based on a given name, using cosine similarity.</li>\n<li><code>#find_type</code> searches theorems based on their type, using cosine similarity.</li>\n<li><code>#find_name_with_gpt</code> uses GPT to generate (i.e. hallucinate) a name for a hypothetical theorem based on a natural language prompt, and looks for theorems with similar names.</li>\n<li><code>#find_type_with_gpt</code> uses GPT to generate/hallucinate the type of a hypothetical theorem based on a natural language prompt, and looks for theorems with similar types.</li>\n</ol>\n<p>The GPT prompts for 3 and 4 are very naive and there's a ton of room for improvement.</p>\n<p>At this point, this work is not quite ready for prime time, as there is quite a lot of setup required to get this working. If anyone is willing to help in reducing the setup overhead, please let me know!</p>",
+        "id": 364134014,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686094475
+    },
+    {
+        "content": "<p>Fun! It looks like ... cosine similarity doesn't work very well? :-) It's hard to judge from the screenshots but often it's not finding what you want, or it is way down the list.</p>",
+        "id": 364145177,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1686101721
+    },
+    {
+        "content": "<p>I'd love to play with it. :-)</p>",
+        "id": 364145188,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1686101730
+    },
+    {
+        "content": "<p>Yeah, just using cosine similarity doesn't get too far. One thing I found it to be very useful for is helping me find the Mathlib4 name given a name with an approximate Mathlib3 naming convention. The current version doesn't do this, but one thing that works better is querying for some results with cosine similarity search, then feeding those in to GPT for a second round to refine its guess. I wanted to implement something like that which can do <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>n</mi></mrow><annotation encoding=\"application/x-tex\">n</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.4306em;\"></span><span class=\"mord mathnormal\">n</span></span></span></span> such iterations for arbitrary <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>n</mi></mrow><annotation encoding=\"application/x-tex\">n</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.4306em;\"></span><span class=\"mord mathnormal\">n</span></span></span></span>, but haven't had a chance to do it yet.</p>",
+        "id": 364146137,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686102438
+    },
+    {
+        "content": "<p>The code is in the mathlib4 <code>find-with-gpt</code> branch, and it uses two repos <a href=\"https://github.com/adamtopaz/lean_pinecone\">https://github.com/adamtopaz/lean_pinecone</a> and <a href=\"https://github.com/adamtopaz/lean_embedding\">https://github.com/adamtopaz/lean_embedding</a></p>\n<p>The first is a small interface for <a href=\"http://pinecone.io\">pinecone.io</a> (the vector database I used) and the second one for OpenAI's embedding API.</p>",
+        "id": 364146314,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686102577
+    },
+    {
+        "content": "<p>I was looking for a single-file vector database to use instead of this hosted one, but I didn't find any good option. Does anyone know of one? Something like sqlite, but with good support for vectors?</p>",
+        "id": 364146418,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686102630
+    },
+    {
+        "content": "<p>If you want to get this working you need the following:</p>\n<ol>\n<li>an openai api key (set as an env variable)</li>\n<li>a pinecone api key, pinecone project id, and pinecone index (set as env variables)</li>\n<li>A pinecone index set up properly </li>\n</ol>\n<p>You then run <code>lake exe embed go</code> which generates embeddings for both types and names, and stores then in (huge) jsonl files, then it takes the data from those files and uploads to pinecone. I tried just using the jsonl files directly and using lean for the dot product calculation, and unsurprisingly, it was way too slow.</p>",
+        "id": 364146669,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686102773
+    },
+    {
+        "content": "<p>Right now, the code only gets embeddings for theorems, found using <code>ConstantInfo.thmInfo</code>. This results in a little over 100K declarations in mathlib4. Computing the embeddings costs about 5-10 USD in API fees, and produces two files which are a little over 2GB in size each.</p>",
+        "id": 364146845,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686102916
+    },
+    {
+        "content": "<p>Oh, this is a bit silly, but I also found it useful for finding the name of the module of some theorems I was looking for :)</p>",
+        "id": 364147356,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686103236
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"243562\">Adam Topaz</span> <a href=\"#narrow/stream/219941-Machine-Learning-for-Theorem-Proving/topic/GPT.20frontend.20for.20mathlib4/near/364146418\">said</a>:</p>\n<blockquote>\n<p>I was looking for a single-file vector database to use instead of this hosted one, but I didn't find any good option. Does anyone know of one? Something like sqlite, but with good support for vectors?</p>\n</blockquote>\n<p><a href=\"https://www.reddit.com/r/MachineLearning/comments/12m9pg0/comment/jgcuzrj/\">This post</a> suggests that you could simply use numpy :) As for vector databases, Auto-GPT <a href=\"https://github.com/Significant-Gravitas/Auto-GPT/discussions/4280\">used to support</a> Redis, Milvus, and Weaviate in addition to Pinecone, for example.</p>\n<p>Update: another list from <a href=\"https://github.com/microsoft/semantic-kernel/releases/tag/dotnet-0.16.230615.1-preview\">Microsoft</a>:<br>\nAzureCognitiveSearch, DuckDB, Pinecone, Postgres, Qdrant, Redis, Sqlite, Weaviate</p>",
+        "id": 364158745,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1686111933
+    },
+    {
+        "content": "<p>I'm curious if the dot products were slow, or loading the JSON files. I'm hoping it's the later, and you can just use <code>pickle</code> / <code>unpickle</code> for storage. (We use this for the library_search cache, for example, and it is fast.)</p>",
+        "id": 364165979,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1686115559
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/219941-Machine-Learning-for-Theorem-Proving/topic/GPT.20frontend.20for.20mathlib4/near/364165979\">said</a>:</p>\n<blockquote>\n<p>I'm curious if the dot products were slow, or loading the JSON files. I'm hoping it's the later, and you can just use <code>pickle</code> / <code>unpickle</code> for storage. (We use this for the library_search cache, for example, and it is fast.)</p>\n</blockquote>\n<p>When I tried this out, I wanted to minimize memory consumption as much as possible for some reason. So what I ended up doing is streaming the 2.2GB file line by line and doing the computation that way. But maybe it's safe to assume that everyone now has 32GB of RAM, so the pickle/unpickle approach might be ok. I'll try it out soon.</p>",
+        "id": 364300808,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686148663
+    },
+    {
+        "content": "<p>OTOH, there are some quite serious benefits for using some sort of database. For example, I envision storing hashes of names/types, and only recomputing embeddings when the hash changes.</p>",
+        "id": 364302580,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686149021
+    },
+    {
+        "content": "<p><a href=\"https://github.com/facebookresearch/faiss\">https://github.com/facebookresearch/faiss</a><br>\nis said to be very fast and easily deployable</p>",
+        "id": 364407990,
+        "sender_full_name": "Fabian Glöckle",
+        "timestamp": 1686177578
+    },
+    {
+        "content": "<p>I thought FAISS was a library that has to be connected to some other database.</p>",
+        "id": 364408617,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686177859
+    },
+    {
+        "content": "<p>FAISS just operates in-memory for the most part, and has simple functions to <a href=\"https://github.com/facebookresearch/faiss/wiki/Index-IO,-cloning-and-hyper-parameter-tuning\">read and write</a> indices to disk. There's a section in the docs for indices that <a href=\"https://github.com/facebookresearch/faiss/wiki/Indexes-that-do-not-fit-in-RAM\">don't fit in RAM</a>.</p>",
+        "id": 364421478,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1686186177
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"243562\">Adam Topaz</span> <a href=\"#narrow/stream/219941-Machine-Learning-for-Theorem-Proving/topic/GPT.20frontend.20for.20mathlib4/near/364408617\">said</a>:</p>\n<blockquote>\n<p>I thought FAISS was a library that has to be connected to some other database.</p>\n</blockquote>\n<p>For the <a href=\"https://github.com/zhangir-azerbayev/mathlib-semantic-search\">mathlib-semantic-search</a> demo (which no longer works because openai discontinued <code>code-davinci-002</code>), we used FAISS and our database was a numpy array. </p>\n<p>I think that numpy's save/load utility makes more sense than pickle, since it is specifically optimized for matrices. Edit: Scott pointed out that FAISS has a <code>save_index</code> api, which will be better than numpy save/load.</p>\n<p>For most use cases, the exotic vector databases are overkill.</p>",
+        "id": 364421497,
+        "sender_full_name": "Zhangir Azerbayev",
+        "timestamp": 1686186186
+    },
+    {
+        "content": "<p>(The pickle I was referring to was <code>mathlib4</code>s <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=pickle#src\">src4#pickle</a>, btw)</p>",
+        "id": 364421674,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1686186314
+    },
+    {
+        "content": "<p>But doing in this Lean is probably a bad idea. :-)</p>",
+        "id": 364421713,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1686186342
+    },
+    {
+        "content": "<p>FWIW, I experimented today by trying to save embeddings using lean’s pickle for about 1/7th of mathlib4, and ran out of memory on my 32GB machine.</p>",
+        "id": 364422049,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686186550
+    },
+    {
+        "content": "<p>I think I’ll try using faiss with some interface between python and lean. Should be straightforward.</p>",
+        "id": 364422260,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686186677
+    },
+    {
+        "content": "<p>Another experiment I did today: I saved (randomly generated) “embeddings” for all of mathlib (both names and types) in a SQLite database, and the file was ~6GB. It’s big, but not completely unreasonable to distribute.</p>",
+        "id": 364422427,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686186785
+    },
+    {
+        "content": "<p>Another good option is to try using the FAISS C++ api. This will allow you to compile a binary and call it from Lean, which might be simpler than interfacing with python.</p>",
+        "id": 364422591,
+        "sender_full_name": "Zhangir Azerbayev",
+        "timestamp": 1686186899
+    },
+    {
+        "content": "<p>Yeah, but I haven’t written any C++ since 2006 <span aria-label=\"rofl\" class=\"emoji emoji-1f923\" role=\"img\" title=\"rofl\">:rofl:</span></p>",
+        "id": 364422739,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686186971
+    },
+    {
+        "content": "<p>Some nice <a href=\"https://github.com/zhangir-azerbayev/ProofNet/commit/58549812118a5ec97c25ddd0835f2f839d3996ad\">proofs found by retrieval</a> from <a href=\"https://github.com/zhangir-azerbayev/ProofNet/pull/14\">https://github.com/zhangir-azerbayev/ProofNet/pull/14</a></p>",
+        "id": 364718972,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1686280034
+    }
+]

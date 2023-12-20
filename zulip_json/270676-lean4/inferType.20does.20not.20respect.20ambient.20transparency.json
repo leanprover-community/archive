@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>Due to <a href=\"https://github.com/leanprover/lean4/blob/8a302e6135bc1b0f1f2901702664c56cd424ebc2/src/Lean/Meta/InferType.lean#L193\">this <code>withTransparency .default</code></a>, <code>withTransparency .all $ inferType e</code> does not unfold <code>irreducible</code> constants. Should this be changed (to <code>withAtLeastTransparency .default</code>) or is it important that <code>inferType</code> runs with exactly <code>default</code> transparency?</p>",
+        "id": 349362842,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1681475015
+    },
+    {
+        "content": "<p>Is there an example where <code>inferType</code> needs to unfold constants to succeed? or for your own code to succeed?</p>\n<p>I wonder if the reason it's at a specific transparency is for the inferType cache.</p>",
+        "id": 349385582,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1681479368
+    },
+    {
+        "content": "<p>Indeed it's very possible that this would create a caching issue.</p>\n<p>I discovered this when testing an extension of Aesop that allows users to change the transparency used by various rules. One of these rules uses <code>inferType</code> internally and therefore fails on this (synthetic) test case:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[irreducible]</span> <span class=\"kd\">def</span> <span class=\"n\">T</span> <span class=\"o\">:=</span> <span class=\"n\">Unit</span> <span class=\"bp\">→</span> <span class=\"n\">Empty</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">T</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">u</span> <span class=\"o\">:</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">aesop</span> <span class=\"bp\">...</span>\n</code></pre></div>\n<p>The rule constructs the application <code>h u</code> to derive <code>Empty</code>, but calling <code>inferType</code> on <code>h u</code> fails since it refuses to unfold <code>T</code> in the type of <code>h</code>.</p>",
+        "id": 349389683,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1681480259
+    },
+    {
+        "content": "<p>I see, well at least <code>h u</code> itself fails since <code>T</code> is irreducible. You can't even do <code>with_unfolding_all have := h u</code>, presumably due to the term elaborator using <code>inferType</code> to check if <code>h</code> is a function.</p>",
+        "id": 349399946,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1681482297
+    },
+    {
+        "content": "<p>You can trick it like this: <code>with_unfolding_all have := (id h : Unit → Empty) u</code> (or more generally you can use <code>(id h : (_ : _) → _) u</code>)</p>",
+        "id": 349400211,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1681482361
+    },
+    {
+        "content": "<p>Even though <code>inferType</code> might use a specific transparency, you can always unfold things in the type afterwards.</p>",
+        "id": 349400505,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1681482407
+    },
+    {
+        "content": "<p>Nice hacks. :D If this behaviour leads to user-facing bugs/inconsistencies involving <code>with_unfolding_all</code>, that seems like an additional argument for change. I imagine it should be possible to address the caching by working with a temporary cache if <code>inferType</code> is used at <code>all</code> transparency.</p>",
+        "id": 350048344,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1681507137
+    },
+    {
+        "content": "<p>Maybe the bug is in <a href=\"https://github.com/leanprover/lean4/blob/3788145a56b457b20f7446ba2be344d97f7149d0/src/Lean/Meta/InferType.lean#L81\">this line</a> where <code>inferType</code> does whnf at default transparency.</p>\n<p>The reason being is that (I think) the contract for <code>inferType</code> is that it's for terms that pass <code>check</code>, and <code>check</code> does everything at <code>.all</code> transparency. Maybe <code>inferType</code> should use <code>.all</code> in general too?</p>",
+        "id": 350051563,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1681508756
+    },
+    {
+        "content": "<p>I was actually pretty surprised to see the error</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">function</span> <span class=\"n\">expected</span>\n  <span class=\"n\">h</span> <span class=\"n\">u</span>\n</code></pre></div>\n<p>and wondered whether something was being truncated because it's not the usual one you get, which would be more like</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#check</span> <span class=\"n\">true</span> <span class=\"n\">true</span>\n<span class=\"c\">/-</span>\n<span class=\"cm\">function expected at</span>\n<span class=\"cm\">  true</span>\n<span class=\"cm\">term has type</span>\n<span class=\"cm\">  Bool</span>\n<span class=\"cm\">-/</span>\n</code></pre></div>\n<p>I doubt we're meant to see it; the elaborator is fine with <code>h u</code> under <code>with_unfolding_all</code> (you can tell because it's the shorter \"function expected\" error), and I would expect <code>inferType</code> to work for a type correct elaborated term no matter the current reducibility settings.</p>",
+        "id": 350052714,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1681509356
+    },
+    {
+        "content": "<p>At this point I think we need the core devs to determine whether this is considered a bug. I'll make an issue.</p>",
+        "id": 350520785,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1681739408
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/pull/2194\">lean4#2194</a></p>",
+        "id": 350526195,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1681740491
+    }
+]

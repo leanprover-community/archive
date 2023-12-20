@@ -1,0 +1,128 @@
+[
+    {
+        "content": "<p>There is some code in <code>Mathlib.Lean.Meta</code> that tries to determine if a goal <code>g</code> is \"independent\" of a list of other goals, in the sense that assigning a value to <code>g</code> cannot change the solvability of those other goals.</p>\n<p>However it is unfortunately buggy, and I'd like some help sorting it out.</p>\n<p>Here's <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.MVarId.independent#src\">src#Lean.MVarId.independent</a>?:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"sd\">/--</span>\n<span class=\"sd\">Check if a goal is \"independent\" of a list of other goals.</span>\n<span class=\"sd\">We say a goal is independent of other goals if assigning a value to it</span>\n<span class=\"sd\">can not change the solvability of the other goals.</span>\n\n<span class=\"sd\">This function only calculates a conservative approximation of this condition.</span>\n<span class=\"sd\">-/</span>\n<span class=\"kd\">def</span> <span class=\"n\">independent</span><span class=\"bp\">?</span> <span class=\"o\">(</span><span class=\"n\">L</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">g</span> <span class=\"o\">:</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"n\">Bool</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">t</span> <span class=\"bp\">←</span> <span class=\"n\">instantiateMVars</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">g.getType</span><span class=\"o\">)</span>\n  <span class=\"k\">if</span> <span class=\"n\">t.hasExprMVar</span> <span class=\"k\">then</span>\n    <span class=\"c1\">-- If the goal's type contains other meta-variables,</span>\n    <span class=\"c1\">-- we conservatively say that `g` is not independent.</span>\n    <span class=\"n\">return</span> <span class=\"n\">false</span>\n  <span class=\"k\">if</span> <span class=\"n\">t.isProp</span> <span class=\"k\">then</span>\n    <span class=\"c1\">-- If the goal is propositional,</span>\n    <span class=\"c1\">-- proof-irrelevance should ensure it is independent of any other goals.</span>\n    <span class=\"n\">return</span> <span class=\"n\">true</span>\n  <span class=\"k\">if</span> <span class=\"bp\">←</span> <span class=\"n\">g.subsingleton</span><span class=\"bp\">?</span> <span class=\"k\">then</span>\n    <span class=\"c1\">-- If the goal is a subsingleton, it should be independent of any other goals.</span>\n    <span class=\"n\">return</span> <span class=\"n\">true</span>\n  <span class=\"c1\">-- Finally, we check if the goal `g` appears in the type of any of the goals `L`.</span>\n  <span class=\"k\">let</span> <span class=\"n\">r</span> <span class=\"bp\">←</span> <span class=\"n\">L.allM</span> <span class=\"k\">fun</span> <span class=\"n\">g'</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">t'</span> <span class=\"bp\">←</span> <span class=\"n\">instantiateMVars</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">g'.getType</span><span class=\"o\">)</span>\n    <span class=\"n\">pure</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">!</span><span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">exprDependsOn'</span> <span class=\"n\">t'</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">mvar</span> <span class=\"n\">g</span><span class=\"o\">))</span>\n  <span class=\"n\">return</span> <span class=\"n\">r</span>\n</code></pre></div>",
+        "id": 387844678,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693302171
+    },
+    {
+        "content": "<p>Here's an example of it working fine:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Lean.Meta</span>\n<span class=\"kn\">import</span> <span class=\"n\">Mathlib.Tactic.RunCmd</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Tactic</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"bp\">Σ</span> <span class=\"n\">α</span><span class=\"o\">,</span> <span class=\"n\">Option</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">constructor</span>\n  <span class=\"c1\">-- Goals are `?fst : Type` and `?snd : Option ?fst`.</span>\n  <span class=\"c1\">-- Correctly, `independent?` claims neither is independent.</span>\n  <span class=\"c1\">-- (`?snd` because its type contains a metavariable, and `?fst` because `?snd`'s type depends on it)</span>\n  <span class=\"n\">run_tac</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">gs</span> <span class=\"bp\">←</span> <span class=\"n\">getGoals</span>\n    <span class=\"n\">for</span> <span class=\"n\">g</span> <span class=\"k\">in</span> <span class=\"n\">gs</span> <span class=\"k\">do</span>\n      <span class=\"n\">guard</span> <span class=\"bp\">!</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">g.independent</span><span class=\"bp\">?</span> <span class=\"n\">gs</span><span class=\"o\">)</span>\n  <span class=\"gr\">sorry</span>\n</code></pre></div>\n<p>But it's easy to fool:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Lean.Meta</span>\n<span class=\"kn\">import</span> <span class=\"n\">Mathlib.Tactic.RunCmd</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Tactic</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"bp\">Σ</span> <span class=\"n\">α</span><span class=\"o\">,</span> <span class=\"n\">Option</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">constructor</span>\n  <span class=\"c1\">-- Now we introduce a hypothesis in the second goal</span>\n  <span class=\"n\">rotate_left</span>\n  <span class=\"k\">have</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span>\n  <span class=\"c1\">-- Now `independent?` incorrectly thinks `?fst` is independent.</span>\n  <span class=\"n\">run_tac</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">gs</span> <span class=\"bp\">←</span> <span class=\"n\">getGoals</span>\n    <span class=\"n\">for</span> <span class=\"n\">g</span> <span class=\"k\">in</span> <span class=\"n\">gs</span> <span class=\"k\">do</span>\n      <span class=\"n\">guard</span> <span class=\"bp\">!</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">g.independent</span><span class=\"bp\">?</span> <span class=\"n\">gs</span><span class=\"o\">)</span> <span class=\"bp\">&lt;|&gt;</span> <span class=\"n\">throwError</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"{← g.getType} was incorrectly considered independent!\"</span>\n  <span class=\"gr\">sorry</span>\n</code></pre></div>\n<p>What's going on here? After the <code>have</code>, the goal state says:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">case</span> <span class=\"n\">fst</span>\n<span class=\"n\">this</span><span class=\"o\">:</span> <span class=\"n\">Nat</span>\n<span class=\"bp\">⊢</span> <span class=\"kt\">Type</span> <span class=\"bp\">?</span><span class=\"n\">u.8</span>\n<span class=\"n\">case</span> <span class=\"n\">snd</span>\n<span class=\"bp\">⊢</span> <span class=\"n\">Option</span>\n  <span class=\"o\">(</span><span class=\"n\">let_fun</span> <span class=\"n\">this</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span><span class=\"bp\">;</span>\n  <span class=\"bp\">?</span><span class=\"n\">m.39</span> <span class=\"n\">this</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>where <code>?m.39 : Nat → Type ?u.8</code> has \"lost contact\" with <code>?fst</code>, and so <code>independent?</code> can see that actually <code>?fst</code> does appear here.</p>",
+        "id": 387844691,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693302174
+    },
+    {
+        "content": "<p>(This problem causes the <code>exact?</code> bug reported <a href=\"#narrow/stream/287929-mathlib4/topic/exact.3F.20recent.20regression.3F/near/387785945\">earlier</a>.)</p>",
+        "id": 387845671,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693302395
+    },
+    {
+        "content": "<p>Maybe I am misunderstanding, but when the target is a Type, I would have thought that \"dependence\" would be (also) that you are looking for a term of that type.  So, maybe, replacing the last</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>    <span class=\"n\">pure</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">!</span><span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">exprDependsOn'</span> <span class=\"n\">t'</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">mvar</span> <span class=\"n\">g</span><span class=\"o\">))</span>\n</code></pre></div>\n<p>with</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>    <span class=\"k\">let</span> <span class=\"n\">defeq</span> <span class=\"o\">:=</span> <span class=\"bp\">←</span> <span class=\"n\">isDefEq</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">inferType</span> <span class=\"n\">t'</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">g.getType''</span><span class=\"o\">)</span>\n    <span class=\"n\">pure</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">!</span><span class=\"o\">((</span><span class=\"bp\">←</span> <span class=\"n\">exprDependsOn'</span> <span class=\"n\">t'</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">mvar</span> <span class=\"n\">g</span><span class=\"o\">))</span> <span class=\"bp\">∨</span> <span class=\"n\">defeq</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>is closer to what you want?</p>\n<p>Sorry if this is just noise!</p>",
+        "id": 387855995,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693306015
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"321459\">@Damiano Testa</span> , I'm not sure what you mean. I think that situation is already being handled correctly:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Lean.Meta</span>\n<span class=\"kn\">import</span> <span class=\"n\">Mathlib.Tactic.RunCmd</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Tactic</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"bp\">Σ</span> <span class=\"n\">α</span><span class=\"o\">,</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">constructor</span>\n  <span class=\"c1\">-- Goals are `?fst : Type` and `?snd : ?fst`.</span>\n  <span class=\"c1\">-- Correctly, `independent?` claims neither is independent.</span>\n  <span class=\"c1\">-- (`?snd` because its type contains a metavariable, and `?fst` because `?snd`'s type depends on it)</span>\n  <span class=\"n\">run_tac</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">gs</span> <span class=\"bp\">←</span> <span class=\"n\">getGoals</span>\n    <span class=\"n\">for</span> <span class=\"n\">g</span> <span class=\"k\">in</span> <span class=\"n\">gs</span> <span class=\"k\">do</span>\n      <span class=\"n\">guard</span> <span class=\"bp\">!</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">g.independent</span><span class=\"bp\">?</span> <span class=\"n\">gs</span><span class=\"o\">)</span>\n  <span class=\"n\">rotate_left</span>\n  <span class=\"gr\">sorry</span>\n  <span class=\"gr\">sorry</span>\n</code></pre></div>",
+        "id": 387857806,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693306765
+    },
+    {
+        "content": "<p>Hmm, this is strange: in the other case, the one where you expected something different, <code>exprDependsOn'</code> seems to give the opposite answer, though, or am I completely confused?</p>",
+        "id": 387858896,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693307149
+    },
+    {
+        "content": "<p>Yes, in the confusing case, that fact that I added an extra hypothesis means that <code>exprDependsOn'</code> can not see the dependence.</p>",
+        "id": 387859082,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693307209
+    },
+    {
+        "content": "<p>But the defeq check does say that the type of <code>t'</code> and the actual target of <code>g</code> are defeq.</p>",
+        "id": 387859213,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693307256
+    },
+    {
+        "content": "<p>So, I agree that in the latest working example <code>exprDependsOn'</code> is doing the right thing, but it seems to be confused by something else in the failing example from before.</p>",
+        "id": 387859371,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693307308
+    },
+    {
+        "content": "<p>The problem in the confusing situation is that the second goal depends on <code>?m.39 : Nat → Type ?u.8</code>, rather than <code>?fst :  Type ?u.8</code>.</p>",
+        "id": 387859586,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693307402
+    },
+    {
+        "content": "<p>Ok, so you are saying that the defeq test does the right thing in this situation, because it is just telling you that the type of <code>g'</code> is \"one-up\" from the type of <code>t'</code> and this is because of the <code>Nat → Type ?u.8</code>, right?</p>\n<p>(Btw, I have <em>way</em> more mvars than you do: <code>fun (this : Nat) =&gt; ?_uniq.16536 this</code>!)</p>",
+        "id": 387860494,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693307725
+    },
+    {
+        "content": "<p>I'm sorry, I don't understand.</p>",
+        "id": 387860762,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693307809
+    },
+    {
+        "content": "<p>While trying to answer your question, I realized that I need to think more about what I meant...</p>",
+        "id": 387861164,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693307968
+    },
+    {
+        "content": "<p>The fact that the question is about <em>in</em>dependence and the checks are for <em>dependence</em> and then the <code>!</code>s all conspire to confuse me.</p>",
+        "id": 387861296,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693308021
+    },
+    {
+        "content": "<p>In the confusing situation, <code>exprDependsOn' t' (.mvar g)</code> returns <code>false</code>, whereas we both agree that it should be true.  Am I right about this?</p>",
+        "id": 387862503,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693308508
+    },
+    {
+        "content": "<p>Yes!</p>",
+        "id": 387864706,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693309387
+    },
+    {
+        "content": "<p>But the solution has to come from understanding the relationship between the <code>?m.X : Nat → Type ?u</code> and <code>?fst : Type ?u</code>.</p>",
+        "id": 387864823,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693309433
+    },
+    {
+        "content": "<p>Ok, I think that my confused message was trying to say: the defeq solution simply checks that some universes somewhere agree -- oh, this is a sign that they could be dependent on each other!  I agree that it is too weak.</p>",
+        "id": 387865005,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693309490
+    },
+    {
+        "content": "<p>I've got one hint: <code>?m.39</code> is a delayed assignment, which is a metavariable with an entry in another table saying how it links up to another metavariable. The code for <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Meta.getMVars#doc\">docs#Lean.Meta.getMVars</a> will give you <em>all</em> metavariables, even accounting for delayed assignments.</p>\n<p>I'm not sure if this is a bug in <code>exprDependsOn'</code> that it doesn't account for delayed assignments, or if it's working as intended.</p>",
+        "id": 387892309,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693318849
+    },
+    {
+        "content": "<p>Here's a version that uses <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Meta.getMVars#doc\">docs#Lean.Meta.getMVars</a>, and it seems to do the right thing.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Lean.Meta</span>\n<span class=\"kn\">import</span> <span class=\"n\">Mathlib.Tactic.RunCmd</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Tactic</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">Lean.MVarId.independent</span><span class=\"bp\">?'</span> <span class=\"o\">(</span><span class=\"n\">L</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">g</span> <span class=\"o\">:</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"n\">Bool</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">t</span> <span class=\"bp\">←</span> <span class=\"n\">instantiateMVars</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">g.getType</span><span class=\"o\">)</span>\n  <span class=\"k\">if</span> <span class=\"n\">t.hasExprMVar</span> <span class=\"k\">then</span>\n    <span class=\"c1\">-- If the goal's type contains other meta-variables,</span>\n    <span class=\"c1\">-- we conservatively say that `g` is not independent.</span>\n    <span class=\"n\">return</span> <span class=\"n\">false</span>\n  <span class=\"k\">if</span> <span class=\"n\">t.isProp</span> <span class=\"k\">then</span>\n    <span class=\"c1\">-- If the goal is propositional,</span>\n    <span class=\"c1\">-- proof-irrelevance should ensure it is independent of any other goals.</span>\n    <span class=\"n\">return</span> <span class=\"n\">true</span>\n  <span class=\"k\">if</span> <span class=\"bp\">←</span> <span class=\"n\">g.subsingleton</span><span class=\"bp\">?</span> <span class=\"k\">then</span>\n    <span class=\"c1\">-- If the goal is a subsingleton, it should be independent of any other goals.</span>\n    <span class=\"n\">return</span> <span class=\"n\">true</span>\n  <span class=\"c1\">-- Finally, we check if the goal `g` appears in the type of any of the goals `L`.</span>\n  <span class=\"n\">L.allM</span> <span class=\"k\">fun</span> <span class=\"n\">g'</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">mvars</span> <span class=\"bp\">←</span> <span class=\"n\">Meta.getMVars</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">g'.getType</span><span class=\"o\">)</span>\n    <span class=\"n\">pure</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">!</span><span class=\"o\">(</span><span class=\"n\">mvars.contains</span> <span class=\"n\">g</span><span class=\"o\">)</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"bp\">Σ</span> <span class=\"n\">α</span><span class=\"o\">,</span> <span class=\"n\">Option</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">constructor</span>\n  <span class=\"c1\">-- Now we introduce a hypothesis in the second goal</span>\n  <span class=\"n\">rotate_left</span>\n  <span class=\"k\">have</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span>\n  <span class=\"n\">run_tac</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">gs</span> <span class=\"bp\">←</span> <span class=\"n\">getUnsolvedGoals</span>\n    <span class=\"n\">for</span> <span class=\"n\">g</span> <span class=\"k\">in</span> <span class=\"n\">gs</span> <span class=\"k\">do</span>\n      <span class=\"k\">let</span> <span class=\"n\">ty</span> <span class=\"bp\">←</span> <span class=\"n\">instantiateMVars</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">g.getType</span><span class=\"o\">)</span>\n      <span class=\"n\">logInfo</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"{Expr.mvar g} : {ty} is independent = {(← g.independent?' gs)}\"</span>\n  <span class=\"gr\">sorry</span>\n<span class=\"c\">/-</span>\n<span class=\"cm\">?fst : Type ?u.3087 is independent = false</span>\n\n<span class=\"cm\">?snd : Option</span>\n<span class=\"cm\">  (let_fun this := 0;</span>\n<span class=\"cm\">  ?m.3118 this) is independent = false</span>\n<span class=\"cm\">-/</span>\n</code></pre></div>",
+        "id": 387893900,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693319307
+    },
+    {
+        "content": "<p>Thanks Kyle, this was super helpful! I think this is incorrect behaviour in <code>exprDependsOn'</code>, I've made an issue at <a href=\"https://github.com/leanprover-community/lean/pull/2483\">lean#2483</a> and a proposed fix at <a href=\"https://github.com/leanprover/lean4/pull/2484\">lean4#2484</a>, and in the meantime your solution works in <code>exact?</code>.</p>",
+        "id": 388030119,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693370253
+    }
+]

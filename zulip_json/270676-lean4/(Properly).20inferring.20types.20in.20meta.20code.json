@@ -1,0 +1,32 @@
+[
+    {
+        "content": "<p>I'm trying to infer the type of an ambiguous let binding, whose type should be able to be inferred by it's usage in a later function.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span> <span class=\"n\">Elab</span> <span class=\"n\">Term</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"dbg_type\"</span> <span class=\"n\">fv</span><span class=\"o\">:</span><span class=\"n\">ident</span> <span class=\"n\">tail</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">fv.getId</span>\n  <span class=\"k\">let</span> <span class=\"n\">some</span> <span class=\"n\">fv</span> <span class=\"bp\">←</span> <span class=\"n\">resolveId</span><span class=\"bp\">?</span> <span class=\"n\">fv</span>\n    <span class=\"bp\">|</span> <span class=\"n\">panic</span><span class=\"bp\">!</span> <span class=\"s2\">\"\"</span>\n\n  <span class=\"n\">synthesizeSyntheticMVarsNoPostponing</span>\n  <span class=\"k\">let</span> <span class=\"n\">ty</span> <span class=\"bp\">←</span> <span class=\"n\">inferType</span> <span class=\"n\">fv</span>\n\n  <span class=\"n\">dbg_trace</span> <span class=\"s2\">\"trace: '{name}' has type '{ty}'\"</span>\n  <span class=\"k\">if</span> <span class=\"n\">ty.isMVar</span> <span class=\"k\">then</span>\n    <span class=\"n\">dbg_trace</span> <span class=\"s2\">\"{ty} is an MVar\"</span>\n  <span class=\"k\">else</span>\n    <span class=\"n\">dbg_trace</span> <span class=\"s2\">\"{ty} is not an MVar\"</span>\n  <span class=\"n\">Elab.Term.elabTerm</span> <span class=\"n\">tail</span> <span class=\"n\">none</span>\n\n\n\n\n<span class=\"kd\">def</span> <span class=\"n\">force_nat</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"n\">id</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"o\">:=</span>\n  <span class=\"k\">let</span> <span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"mi\">2</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"o\">:=</span> <span class=\"n\">force_nat</span> <span class=\"n\">n</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"o\">:=</span> <span class=\"n\">dbg_type</span> <span class=\"n\">n</span> <span class=\"mi\">1</span>\n  <span class=\"bp\">.</span><span class=\"n\">intro</span>\n</code></pre></div>\n<p>The infoview shows <code>n : Nat</code> as expected, but the trace just says</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">trace</span><span class=\"o\">:</span> <span class=\"sc\">'n'</span> <span class=\"n\">has</span> <span class=\"n\">type</span> <span class=\"bp\">'?</span><span class=\"n\">_uniq.3943'</span>\n<span class=\"bp\">?</span><span class=\"n\">_uniq.3943</span> <span class=\"n\">is</span> <span class=\"n\">an</span> <span class=\"n\">MVar</span>\n</code></pre></div>\n<p>I get the feeling I need to so more synthesizing of MVars somehow, is there some method stronger than <code>synthesizeSyntheticMVars</code>?</p>",
+        "id": 351001212,
+        "sender_full_name": "Alex Keizer",
+        "timestamp": 1681899674
+    },
+    {
+        "content": "<p>Looks to me like the mvar is getting assigned just fine, you just need to <code>instantiateMVars ty</code>.</p>",
+        "id": 351010734,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1681902158
+    },
+    {
+        "content": "<p>Yep, that fixes it. It's maybe mildly surprising that <code>inferType</code> doesn't already do this.</p>",
+        "id": 351011160,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1681902282
+    },
+    {
+        "content": "<p>Aha, so to make sure I understand correctly: the environment already has a mapping that the mvar <code>?_uniq.3943</code> should stand for <code>Nat</code>, and <code>instantiateMVars</code> just goes to check this mapping and replaces any (pre-assigned) mvars with their assigned value, right?</p>",
+        "id": 351013723,
+        "sender_full_name": "Alex Keizer",
+        "timestamp": 1681902989
+    },
+    {
+        "content": "<p>Yes. Lean does not remember which expressions a metavariable <code>?m</code> may appear in. So when a metavariable is assigned, these expressions remain unchanged and still contain <code>?m</code>. You must then manually synchronise the expressions with the assignment by calling <code>instantiateMVars</code>. Forgetting to do this is one of the most common mistakes in tactic code. Many builtin functions (e.g. <code>whnf</code>) also do <code>instantiateMVars</code> for you, but when in doubt it's better to instantiate too much than too little since <code>instantiateMVars</code> is quite well-optimised. In particular, it's an immediate no-op for (sub)expressions which don't contain any metavariables.</p>",
+        "id": 351019776,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1681904656
+    }
+]

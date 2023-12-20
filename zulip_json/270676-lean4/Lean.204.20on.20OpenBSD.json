@@ -1,0 +1,158 @@
+[
+    {
+        "content": "<p>Has anyone here managed to build Lean 4 on OpenBSD?  I'm trying to build 4.0.0.<br>\nFirst bump was the non-existent <code>sys/random.h</code>.  For the time being I have just commented-out the corresponding <code>#include</code> line in <code>runtime/io.cpp</code>.  This allowed <code>gmake</code> to move past this bump for the time being, but it hit a second one:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>[ 63%] Built target compiler\n[ 63%] Built target leancpp\n[ 63%] Built target make_stdlib\n[ 63%] Building CXX object runtime/CMakeFiles/leanrt_initial-exec.dir/stack_overflow.cpp.o\n/cave/thanos/devel/lean4/lean4-4.0.0/stage0/src/runtime/stack_overflow.cpp:63:5: error: use of undeclared identifier 'pthread_getattr_np'; did you mean 'pthread_attr'?\n    pthread_getattr_np(pthread_self(), &amp;attr);\n    ^\n/usr/include/pthread.h:96:8: note: 'pthread_attr' declared here\nstruct pthread_attr;\n       ^\n1 error generated.\ngmake[5]: *** [runtime/CMakeFiles/leanrt_initial-exec.dir/build.make:342: runtime/CMakeFiles/leanrt_initial-exec.dir/stack_overflow.cpp.o] Error 1\ngmake[4]: *** [CMakeFiles/Makefile2:1129: runtime/CMakeFiles/leanrt_initial-exec.dir/all] Error 2\ngmake[3]: *** [Makefile:146: all] Error 2\ngmake[2]: *** [CMakeFiles/stage0.dir/build.make:86: stage0-prefix/src/stage0-stamp/stage0-build] Error 2\ngmake[1]: *** [CMakeFiles/Makefile2:90: CMakeFiles/stage0.dir/all] Error 2\ngmake: *** [Makefile:136: all] Error 2\n</code></pre></div>\n<p>I tried messing with <code>src/runtime/stack_overflow.cpp</code>.  The following snippet starts on line 56:</p>\n<div class=\"codehilite\" data-code-language=\"C++\"><pre><span></span><code><span class=\"kt\">bool</span><span class=\"w\"> </span><span class=\"nf\">is_within_stack_guard</span><span class=\"p\">(</span><span class=\"kt\">void</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"w\"> </span><span class=\"n\">addr</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"kt\">char</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"w\"> </span><span class=\"n\">stackaddr</span><span class=\"p\">;</span>\n<span class=\"cp\">#ifdef __APPLE__</span>\n<span class=\"w\">    </span><span class=\"n\">stackaddr</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"k\">static_cast</span><span class=\"o\">&lt;</span><span class=\"kt\">char</span><span class=\"w\"> </span><span class=\"o\">*&gt;</span><span class=\"p\">(</span><span class=\"n\">pthread_get_stackaddr_np</span><span class=\"p\">(</span><span class=\"n\">pthread_self</span><span class=\"p\">()))</span><span class=\"w\"> </span><span class=\"o\">-</span><span class=\"w\"> </span><span class=\"n\">pthread_get_stacksize_np</span><span class=\"p\">(</span><span class=\"n\">pthread_self</span><span class=\"p\">());</span>\n<span class=\"cp\">#else</span>\n<span class=\"w\">    </span><span class=\"n\">pthread_attr_t</span><span class=\"w\"> </span><span class=\"n\">attr</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"n\">pthread_attr_init</span><span class=\"p\">(</span><span class=\"o\">&amp;</span><span class=\"n\">attr</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"o\">!=</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"nb\">false</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"n\">pthread_getattr_np</span><span class=\"p\">(</span><span class=\"n\">pthread_self</span><span class=\"p\">(),</span><span class=\"w\"> </span><span class=\"o\">&amp;</span><span class=\"n\">attr</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"kt\">size_t</span><span class=\"w\"> </span><span class=\"n\">stacksize</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"n\">pthread_attr_getstack</span><span class=\"p\">(</span><span class=\"o\">&amp;</span><span class=\"n\">attr</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"k\">reinterpret_cast</span><span class=\"o\">&lt;</span><span class=\"kt\">void</span><span class=\"w\"> </span><span class=\"o\">**&gt;</span><span class=\"p\">(</span><span class=\"o\">&amp;</span><span class=\"n\">stackaddr</span><span class=\"p\">),</span><span class=\"w\"> </span><span class=\"o\">&amp;</span><span class=\"n\">stacksize</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"n\">pthread_attr_destroy</span><span class=\"p\">(</span><span class=\"o\">&amp;</span><span class=\"n\">attr</span><span class=\"p\">);</span>\n<span class=\"cp\">#endif</span>\n<span class=\"w\">    </span><span class=\"c1\">// close enough; the actual guard might be bigger, but it's unlikely a Lean function will have stack frames that big</span>\n<span class=\"w\">    </span><span class=\"kt\">size_t</span><span class=\"w\"> </span><span class=\"n\">guardsize</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"k\">static_cast</span><span class=\"o\">&lt;</span><span class=\"kt\">size_t</span><span class=\"o\">&gt;</span><span class=\"p\">(</span><span class=\"n\">sysconf</span><span class=\"p\">(</span><span class=\"n\">_SC_PAGESIZE</span><span class=\"p\">));</span>\n<span class=\"w\">    </span><span class=\"c1\">// the stack guard is *below* the stack</span>\n<span class=\"w\">    </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"n\">stackaddr</span><span class=\"w\"> </span><span class=\"o\">-</span><span class=\"w\"> </span><span class=\"n\">guardsize</span><span class=\"w\"> </span><span class=\"o\">&lt;=</span><span class=\"w\"> </span><span class=\"n\">addr</span><span class=\"w\"> </span><span class=\"o\">&amp;&amp;</span><span class=\"w\"> </span><span class=\"n\">addr</span><span class=\"w\"> </span><span class=\"o\">&lt;</span><span class=\"w\"> </span><span class=\"n\">stackaddr</span><span class=\"p\">;</span>\n<span class=\"p\">}</span>\n</code></pre></div>\n<p>Usually, in cases like these, going the APPLE/MACOSX route has more chances to work for OpenBSD (programs tend to assume that the <code>#else</code> clause corresponds to some GNU/Linux for Linuxism's sake).  But for this error neither the <code>#ifdef __APPLE__</code> route nor the <code>#else</code> route worked.  I managed to get past this temporarily by commenting out this whole <code>#ifdef…#endif</code>, although I get a fair warning:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>[ 63%] Building CXX object runtime/CMakeFiles/leanrt_initial-exec.dir/stack_overflow.cpp.o\n/cave/thanos/devel/lean4/lean4-4.0.0/stage0/src/runtime/stack_overflow.cpp:71:12: warning: variable 'stackaddr' is uninitialized when used here [-Wuninitialized]\n    return stackaddr - guardsize &lt;= addr &amp;&amp; addr &lt; stackaddr;\n           ^~~~~~~~~\n/cave/thanos/devel/lean4/lean4-4.0.0/stage0/src/runtime/stack_overflow.cpp:57:21: note: initialize the variable 'stackaddr' to silen\nce this warning\n    char * stackaddr;\n                    ^\n                     = nullptr\n1 warning generated.\n</code></pre></div>\n<p>And now it bumps while trying to build <code>libleanshared.so</code>, with ld errors suggesting to «recompile with -fPIC»:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>[    ] Building /cave/thanos/devel/lean4/lean4-4.0.0/build/release/stage0/lib/lean/libleanshared.so\nld: error: relocation R_X86_64_PC32 cannot be used against symbol l_Classical_tacticBy__cases___x3a__; recompile with -fPIC\n&gt;&gt;&gt; defined in /cave/thanos/devel/lean4/lean4-4.0.0/build/release/stage0/lib/lean/libInit.a(Classical.o)\n&gt;&gt;&gt; referenced by Classical.c\n&gt;&gt;&gt;               Classical.o:(initialize_Init_Classical) in archive /cave/thanos/devel/lean4/lean4-4.0.0/build/release/stage0/lib/l\nean/libInit.a\n\nld: error: relocation R_X86_64_PC32 cannot be used against symbol l_instCoeTC___rarg; recompile with -fPIC\n&gt;&gt;&gt; defined in /cave/thanos/devel/lean4/lean4-4.0.0/build/release/stage0/lib/lean/libInit.a(Coe.o)\n&gt;&gt;&gt; referenced by Coe.c\n&gt;&gt;&gt;               Coe.o:(l_instCoeTC) in archive /cave/thanos/devel/lean4/lean4-4.0.0/build/release/stage0/lib/lean/libInit.a\n</code></pre></div>\n<p>…and many similar errors, until it dies with exit code 2:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>ld: error: relocation R_X86_64_PC32 cannot be used against symbol l_decPropToBool___rarg___boxed; recompile with -fPIC\n&gt;&gt;&gt; defined in /cave/thanos/devel/lean4/lean4-4.0.0/build/release/stage0/lib/lean/libInit.a(Coe.o)\n&gt;&gt;&gt; referenced by Coe.c\n&gt;&gt;&gt;               Coe.o:(l_decPropToBool) in archive /cave/thanos/devel/lean4/lean4-4.0.0/build/release/stage0/lib/lean/libInit.a\n\nld: error: too many errors emitted, stopping now (use -error-limit=0 to see all errors)\ncc: error: linker command failed with exit code 1 (use -v to see invocation)\ngmake[6]: *** [/cave/thanos/devel/lean4/lean4-4.0.0/build/release/stage0/stdlib.make:47: /cave/thanos/devel/lean4/lean4-4.0.0/build/release/stage0/lib/lean/libleanshared.so] Error 1\ngmake[5]: *** [CMakeFiles/leanshared.dir/build.make:71: CMakeFiles/leanshared] Error 2\ngmake[4]: *** [CMakeFiles/Makefile2:1051: CMakeFiles/leanshared.dir/all] Error 2\ngmake[3]: *** [Makefile:146: all] Error 2\ngmake[2]: *** [CMakeFiles/stage0.dir/build.make:86: stage0-prefix/src/stage0-stamp/stage0-build] Error 2\ngmake[1]: *** [CMakeFiles/Makefile2:90: CMakeFiles/stage0.dir/all] Error 2\ngmake: *** [Makefile:136: all] Error 2\n</code></pre></div>\n<p>Any ideas?</p>",
+        "id": 390142435,
+        "sender_full_name": "Thanos Tsouanas",
+        "timestamp": 1694350355
+    },
+    {
+        "content": "<p>You need to add another ifdef specifically for openbsd where the function to be used is <br>\npthread_attr_getstackaddr - from pthreads.3 - <a href=\"https://man.openbsd.org/pthreads.3#pthread_attr_getstackaddr\">https://man.openbsd.org/pthreads.3#pthread_attr_getstackaddr</a><br>\npthreads is a pita as there's over 9000 non-portable (pthread_*_np) functions everywhere.</p>",
+        "id": 390229989,
+        "sender_full_name": "Aisha Tammy",
+        "timestamp": 1694404767
+    },
+    {
+        "content": "<p>Thanks <span class=\"user-mention\" data-user-id=\"648599\">@Aisha Tammy</span> !  I believe this is indeed the proper way to solve the second \"bump\" I mentioned above.<br>\nBut looking at the original <code>stack_overflow.cpp</code> code and pthreads(3) man page I am not sure how I should proceed with translating this part.<br>\nDo you have any idea about the ld error?  (the one suggesting to «recompile with -fPIC»).</p>",
+        "id": 390548893,
+        "sender_full_name": "Thanos Tsouanas",
+        "timestamp": 1694533842
+    },
+    {
+        "content": "<p>PIC is for position independent code which is needed when you want to relocate symbols, which typically is needed when creating a shared library as that is going to be loaded by the runtime linker and potentially placed in different locations (aslr/etc.)<br>\nThe fix here would be to find out what is generating the shared/static libraries and add <code>-fPIC</code> to both CFLAGS and LDFLAGS.<br>\nFrom a quick look it seems like the libInit.a is being built using the <a href=\"http://leanc.sh\">leanc.sh</a>, which is where you would need to add -fPIC to the CFLAGS/LDFLAGS, but it is some kind of wrapper around CC and that file itself is autogenerated using CMakelists.txt at here - <a href=\"https://github.com/leanprover/lean4/blob/master/src/CMakeLists.txt#L567\">https://github.com/leanprover/lean4/blob/master/src/CMakeLists.txt#L567</a><br>\nNow if we look above that here - <a href=\"https://github.com/leanprover/lean4/blob/master/src/CMakeLists.txt#L355\">https://github.com/leanprover/lean4/blob/master/src/CMakeLists.txt#L355</a> - we see that CMakelists.txt has capability to add fpic but its only doing it for Linux, so the solution is to also add *BSD to that check (or what ever other workaround lean developers would be happy to accept as a patch). <br>\nI'm not a lean user or developer nor have I ever seen the lean codebase before this, so I hope you can try to do the next steps yourself  :)<br>\nbest of luck</p>",
+        "id": 390636245,
+        "sender_full_name": "Aisha Tammy",
+        "timestamp": 1694574387
+    },
+    {
+        "content": "<p>Thanks again, <span class=\"user-mention\" data-user-id=\"648599\">@Aisha Tammy</span>!  The <code>-fPIC</code> problem was solved thanks to your tip, although I couldn't spot how the <code>stage0</code>'s <code>CMakeLists.txt</code> is generated.  (So I had to edit both <code>CMakeList.txt</code> files manually.)  I still didn't manage to finish the build; I'll keep trying and report back.</p>",
+        "id": 392024042,
+        "sender_full_name": "Thanos Tsouanas",
+        "timestamp": 1695173637
+    },
+    {
+        "content": "<p>nothing in stage0 is autogenerated (except by the previous stage, no longer in the source tree)</p>",
+        "id": 392024372,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1695173781
+    },
+    {
+        "content": "<p>Aaah, I just noticed that lean4-4.0.0.tar.gz already has <code>src/CMakeList.txt</code> <em>and</em> <code>stage0/CMakeList.txt</code>.  Sorry, I thought <code>stage0</code>'s was somehow generated from somewhere.  So it makes sense that I had to alter both files in the (so far unsuccessful) attempt to build on OpenBSD.</p>",
+        "id": 392024785,
+        "sender_full_name": "Thanos Tsouanas",
+        "timestamp": 1695174026
+    },
+    {
+        "content": "<p>it's unusual (but not unprecedented) to need to modify <code>stage0/</code>, although this is generally on the assumption that there is already an existing build that works and you are just making a modification to it. If this is the first time building on a new platform I can imagine needing to make modifications to both</p>",
+        "id": 392025030,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1695174165
+    },
+    {
+        "content": "<p>it is interesting that we are shipping lean4 with both stage0 and stage1. <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> is it possible to remove stage0 from releases? Seems like that just needlessly increases the distribution size</p>",
+        "id": 392025284,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1695174282
+    },
+    {
+        "content": "<p>This line here - <a href=\"https://github.com/leanprover/lean4/blob/master/CMakeLists.txt#L6\">https://github.com/leanprover/lean4/blob/master/CMakeLists.txt#L6</a><br>\nIt says you can pass variables to stage0 with some prefix, if that helps.<br>\n<span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> OpenBSD is a new platform, with its own everything, so I do imagine a stage0 is needed. I am unfamiliar with how Lean4 builds, presumably at some point the build will be able to have a bootstrap blob and just use that going forward. Would be good if someone makes an official port/package and that way would be easier to keep track of patches/ problems. <br>\n<span class=\"user-mention\" data-user-id=\"384773\">@Thanos Tsouanas</span> if you want to create an official OpenBSD package that would be a nice way of moving forward.</p>",
+        "id": 392027190,
+        "sender_full_name": "Aisha Tammy",
+        "timestamp": 1695175366
+    },
+    {
+        "content": "<p>the \"bootstrap blob\" is <code>stage0/</code></p>",
+        "id": 392027231,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1695175392
+    },
+    {
+        "content": "<p>it's not a blob, although it consists largely of generated C source files so it may as well be to some extent</p>",
+        "id": 392027259,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1695175415
+    },
+    {
+        "content": "<p>is it possible to build stage0 without the top level cmake being run? The \"external project\" structure with cmake calling cmake was quite interesting to look at, haven't seen that one before XD</p>",
+        "id": 392027385,
+        "sender_full_name": "Aisha Tammy",
+        "timestamp": 1695175488
+    },
+    {
+        "content": "<p>the whole build structure is dark magic and voodoo as far as I can understand. I've been considering writing a bootstrap chain for lean4 but disentangling those cmake files is a nightmare</p>",
+        "id": 392027544,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1695175572
+    },
+    {
+        "content": "<p>Haha, agreed, cmake is not the most fun tool but oh well.</p>",
+        "id": 392027874,
+        "sender_full_name": "Aisha Tammy",
+        "timestamp": 1695175727
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"648599\">Aisha Tammy</span> <a href=\"#narrow/stream/270676-lean4/topic/Lean.204.20on.20OpenBSD/near/392027190\">said</a>:</p>\n<blockquote>\n<p>This line here [...] says you can pass variables to stage0 with some prefix, if that helps.</p>\n</blockquote>\n<p>Knowing that <code>stage0/CMakeLists.txt</code> actually exists on the source tree I suppose it's better if I patch both <code>CMakeList.txt</code> files.<br>\nThere is an official port, but it's Lean 3.  I'll check with the maintainer to see what the plans are for a possible upgrade.</p>",
+        "id": 392042492,
+        "sender_full_name": "Thanos Tsouanas",
+        "timestamp": 1695184910
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Lean.204.20on.20OpenBSD/near/392025284\">said</a>:</p>\n<blockquote>\n<p>it is interesting that we are shipping lean4 with both stage0 and stage1. <span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> is it possible to remove stage0 from releases? Seems like that just needlessly increases the distribution size</p>\n</blockquote>\n<p>We aren't, I assume <span class=\"user-mention\" data-user-id=\"384773\">@Thanos Tsouanas</span> was talking about the source tarball</p>",
+        "id": 392055227,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1695193296
+    },
+    {
+        "content": "<p>Yes, I was talking about <code>lean4-4.0.0.tar.gz</code>, which comes with <code>stage0</code>.  But I got curious: what would «shipping» refer to, if not the source tarball?</p>",
+        "id": 392232523,
+        "sender_full_name": "Thanos Tsouanas",
+        "timestamp": 1695263345
+    },
+    {
+        "content": "<p>Lean is primarily delivered to users as \"releases\", either nightlies or tagged versions</p>",
+        "id": 392232661,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1695263518
+    },
+    {
+        "content": "<p>e.g. <a href=\"https://github.com/leanprover/lean4/releases/tag/v4.0.0\">https://github.com/leanprover/lean4/releases/tag/v4.0.0</a></p>",
+        "id": 392232706,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1695263542
+    },
+    {
+        "content": "<p>you can also find nightlies on <a href=\"https://github.com/leanprover/lean4-nightly/tags\">https://github.com/leanprover/lean4-nightly/tags</a></p>",
+        "id": 392232728,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1695263581
+    },
+    {
+        "content": "<p>but most people get new nightlies or releases by specifying them in the <code>lean-toolchain</code> and letting elan download the new version from these sources</p>",
+        "id": 392232749,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1695263611
+    },
+    {
+        "content": "<p>Yes; and it was actually harder-than-I-remember-it to spot the source tarball (via the installation instructions website).  But it seems to be the only option to try on OpenBSD at the moment.</p>\n<blockquote>\n<p>e.g. <a href=\"https://github.com/leanprover/lean4/releases/tag/v4.0.0\">https://github.com/leanprover/lean4/releases/tag/v4.0.0</a></p>\n</blockquote>\n<p>That's exactly where I got the source tarball from, that's why I thought it's part of what's being «shipped» as a release.</p>",
+        "id": 392234841,
+        "sender_full_name": "Thanos Tsouanas",
+        "timestamp": 1695265355
+    },
+    {
+        "content": "<p>From what I understand elan only looks for something already built/compiled to download, for the specific system it recognizes as being run from; there's no fallback to build from .lean sources having a \"bootstrap\" minilean or something like that, right?  Speaking of which, is the <code>-D CMAKE_BUILD_TYPE=MINSIZEREL</code> option something like that?  (I'd appreciate pointers to the documentation about how the procedure works.)</p>",
+        "id": 392235482,
+        "sender_full_name": "Thanos Tsouanas",
+        "timestamp": 1695266010
+    },
+    {
+        "content": "<p>I don't think we ever used that. The binary size of Lean is not an issue compared to its stdlib size</p>",
+        "id": 392267807,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1695283165
+    },
+    {
+        "content": "<p>With lots of help from Theo Buehler (maintainer of OpenBSD's port for Lean (currently Lean 3)), stage0 managed to build on OpenBSD <span aria-label=\"tada\" class=\"emoji emoji-1f389\" role=\"img\" title=\"tada\">:tada:</span> <span aria-label=\"blowfish\" class=\"emoji emoji-1f421\" role=\"img\" title=\"blowfish\">:blowfish:</span> <br>\nStill, stage1 dies because <code>lean</code> cannot load <code>libleanshared.so</code>:</p>\n<div class=\"codehilite\" data-code-language=\"txt\"><pre><span></span><code>-- Build files have been written to: /cave/thanos/devel/lean4/lean4-4.1.0/build/release/stage1\n[ 62%] Performing build step for 'stage1'\n[ 12%] Built target kernel\n[ 12%] Built target initialize\n[ 17%] Built target constructions\n[ 31%] Built target library\n[ 50%] Built target compiler\n[ 63%] Built target util\n[ 63%] Built target leancpp\nld.so: lean: can't load library 'libleanshared.so'\n/cave/thanos/devel/lean4/lean4-4.1.0/build/release/stage0/bin/lean --deps Init.lean failed (137):\n/cave/thanos/devel/lean4/lean4-4.1.0/build/release/stage1/bin/../share/lean/lean.mk:126: ../build/release/stage1/lib/temp/Init.depend: No such file or directory\nmake[7]: *** [/cave/thanos/devel/lean4/lean4-4.1.0/build/release/stage1/bin/../share/lean/lean.mk:58: ../build/release/stage1/lib/temp/Init.depend] Error 1\nmake[6]: *** [/cave/thanos/devel/lean4/lean4-4.1.0/build/release/stage1/stdlib.make:37: Init] Error 2\nmake[5]: *** [CMakeFiles/make_stdlib.dir/build.make:70: CMakeFiles/make_stdlib] Error 2\nmake[4]: *** [CMakeFiles/Makefile2:1028: CMakeFiles/make_stdlib.dir/all] Error 2\nmake[3]: *** [Makefile:146: all] Error 2\nmake[2]: *** [CMakeFiles/stage1.dir/build.make:86: stage1-prefix/src/stage1-stamp/stage1-build] Error 2\nmake[1]: *** [CMakeFiles/Makefile2:116: CMakeFiles/stage1.dir/all] Error 2\nmake: *** [Makefile:136: all] Error 2\n</code></pre></div>\n<p>Any ideas?<br>\nI also noticed that on <code>lean4-4.1.0</code>, the <code>src/CMakeList.txt</code> and <code>stage0/src/CMakeList.txt</code> differ thus:</p>\n<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"gd\">&lt; set(LEAN_VERSION_MINOR 1)</span>\n<span class=\"gs\">---</span>\n<span class=\"gi\">&gt; set(LEAN_VERSION_MINOR 0)</span>\n</code></pre></div>\n<p>(This is probably something to fix, but unrelated to my issue.)</p>",
+        "id": 394335381,
+        "sender_full_name": "Thanos Tsouanas",
+        "timestamp": 1696228516
+    }
+]

@@ -1,0 +1,140 @@
+[
+    {
+        "content": "<p>In the context of <code>#find</code> I think I can use a Char trie data structure, and I noticed that lean already has one: <a href=\"https://leanprover-community.github.io/mathlib4_docs/Lean/Data/Trie.html#Lean.Parser.Trie\">https://leanprover-community.github.io/mathlib4_docs/Lean/Data/Trie.html#Lean.Parser.Trie</a><br>\nAt first glance seems less optimized for queries and memory compactness and more for frequent updates than I'd expect.<br>\nIt seems it's used by the lean parser. Does anyone have a sense whether it's query performance is on the hot path, and whether it may be useful to optimize for query speed and memory size (at the expense of insertion speed)? (I'd avoid the nested search tree on Char at each node and instead would go for a flat unboxed sorted array of bytes to do binary search on. And investigate whether path compression is worth it.)</p>",
+        "id": 389916530,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694191766
+    },
+    {
+        "content": "<p>I'd guess if someone knows its <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span></p>",
+        "id": 389921508,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1694193891
+    },
+    {
+        "content": "<p>I'd have to measure again but I believe the token cache is quite effective at minimizing the time in the tokenizer</p>",
+        "id": 389994475,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694236535
+    },
+    {
+        "content": "<p>And the trie data structure is used by the tokenizer?</p>",
+        "id": 389998380,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694238903
+    },
+    {
+        "content": "<p>Yes, it stores the set of keywords</p>",
+        "id": 389999310,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694239569
+    },
+    {
+        "content": "<p>Ok, so it is on the hot path? Then I'll see if i can speed it up a bit when I'm adapting it for Loogle, there might be some lowish hanging fruit there (branch on bytes, not chars; use flat unpacked arrays instead of rb trees; possibly even linear search then binary search, given the branching factor should be low and rumors are that linear branchless searches are faster than binary search for short arrays). Will be a fun exercise learning more about the kind of C code that lean generates</p>",
+        "id": 390046600,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694275605
+    },
+    {
+        "content": "<p>(ok, not sure if switching to bytes helps, it seems <code>ByteArray</code> isn't a packed byte array in lean. Anyways, I'll just play around with it.)</p>",
+        "id": 390048040,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694276761
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/270676-lean4/topic/char.20trie.20data.20structure/near/390048040\">said</a>:</p>\n<blockquote>\n<p>(ok, not sure if switching to bytes helps, it seems <code>ByteArray</code> isn't a packed byte array in lean. Anyways, I'll just play around with it.)</p>\n</blockquote>\n<p>I was under the impression that it is, what makes you think this?</p>",
+        "id": 390048588,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1694277246
+    },
+    {
+        "content": "<p>Reading this on the phone, so may be wrong but it seems all arrays are backed by a <code>(void *)</code>:<br>\n<a href=\"https://github.com/leanprover/lean4/blob/3aa1cfcceabf7d091a3b2e5d4330df76767336ac/src/include/lean/lean.h#L871\">https://github.com/leanprover/lean4/blob/3aa1cfcceabf7d091a3b2e5d4330df76767336ac/src/include/lean/lean.h#L871</a></p>",
+        "id": 390048755,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694277411
+    },
+    {
+        "content": "<p>Hmm, let me look again</p>",
+        "id": 390048804,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694277469
+    },
+    {
+        "content": "<p>I stand corrected. Great! (And sorry for the noise)</p>",
+        "id": 390048940,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694277586
+    },
+    {
+        "content": "<p>I ran some first experiments, where I put all mathlib definitions name suffixes into one trie.<br>\nSwitching from RBTrees to flat unsorted arrays inside the nodes reduced the overall size less than I expected  (255MB to 219MB – guess the <code>Trie</code> itself and the <code>Name</code>s make up most of that).</p>\n<p>Lookup speed seems to have improved noticably  – 1000000 queries of <code>Nat.iterate</code> take 11s instead of 16.5s. And it can probably be improved even more (add something like <code>ByteArray.strchr</code> for branchless finding of a byte; avoid <code>Nat</code> for indexing).</p>\n<p>For Loogle/#find I am unsure if I want to use this – for interactive use the index is far too slow to construct.<br>\nFor the online version it wouldn’t be too bad, given that the index is precomputed, but I wonder if the two should diverge like this.<br>\nThe lookup improvement might be useful for lean itself, but there I am facing the problem that <code>Trie.matchPrefix</code> wants to index into a String at a certain position, which shouldn’t be copied using <code>String.toUTF8</code>, but currently the <code>String</code> API doesn't allow direct iterative access to the utf8 bytes. Guess a <code>String.getUTF8Byte</code> could be added… maybe I’ll try.</p>\n<p>Is there profiling data readily available to see how much time is spent in <code>Trie</code> operations?</p>",
+        "id": 390164554,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694365593
+    },
+    {
+        "content": "<p>I think perf with a frontend (e.g. <a href=\"https://github.com/KDAB/hotspot\">hotspot</a>) is the way people profile?</p>",
+        "id": 390184139,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1694379118
+    },
+    {
+        "content": "<p>I was hoping that maybe a profile is created by CI an pushed online :-D</p>\n<p>I did another variant, where I add to the <code>Trie</code> a constructor for the case of only one child node (which is very common). This brings size down to <code>148M</code> (plausible) and the lookup time to 2s … but something is wrong with my testing suddenly.</p>",
+        "id": 390185731,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694380324
+    },
+    {
+        "content": "<p>ah yeah I have no idea how the speedcenter works <span aria-label=\"big smile\" class=\"emoji emoji-1f604\" role=\"img\" title=\"big smile\">:big_smile:</span></p>",
+        "id": 390186183,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1694380597
+    },
+    {
+        "content": "<p>speedcenter scripts are linked here: <a href=\"#narrow/stream/287929-mathlib4/topic/mathlib4.20speedcenter/near/346669256\">https://leanprover.zulipchat.com/#narrow/stream/287929-mathlib4/topic/mathlib4.20speedcenter/near/346669256</a></p>",
+        "id": 390186626,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1694380900
+    },
+    {
+        "content": "<p><a href=\"https://github.com/Kha/mathlib4-bench\">https://github.com/Kha/mathlib4-bench</a></p>",
+        "id": 390186636,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1694380914
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/270676-lean4/topic/char.20trie.20data.20structure/near/390164554\">said</a>:</p>\n<blockquote>\n<p>For Loogle/#find I am unsure if I want to use this – for interactive use the index is far too slow to construct.</p>\n</blockquote>\n<p>Why can't interactive use also use a precomputed index, like <code>exact?</code> does?</p>",
+        "id": 390198003,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1694388451
+    },
+    {
+        "content": "<p>It could, if the benefit is worth the cost.<br>\nBenefit:<br>\n<code>#find</code> supports queries with _just_ lemma name fragments (as soon as any term pattern is used, a different index can be used)<br>\nCosts:<br>\n~200MB extra download<br>\nif the cache isn’t there (e.g. you are modifying mathlib and rebuilding everything), you spend a few extra minutes rebuilding the cache.</p>\n<p>Hard to tell…</p>",
+        "id": 390267194,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694423664
+    },
+    {
+        "content": "<p>On the plane I did some more testing. <br>\nIndexing a slice of mathlib, the trie size goes down from 26MB to 22MB (flat byte array) to 16MB (separate constructor for nodes with degree 1)<br>\nAnd looking up <code>replicate</code> in that trie, which means traversing nodes with degrees 92 60 43 4 2 1 1 1 1, 10M times takes 64s→28s→17s. This looks like it is going to worth giving a shot getting that into lean.</p>",
+        "id": 390268130,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694423991
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"470149\">@Joachim Breitner</span> In the <code>parser</code> benchmark, <code>Trie.matchPrefix</code> accounts for 6.9% of the run time. But that's for 100% of the time spent in the parser; in mathlib, parsing is only ~2% of the total run time. So while tokenizer optimizations might be interesting for some use cases, I would argue their priority is not terribly high at the moment</p>",
+        "id": 390304205,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694436824
+    },
+    {
+        "content": "<p>Yeah; still a fun exercise and since I might want to optimize that data structure for <code>#find</code>/loogle anyways… we’ll see. Right now I still have to find a bug somewhere :-)</p>",
+        "id": 390347405,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694449233
+    },
+    {
+        "content": "<p><code>matchPrefix</code> returns <code>String.Pos × Option α</code>, but it seems all uses in lean ignore the first field and only cares about the result. So probably that code can be simplified (wip @ <a href=\"https://github.com/leanprover/lean4/pull/2531\">https://github.com/leanprover/lean4/pull/2531</a>)</p>",
+        "id": 390353120,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694451498
+    }
+]

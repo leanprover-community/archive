@@ -1,0 +1,98 @@
+[
+    {
+        "content": "<p>I observe some oddity that possibly stems from a misunderstanding of the bootstrapping, or something else; in any case, I am confused and clearing up the confusion will probably be enlightening.</p>\n<p>In <a href=\"https://github.com/leanprover/lean4/pull/2529\">lean4#2529</a> I am swapping out the the implementation of <code>Lean.Parser.Trie</code>. This now leads to a parse error at a subsequent module</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Lean</span><span class=\"bp\">/</span><span class=\"n\">Parser</span><span class=\"bp\">/</span><span class=\"n\">Extra.lean</span><span class=\"o\">:</span><span class=\"mi\">290</span><span class=\"o\">:</span><span class=\"mi\">82</span><span class=\"o\">:</span> <span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">expected</span> <span class=\"sc\">')'</span>\n</code></pre></div>\n<p>I see this</p>\n<ul>\n<li>with <code>nix build .#lean</code></li>\n<li>with <code>make -C build/release/stage1</code> when building using <code>cmake</code> (in <code>nix-shell</code> to provide the clang deps, no <code>ccache</code>)</li>\n<li>on CI on previous commits for that PR.</li>\n<li>with <code>elan override set lean4-stage0</code>in <code>src/</code>, starting<code>code src</code>/ and then  opening <code>Lean/Parser/Extra.lean</code></li>\n</ul>\n<p>So far so normal, I must have made a mistake somehow. But strangely, the current commit (<code>1c641e7)</code> on that branch suddenly builds cleanly on CI! Did I somehow fix things?  But then why would it fail locally? </p>\n<p>I am particularly worried that the CI ran <code>nix build .#cacheRoots </code> fine but that command fails here… why is even nix letting me down here? Does the <code>ccache</code> on CI play a role?</p>\n<p>I am also a bit confused how a change to <code>Lean/Data/Trie.lean</code> would affect how <code>Lean/Parser/Extra.lean</code> is built by stage0 (which shouldn’t have my change yet) – is it somehow using the stage1 parser  here already?</p>",
+        "id": 390743035,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694617212
+    },
+    {
+        "content": "<p>Oh, Github is setup to do this thing where CI doesn’t actually test the commit you are pushing, it tests a synthetic merge with <code>master</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"n\">HEAD</span> <span class=\"n\">is</span> <span class=\"n\">now</span> <span class=\"n\">at</span> <span class=\"n\">c42ed09</span> <span class=\"n\">Merge</span> <span class=\"mi\">1</span><span class=\"n\">c641e7a87918bb633a979020e3889d17c669e1c</span> <span class=\"n\">into</span> <span class=\"n\">e9d60e143a8b1ee06be1f201f78068250a2b8949</span>\n</code></pre></div>\n<p>so whether CI is green or not doesn’t say much about the state of the branch itself, and success or failure depends on whatever happens on <code>master</code> right now. I never understood how they could make that the default… I wonder if it might be related to my problem, though.</p>",
+        "id": 390746221,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694618101
+    },
+    {
+        "content": "<p>For a second you made me lose faith in Nix <span aria-label=\"big smile\" class=\"emoji emoji-1f604\" role=\"img\" title=\"big smile\">:big_smile:</span> ... we're thinking about enabling Merge Queues for the lean4 repo, which would be a much more robust approach than this automatic merging</p>",
+        "id": 390749251,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694619006
+    },
+    {
+        "content": "<p>Indeed, after <code>git merge origin/master</code>, my local nix build succeeds.<br>\nI still don’t understand why my change caused that kind of failure in a later module, but I guess that’s history now :-)</p>",
+        "id": 390750905,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694619552
+    },
+    {
+        "content": "<p>This is the <code>action/checkout</code> setting to make CI test the branch as is: &lt;<a href=\"https://github.com/actions/checkout#Checkout-pull-request-HEAD-commit-instead-of-merge-commit\">https://github.com/actions/checkout#Checkout-pull-request-HEAD-commit-instead-of-merge-commit</a>&gt;<br>\nIt goes well with the “require strict merge”  setting.  That will require PRs to be up to date before they can be merged (auto or not), and also adds the “Update to latest master” button on the PR, which needs to be manually pressed after pushes to <code>master</code>. Good enough on low activity repositories; if you need more throughput merge queues of some form (mergify or github native) are needed.</p>",
+        "id": 390751184,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694619651
+    },
+    {
+        "content": "<p>If you haven't already seen <a href=\"https://leanprover.github.io/lean4/doc/dev/bootstrap.html#further-bootstrapping-complications\">https://leanprover.github.io/lean4/doc/dev/bootstrap.html#further-bootstrapping-complications</a>, things can certainly get complicated/mysterious when changing the parser ABI :) . But I can't immediately say what could have gone wrong in this case.</p>",
+        "id": 390751471,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694619740
+    },
+    {
+        "content": "<p>And now I see that I have committed <code>prefer_native=true</code> to master, oops...</p>",
+        "id": 390751957,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694619904
+    },
+    {
+        "content": "<p>I skimmed that file, can’t claim I understood it all, but unless the <code>TokenCache</code> is pickled somehow I couldn’t quite see what could go wrong <span aria-label=\"shrug\" class=\"emoji emoji-1f937\" role=\"img\" title=\"shrug\">:shrug:</span></p>",
+        "id": 390751966,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694619909
+    },
+    {
+        "content": "<p>It's not about on-disk representation but about necessarily mixing native code from the stage 0 binary and interpreted code from the stage 1 stdlib when doing metaprogramming while bootstrapping</p>",
+        "id": 390752370,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694620025
+    },
+    {
+        "content": "<p>So you end up running code not necessarily compiled against the same definitions of parser types</p>",
+        "id": 390752487,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694620061
+    },
+    {
+        "content": "<p>Pushed a stage0 update, so your PR should be broken again now :) ... you would have to set the flag in <code>stage0/src/stdlib_flags.h</code> yourself</p>",
+        "id": 390752775,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694620127
+    },
+    {
+        "content": "<p>Should <code>stage0/src/stdlib_flags.h</code> be excluded from </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">stage0</span><span class=\"bp\">/**</span> <span class=\"n\">binary</span> <span class=\"n\">linguist</span><span class=\"bp\">-</span><span class=\"n\">generated</span>\n</code></pre></div>\n<p>if that’s a file that is manually edited in certain circumstances?</p>",
+        "id": 390757196,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694621495
+    },
+    {
+        "content": "<p>Yes, that would probably make sense</p>",
+        "id": 390757865,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694621734
+    },
+    {
+        "content": "<p>I’ll make a PR at <a href=\"https://github.com/leanprover/lean4/pull/2537\">https://github.com/leanprover/lean4/pull/2537</a></p>",
+        "id": 390758229,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694621870
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Confusing.20build.20failure.20sometimes.20in.20stage1/near/390751957\">said</a>:</p>\n<blockquote>\n<p>And now I see that I have committed <code>prefer_native=true</code> to master, oops...</p>\n</blockquote>\n<p>Oh, so that was I mistake! I saw that when trying to debug <a href=\"https://github.com/leanprover/lean4/pull/245\">lean4#245</a> and thought it may be part of the problem, but second guessed myself and believed I was misunderstanding something about the bootstrapping.</p>",
+        "id": 390804925,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694640295
+    },
+    {
+        "content": "<p>At least that mistake debugged my branch, I wonder how much longer I might have stared at it if it wasn’t for that :)<br>\nIn hindsight I kinda understand why my build failed without that.</p>",
+        "id": 390898786,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694686695
+    }
+]

@@ -1,0 +1,350 @@
+[
+    {
+        "content": "<p>As an Isabelle-exile, I dearly miss Isabelle’s <code>find_theorems</code> command. It can search for lemmas in various ways (name substrings, type patterns), but maybe the most important is “Give me all lemmas that mention both <code>foo</code> and <code>bar</code> in the type”. It’s similar to <code>library_search</code>, but doesn’t require the needle to be at the head of the type.</p>\n<p>I made a quick experiment using ad-hoc code: <br>\nA file importing <code>import Mathlib.Topology.Algebra.InfiniteSum.Basic</code>, but nothing else from Mathlib, finds all lemmas mentioning <code>HasSum</code> in 6 seconds; this is a linear scan through the whole environment. Not amazing, but already somewhat practical.<br>\nWith <code>import Mathlib</code> it now runs for multiple minutes, so certainly needs optimization to be practical – probably some kind of reverse index mapping constants to the set of definitions they appear in. The <code>DeclCache</code> infrastructure can probably help here…</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<p>import Lean.Meta.Basic<br>\nimport Lean.MonadEnv<br>\nimport Mathlib.Tactic.Cache<br>\nimport Mathlib.Lean.Expr.Traverse<br>\nimport Lean.Log</p>\n<p>import Mathlib.Topology.Algebra.InfiniteSum.Basic<br>\nimport Mathlib</p>\n<p>set_option autoImplicit false</p>\n<p>open Mathlib.Tactic<br>\nopen Lean.MonadEnv<br>\nopen Lean.Meta<br>\nopen Lean</p>\n<p>namespace Lean.Expr<br>\ndef allConsts {M} [Applicative M] (f : Name → M PUnit) : Expr → M PUnit<br>\n  | forallE _ d b _ =&gt; allConsts f d *&gt; allConsts f b<br>\n  | lam _ d b _     =&gt; allConsts f d *&gt; allConsts f b<br>\n  | mdata _ b       =&gt; allConsts f b<br>\n  | letE _ t v b _  =&gt; allConsts f t *&gt; allConsts f v *&gt; allConsts f b<br>\n  | app l r         =&gt; allConsts f l *&gt; allConsts f r<br>\n  | proj _ _ b      =&gt; allConsts f b<br>\n  | const n _       =&gt; f n<br>\n  | lit _           =&gt; pure .unit<br>\n  | sort _          =&gt; pure .unit<br>\n  | mvar _          =&gt; pure .unit<br>\n  | fvar _          =&gt; pure .unit<br>\n  | bvar _          =&gt; pure .unit<br>\nend Lean.Expr</p>\n<p>run_cmd do<br>\n  let n := (← getEnv).constants.size<br>\n  dbg_trace n<br>\n  (← getEnv).constants.forM fun name ci =&gt; do<br>\n    let found &lt;- IO.mkRef false<br>\n    when (true || name == <code>HasSum.tsum_eq) do\n      ci.type.allConsts fun c =&gt; do\n          -- Lean.logInfo m!\"{c}\"\n          when (c == </code>HasSum) do<br>\n            found.set true<br>\n    when (← found.get) do<br>\n      Lean.logInfo m!\"{name}\"<br>\n  return n</p>\n</div></div>",
+        "id": 378196032,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690214462
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/113488-general/topic/Implementing.20find_theorems/near/378196032\">said</a>:</p>\n<blockquote>\n<p>As an Isabelle-exile, I dearly miss Isabelle’s <code>fine_theorems</code> command. ...</p>\n</blockquote>\n<p>I like Lean/Mathlib theorems so much that my naming suggestion would be: <code>not_just_fine_but_beautiful_theorems</code>. <span aria-label=\"upside down\" class=\"emoji emoji-1f643\" role=\"img\" title=\"upside down\">:upside_down:</span></p>",
+        "id": 378199806,
+        "sender_full_name": "Kalle Kytölä",
+        "timestamp": 1690215102
+    },
+    {
+        "content": "<p>Ok, the one on <code>Mathlib</code> still runs… but presumably if I run it like that, my command is interpreted, not compiled? Will try to see if it makes a difference (tomorrow or so)</p>",
+        "id": 378201813,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690215485
+    },
+    {
+        "content": "<p>Try <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Expr.foldConsts#doc\">docs#Lean.Expr.foldConsts</a> for more efficient expression traversal. If you use that, compiling probably won't make much of a difference any more because all the work will happen in already-compiled core functions.</p>",
+        "id": 378204408,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1690216001
+    },
+    {
+        "content": "<p>Ah, again shows how bad I am at finding stuff, as I was looking for Expr traversals there…</p>",
+        "id": 378207350,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690216628
+    },
+    {
+        "content": "<p>Yeah, there's a bunch of these specialised traversals (<code>collectMVars</code> and <code>collectFVars</code> come to mind) and they're not easy to find.</p>",
+        "id": 378209128,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1690217035
+    },
+    {
+        "content": "<p>With the smaller set of imports, down from 6s to 4s. Good, but not a game changer.</p>",
+        "id": 378257931,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690229010
+    },
+    {
+        "content": "<p>Ah, if I put the code into a </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[command_elab find_theorems]</span> <span class=\"kd\">def</span> <span class=\"n\">findTheoremsElab</span> <span class=\"o\">:</span> <span class=\"n\">CommandElab</span> <span class=\"o\">:=</span> <span class=\"bp\">λ</span> <span class=\"n\">_stx</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n</code></pre></div>\n<p>in file <code>A.lean</code>, and import that from <code>B.lean</code> to use the command, so that both are compiled, searching throuh all of <code>impot Mathlib</code> finishes in 11s. That’s already usable!<br>\n(Fun fact: there are 296 definitions mentioning <code>HasSum</code>.)</p>",
+        "id": 378260437,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690229795
+    },
+    {
+        "content": "<p>So far, <code>git grep</code> is faster.</p>",
+        "id": 378263687,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1690231035
+    },
+    {
+        "content": "<p>Though typing the query may be the bottleneck anyway.</p>",
+        "id": 378263764,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1690231065
+    },
+    {
+        "content": "<p>I have the feeling that competing on speed with grep is a losing battle.</p>\n<p>However, grep will not find automatically generated declarations</p>",
+        "id": 378264449,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1690231337
+    },
+    {
+        "content": "<p>Or lemmas where the two constants are not on the same line…</p>",
+        "id": 378277088,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690233053
+    },
+    {
+        "content": "<p><a href=\"/user_uploads/3121/0k0Ok9yTqx9Hie99DeDJ1uE5/find_theorems.gif\">find_theorems.gif</a><br>\nThis looks rather promising…</p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/0k0Ok9yTqx9Hie99DeDJ1uE5/find_theorems.gif\" title=\"find_theorems.gif\"><img src=\"/user_uploads/3121/0k0Ok9yTqx9Hie99DeDJ1uE5/find_theorems.gif\"></a></div><p>Code at &lt;<a href=\"https://github.com/nomeata/rerolling-sixes/blob/master/RerollingSixes/FindTheorems.lean\">https://github.com/nomeata/rerolling-sixes/blob/master/RerollingSixes/FindTheorems.lean</a>&gt; for now.</p>",
+        "id": 378277178,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690233095
+    },
+    {
+        "content": "<p>We might be able to build a global cache, that is stored in an <code>olean</code> generated by CI, like <code>rw?</code> and <code>exact?</code> do.</p>",
+        "id": 378286825,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1690237007
+    },
+    {
+        "content": "<p>This could then tell you about theorems that haven't been imported yet.</p>",
+        "id": 378286991,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1690237066
+    },
+    {
+        "content": "<p>But maybe this cache would be too big. I'm not exactly sure what we would have to store: a <code>c : NameMap NameSet</code> so that <code>(c.get n).contains m</code> tells you whether <code>n</code> appears in the type of <code>m</code>?</p>",
+        "id": 378287358,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1690237200
+    },
+    {
+        "content": "<p>We'd possibly want to separately cache a lookup table of declaration-name to module-of-definition (as of the last CI), so that we can tell users what they would need to import for results that are not yet imported.</p>",
+        "id": 378287573,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1690237266
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 378287830,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1690237372
+    },
+    {
+        "content": "<p>deleted as that's what Scott essentially said in the last message :)</p>",
+        "id": 378288196,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1690237514
+    },
+    {
+        "content": "<p>You could also have a tab open with a scratch file that just imports <code>Mathlib</code>, where you #search for stuff. This way you find it all, and the slow commands don't interfere with the processing of the files you look at.</p>\n<p>I also wonder how big the cache will be. It'll still be a fraction of the Environment, so maybe doable. Or maybe I'll have to nerd out with bloom filters and whatnot :-)</p>\n<p>I'll look into caching next, maybe using <code>DeclCache</code>.</p>",
+        "id": 378288947,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690237906
+    },
+    {
+        "content": "<p>BTW, you probably want to exclude internal stuff with <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Name.isInternal%27#doc\">docs#Lean.Name.isInternal'</a></p>",
+        "id": 378289046,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1690237943
+    },
+    {
+        "content": "<p>Yes, using <code>DeclCache</code> is the right idea, (in part) because then you can just copy and paste existing code to get CI to generate a global version for you.</p>",
+        "id": 378289130,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1690238002
+    },
+    {
+        "content": "<p>I am reading through the code at &lt;<a href=\"https://github.com/leanprover-community/mathlib4/blob/c652e603884371ddd609b7bee3c2229991d9d6fa/Mathlib/Tactic/Cache.lean\">https://github.com/leanprover-community/mathlib4/blob/c652e603884371ddd609b7bee3c2229991d9d6fa/Mathlib/Tactic/Cache.lean</a>&gt;, and I wonder how the <code>Cache</code> gets preserved when the inputs are unchanged, or rather, how it gets invalidated when the imports of a module change.</p>",
+        "id": 378387045,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690275127
+    },
+    {
+        "content": "<p>Imports changing is the simple case because the whole process gets restarted :)</p>",
+        "id": 378390869,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1690275874
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"470149\">@Joachim Breitner</span>, the <code>Cache</code> there is rebuilt at the beginning of each file. It is not a global cache, and so whenever you change the imports that is going to trigger a rebuild.</p>\n<p><code>exact?</code> and <code>rw?</code> on top of that implement a global cache (i.e. in CI a file that has imported <code>Mathlib</code> writes out its <code>Cache</code> in an olean, and then <code>exact?</code> and <code>rw?</code> load that as needed).</p>",
+        "id": 378399907,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1690277602
+    },
+    {
+        "content": "<p>Thanks. Why exactl does changing the imports trigger a rebuild? Does changing the imports actually restart the complete per-file lean process?</p>",
+        "id": 378400432,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690277706
+    },
+    {
+        "content": "<p>Nice. With the cache the first invocation takes ~20s, but then searching is essentially instantaneous</p>",
+        "id": 378400873,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690277791
+    },
+    {
+        "content": "<p>Exactly. Processing the imports is completely separate from processing the rest of the file. I'd have to dig to find the code, but if you grep for <code>Frontend</code> you'll find examples calling <code>processImports</code>, which is this initial step.</p>",
+        "id": 378400908,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1690277799
+    },
+    {
+        "content": "<p>And with a global cache, you can hand off that ~20s to CI. It turns out loading oleans is really fast (hooray memory mapping).</p>",
+        "id": 378401068,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1690277832
+    },
+    {
+        "content": "<p>Thanks, no digging needed, that’s the clarification I needed :-)</p>",
+        "id": 378401191,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690277858
+    },
+    {
+        "content": "<p><a href=\"/user_uploads/3121/yQ8sObOL5P-qDC2m60nioRiF/find_theorems2.gif\">find_theorems2.gif</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/yQ8sObOL5P-qDC2m60nioRiF/find_theorems2.gif\" title=\"find_theorems2.gif\"><img src=\"/user_uploads/3121/yQ8sObOL5P-qDC2m60nioRiF/find_theorems2.gif\"></a></div>",
+        "id": 378402617,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690278126
+    },
+    {
+        "content": "<p>You shouldn't need the brackets fwiw, the sequence of idents will be terminated by the keyword of the next statement</p>",
+        "id": 378404751,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1690278562
+    },
+    {
+        "content": "<p>I tried that briefly, and it would make the command pick up partial keywords as I type them in the next line, causing supurious messages, which I found unergonomic. But I guess that's a general problem with the lean syntax, and for consistency no brackets are better?</p>",
+        "id": 378410851,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690279695
+    },
+    {
+        "content": "<p>Can a <code>colGt</code> ensure that it only picks up things on a subsequent line if they are indented?</p>",
+        "id": 378417192,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1690280693
+    },
+    {
+        "content": "<p>Yes, <code>(colGt ident)+</code> is the standard approach for this</p>",
+        "id": 378418526,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1690280883
+    },
+    {
+        "content": "<p>Ah, perfect!</p>",
+        "id": 378446342,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690286265
+    },
+    {
+        "content": "<p>Hmm, doesn’t seem t work work. Neither</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">syntax</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">find_theorems</span><span class=\"o\">)</span> <span class=\"s2\">\"#find_theorems\"</span> <span class=\"o\">(</span><span class=\"n\">colGt</span> <span class=\"n\">ident</span><span class=\"o\">)</span><span class=\"bp\">+</span> <span class=\"o\">:</span> <span class=\"n\">command</span>\n</code></pre></div>\n<p>nor</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">syntax</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">find_theorems</span><span class=\"o\">)</span> <span class=\"s2\">\"#find_theorems\"</span> <span class=\"o\">(</span><span class=\"n\">colGt</span> <span class=\"o\">(</span><span class=\"n\">ident</span><span class=\"bp\">+</span><span class=\"o\">))</span> <span class=\"o\">:</span> <span class=\"n\">command</span>\n</code></pre></div>\n<p>prevents </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">find_theorems</span> <span class=\"n\">HasSum</span> <span class=\"n\">tsum</span>\n<span class=\"n\">xy</span>\n</code></pre></div>\n<p>from interpreting <code>xy</code> as part of the list of <code>ident</code></p>",
+        "id": 378450450,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690287066
+    },
+    {
+        "content": "<p>Ah, it should be <code>withPosition(\"#find_theorems\" (colGt ident)+)</code></p>",
+        "id": 378453697,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1690287682
+    },
+    {
+        "content": "<p>Thanks, that works!</p>",
+        "id": 378455772,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690288053
+    },
+    {
+        "content": "<p>Is there a way to “flush” the log messages? The first time this command is used (with all of mathlib in scope) it builds the cache and that takes a while, but just putting <code>logInfo</code> in the command will not show this info until the command is done. Is there a way to make it display “Building cache, please hang one” while the command is still running?</p>",
+        "id": 378461661,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690289163
+    },
+    {
+        "content": "<p>Not right now, there is no asynchronous communication between elaboration and language server</p>",
+        "id": 378470489,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1690290793
+    },
+    {
+        "content": "<p>Ok, in that case I declare <code>#find_theorems</code> has reached MVP status.<br>\nShould I put it into a mathlib PR, as its own thing?<br>\nOr should I instead kick off a discussion if we can expand <code>#find</code> to support a richer algebra of queries – in addition to the patterns it supports also constants and maybe names?<br>\nOr both – introduce <code>#find_theorems</code> (or  better <code>#find_by_consts</code>) soon to get user feedback, and then work towards unifying with <code>#find</code>.</p>",
+        "id": 378474084,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690291440
+    },
+    {
+        "content": "<p>Let's get this into Mathlib first, and then worry about unification with other commands.</p>",
+        "id": 378969830,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1690416269
+    },
+    {
+        "content": "<p>how about <code>#mentioning</code> as the name?</p>",
+        "id": 378969859,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1690416298
+    },
+    {
+        "content": "<p>I had a chat with Sebastian yesterday, who wrote #find in the first place, and he encouraged me to extend #find instead (if you can search for consts, and for patterns, then it will be weird if you can't search for the conjunction). So my current plan would be to make a PR that subsumes #find right awat, if that's reasonable.</p>",
+        "id": 379017279,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690438287
+    },
+    {
+        "content": "<p>In my local prototype I have now added <code>#find</code>s ability to search by patterns to my <code>#find_theorem</code>. It seems enough, or even better, to have a const-to-def cache, so if you do</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code> <span class=\"bp\">#</span><span class=\"n\">find_theorems</span> <span class=\"o\">(</span><span class=\"n\">Lean.Syntax</span> <span class=\"bp\">→</span> <span class=\"n\">Lean.Name</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>it can use the cache to quickly find the set of definitions mentioning <code>Lean.Syntax</code>, the set of definitions mentioning <code>Lean.Name</code>, take the intersection, and on only that (hopefully smaller) list select those that match this pattern.</p>\n<p>It also seems that this cache is cheaper to construct than the HeadIndex-indexed cache used by <code>#find</code>: For a file importing <code>Mathlib</code> the first</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code> <span class=\"bp\">#</span><span class=\"n\">find_theorems</span> <span class=\"o\">(</span><span class=\"n\">Lean.Syntax</span> <span class=\"bp\">→</span> <span class=\"n\">Lean.Name</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>takes 22s while the first</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code> <span class=\"bp\">#</span><span class=\"n\">find</span>  <span class=\"o\">(</span><span class=\"n\">Lean.Syntax</span> <span class=\"bp\">→</span> <span class=\"n\">Lean.Name</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>takes 101s.</p>\n<p>And it can be useful to combine the two, for example</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">find_theorems</span> <span class=\"o\">(</span><span class=\"bp\">∑'</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">_</span> <span class=\"bp\">=</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"n\">HMul.hMul</span> <span class=\"n\">HPow.hPow</span>\n</code></pre></div>\n<p>finds all lemmas that give the value of a series where multiplication and power occurs.</p>\n<p>I am inclined to also add a way to search for patterns _anywhere_ in the type (e.g. <code>_ * _ ^ _</code>), not necessarily only rooted at the conclusion. But for that I need a nice idea for a syntax that distinguishes the two variants.</p>",
+        "id": 379648186,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1690582992
+    },
+    {
+        "content": "<p>I am now working on the variant where I am finding for patterns anywhere in the type of constants. This is my approach so far:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">PreparedPattern</span> <span class=\"kd\">extends</span>  <span class=\"n\">AbstractMVarsResult</span> <span class=\"n\">where</span>\n  <span class=\"n\">headIndex</span> <span class=\"o\">:</span> <span class=\"n\">HeadIndex</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">preparePat</span> <span class=\"o\">(</span><span class=\"n\">t</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"n\">PreparedPattern</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">amr</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">withReducible</span> <span class=\"bp\">$</span> <span class=\"k\">do</span> <span class=\"n\">abstractMVars</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">instantiateMVars</span> <span class=\"n\">t</span><span class=\"o\">)</span>\n  <span class=\"n\">pure</span> <span class=\"o\">{</span> <span class=\"n\">toAbstractMVarsResult</span> <span class=\"o\">:=</span> <span class=\"n\">amr</span><span class=\"o\">,</span> <span class=\"n\">headIndex</span> <span class=\"o\">:=</span> <span class=\"n\">t.toHeadIndex</span> <span class=\"o\">}</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">matchPatAnywhere</span> <span class=\"o\">(</span><span class=\"n\">pat</span> <span class=\"o\">:</span> <span class=\"n\">PreparedPattern</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">ConstantInfo</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"n\">Bool</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">found</span>  <span class=\"bp\">←</span> <span class=\"n\">IO.mkRef</span> <span class=\"n\">false</span>\n  <span class=\"n\">withReducible</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">cTy</span> <span class=\"o\">:=</span> <span class=\"n\">c.instantiateTypeLevelParams</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mkFreshLevelMVars</span> <span class=\"n\">c.numLevelParams</span><span class=\"o\">)</span>\n    <span class=\"n\">Lean.Meta.forEachExpr'</span> <span class=\"n\">cTy</span> <span class=\"k\">fun</span> <span class=\"n\">sub_e</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n      <span class=\"k\">if</span> <span class=\"n\">pat.headIndex</span> <span class=\"bp\">==</span> <span class=\"n\">sub_e.toHeadIndex</span> <span class=\"k\">then</span> <span class=\"k\">do</span>\n        <span class=\"n\">withNewMCtxDepth</span> <span class=\"bp\">$</span> <span class=\"k\">do</span>\n          <span class=\"k\">let</span> <span class=\"n\">pat</span> <span class=\"o\">:=</span> <span class=\"n\">pat.expr.instantiateLevelParamsArray</span> <span class=\"n\">pat.paramNames</span>\n            <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mkFreshLevelMVars</span> <span class=\"n\">pat.numMVars</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">toArray</span>\n          <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">pat</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">lambdaMetaTelescope</span> <span class=\"n\">pat</span>\n          <span class=\"k\">if</span> <span class=\"bp\">←</span> <span class=\"n\">isDefEq</span> <span class=\"n\">pat</span> <span class=\"n\">sub_e</span>\n          <span class=\"k\">then</span> <span class=\"n\">found.set</span> <span class=\"n\">true</span>\n      <span class=\"c1\">-- keep searching if we haven't found it yet</span>\n      <span class=\"n\">not</span> <span class=\"bp\">&lt;$&gt;</span> <span class=\"n\">found.get</span>\n  <span class=\"n\">found.get</span>\n</code></pre></div>\n<p>It seems to work, but it is quite slow, for example with</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">find_theorems</span> <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"bp\">+</span> <span class=\"n\">_</span><span class=\"o\">))</span>\n</code></pre></div>\n<p>(and note that it only looks at lemmas that mention both <code>HMul.hMul</code> and <code>HAdd.hAdd </code>), and I run out of heartbeats sometimes.</p>\n<p>It seems that there some definitions with very large types, e.g.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#check</span> <span class=\"n\">MonoidAlgebra.liftMagma.proof_5</span>\n</code></pre></div>\n<p>which you very likely don’t want to <code>#find</code> anyways. Can I recognize such definitions easily? I am already using</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- from Lean.Server.Completion</span>\n<span class=\"c1\">-- from Mathlib.Tactic.Find</span>\n<span class=\"c1\">-- (someone should put it somewhere public)</span>\n<span class=\"kn\">private</span> <span class=\"kd\">def</span> <span class=\"n\">isBlackListed</span> <span class=\"o\">(</span><span class=\"n\">declName</span> <span class=\"o\">:</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"n\">Bool</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">env</span> <span class=\"bp\">←</span> <span class=\"n\">getEnv</span>\n  <span class=\"n\">pure</span> <span class=\"bp\">$</span> <span class=\"n\">declName.isInternal</span>\n   <span class=\"bp\">||</span> <span class=\"n\">isAuxRecursor</span> <span class=\"n\">env</span> <span class=\"n\">declName</span>\n   <span class=\"bp\">||</span> <span class=\"n\">isNoConfusion</span> <span class=\"n\">env</span> <span class=\"n\">declName</span>\n  <span class=\"bp\">&lt;||&gt;</span> <span class=\"n\">isRec</span> <span class=\"n\">declName</span>\n  <span class=\"bp\">&lt;||&gt;</span> <span class=\"n\">Meta.isMatcher</span> <span class=\"n\">declName</span>\n</code></pre></div>",
+        "id": 381495147,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1691071300
+    },
+    {
+        "content": "<p>I think most will be caught by <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Name.isInternal%27#doc\">docs#Lean.Name.isInternal'</a></p>",
+        "id": 381499156,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1691071914
+    },
+    {
+        "content": "<p>That at least catches the <code>proof_37</code> names</p>",
+        "id": 381499437,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1691071954
+    },
+    {
+        "content": "<p>Thanks! I’m surprised this wasn’t already in the blacklist filter that I stole from <code>#find</code>…</p>",
+        "id": 381499841,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1691072029
+    },
+    {
+        "content": "<p>It’s part of <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Name.isBlackListed#doc\">docs#Lean.Name.isBlackListed</a></p>",
+        "id": 381500122,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1691072077
+    },
+    {
+        "content": "<p>Great, now</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">find_theorems</span> <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"bp\">+</span> <span class=\"n\">_</span><span class=\"o\">))</span>\n</code></pre></div>\n<p>takes 3s (with a warm cache) and finds plausible 161 theorems.</p>",
+        "id": 381500146,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1691072081
+    },
+    {
+        "content": "<p>I also added filtering by name substring (this helps with debuggging :-)), so </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">find_theorems</span> <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"bp\">+</span> <span class=\"n\">_</span><span class=\"o\">))</span> <span class=\"s2\">\"distr\"</span>\n</code></pre></div>\n<p>will print (instantaneously, with the additional name filter)</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Found</span> <span class=\"mi\">2113</span> <span class=\"n\">definitions</span> <span class=\"n\">mentioning</span> <span class=\"n\">HMul.hMul</span> <span class=\"n\">and</span> <span class=\"n\">HAdd.hAdd.</span>\n<span class=\"n\">Of</span> <span class=\"n\">these</span><span class=\"o\">,</span> <span class=\"mi\">31</span> <span class=\"k\">have</span> <span class=\"n\">a</span> <span class=\"n\">name</span> <span class=\"n\">containing</span> <span class=\"n\">all</span> <span class=\"n\">of</span> <span class=\"s2\">\"distr\"</span><span class=\"bp\">.</span>\n<span class=\"n\">Of</span> <span class=\"n\">these</span><span class=\"o\">,</span> <span class=\"mi\">14</span> <span class=\"k\">have</span> <span class=\"n\">mention</span> <span class=\"n\">your</span> <span class=\"n\">pattern</span><span class=\"o\">(</span><span class=\"n\">s</span><span class=\"o\">)</span><span class=\"bp\">.</span>\n<span class=\"bp\">•</span> <span class=\"n\">left_distrib</span>\n<span class=\"bp\">•</span> <span class=\"n\">CanonicallyOrderedCommSemiring.left_distrib</span>\n<span class=\"bp\">•</span> <span class=\"n\">Distrib.left_distrib</span>\n<span class=\"bp\">•</span> <span class=\"n\">IsLprojection.distrib_lattice_lemma</span>\n<span class=\"bp\">•</span> <span class=\"n\">LeftDistribClass.left_distrib</span>\n<span class=\"bp\">•</span> <span class=\"n\">Nat.left_distrib</span>\n<span class=\"bp\">•</span> <span class=\"n\">NonUnitalNonAssocRing.left_distrib</span>\n<span class=\"bp\">•</span> <span class=\"n\">NonUnitalNonAssocSemiring.left_distrib</span>\n<span class=\"bp\">•</span> <span class=\"n\">OreLocalization.left_distrib</span>\n<span class=\"bp\">•</span> <span class=\"n\">PGame.left_distrib_equiv</span>\n<span class=\"bp\">•</span> <span class=\"n\">PGame.quot_left_distrib</span>\n<span class=\"bp\">•</span> <span class=\"n\">FreeAlgebra.Rel.left_distrib</span>\n<span class=\"bp\">•</span> <span class=\"n\">LucasLehmer.X.left_distrib</span>\n<span class=\"bp\">•</span> <span class=\"n\">FreeAlgebra.Rel.below.left_distrib</span>\n</code></pre></div>\n<p>and the lemma names will show their type when hovering.</p>",
+        "id": 381521896,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1691075914
+    },
+    {
+        "content": "<p>And because the matching of patterns against subexpressions uses <code>defEq</code> and works with metavariables, it seems to support non-linear patterns just fine:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">find_theorems</span> <span class=\"o\">(</span><span class=\"n\">Real.sqrt</span> <span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"bp\">*</span> <span class=\"n\">Real.sqrt</span> <span class=\"bp\">?</span><span class=\"n\">a</span><span class=\"o\">)</span>\n\n<span class=\"n\">Found</span> <span class=\"mi\">8</span> <span class=\"n\">definitions</span> <span class=\"n\">mentioning</span> <span class=\"n\">HMul.hMul</span> <span class=\"n\">and</span> <span class=\"n\">Real.sqrt.</span>\n<span class=\"n\">Of</span> <span class=\"n\">these</span><span class=\"o\">,</span> <span class=\"mi\">1</span> <span class=\"k\">match</span> <span class=\"n\">your</span> <span class=\"n\">patterns.</span>\n<span class=\"bp\">•</span> <span class=\"n\">Real.mul_self_sqrt</span>\n</code></pre></div>",
+        "id": 381547210,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1691080433
+    },
+    {
+        "content": "<p>This looks amazing. <span aria-label=\"heart\" class=\"emoji emoji-2764\" role=\"img\" title=\"heart\">:heart:</span></p>",
+        "id": 381568843,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1691084966
+    },
+    {
+        "content": "<p>Yeah that ability to do that kind of matching was exactly what was missing from Lean 3 <code>#find</code>. I couldn't say <code>List X -&gt; List X</code>, I had to say <code>List X -&gt; List Y</code> and then get a bunch of spurious results.</p>",
+        "id": 381598883,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1691093121
+    },
+    {
+        "content": "<p>I think <code>#find (List ?a → List ?a)</code> already works as intended with the present <code>#find</code> implementation, but maybe it’s not documented like that. I’ll make sure to point it out in the docs for the new version.</p>",
+        "id": 381727577,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1691137273
+    },
+    {
+        "content": "<p>The new <code>#find</code> command is ready for reviewing: <a href=\"https://github.com/leanprover-community/mathlib4/pull/6363\">https://github.com/leanprover-community/mathlib4/pull/6363</a></p>",
+        "id": 381768939,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1691143691
+    }
+]

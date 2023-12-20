@@ -1,0 +1,152 @@
+[
+    {
+        "content": "<p>I have <code>arg : Type v</code> and <code>inductive T.{u} : Type u -&gt; Type u</code>, and then my expr is <code>T arg</code>, which gets a repr of <code>.app (.const T [v]) (.const arg [v])</code>, so this far everything is working correctly when Lean does it for me.</p>\n<p>But in my tactic I want to construct such expressions myself, and I don't know which functions exist to deal with level params like this, nor do I know much theory regarding level params (though I'm guessing this will be some kind of unification problem). Any pointers?</p>\n<p>Currently I essentially re-implemented \"mkAppN\" myself to some degree, since I need to partially apply some function parameters with some specific pattern (context: I'm doing some monomorphization). As such, I have a recursive function which goes through a forall telescope, and in each step does:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">myfunc</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">Meta.forallBoundedTelescope</span> <span class=\"n\">expr</span> <span class=\"o\">(</span><span class=\"n\">some</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"k\">fun</span> <span class=\"n\">fvars</span> <span class=\"n\">body</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"bp\">...</span>\n    <span class=\"k\">let</span> <span class=\"n\">body'</span> <span class=\"o\">:=</span> <span class=\"n\">body.replaceFvar</span> <span class=\"n\">fvars</span><span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"o\">]</span><span class=\"bp\">!</span> <span class=\"n\">arg</span>\n    <span class=\"n\">myfunc</span> <span class=\"n\">body'</span>\n</code></pre></div>\n<p>I can't use <code>mkAppOptM'</code> here since we're dealing with foralls instead of lambdas. But I think the problem stems from the <code>replaceFvar</code>, since <code>arg</code> contains levelParams with name <code>v</code>, which do not exist in the context that I'm working with, and <code>replaceFVar</code> is not smart enough to unify them with anyhing.</p>",
+        "id": 328785701,
+        "sender_full_name": "Max Nowak 🐉",
+        "timestamp": 1676802755
+    },
+    {
+        "content": "<p>It sounds like something is wrong with <code>arg</code> already, if it contains universe level parameters that are not in scope</p>",
+        "id": 328788136,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1676804011
+    },
+    {
+        "content": "<p>I thought the question was going to go in the direction of: how do I work out what universe parameters to pass to <code>T</code>, so that it type checks with <code>arg</code>.</p>",
+        "id": 328788261,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1676804076
+    },
+    {
+        "content": "<p>I guess the answer to that would be something like: apply <code>T</code> to a fresh level metavariable, and then unify the types before doing <code>replaceFvar</code>.</p>",
+        "id": 328788571,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1676804214
+    },
+    {
+        "content": "<p>Hm, yeah, now that you say it, <code>arg</code> does contain universe level parameters that are not in scope. I didn't realize that was the key problem.</p>\n<p>I construct my own <code>T'</code> given <code>T</code>, specifically I have an expression <code>T arg₁ arg₂</code> and want to monomorphize it to <code>T_arg₁ arg₂</code> for example.</p>",
+        "id": 328788609,
+        "sender_full_name": "Max Nowak 🐉",
+        "timestamp": 1676804235
+    },
+    {
+        "content": "<p>Anyways the theory of how universes occur in expressions is pretty simple: only constants (i.e. top-level definitions, instances, etc) can quantify over universe levels, they always do so at the outermost position, and you always specify all the universe parameters when referring to a constant.</p>",
+        "id": 328789247,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1676804508
+    },
+    {
+        "content": "<p>Yeah that took me a little while to fully wrap my head around. Helps to imagine they are essentially binders, but since it's so simple, a list with names is enough.</p>",
+        "id": 328789415,
+        "sender_full_name": "Max Nowak 🐉",
+        "timestamp": 1676804570
+    },
+    {
+        "content": "<p>It's the same way quantification over <em>types</em> works in standard Haskell, if that helps</p>",
+        "id": 328789670,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1676804695
+    },
+    {
+        "content": "<p>I skipped Haskell and went directly for Idris and Lean, unfortunately :P. But I understand how levels work now, just not how to handle them easily in metaprogramming. Currently looking at the metavar approach you suggested.</p>",
+        "id": 328789938,
+        "sender_full_name": "Max Nowak 🐉",
+        "timestamp": 1676804832
+    },
+    {
+        "content": "<p>Can I just disable universe checking? It's actually not very important for what I'm doing.<br>\n(Googling \"lean unsafe level\" did <em>not</em> bring up the results I thought it would xD)</p>",
+        "id": 328796841,
+        "sender_full_name": "Max Nowak 🐉",
+        "timestamp": 1676807921
+    },
+    {
+        "content": "<p>Kind of. Do you actually need universe polymorphism at all?<br>\nIf you're trying to use existential types or something then I think with <code>unsafe</code> you can write inductive types that ignore the universe rules.</p>",
+        "id": 328797557,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1676808289
+    },
+    {
+        "content": "<p>I specified <code>isUnsafe := true</code> to <code>addDecl</code>, and it still complains about invalid reference to undeclared universe parameter.</p>",
+        "id": 328798086,
+        "sender_full_name": "Max Nowak 🐉",
+        "timestamp": 1676808476
+    },
+    {
+        "content": "<p>I do not need universe polymorphism at all, in fact, I won't even have polymorphism when I'm done haha. This is all just an intermediate step, and I eventually end up with something I can shove into an SMT solver.</p>",
+        "id": 328798279,
+        "sender_full_name": "Max Nowak 🐉",
+        "timestamp": 1676808553
+    },
+    {
+        "content": "<p>Oh, if you are making a new universe-polymorphic definition, then you need to include the parameters in the declaration.</p>",
+        "id": 328800050,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1676809400
+    },
+    {
+        "content": "<p>Do you know of a function to collect all of them? There is <code>Lean.collectLevelParams</code>, but it needs to be run in some monad and it feels like some internal function.</p>",
+        "id": 328800573,
+        "sender_full_name": "Max Nowak 🐉",
+        "timestamp": 1676809655
+    },
+    {
+        "content": "<p>I think you're just expected to write <code>(Lean.collectLevelParams {} e).params</code>. I don't know exactly why they're designed this way, but my guess has been that this lets you easily take the union across multiple expressions.</p>",
+        "id": 328803624,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1676811127
+    },
+    {
+        "content": "<p>like <code>(Lean.collectLevelParams (Lean.collectLevelParams {} e1) e2).params</code> (or you could imagine a fold across a List or Array).</p>",
+        "id": 328803671,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1676811151
+    },
+    {
+        "content": "<p>Ah, yeah, that makes sense I suppose.</p>",
+        "id": 328804202,
+        "sender_full_name": "Max Nowak 🐉",
+        "timestamp": 1676811417
+    },
+    {
+        "content": "<p>Depending on what you're doing, you might already know in advance what the universe parameters of the new definition should be</p>",
+        "id": 328812395,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1676815473
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110032\">Reid Barton</span> <a href=\"#narrow/stream/270676-lean4/topic/Dealing.20with.20level.20params.20in.20metaprogramming/near/328788571\">said</a>:</p>\n<blockquote>\n<p>I guess the answer to that would be something like: apply <code>T</code> to a fresh level metavariable, and then unify the types before doing <code>replaceFvar</code>.</p>\n</blockquote>\n<p>I can't quite make out what you meant with this. The problem (as we found earlier today) is that <code>arg</code> already has concrete level params when given to <code>myfunc</code>. How would a metavariable help here?</p>",
+        "id": 328819529,
+        "sender_full_name": "Max Nowak 🐉",
+        "timestamp": 1676818167
+    },
+    {
+        "content": "<p>This was meant to be an answer to how to figure out the correct universe parameters for <code>T</code></p>",
+        "id": 328820421,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1676818454
+    },
+    {
+        "content": "<p>Given an inductive type <code>inductive T : τ where | ctors...</code>, in order to find all its levelParams, it is sufficient to check τ, right? I don't have to scan the ctors for extra levelParams.</p>",
+        "id": 328825853,
+        "sender_full_name": "Max Nowak 🐉",
+        "timestamp": 1676820755
+    },
+    {
+        "content": "<p>And second question, all ctors have the exact same level params on them as well? (Some small experimentation with <code>#check T.c</code> seems to allude to that)</p>",
+        "id": 328825931,
+        "sender_full_name": "Max Nowak 🐉",
+        "timestamp": 1676820791
+    },
+    {
+        "content": "<p>If the answers to those questions are true, I think I found a somewhat-proper way of dealing with level params, using something like <br>\n<code>Lean.instantiateLevelParams T.type T.levelParams levelParamsFromConst</code>.</p>",
+        "id": 328826089,
+        "sender_full_name": "Max Nowak 🐉",
+        "timestamp": 1676820857
+    },
+    {
+        "content": "<p>Oh my dog it works. I can't believe it took me a whole day to figure this out.</p>",
+        "id": 328826517,
+        "sender_full_name": "Max Nowak 🐉",
+        "timestamp": 1676821090
+    }
+]

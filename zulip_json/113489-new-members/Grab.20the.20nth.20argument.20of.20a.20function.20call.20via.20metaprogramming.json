@@ -1,0 +1,56 @@
+[
+    {
+        "content": "<p>I am guessing there's some basic type theoretic reason why this is impossible, but I am trying to pattern match on a specific function to extract an argument out a function call (with default). Here is a MWE:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n  <span class=\"kd\">@[</span><span class=\"n\">match_pattern</span><span class=\"kd\">]</span>\n  <span class=\"kd\">def</span> <span class=\"n\">f</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span> <span class=\"n\">a</span> <span class=\"bp\">+</span> <span class=\"n\">b</span>\n\n  <span class=\"kd\">def</span> <span class=\"n\">g</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span> <span class=\"bp\">→</span> <span class=\"n\">ℕ</span>\n    <span class=\"bp\">|</span> <span class=\"n\">f</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">a</span>\n    <span class=\"bp\">|</span> <span class=\"n\">n</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">n</span>\n</code></pre></div>\n<p>I get the following error: <code>■ invalid patterns, </code>a<code> is an explicit pattern variable, but it only occurs in positions that are inaccessible to pattern matching    .(Nat.add a b)</code></p>\n<p>Is anything like this possible without adding a constructor to the underlying type? Even with metaprogramming?</p>",
+        "id": 404103504,
+        "sender_full_name": "Malcolm Langfield",
+        "timestamp": 1700912594
+    },
+    {
+        "content": "<p>f 1 3 = f 2 2 = 4, so what do you expect g 4 to be?</p>",
+        "id": 404103707,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1700912672
+    },
+    {
+        "content": "<p>I expect <code>g 4 = 4</code>, so I guess this reveals the issue. It requires that the argument to <code>g</code> is not evaluated until after the call to <code>g</code>, or something vaguely like that?</p>",
+        "id": 404104071,
+        "sender_full_name": "Malcolm Langfield",
+        "timestamp": 1700912773
+    },
+    {
+        "content": "<p>In fact the value of the function changes depending on whether the expression passed to it is simplified or not. But this is precisely the behavior I want. Would it be possible to write a tactic combinator that does this?</p>\n<p>I suppose this means that if one were to write a thing that does this, it would not be a function in the mathematical sense, but maybe more like a parser.</p>",
+        "id": 404104265,
+        "sender_full_name": "Malcolm Langfield",
+        "timestamp": 1700912855
+    },
+    {
+        "content": "<p>Indeed this can be done.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"kd\">def</span> <span class=\"n\">f</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"n\">a</span> <span class=\"bp\">+</span> <span class=\"n\">b</span>\n\n  <span class=\"kn\">open</span> <span class=\"n\">Lean.Elab.Tactic</span> <span class=\"k\">in</span>\n  <span class=\"n\">elab</span> <span class=\"s2\">\"extract_first_argument \"</span> <span class=\"n\">n</span><span class=\"o\">:</span><span class=\"n\">ident</span> <span class=\"s2\">\" : \"</span> <span class=\"n\">v</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"s2\">\" giving the aforementioned argument the name \"</span> <span class=\"n\">name</span><span class=\"o\">:</span><span class=\"n\">ident</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"k\">let</span> <span class=\"n\">a</span> <span class=\"o\">:=</span>\n      <span class=\"k\">match</span> <span class=\"n\">v</span> <span class=\"k\">with</span>\n        <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"bp\">$</span><span class=\"n\">a</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"bp\">$</span><span class=\"n\">_</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">a</span>\n        <span class=\"bp\">|</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">v</span>\n    <span class=\"n\">withMainContext</span> <span class=\"k\">do</span>\n      <span class=\"n\">evalTactic</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">←</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">tactic</span><span class=\"bp\">|</span> <span class=\"n\">generalize</span> <span class=\"bp\">$</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"bp\">$</span><span class=\"n\">a</span> <span class=\"bp\">=</span> <span class=\"bp\">$</span><span class=\"n\">name</span><span class=\"o\">)</span>\n\n  <span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">f</span> <span class=\"mi\">3</span> <span class=\"mi\">4</span> <span class=\"bp\">=</span> <span class=\"mi\">7</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n    <span class=\"n\">extract_first_argument</span> <span class=\"n\">eq</span> <span class=\"o\">:</span> <span class=\"n\">f</span> <span class=\"o\">(</span><span class=\"mi\">1</span> <span class=\"bp\">+</span> <span class=\"mi\">2</span> <span class=\"bp\">+</span> <span class=\"mi\">3</span> <span class=\"bp\">+</span> <span class=\"mi\">4</span><span class=\"o\">)</span> <span class=\"mi\">4</span> <span class=\"n\">giving</span> <span class=\"n\">the</span> <span class=\"n\">aforementioned</span> <span class=\"n\">argument</span> <span class=\"n\">the</span> <span class=\"n\">name</span> <span class=\"n\">a</span>\n    <span class=\"n\">simp</span> <span class=\"n\">only</span>\n</code></pre></div>",
+        "id": 404112332,
+        "sender_full_name": "Malcolm Langfield",
+        "timestamp": 1700919181
+    },
+    {
+        "content": "<p>You can even make a term elaborator that does this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Term</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"last_arg%\"</span> <span class=\"n\">t</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">match</span> <span class=\"bp\">←</span> <span class=\"n\">elabTerm</span> <span class=\"n\">t</span> <span class=\"n\">none</span> <span class=\"k\">with</span>\n    <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">app</span> <span class=\"n\">_</span> <span class=\"n\">f</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"n\">f</span>\n    <span class=\"bp\">|</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">throwError</span> <span class=\"s2\">\"Not a function call.\"</span>\n\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">last_arg</span><span class=\"bp\">%</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"mi\">1</span><span class=\"o\">))</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span> <span class=\"n\">rfl</span>\n</code></pre></div>",
+        "id": 404118207,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1700924620
+    },
+    {
+        "content": "<p>This doesn't do exactly what you want since it gets the last argument, not the first one, but you get the idea</p>",
+        "id": 404118313,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1700924725
+    },
+    {
+        "content": "<p>Here's a variant that gets the first arg:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">elab</span> <span class=\"s2\">\"first_arg%\"</span> <span class=\"n\">t</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">match</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">elabTerm</span> <span class=\"n\">t</span> <span class=\"n\">none</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">getAppFnArgs</span> <span class=\"k\">with</span>\n    <span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"bp\">.</span><span class=\"n\">mk</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">::</span> <span class=\"n\">_</span><span class=\"o\">))</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"n\">a</span>\n    <span class=\"bp\">|</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">throwError</span> <span class=\"s2\">\"Failed\"</span>\n</code></pre></div>",
+        "id": 404118578,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1700924973
+    },
+    {
+        "content": "<p>Oh this is extremely nice! Thanks so much, I will probably use this instead! <span aria-label=\"heart\" class=\"emoji emoji-2764\" role=\"img\" title=\"heart\">:heart:</span></p>",
+        "id": 404134366,
+        "sender_full_name": "Malcolm Langfield",
+        "timestamp": 1700935483
+    }
+]

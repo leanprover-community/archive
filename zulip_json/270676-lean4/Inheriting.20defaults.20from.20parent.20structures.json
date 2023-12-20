@@ -1,0 +1,128 @@
+[
+    {
+        "content": "<p>I'm wondering what the best way to inherit defaults from a parent structure to a child structure is. For example</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">SharedFoo</span> <span class=\"n\">where</span>\n  <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Bool</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">Bar</span> <span class=\"kd\">extends</span> <span class=\"n\">SharedFoo</span> <span class=\"n\">where</span>\n  <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">true</span>\n  <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">Foo</span> <span class=\"kd\">extends</span> <span class=\"n\">SharedFoo</span> <span class=\"n\">where</span>\n  <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">true</span> <span class=\"c1\">-- intended to be a \"global\" setting for `a`</span>\n  <span class=\"n\">bar</span> <span class=\"o\">:</span> <span class=\"n\">Bar</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">a</span> <span class=\"o\">}</span> <span class=\"c1\">-- we want that by default, this instance of Bar uses the parent `a` for the value of `a`</span>\n</code></pre></div>\n<p>The \"problem\" with this is that when specifying a <code>Foo</code>, setting <code>bar</code>'s other fields (<code>b</code>) will cause the default value of the field <code>a</code> to be decoupled from the <code>a</code> used in <code>Foo</code>. For example, in <code>def x : Foo := { a := false, bar := { b := 2 } }</code>, we find that <code>x.bar.a</code> is <code>true</code>—the default from <code>Bar</code>, when we'd like it to inherit the \"global\" value <code>false</code> as its default, from the surrounding instance for <code>Foo</code>.</p>\n<p>Long message incoming: <strong>tl;dr</strong> it's useful for complicated config structures, and you can do it with a parameter to the structure which sets the defaults, or maybe by changing the underlying elaborator. And the question: is there support for making it more convenient than it currently is, one way another? If so, how?</p>\n<h3>Motivation</h3>\n<p>You might say that every <code>Bar</code> instance should get the same defaults wherever it's created (whether inside <code>Foo</code> or otherwise), but the situation is a bit different when <code>Bar</code>'s only purpose in life, so to speak, is to be the type of a field of <code>Foo</code>.</p>\n<p>Consider the following (real) situation as a motivating example: you're writing a config structure for a complicated thing, and you want lots of knobs to control all the different components. Many of the components involve running the same type of process, in part, but you'd like to provide the ability to modulate each one of the components' instances of these processes separately if need be. That means you at least want structures like</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">SharedProcessConfig</span> <span class=\"n\">where</span>\n  <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Bool</span> <span class=\"o\">:=</span> <span class=\"n\">true</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">Comp1Config</span> <span class=\"kd\">extends</span> <span class=\"n\">SharedProcessConfig</span> <span class=\"c1\">-- plus other fields</span>\n<span class=\"kd\">structure</span> <span class=\"n\">Comp2Config</span> <span class=\"kd\">extends</span> <span class=\"n\">SharedProcessConfig</span> <span class=\"c1\">-- plus other fields</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">WholeThingConfig</span> <span class=\"n\">where</span>\n  <span class=\"n\">c1</span> <span class=\"o\">:</span> <span class=\"n\">Comp1Config</span>\n  <span class=\"n\">c2</span> <span class=\"o\">:</span> <span class=\"n\">Comp2Config</span>\n</code></pre></div>\n<p>However, you'd like the ability to control <code>a</code> in all components at once as a convenient \"global\" setting in <code>WholeThingConfig</code>, but in a manner which could be overridden by one or two components manually.</p>\n<h3>Some approaches</h3>\n<p>One way to get around this is to give each <code>Comp*Config</code> a parameter which sets the defaults. For example</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">SharedProcessConfig</span> <span class=\"n\">where</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Bool</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">Comp1Config</span> <span class=\"o\">(</span><span class=\"n\">defaults</span> <span class=\"o\">:</span> <span class=\"n\">SharedProcessConfig</span><span class=\"o\">)</span> <span class=\"kd\">extends</span> <span class=\"n\">SharedProcessConfig</span> <span class=\"n\">where</span>\n  <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">defaults.a</span>\n  <span class=\"c1\">-- plus other fields</span>\n\n<span class=\"c1\">-- likewise for Comp2Config</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">WholeThingConfig</span> <span class=\"kd\">extends</span> <span class=\"n\">SharedProcessConfig</span> <span class=\"n\">where</span>\n  <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">true</span>\n  <span class=\"n\">c1</span> <span class=\"o\">:</span> <span class=\"n\">Comp1Config</span> <span class=\"o\">{</span> <span class=\"n\">a</span> <span class=\"o\">}</span> <span class=\"o\">:=</span> <span class=\"o\">{}</span>\n  <span class=\"n\">c2</span> <span class=\"o\">:</span> <span class=\"n\">Comp2Config</span> <span class=\"o\">{</span> <span class=\"n\">a</span> <span class=\"o\">}</span> <span class=\"o\">:=</span> <span class=\"o\">{}</span>\n</code></pre></div>\n<p>The thing is that this does get a bit tedious after doing a bit of it. <code>(defaults : SharedProcessConfig) extends SharedProcessConfig where a := defaults.a</code>, but for all fields, and for each subconfig you write, is quite cluttered; and one even needs to define <code>structure SharedProcessConfigWithDefaults (defaults : SharedProcessConfig)</code> in some cases for the type of the field that eventually actually controls the shared process.</p>\n<p>We could maybe automate this via an <code>inheriting</code> or <code>inheriting_as_default</code> elaborator, so that one could write something roughly like</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">...</span>\n<span class=\"kd\">structure</span> <span class=\"n\">Comp1Config</span> <span class=\"kd\">extends</span> <span class=\"n\">SharedProcessConfig</span> <span class=\"c1\">-- plus other fields</span>\n<span class=\"kd\">structure</span> <span class=\"n\">Comp2Config</span> <span class=\"kd\">extends</span> <span class=\"n\">SharedProcessConfig</span> <span class=\"c1\">-- plus other fields</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">WholeThingConfig</span> <span class=\"kd\">extends</span> <span class=\"n\">SharedProcessConfig</span> <span class=\"n\">where</span>\n  <span class=\"c1\">-- creates Comp(1/2)ConfigInheritingFromWholeThingConfig (a) behind the scenes with appropriate defaults</span>\n  <span class=\"c1\">-- we can also maybe create coercions to/from the \"base\" structures for convenience</span>\n  <span class=\"n\">c1</span> <span class=\"o\">:</span> <span class=\"n\">Comp1Config</span> <span class=\"n\">inheriting</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"o\">{}</span>\n  <span class=\"n\">c2</span> <span class=\"o\">:</span> <span class=\"n\">Comp2Config</span> <span class=\"n\">inheriting</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"o\">{}</span>\n</code></pre></div>\n<p>but this is a fair bit of trickery, and I'm a little wary of trying to make types like this invisible.</p>\n<p>A totally different approach would be to modify elaborator for structures and structure instances in a way which, say, stores extra information in the structure info, then, during instance elaboration, checks some hint stored in the infotree to see if it needs to consult a parent structure's info and instance syntax for its defaults. But I haven't really worked this out yet, and an addition to core would be a bigger undertaking; I'm thinking of this as probably a potential addition to std4 or mathlib4 (if anything), but thought I'd post here since it technically only concerns lean4.</p>\n<p>Is there support for figuring out how to make inheriting defaults more convenient, one way or another? Is there another way to do this currently which I'm totally missing, or even just a better way to approach the problem of complicated configs? Or is the whole feature just too niche? :)</p>",
+        "id": 373636566,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1688890362
+    },
+    {
+        "content": "<p>I would avoid using default initializers and instead do the following: </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">SharedFoo</span> <span class=\"n\">where</span>\n  <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Bool</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">Bar</span> <span class=\"kd\">extends</span> <span class=\"n\">SharedFoo</span> <span class=\"n\">where</span>\n  <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">Foo</span> <span class=\"kd\">extends</span> <span class=\"n\">SharedFoo</span> <span class=\"n\">where</span>\n  <span class=\"n\">bar</span> <span class=\"o\">:</span> <span class=\"n\">Bar</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">SharedFoo.default</span> <span class=\"o\">:</span> <span class=\"n\">SharedFoo</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">true</span> <span class=\"o\">}</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">Bar.default</span> <span class=\"o\">(</span><span class=\"n\">d</span> <span class=\"o\">:</span> <span class=\"n\">SharedFoo</span> <span class=\"o\">:=</span> <span class=\"n\">SharedFoo.default</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Bar</span> <span class=\"o\">:=</span>\n  <span class=\"o\">{</span> <span class=\"n\">toSharedFoo</span> <span class=\"o\">:=</span> <span class=\"n\">d</span><span class=\"o\">,</span> <span class=\"n\">b</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span> <span class=\"o\">}</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">Foo.default</span> <span class=\"o\">(</span><span class=\"n\">d</span> <span class=\"o\">:</span> <span class=\"n\">SharedFoo</span> <span class=\"o\">:=</span> <span class=\"n\">SharedFoo.default</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Foo</span> <span class=\"o\">:=</span>\n  <span class=\"o\">{</span> <span class=\"n\">toSharedFoo</span> <span class=\"o\">:=</span> <span class=\"n\">d</span><span class=\"o\">,</span> <span class=\"n\">bar</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">default</span> <span class=\"n\">d</span> <span class=\"o\">}</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">myCfg</span> <span class=\"o\">:</span> <span class=\"n\">Foo</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">default</span> <span class=\"o\">{</span> <span class=\"n\">SharedFoo.default</span> <span class=\"k\">with</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">false</span> <span class=\"o\">}</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">myCfg.a</span>\n<span class=\"c1\">-- false</span>\n<span class=\"k\">#eval</span> <span class=\"n\">myCfg.bar.a</span>\n<span class=\"c1\">-- false</span>\n</code></pre></div>",
+        "id": 373675924,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688901267
+    },
+    {
+        "content": "<p>The pattern is that you make <code>default</code> constructors that take the shared configuration and thread it to each of the <code>default</code> constructors for each field, and then when you construct a configuration later you make use of the default constructors along with <code>{ ... with ...}</code> notation to override values.</p>",
+        "id": 373676075,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688901320
+    },
+    {
+        "content": "<p>The <code>structure Comp1Config (defaults : SharedProcessConfig)</code> pattern doesn't seem like a good idea because then every value for <code>defaults</code> yields a completely different type -- that's likely not what you want.</p>",
+        "id": 373676236,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688901362
+    },
+    {
+        "content": "<p>Hmm, I am specifically looking for “natural” structure instance input syntax, though, so that you can actually just write <code>{ a := false, bar := { b := 2 } }</code>. I’d worry that this makes that a bit clunky when we have nested config structures. It also means that I need to “teach” the user of a potentially already-complicated config about the default constructors, and shifts the responsibility onto them for remembering it at every level, instead of saying “inner values of <code>a</code> are taken to be the nearest outer value of <code>a</code> by default” and having it “just work”.</p>",
+        "id": 373677409,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1688901650
+    },
+    {
+        "content": "<p>Though, does having each value of <code>defaults</code> yield a different type cause an issue somehow?</p>",
+        "id": 373677634,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1688901721
+    },
+    {
+        "content": "<p>Also, hmmm…upon looking closer, I’m not sure <code>.default</code> constructors actually address the issue. How do we set <code>b := 2</code> in <code>Foo.bar</code> in the example given? If we use <code>Foo.default</code>, we only get to set <code>a</code>; if we use <code>Bar.default</code> and modify <code>b</code> with <code>with</code>, then we don’t know about the parent <code>a</code> unless we explicitly write it in, and that’s what we want to avoid doing.</p>",
+        "id": 373680444,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1688902500
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">myCfg</span> <span class=\"o\">:</span> <span class=\"n\">Foo</span> <span class=\"o\">:=</span>\n  <span class=\"o\">{</span> <span class=\"n\">Foo.default</span> <span class=\"o\">{</span> <span class=\"n\">SharedFoo.default</span> <span class=\"k\">with</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">false</span> <span class=\"o\">}</span> <span class=\"k\">with</span> <span class=\"n\">bar.b</span> <span class=\"o\">:=</span> <span class=\"mi\">3</span> <span class=\"o\">}</span>\n</code></pre></div>\n<p>(One variation would be to let <code>SharedFoo</code> have default initializers, to cut down on the syntax a little and only need to write <code>{a := false}</code> in there.)</p>",
+        "id": 373681714,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688902832
+    },
+    {
+        "content": "<p>That does <em>work</em>, but that means that you have to set <em>each</em> field of <code>bar</code> in a “flat” way, instead of in a packaged way, which I don’t think would be very readable when <code>bar</code> is the name of a subconfig and has several fields (and also there are other subconfigs, each which may also be provided)</p>",
+        "id": 373682530,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1688903072
+    },
+    {
+        "content": "<p>This all seems to be very, and I'm not sure there's any avoiding needing to teach users of this configuration how it works no matter what design you use.</p>\n<p>Are you sure you're solving a well-motivated problem right now? Do actually have configurations that you expect to need reconfiguration that need such nested structure and which need rules for which defaults override which?</p>",
+        "id": 373682862,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688903176
+    },
+    {
+        "content": "<p>Could you instead make a single configuration object that flattens everything for your particular application? If it makes things simpler to work with, I think it's perfectly ok if each individual sub-command doesn't make use of all the configuration fields in this flattened configuration object.</p>",
+        "id": 373683017,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688903227
+    },
+    {
+        "content": "<p>(My particular suggestion is one way to keep having nested configuration objects while also trying to avoid relying on any sort of magic <span aria-label=\"magic\" class=\"emoji emoji-1fa84\" role=\"img\" title=\"magic\">:magic:</span> -- anyone can follow the definitions of the <code>default</code> functions to see what will happen.)</p>",
+        "id": 373683308,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688903316
+    },
+    {
+        "content": "<p>I'm asking this because I feel like you're veering into enterprise-grade configuration patterns, and it's not clear that there are enterprise-grade applications for it, and life is better when we can keep things simple when we can.</p>\n<p>This is for <code>fail_if_no_progress</code> right? In principle it's nice that you're making it be so configurable, but in practice, do you have concrete applications in mind where all these configurations will be exercised? Or are there a few basic configurations that anybody will use? Do we need different equality relations and transparencies for types, values, local declarations types and values, and metavariable contexts, all independently?</p>",
+        "id": 373685167,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688903891
+    },
+    {
+        "content": "<p>So, this is for the full bells-and-whistles version of <code>fail_if_no_progress</code>, where the objective is to compare goal lists and have as many knobs as possible present in the background in case anyone wants them. As it happens, I did already implement the default initializer version I put forward in the time between my last message and your first message <span aria-label=\"sweat smile\" class=\"emoji emoji-1f605\" role=\"img\" title=\"sweat smile\">:sweat_smile:</span> The configs are each for different components of the goals. I’d rather not flatten them all into one config, in part because I like the pattern of being able to control whether e.g. local contexts are compared by having something like <code>Option (LocalContextComparisonConfig defaults)</code> [name pending] rather than a separate boolean toggle—but maybe this is not a shared view. In that case, I could flatten them, but would need much longer field names to distinguish everything—and at that point may as well be using <code>with bar.b := …</code></p>",
+        "id": 373685188,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1688903897
+    },
+    {
+        "content": "<p>Yes! Sorry, was in the middle of typing. :)</p>",
+        "id": 373685301,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1688903942
+    },
+    {
+        "content": "<p>So, that’s true, there’s an argument for more or less saying “why would you do that? don’t do that!” about comparing different Expr’s in different places in different ways; it’s not motivated yet. I can, though, at least <em>imagine</em> wanting to check some Expr’s with beq and some with isDefEq, or the hypotheses at instances transparency to see through instances but the goal at reducible transparency, but if people don’t think there will ever be a use for it, I can simplify things and avoid all of this. :)</p>\n<p>I do think the notion of having a “global setting” and a “local setting” in configs is pretty useful in general, though, and I do think it ought to be easier than setting up default constructors. I can appreciate that they’re less magical, but personally I’d worry they’re sufficiently more wordy and time-consuming to infer the meaning of that they wind up being much more complex for the person writing the structure instance. To me, being able to write (the analogue of) <code>{ a := false, bar := { b := 2 } }</code> is just cleaner and simpler.</p>\n<p>At least one redeeming (magic-reducing) quality of having the defaults in the type explicitly (and not doing something like <code>inheriting</code>) is that you at least can’t extricate the <code>Bar _</code> instance from its context: <code>def bar’ := { b := 2 }</code> doesn’t have enough info to typecheck. On the other hand, that makes it annoying to use the standalone comparison functions which take in Bar’s. You can probably imagine a way around that—have <code>BarWithDefaults (defaults)</code> and <code>BarWithDefaults.toBar</code> which simply forgets the type info—but it is another step.</p>",
+        "id": 373690938,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1688905642
+    },
+    {
+        "content": "<p>Hmm, one thing I haven’t added to the configs yet but <em>can</em> see a real use case for is functions which override the standard comparisons in a certain way. Ultimately there’s too much complexity out there for one config to cover it all. And I can see people wanting these functions to be defined differently at different spots, and for outer functions to propagate inwards by default…so I suppose that would be the closest to a reasonable motivating hypothetical.</p>",
+        "id": 373692651,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1688906199
+    },
+    {
+        "content": "<p>Often the best configuration system is to give a good API to let people write the exact tactic that they want. At some point a configuration system permits so much that it becomes a programming language on its own, so one may as well just program a new tactic <span aria-label=\"wink\" class=\"emoji emoji-1f609\" role=\"img\" title=\"wink\">:wink:</span></p>",
+        "id": 373695316,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688906969
+    },
+    {
+        "content": "<p>Stepping back, what is <code>fail_if_no_progress</code> itself solving? Do you have other applications than <code>simp</code>? (And I hope <code>simp</code> will eventually at least have its own configuration option to have it detect it's made no progress.)</p>\n<p>I would go through this effort to design such a featureful configuration system for only two reasons: (1) if there are multiple concrete situations I want to support right now, not just the tempting \"I could imagine this being useful\" that afflicts us all, or (2) if this is a personal exercise to see what's possible, but I wouldn't contribute it because I wouldn't want to make other people support it in the future (it's not a waste though: you'll be ready when a time comes that it's necessary)</p>",
+        "id": 373696355,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688907246
+    },
+    {
+        "content": "<p>(If you're not familiar with it, there's <a href=\"https://en.wikipedia.org/wiki/Worse_is_better\">\"worse is better\"</a>. I remember the 1989 paper it comes from being an interesting read.)</p>",
+        "id": 373698143,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688907773
+    },
+    {
+        "content": "<p>That’s insightful; thanks! :) I’ll think about it from this perspective further after I sleep, and try to keep things simple and maintainable while still featureful. I’m not familiar, so I look forward to reading it! :)</p>",
+        "id": 373700531,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1688908431
+    }
+]

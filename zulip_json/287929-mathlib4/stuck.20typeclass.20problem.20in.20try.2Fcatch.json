@@ -1,0 +1,200 @@
+[
+    {
+        "content": "<p>In <a href=\"https://github.com/leanprover-community/mathlib4/pull/2109\">mathlib4#2109</a>, I made an attempt at porting <code>slice</code> and its descendants. While it is not the most pretty, I am reasonably confident it is executing properly, at least on rewrites. </p>\n<p>I am encountering a <code>typeclass instance problem is stuck</code> error which I do not completely understand. </p>\n<p>For <del>my best</del> an awful <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a> example, see below. I have included a similar  example in <code>Slice.lean</code> in the branch and have included a worked-on <code>Equivalence.lean</code> file with similar behavior (<code>sliceLHS</code> can be used to solve the goal modulo this). </p>\n<div class=\"codehilite\" data-code-language=\"lean4\"><pre><span></span><code>import Mathlib.CategoryTheory.Category.Basic\nimport Mathlib.Tactic.Conv\n\nopen CategoryTheory\nopen Lean Parser.Tactic Elab Command Elab.Tactic Meta\n\ndef test : TacticM Unit := do\n   iterateUntilFailure do\n    ``(Category.assoc) &gt;&gt;= fun e =&gt; rewriteTarget' e (symm := false)\n\nelab \"test\" : tactic =&gt; test\n\nvariable (C : Type) [Category C] (X Y Z W : C)\nvariable (f : X ⟶ Y) (g : Y ⟶ Z) (h : Z ⟶ W)\n\nexample : (f ≫ g) ≫ h = ((f ≫ g) ≫ h := by\n  test — typeclass instance problem is stuck\n  rfl\n</code></pre></div>\n<p>Replacing <code>iterateUntilFailure</code> with <code>iterateAtMost 1</code>removes the error. <code>iterateAtMost 2</code> brings it back.</p>",
+        "id": 326441025,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1675798078
+    },
+    {
+        "content": "<p>I can try to minimize this further later this evening after teaching/dinner but it appears the error is coming from the <code>catch</code> branch in the iteration tactics.</p>",
+        "id": 326441187,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1675798123
+    },
+    {
+        "content": "<p><code>unit_inverse_comp</code> in the equivalences file in that branch is a fun illustration.</p>",
+        "id": 326442330,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1675798476
+    },
+    {
+        "content": "<p>Interesting! (Btw, I've just moved the test from <code>Slice.lean</code> into <code>test/slice.lean</code>, where it can stay forever as a useful test of this issue!)</p>",
+        "id": 326458791,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1675804316
+    },
+    {
+        "content": "<p>Here is a better <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a>: </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean.Elab.Tactic</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Parser.Tactic</span> <span class=\"n\">Elab</span> <span class=\"n\">Command</span> <span class=\"n\">Elab.Tactic</span> <span class=\"n\">Meta</span>\n\n<span class=\"kd\">class</span> <span class=\"n\">Assoc</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"kd\">extends</span> <span class=\"n\">Mul</span> <span class=\"n\">α</span> <span class=\"n\">where</span>\n  <span class=\"n\">assoc</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"n\">a₁</span> <span class=\"n\">a₂</span> <span class=\"n\">a₃</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"o\">,</span> <span class=\"o\">(</span><span class=\"n\">a₁</span> <span class=\"bp\">*</span> <span class=\"n\">a₂</span><span class=\"o\">)</span> <span class=\"bp\">*</span> <span class=\"n\">a₃</span> <span class=\"bp\">=</span> <span class=\"n\">a₁</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">a₂</span> <span class=\"bp\">*</span> <span class=\"n\">a₃</span><span class=\"o\">)</span>\n\n<span class=\"kd\">variable</span> <span class=\"o\">[</span><span class=\"n\">Monad</span> <span class=\"n\">m</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">MonadExceptOf</span> <span class=\"n\">Exception</span> <span class=\"n\">m</span><span class=\"o\">]</span>\n\n<span class=\"n\">partial</span> <span class=\"kd\">def</span> <span class=\"n\">iterateUntilFailure</span> <span class=\"o\">(</span><span class=\"n\">tac</span> <span class=\"o\">:</span> <span class=\"n\">m</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">m</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span>\n  <span class=\"n\">try</span> <span class=\"n\">tac</span><span class=\"bp\">;</span> <span class=\"n\">iterateUntilFailure</span> <span class=\"n\">tac</span> <span class=\"n\">catch</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">pure</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">iterateAtMost</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">m</span> <span class=\"n\">Unit</span> <span class=\"bp\">→</span> <span class=\"n\">m</span> <span class=\"n\">Unit</span>\n<span class=\"bp\">|</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">pure</span> <span class=\"o\">()</span>\n<span class=\"bp\">|</span> <span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">tac</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">try</span> <span class=\"n\">tac</span><span class=\"bp\">;</span> <span class=\"n\">iterateAtMost</span> <span class=\"n\">n</span> <span class=\"n\">tac</span> <span class=\"n\">catch</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">pure</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">test</span> <span class=\"o\">:</span> <span class=\"n\">TacticM</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">iterateUntilFailure</span> <span class=\"k\">do</span>\n    <span class=\"n\">evalTactic</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">←</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">conv</span><span class=\"bp\">|</span> <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">Assoc.assoc</span><span class=\"o\">])</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"test\"</span> <span class=\"o\">:</span> <span class=\"n\">conv</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">test</span>\n\n<span class=\"kd\">variable</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">Assoc</span> <span class=\"n\">α</span><span class=\"o\">]</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">a₁</span> <span class=\"n\">a₂</span> <span class=\"n\">a₃</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">a₁</span> <span class=\"bp\">*</span> <span class=\"n\">a₂</span><span class=\"o\">)</span> <span class=\"bp\">*</span> <span class=\"n\">a₃</span> <span class=\"bp\">=</span> <span class=\"n\">a₁</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">a₂</span> <span class=\"bp\">*</span> <span class=\"n\">a₃</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">conv</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">lhs</span>\n    <span class=\"n\">test</span> <span class=\"c1\">-- typeclass instance problem is stuck, it is often due to metavariables Assoc ?m.7325</span>\n</code></pre></div>\n<p>Add <code>rfl</code> to the example </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">a₁</span> <span class=\"n\">a₂</span> <span class=\"n\">a₃</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">a₁</span> <span class=\"bp\">*</span> <span class=\"n\">a₂</span><span class=\"o\">)</span> <span class=\"bp\">*</span> <span class=\"n\">a₃</span> <span class=\"bp\">=</span> <span class=\"n\">a₁</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">a₂</span> <span class=\"bp\">*</span> <span class=\"n\">a₃</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">conv</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">lhs</span>\n    <span class=\"n\">test</span>\n  <span class=\"n\">rfl</span> <span class=\"c1\">-- no goals to be solved</span>\n</code></pre></div>\n<p>Replacing <code>iterateUntilFailure</code> with <code>iterateAtMost 1</code> removes the original error. With <code>iterateAtMost 2</code> it returns.</p>",
+        "id": 326491414,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1675820777
+    },
+    {
+        "content": "<p>Specializing <code>m</code> to <code>TacticM</code> seems to have fixed the issue.</p>",
+        "id": 326492998,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1675822144
+    },
+    {
+        "content": "<p>If you change <code>MonadExceptOf</code> to <code>MonadExcept</code> then it also works.</p>",
+        "id": 326496120,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1675824961
+    },
+    {
+        "content": "<p>I guess the metavariable that lean is complaining about is <code>Exception</code> in the <code>MonadExceptOf</code> variable</p>",
+        "id": 326496188,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1675825016
+    },
+    {
+        "content": "<p>Is that where the <code>Category</code> metavariable would land?</p>",
+        "id": 326496227,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1675825048
+    },
+    {
+        "content": "<p>I'm not sure what you mean</p>",
+        "id": 326496248,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1675825078
+    },
+    {
+        "content": "<p>Sorry. For this one, it complains about finding an instance of <code>Assoc</code>.</p>",
+        "id": 326496317,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1675825123
+    },
+    {
+        "content": "<p>Oh</p>",
+        "id": 326496324,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1675825132
+    },
+    {
+        "content": "<p>Okay now I'm confused. This also works:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean.Elab.Tactic</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Parser.Tactic</span> <span class=\"n\">Elab</span> <span class=\"n\">Command</span> <span class=\"n\">Elab.Tactic</span> <span class=\"n\">Meta</span>\n\n<span class=\"kd\">class</span> <span class=\"n\">Assoc</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"n\">outParam</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"kd\">extends</span> <span class=\"n\">Mul</span> <span class=\"n\">α</span> <span class=\"n\">where</span>\n  <span class=\"n\">assoc</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"n\">a₁</span> <span class=\"n\">a₂</span> <span class=\"n\">a₃</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"o\">,</span> <span class=\"o\">(</span><span class=\"n\">a₁</span> <span class=\"bp\">*</span> <span class=\"n\">a₂</span><span class=\"o\">)</span> <span class=\"bp\">*</span> <span class=\"n\">a₃</span> <span class=\"bp\">=</span> <span class=\"n\">a₁</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">a₂</span> <span class=\"bp\">*</span> <span class=\"n\">a₃</span><span class=\"o\">)</span>\n\n<span class=\"kd\">variable</span> <span class=\"o\">[</span><span class=\"n\">Monad</span> <span class=\"n\">m</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">MonadExceptOf</span> <span class=\"n\">Exception</span> <span class=\"n\">m</span><span class=\"o\">]</span>\n\n<span class=\"n\">partial</span> <span class=\"kd\">def</span> <span class=\"n\">iterateUntilFailure</span> <span class=\"o\">(</span><span class=\"n\">tac</span> <span class=\"o\">:</span> <span class=\"n\">m</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">m</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span>\n  <span class=\"n\">try</span> <span class=\"n\">tac</span><span class=\"bp\">;</span> <span class=\"n\">iterateUntilFailure</span> <span class=\"n\">tac</span> <span class=\"n\">catch</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">pure</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">test</span> <span class=\"o\">:</span> <span class=\"n\">TacticM</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">iterateUntilFailure</span> <span class=\"k\">do</span>\n    <span class=\"n\">evalTactic</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">←</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">conv</span><span class=\"bp\">|</span> <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">Assoc.assoc</span><span class=\"o\">])</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"test\"</span> <span class=\"o\">:</span> <span class=\"n\">conv</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">test</span>\n\n<span class=\"kd\">variable</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">Assoc</span> <span class=\"n\">α</span><span class=\"o\">]</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">a₁</span> <span class=\"n\">a₂</span> <span class=\"n\">a₃</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">a₁</span> <span class=\"bp\">*</span> <span class=\"n\">a₂</span><span class=\"o\">)</span> <span class=\"bp\">*</span> <span class=\"n\">a₃</span> <span class=\"bp\">=</span> <span class=\"n\">a₁</span> <span class=\"bp\">*</span> <span class=\"o\">(</span><span class=\"n\">a₂</span> <span class=\"bp\">*</span> <span class=\"n\">a₃</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">conv</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">lhs</span>\n    <span class=\"n\">test</span>\n</code></pre></div>",
+        "id": 326496355,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1675825197
+    },
+    {
+        "content": "<p>It seems that typeclass search just gets stuck even though it shouldn't?</p>",
+        "id": 326496430,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1675825230
+    },
+    {
+        "content": "<p>Yes. It seems so. Putting <code>rfl</code> at the end convinces Lean that all goals are cleared.</p>",
+        "id": 326496508,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1675825316
+    },
+    {
+        "content": "<p>what's the <code>set_option</code> for typeclass tracing?</p>",
+        "id": 326496509,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1675825317
+    },
+    {
+        "content": "<p>Nice catch, because this is really weird to me. Even specifying the monad with <code>iterateUntilFailure (m := TacticM) ...</code> in the calls doesn't help—it actually has to be in the type declaration.</p>",
+        "id": 326496611,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1675825376
+    },
+    {
+        "content": "<p><code>set_option trace.Meta.synthInstance true</code> only for <code>#synth</code>?</p>",
+        "id": 326496836,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1675825536
+    },
+    {
+        "content": "<p>no that's the one</p>",
+        "id": 326496909,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1675825590
+    },
+    {
+        "content": "<p>I don't really know why it's failing.</p>",
+        "id": 326496941,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1675825635
+    },
+    {
+        "content": "<p>(aside: <code>slice</code> is working well enough now that I am trying to kill off <a href=\"https://github.com/leanprover-community/mathlib4/pull/1287\">!4#1287</a> before bed)</p>",
+        "id": 326497252,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1675825866
+    },
+    {
+        "content": "<p>Is there any reason why one should not just use <code>MonadExcept</code> here?</p>",
+        "id": 326497263,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1675825876
+    },
+    {
+        "content": "<p>I took the tactic iterators from <code>Mathlib.Tactic.Core</code>without much thought</p>",
+        "id": 326497283,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1675825913
+    },
+    {
+        "content": "<p>Oh I see.</p>",
+        "id": 326497338,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1675825936
+    },
+    {
+        "content": "<p>But I doubt you would have much to break if you changed them there</p>",
+        "id": 326497437,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1675825985
+    },
+    {
+        "content": "<p>I'll leave that to the tactic writing experts to decide.</p>",
+        "id": 326497647,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1675826147
+    },
+    {
+        "content": "<p>It's strange to me that making everything explicit doesn't work either. I wouldn't have expected this—but I guess that's the magic of outparams, which I don't understand yet.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">inst</span> <span class=\"o\">:</span> <span class=\"n\">MonadExceptOf</span> <span class=\"n\">Exception</span> <span class=\"n\">TacticM</span> <span class=\"o\">:=</span> <span class=\"n\">inferInstance</span>\n\n<span class=\"n\">partial</span> <span class=\"kd\">def</span> <span class=\"n\">iterateUntilFailure'</span> <span class=\"o\">{</span><span class=\"n\">m</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">_</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">m₀</span> <span class=\"o\">:</span> <span class=\"n\">Monad</span> <span class=\"n\">m</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">m₁</span> <span class=\"o\">:</span> <span class=\"n\">MonadExceptOf</span> <span class=\"n\">Exception</span> <span class=\"n\">m</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">tac</span> <span class=\"o\">:</span> <span class=\"n\">m</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">m</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span>\n  <span class=\"n\">try</span> <span class=\"n\">tac</span><span class=\"bp\">;</span> <span class=\"bp\">@</span><span class=\"n\">iterateUntilFailure'</span> <span class=\"n\">m</span> <span class=\"n\">m₀</span> <span class=\"n\">m₁</span> <span class=\"n\">tac</span> <span class=\"n\">catch</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">pure</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">test</span> <span class=\"o\">:</span> <span class=\"n\">TacticM</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"bp\">@</span><span class=\"n\">iterateUntilFailure'</span> <span class=\"n\">TacticM</span> <span class=\"n\">instMonadTacticM</span> <span class=\"n\">inst</span> <span class=\"k\">do</span>\n    <span class=\"n\">rewriteTarget'</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"bp\">``</span><span class=\"o\">(</span><span class=\"n\">Category.assoc</span><span class=\"o\">))</span> <span class=\"o\">(</span><span class=\"n\">symm</span> <span class=\"o\">:=</span> <span class=\"n\">false</span><span class=\"o\">)</span>\n\n<span class=\"c1\">-- same issues occur</span>\n</code></pre></div>",
+        "id": 326498088,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1675826477
+    },
+    {
+        "content": "<p>Btw, the defs in that block of <code>Mathlib.Tactic.Core</code> which depend on <code>[MonadExceptOf Exception m]</code> are only used in <code>slice</code> and <code>tauto</code>. If <code>tauto</code> works with the change, I would hope we could just change it to <code>[MonadExcept Exception m]</code>—but I'm not sure why that choice was made in the first place, so we should confirm with an expert.</p>",
+        "id": 326498427,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1675826743
+    },
+    {
+        "content": "<p>In any case, it's great that it's working! Thanks for porting it! :)</p>",
+        "id": 326498761,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1675827015
+    },
+    {
+        "content": "<p>In terms of git organization (which you might be planning to do already, but just mentioning since I don’t see it on GitHub): I think <a href=\"https://github.com/leanprover-community/mathlib4/pull/1287\">!4#1287</a> should be made to depend on <a href=\"https://github.com/leanprover-community/mathlib4/pull/2109\">!4#2109</a>, and <a href=\"https://github.com/leanprover-community/mathlib4/pull/2109\">!4#2109</a> shouldn’t include <code>Equivalence</code>.</p>",
+        "id": 326498960,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1675827148
+    },
+    {
+        "content": "<p>Agreed. Once I get equivalences working or give up, I will clean and arrange things.</p>",
+        "id": 326499014,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1675827207
+    },
+    {
+        "content": "<p>Another thing you might be planning already anyway, but: I think we should go ahead and change <code>MonadExceptOf</code> to <code>MonadExcept</code> in that spot in Tactic.Core, check that nothing breaks, link to this thread in the PR description, and the change will get seen and confirmed by an expert during review.</p>",
+        "id": 326502380,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1675829904
+    },
+    {
+        "content": "<p>This should be done now. Please check my work.</p>",
+        "id": 326621098,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1675871105
+    }
+]

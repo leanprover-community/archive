@@ -1,0 +1,434 @@
+[
+    {
+        "content": "<p>It seems to me that to write a backend for lean, I do need to rewrite a lot of functions that is in <code>lean.h</code>.<br>\nIs there a better way? Some current sketch:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">LeanGccBackend.Basic</span>\n<span class=\"kn\">import</span> <span class=\"n\">LeanGccJit.Core</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">LeanGccJit.Core</span>\n<span class=\"kn\">namespace</span> <span class=\"n\">Lean.IR</span>\n<span class=\"kn\">namespace</span> <span class=\"n\">GccJit</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">getLeanObject</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"o\">(</span><span class=\"n\">Struct</span> <span class=\"bp\">×</span> <span class=\"n\">Array</span> <span class=\"n\">Field</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"n\">getOrCreateStruct</span> <span class=\"s2\">\"lean_object\"</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">ctx</span> <span class=\"bp\">←</span> <span class=\"n\">getCtx</span>\n    <span class=\"k\">let</span> <span class=\"n\">int</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.Int</span>\n    <span class=\"k\">let</span> <span class=\"n\">unsigned</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.UnsignedInt</span>\n    <span class=\"k\">let</span> <span class=\"n\">m_rc</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newField</span> <span class=\"n\">none</span> <span class=\"n\">int</span> <span class=\"s2\">\"m_rc\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">m_cs_sz</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newBitField</span> <span class=\"n\">none</span> <span class=\"n\">unsigned</span> <span class=\"mi\">16</span> <span class=\"s2\">\"m_cs_sz\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">m_other</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newBitField</span> <span class=\"n\">none</span> <span class=\"n\">unsigned</span> <span class=\"mi\">8</span> <span class=\"s2\">\"m_other\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">m_tag</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newBitField</span> <span class=\"n\">none</span> <span class=\"n\">unsigned</span> <span class=\"mi\">8</span> <span class=\"s2\">\"m_tag\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">obj</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newStructType</span> <span class=\"n\">none</span> <span class=\"s2\">\"lean_object\"</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">m_rc</span><span class=\"o\">,</span> <span class=\"n\">m_cs_sz</span><span class=\"o\">,</span> <span class=\"n\">m_other</span><span class=\"o\">,</span> <span class=\"n\">m_tag</span><span class=\"o\">]</span>\n    <span class=\"n\">pure</span> <span class=\"o\">(</span><span class=\"n\">obj</span><span class=\"o\">,</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">m_rc</span><span class=\"o\">,</span> <span class=\"n\">m_cs_sz</span><span class=\"o\">,</span> <span class=\"n\">m_other</span><span class=\"o\">,</span> <span class=\"n\">m_tag</span><span class=\"o\">])</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">getLeanObjPtr</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"n\">JitType</span> <span class=\"o\">:=</span>\n  <span class=\"n\">getLeanObject</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"o\">(</span><span class=\"bp\">·.</span><span class=\"n\">fst.asJitType</span><span class=\"o\">)</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"o\">(</span><span class=\"bp\">·.</span><span class=\"n\">getPointer</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">getLeanBox</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"n\">Func</span> <span class=\"o\">:=</span>\n  <span class=\"n\">getOrCreateFunction</span> <span class=\"s2\">\"lean_box\"</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">ctx</span> <span class=\"bp\">←</span> <span class=\"n\">getCtx</span>\n    <span class=\"k\">let</span> <span class=\"n\">obj</span> <span class=\"bp\">←</span> <span class=\"n\">getLeanObjPtr</span>\n    <span class=\"k\">let</span> <span class=\"n\">size_t</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.SizeT</span>\n    <span class=\"k\">let</span> <span class=\"n\">input</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newParam</span> <span class=\"n\">none</span> <span class=\"n\">size_t</span> <span class=\"s2\">\"value\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">leanBox</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newFunction</span> <span class=\"n\">none</span> <span class=\"n\">FunctionKind.AlwaysInline</span> <span class=\"n\">obj</span> <span class=\"s2\">\"lean_box\"</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">input</span><span class=\"o\">]</span> <span class=\"n\">false</span>\n    <span class=\"k\">let</span> <span class=\"n\">block</span> <span class=\"bp\">←</span> <span class=\"n\">leanBox.newBlock</span> <span class=\"s2\">\"entry\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">one</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.one</span> <span class=\"n\">size_t</span>\n    <span class=\"k\">let</span> <span class=\"n\">shifted</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newBinaryOp</span> <span class=\"n\">none</span> <span class=\"n\">BinaryOp.LShift</span> <span class=\"n\">size_t</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">input.asRValue</span><span class=\"o\">)</span> <span class=\"n\">one</span>\n    <span class=\"k\">let</span> <span class=\"n\">set</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newBinaryOp</span> <span class=\"n\">none</span> <span class=\"n\">BinaryOp.BitwiseOr</span> <span class=\"n\">size_t</span> <span class=\"n\">shifted</span> <span class=\"n\">one</span>\n    <span class=\"k\">let</span> <span class=\"n\">casted</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newBitCast</span> <span class=\"n\">none</span> <span class=\"n\">set</span> <span class=\"n\">obj</span>\n    <span class=\"n\">block.endWithReturn</span> <span class=\"n\">none</span> <span class=\"n\">casted</span>\n    <span class=\"n\">pure</span> <span class=\"n\">leanBox</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">getLeanUnbox</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"n\">Func</span> <span class=\"o\">:=</span>\n  <span class=\"n\">getOrCreateFunction</span> <span class=\"s2\">\"leam_unbox\"</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">ctx</span> <span class=\"bp\">←</span> <span class=\"n\">getCtx</span>\n    <span class=\"k\">let</span> <span class=\"n\">obj</span> <span class=\"bp\">←</span> <span class=\"n\">getLeanObjPtr</span>\n    <span class=\"k\">let</span> <span class=\"n\">size_t</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.SizeT</span>\n    <span class=\"k\">let</span> <span class=\"n\">input</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newParam</span> <span class=\"n\">none</span> <span class=\"n\">obj</span> <span class=\"s2\">\"boxed\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">leanUnbox</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newFunction</span> <span class=\"n\">none</span> <span class=\"n\">FunctionKind.AlwaysInline</span> <span class=\"n\">obj</span> <span class=\"s2\">\"lean_unbox\"</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">input</span><span class=\"o\">]</span> <span class=\"n\">false</span>\n    <span class=\"k\">let</span> <span class=\"n\">block</span> <span class=\"bp\">←</span> <span class=\"n\">leanUnbox.newBlock</span> <span class=\"s2\">\"entry\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">casted</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newBitCast</span> <span class=\"n\">none</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">input.asRValue</span><span class=\"o\">)</span> <span class=\"n\">size_t</span>\n    <span class=\"k\">let</span> <span class=\"n\">shifted</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newBinaryOp</span> <span class=\"n\">none</span> <span class=\"n\">BinaryOp.RShift</span> <span class=\"n\">size_t</span> <span class=\"n\">casted</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">ctx.one</span> <span class=\"n\">size_t</span><span class=\"o\">)</span>\n    <span class=\"n\">block.endWithReturn</span> <span class=\"n\">none</span> <span class=\"n\">shifted</span>\n    <span class=\"n\">pure</span> <span class=\"n\">leanUnbox</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">getLeanIsScalar</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"n\">Func</span> <span class=\"o\">:=</span>\n  <span class=\"n\">getOrCreateFunction</span> <span class=\"s2\">\"lean_is_scalar\"</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">ctx</span> <span class=\"bp\">←</span> <span class=\"n\">getCtx</span>\n    <span class=\"k\">let</span> <span class=\"n\">obj</span> <span class=\"bp\">←</span> <span class=\"n\">getLeanObjPtr</span>\n    <span class=\"k\">let</span> <span class=\"n\">bool</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.Bool</span>\n    <span class=\"k\">let</span> <span class=\"n\">input</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newParam</span> <span class=\"n\">none</span> <span class=\"n\">obj</span> <span class=\"s2\">\"obj\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">leanIsScalar</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newFunction</span> <span class=\"n\">none</span> <span class=\"n\">FunctionKind.AlwaysInline</span> <span class=\"n\">bool</span> <span class=\"s2\">\"lean_is_scalar\"</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">input</span><span class=\"o\">]</span> <span class=\"n\">false</span>\n    <span class=\"k\">let</span> <span class=\"n\">block</span> <span class=\"bp\">←</span> <span class=\"n\">leanIsScalar.newBlock</span> <span class=\"s2\">\"entry\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">casted</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newBitCast</span> <span class=\"n\">none</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">input.asRValue</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.SizeT</span><span class=\"o\">)</span>\n    <span class=\"k\">let</span> <span class=\"n\">one</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.one</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.SizeT</span><span class=\"o\">)</span>\n    <span class=\"k\">let</span> <span class=\"n\">bitand</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newBinaryOp</span> <span class=\"n\">none</span> <span class=\"n\">BinaryOp.BitwiseAnd</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.SizeT</span><span class=\"o\">)</span> <span class=\"n\">casted</span> <span class=\"n\">one</span>\n    <span class=\"k\">let</span> <span class=\"n\">cmp</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.newComparison</span> <span class=\"n\">none</span> <span class=\"n\">Comparison.EQ</span> <span class=\"n\">bitand</span> <span class=\"n\">one</span>\n    <span class=\"n\">block.endWithReturn</span> <span class=\"n\">none</span> <span class=\"n\">cmp</span>\n    <span class=\"n\">pure</span> <span class=\"n\">leanIsScalar</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">importFunction</span> <span class=\"o\">(</span><span class=\"n\">name</span><span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">ret</span><span class=\"o\">:</span> <span class=\"n\">JitType</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">params</span><span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"o\">(</span><span class=\"n\">String</span> <span class=\"bp\">×</span> <span class=\"n\">JitType</span><span class=\"o\">))</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"n\">Func</span> <span class=\"o\">:=</span>\n  <span class=\"n\">getOrCreateFunction</span> <span class=\"n\">name</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">ctx</span> <span class=\"bp\">←</span> <span class=\"n\">getCtx</span>\n    <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">inputs</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n    <span class=\"n\">for</span> <span class=\"o\">(</span><span class=\"n\">name</span><span class=\"o\">,</span> <span class=\"n\">ty</span><span class=\"o\">)</span> <span class=\"k\">in</span> <span class=\"n\">params</span> <span class=\"k\">do</span>\n      <span class=\"n\">inputs</span> <span class=\"o\">:=</span> <span class=\"n\">inputs.push</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">ctx.newParam</span> <span class=\"n\">none</span> <span class=\"n\">ty</span> <span class=\"n\">name</span><span class=\"o\">)</span>\n    <span class=\"n\">ctx.newFunction</span> <span class=\"n\">none</span> <span class=\"n\">FunctionKind.Imported</span> <span class=\"n\">ret</span> <span class=\"n\">name</span> <span class=\"n\">inputs</span> <span class=\"n\">false</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">getLeanMarkPersistent</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"n\">Func</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">ctx</span> <span class=\"bp\">←</span> <span class=\"n\">getCtx</span>\n  <span class=\"k\">let</span> <span class=\"n\">void</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.Void</span>\n  <span class=\"k\">let</span> <span class=\"n\">obj</span> <span class=\"bp\">←</span> <span class=\"n\">getLeanObjPtr</span>\n  <span class=\"n\">importFunction</span> <span class=\"s2\">\"lean_mark_persistent\"</span> <span class=\"n\">void</span> <span class=\"bp\">#</span><span class=\"o\">[(</span><span class=\"s2\">\"obj\"</span><span class=\"o\">,</span> <span class=\"n\">obj</span><span class=\"o\">)]</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">getLeanAllocSmall</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"n\">Func</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">ctx</span> <span class=\"bp\">←</span> <span class=\"n\">getCtx</span>\n  <span class=\"k\">let</span> <span class=\"n\">voidPtr</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.VoidPtr</span>\n  <span class=\"k\">let</span> <span class=\"n\">unsigned</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.UnsignedInt</span>\n  <span class=\"n\">importFunction</span> <span class=\"s2\">\"lean_alloc_small\"</span> <span class=\"n\">voidPtr</span> <span class=\"bp\">#</span><span class=\"o\">[(</span><span class=\"s2\">\"sz\"</span><span class=\"o\">,</span> <span class=\"n\">unsigned</span><span class=\"o\">),</span> <span class=\"o\">(</span><span class=\"s2\">\"slot_idx\"</span><span class=\"o\">,</span> <span class=\"n\">unsigned</span><span class=\"o\">)]</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">getLeanFreeSmall</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"n\">Func</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">ctx</span> <span class=\"bp\">←</span> <span class=\"n\">getCtx</span>\n  <span class=\"k\">let</span> <span class=\"n\">void</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.Void</span>\n  <span class=\"k\">let</span> <span class=\"n\">voidPtr</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.VoidPtr</span>\n  <span class=\"n\">importFunction</span> <span class=\"s2\">\"lean_free_small\"</span> <span class=\"n\">void</span> <span class=\"bp\">#</span><span class=\"o\">[(</span><span class=\"s2\">\"p\"</span><span class=\"o\">,</span> <span class=\"n\">voidPtr</span><span class=\"o\">)]</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">getLeanSmallMemSize</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"n\">Func</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">ctx</span> <span class=\"bp\">←</span> <span class=\"n\">getCtx</span>\n  <span class=\"k\">let</span> <span class=\"n\">unsigned</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.UnsignedInt</span>\n  <span class=\"k\">let</span> <span class=\"n\">voidPtr</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.VoidPtr</span>\n  <span class=\"n\">importFunction</span> <span class=\"s2\">\"lean_small_mem_size\"</span> <span class=\"n\">unsigned</span> <span class=\"bp\">#</span><span class=\"o\">[(</span><span class=\"s2\">\"p\"</span><span class=\"o\">,</span> <span class=\"n\">voidPtr</span><span class=\"o\">)]</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">getLeanIncHeartbeat</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"n\">Func</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">ctx</span> <span class=\"bp\">←</span> <span class=\"n\">getCtx</span>\n  <span class=\"k\">let</span> <span class=\"n\">void</span> <span class=\"bp\">←</span> <span class=\"n\">ctx.getType</span> <span class=\"n\">TypeEnum.Void</span>\n  <span class=\"n\">importFunction</span> <span class=\"s2\">\"lean_inc_heartbeat\"</span> <span class=\"n\">void</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">callLeanBox</span> <span class=\"o\">(</span><span class=\"n\">value</span> <span class=\"o\">:</span> <span class=\"n\">RValue</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"n\">RValue</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">ctx</span> <span class=\"bp\">←</span> <span class=\"n\">getCtx</span>\n  <span class=\"k\">let</span> <span class=\"n\">leanBox</span> <span class=\"bp\">←</span> <span class=\"n\">getLeanBox</span>\n  <span class=\"n\">ctx.newCall</span> <span class=\"n\">none</span> <span class=\"n\">leanBox</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">value</span><span class=\"o\">]</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">callLeanMarkPersistent</span> <span class=\"o\">(</span><span class=\"n\">obj</span> <span class=\"o\">:</span> <span class=\"n\">RValue</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"n\">RValue</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">ctx</span> <span class=\"bp\">←</span> <span class=\"n\">getCtx</span>\n  <span class=\"k\">let</span> <span class=\"n\">leanMarkPersistent</span> <span class=\"bp\">←</span> <span class=\"n\">getLeanMarkPersistent</span>\n  <span class=\"n\">ctx.newCall</span> <span class=\"n\">none</span> <span class=\"n\">leanMarkPersistent</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">obj</span><span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 394043515,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696047397
+    },
+    {
+        "content": "<p>(typo: <code>leam_unbox</code>)</p>",
+        "id": 394043568,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696047481
+    },
+    {
+        "content": "<p>but I suppose that makes your point that with a lot of functions there is a lot of potential for mistakes</p>",
+        "id": 394043623,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696047504
+    },
+    {
+        "content": "<p>Is there a way to feed a header file into gccgit?</p>",
+        "id": 394043660,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696047575
+    },
+    {
+        "content": "<p>because that does seem pretty painful</p>",
+        "id": 394043664,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696047587
+    },
+    {
+        "content": "<p>I think the LLVM.Backend is also repeating the definitions. So painful.</p>",
+        "id": 394043753,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696047651
+    },
+    {
+        "content": "<p>I imagine that one day the ABI changes, and then a lot of repeated modifications are required.</p>",
+        "id": 394043786,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696047698
+    },
+    {
+        "content": "<p>is it possible for the LLVM.Backend to at least share code with this implementation?</p>",
+        "id": 394043806,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696047721
+    },
+    {
+        "content": "<p>It will be hard I think. Mine is personal interest while the LLVM one is official. I mean, there may be generic abstraction that fit both backends, but LLVM is the only one inside lean, so ad-hoc code is better :D</p>",
+        "id": 394044103,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696047985
+    },
+    {
+        "content": "<p>well, I mean it more in the opposite sense, maybe the official LLVM backend can expose things in such a way that you can use it for your backend</p>",
+        "id": 394044148,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696048045
+    },
+    {
+        "content": "<p>that said, I am not that surprised that writing a backend is a lot of work. It's not like we expect that to be a common activity</p>",
+        "id": 394044164,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696048070
+    },
+    {
+        "content": "<p>maybe you should define some abstraction for describing the functions (maybe, C code?) and instantiate it to both backends</p>",
+        "id": 394044359,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696048217
+    },
+    {
+        "content": "<p>that's probably more efficient than writing things like this even if it is only for you</p>",
+        "id": 394044382,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696048236
+    },
+    {
+        "content": "<p>(efficient in terms of effort and entropy in the file, not necessarily runtime)</p>",
+        "id": 394044433,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696048268
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Lean.20Backend/near/394044164\">said</a>:</p>\n<blockquote>\n<p>that said, I am not that surprised that writing a backend is a lot of work. It's not like we expect that to be a common activity</p>\n</blockquote>\n<p>Yeah. It requires efforts.</p>",
+        "id": 394044444,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696048286
+    },
+    {
+        "content": "<p>I wonder, is Alloy able to parse lean.h? Alternatively, you could call clang to parse the file. Either way, you could get the AST and translate it into function definitions as a way to automate this</p>",
+        "id": 394044566,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696048424
+    },
+    {
+        "content": "<p>but that might be harder than just writing it out by hand <span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span></p>",
+        "id": 394044629,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696048472
+    },
+    {
+        "content": "<p>And, it may induce extra runtime cost <span aria-label=\"crying cat\" class=\"emoji emoji-1f63f\" role=\"img\" title=\"crying cat\">:crying_cat:</span>. </p>\n<p>Well, I would say that being FBIP-flavor, <code>koka</code> and <code>lean</code>'s runtime is already lighter than many other PLs. </p>\n<p>Maybe I'll just put it up bit by bit in my leisure time.</p>",
+        "id": 394044782,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696048653
+    },
+    {
+        "content": "<p>you can do elab-time codegen if you want to remove the runtime cost</p>",
+        "id": 394045455,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696049317
+    },
+    {
+        "content": "<p>i.e. making a macro which generates the code you have written above</p>",
+        "id": 394045464,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696049339
+    },
+    {
+        "content": "<p>then the cost would be shifted to compiling the library itself</p>",
+        "id": 394045485,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696049361
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Lean.20Backend/near/394044566\">said</a>:</p>\n<blockquote>\n<p>I wonder, is Alloy able to parse lean.h?</p>\n</blockquote>\n<p>Sadly, not at the moment. The <a href=\"https://github.com/opencompl/C-parsing-for-Lean4\">opencompl C Parser</a> may be able to (and may be a better fit in this kind of use case anyway). However, it does require a custom toolchain since <a href=\"https://github.com/leanprover/lean4/pull/2293\">lean4#2293</a> has yet to land.</p>",
+        "id": 394117274,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1696111568
+    },
+    {
+        "content": "<p>it's a bit funny that the project is considered 96% C code even though it's a lean project</p>",
+        "id": 394117432,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696111815
+    },
+    {
+        "content": "<p>I'm guessing there must be some big tests</p>",
+        "id": 394117440,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696111839
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> A quick skim gave, as an example test, <a href=\"https://github.com/opencompl/C-parsing-for-Lean4/blob/a3669a8fb5d3c771712234ac3d3e9f9d1773023b/Tests/SQLite/shell_clanged.c\">shell_clangd.c</a> which is 23147 lines long. So, yeah, I think you are right about the big tests. <span aria-label=\"rofl\" class=\"emoji emoji-1f923\" role=\"img\" title=\"rofl\">:rofl:</span></p>",
+        "id": 394117548,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1696112002
+    },
+    {
+        "content": "<p><a href=\"https://github.com/SchrodingerZhu/LeanGccBackend/blob/main/LeanGccBackend/Runtime.lean\">https://github.com/SchrodingerZhu/LeanGccBackend/blob/main/LeanGccBackend/Runtime.lean</a></p>",
+        "id": 394119320,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696114293
+    },
+    {
+        "content": "<p>porting runtime all day long — not even half <span aria-label=\"stuck out tongue closed eyes\" class=\"emoji emoji-1f61d\" role=\"img\" title=\"stuck out tongue closed eyes\">:stuck_out_tongue_closed_eyes:</span></p>",
+        "id": 394119370,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696114326
+    },
+    {
+        "content": "<p>is there a reason <code>ctx</code> is an explicit argument to functions like <code>getType</code>? It could just pull the value out of the monad</p>",
+        "id": 394119395,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696114397
+    },
+    {
+        "content": "<p>no. I should have wrapped getType.</p>",
+        "id": 394119493,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696114512
+    },
+    {
+        "content": "<p>also some common type can be made easier to construct？</p>",
+        "id": 394119669,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696114763
+    },
+    {
+        "content": "<p>like size_t/void/unsigned</p>",
+        "id": 394119677,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696114786
+    },
+    {
+        "content": "<p>I would spend more time trying to make the writing of these functions simpler, e.g.:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">getLeanArrayObject</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"o\">(</span><span class=\"n\">Struct</span> <span class=\"bp\">×</span> <span class=\"n\">Array</span> <span class=\"n\">Field</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"n\">mkStruct</span> <span class=\"s2\">\"lean_array_object\"</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"bp\">#</span><span class=\"o\">[</span>\n    <span class=\"bp\">←</span> <span class=\"n\">field</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">obj</span><span class=\"o\">)</span> <span class=\"s2\">\"m_header\"</span><span class=\"o\">,</span>\n    <span class=\"bp\">←</span> <span class=\"n\">field</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">size_t</span><span class=\"o\">)</span> <span class=\"s2\">\"m_size\"</span><span class=\"o\">,</span>\n    <span class=\"bp\">←</span> <span class=\"n\">field</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">size_t</span><span class=\"o\">)</span> <span class=\"s2\">\"m_capacity\"</span><span class=\"o\">,</span>\n    <span class=\"bp\">←</span> <span class=\"n\">field</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">array</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">obj</span><span class=\"o\">)</span> <span class=\"mi\">0</span><span class=\"o\">)</span> <span class=\"s2\">\"m_data\"</span>\n  <span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 394119682,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696114798
+    },
+    {
+        "content": "<p>actually, if <code>field</code> took a monadic function as its first argument and so did <code>array</code>, you could simplify this to</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">getLeanArrayObject</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"o\">(</span><span class=\"n\">Struct</span> <span class=\"bp\">×</span> <span class=\"n\">Array</span> <span class=\"n\">Field</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"n\">mkStruct</span> <span class=\"s2\">\"lean_array_object\"</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"bp\">#</span><span class=\"o\">[</span>\n    <span class=\"bp\">←</span> <span class=\"n\">field</span> <span class=\"n\">obj</span> <span class=\"s2\">\"m_header\"</span><span class=\"o\">,</span>\n    <span class=\"bp\">←</span> <span class=\"n\">field</span> <span class=\"n\">size_t</span> <span class=\"s2\">\"m_size\"</span><span class=\"o\">,</span>\n    <span class=\"bp\">←</span> <span class=\"n\">field</span> <span class=\"n\">size_t</span> <span class=\"s2\">\"m_capacity\"</span><span class=\"o\">,</span>\n    <span class=\"bp\">←</span> <span class=\"n\">field</span> <span class=\"o\">(</span><span class=\"n\">array</span> <span class=\"n\">obj</span> <span class=\"mi\">0</span><span class=\"o\">)</span> <span class=\"s2\">\"m_data\"</span>\n  <span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 394119781,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696114916
+    },
+    {
+        "content": "<p>and that's without even pulling out the macros, which could give this almost C-like syntax if you wanted</p>",
+        "id": 394119848,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696114974
+    },
+    {
+        "content": "<p>which would make it easier to just copy-paste-modify from lean.h</p>",
+        "id": 394119861,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696114992
+    },
+    {
+        "content": "<p>fair enough. also, some if then else branch helper would also reduce the code</p>",
+        "id": 394119919,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696115048
+    },
+    {
+        "content": "<p>you have to name every basic block? That's messy</p>",
+        "id": 394119968,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696115157
+    },
+    {
+        "content": "<p>if you call <code>newBlock</code> twice with the same name, what happens?</p>",
+        "id": 394120034,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696115215
+    },
+    {
+        "content": "<p>that label can be none</p>",
+        "id": 394120040,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696115228
+    },
+    {
+        "content": "<p>But I did not set default values in the upstream</p>",
+        "id": 394120052,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696115278
+    },
+    {
+        "content": "<p>Also, all those none passing around is for debug info. I don’t put them in the last place cuz I wanted to keep them in the same order of the CAPI. But I think it is a good decision</p>",
+        "id": 394120115,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696115354
+    },
+    {
+        "content": "<p><em>not</em> good</p>",
+        "id": 394120126,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696115378
+    },
+    {
+        "content": "<p>you can just have a defaulted parameter if it's almost always none</p>",
+        "id": 394120127,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696115382
+    },
+    {
+        "content": "<p>besides, the functions I am showing here like <code>size_t</code>, <code>array</code> etc are not meant to be coming from <code>LeanGccJit</code>, they are wrappers you have in this file to compress the task of writing these functions</p>",
+        "id": 394120193,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696115463
+    },
+    {
+        "content": "<p>which means they can be more tailored to exactly how you intend to use the API in this file</p>",
+        "id": 394120203,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696115492
+    },
+    {
+        "content": "<p>they may or may not be useful for other purposes</p>",
+        "id": 394120258,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696115537
+    },
+    {
+        "content": "<p>but creating DSLs on the spot is one of lean's selling points, you should take advantage of it whenever you notice you are writing a lot of boilerplate</p>",
+        "id": 394120300,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696115631
+    },
+    {
+        "content": "<p>I think I have made it much shorter now: <a href=\"https://github.com/SchrodingerZhu/LeanGccBackend/blob/main/LeanGccBackend/Runtime.lean\">https://github.com/SchrodingerZhu/LeanGccBackend/blob/main/LeanGccBackend/Runtime.lean</a></p>\n<p>There are still a lot of arrows flying around --- I actually begin with monoidal parameters, but then I find that such operations are lazy: If you pass a monoidal variable, the evaluation time and order are nondeterministic. Thus, I end up using arrows anyway.</p>",
+        "id": 394146059,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696135061
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"639630\">Schrodinger ZHU Yifan</span> <a href=\"#narrow/stream/270676-lean4/topic/Lean.20Backend/near/394043753\">said</a>:</p>\n<blockquote>\n<p>I think the LLVM.Backend is also repeating the definitions</p>\n</blockquote>\n<p>It isn't, see lean.h.bc</p>",
+        "id": 394156121,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1696140117
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac Malone</span> <a href=\"#narrow/stream/270676-lean4/topic/Lean.20Backend/near/394117274\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Lean.20Backend/near/394044566\">said</a>:</p>\n<blockquote>\n<p>I wonder, is Alloy able to parse lean.h?</p>\n</blockquote>\n<p>Sadly, not at the moment.</p>\n</blockquote>\n<p>Alloy is now able to parse <code>lean.h</code> with minimal overhead:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Alloy.C.Grammar</span>\n<span class=\"kn\">import</span> <span class=\"n\">Lean.Elab.Command</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Parser</span> <span class=\"n\">Elab</span> <span class=\"n\">Command</span>\n\n<span class=\"c\">/-</span><span class=\"cm\"> By Mario: https://leanprover.zulipchat.com/#narrow/stream/270676-lean4/topic/Undefine.20lambda/near/393694214 -/</span>\n<span class=\"kd\">def</span> <span class=\"n\">Lean.Parser.Trie.isEmpty</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">t</span> <span class=\"o\">:</span> <span class=\"n\">Trie</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Bool</span> <span class=\"o\">:=</span> <span class=\"n\">t</span> <span class=\"n\">matches</span> <span class=\"bp\">.</span><span class=\"n\">Node</span> <span class=\"n\">none</span> <span class=\"bp\">.</span><span class=\"n\">leaf</span>\n<span class=\"n\">partial</span> <span class=\"kd\">def</span> <span class=\"n\">Lean.Parser.Trie.erase</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">t</span> <span class=\"o\">:</span> <span class=\"n\">Trie</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">s</span> <span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Trie</span> <span class=\"n\">α</span> <span class=\"o\">:=</span>\n  <span class=\"k\">let</span> <span class=\"n\">rec</span> <span class=\"n\">loop</span> <span class=\"o\">:</span> <span class=\"n\">Trie</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">String.Pos</span> <span class=\"bp\">→</span> <span class=\"n\">Option</span> <span class=\"o\">(</span><span class=\"n\">Trie</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n    <span class=\"bp\">|</span> <span class=\"o\">⟨</span><span class=\"n\">val</span><span class=\"o\">,</span> <span class=\"n\">m</span><span class=\"o\">⟩,</span> <span class=\"n\">i</span> <span class=\"bp\">=&gt;</span>\n      <span class=\"k\">match</span> <span class=\"n\">s.atEnd</span> <span class=\"n\">i</span> <span class=\"k\">with</span>\n      <span class=\"bp\">|</span> <span class=\"n\">true</span>  <span class=\"bp\">=&gt;</span> <span class=\"n\">some</span> <span class=\"o\">(</span><span class=\"n\">Trie.Node</span> <span class=\"n\">none</span> <span class=\"n\">m</span><span class=\"o\">)</span>\n      <span class=\"bp\">|</span> <span class=\"n\">false</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n        <span class=\"k\">let</span> <span class=\"n\">c</span> <span class=\"o\">:=</span> <span class=\"n\">s.get</span> <span class=\"n\">i</span>\n        <span class=\"k\">let</span> <span class=\"n\">i</span> <span class=\"o\">:=</span> <span class=\"n\">s.next</span> <span class=\"n\">i</span>\n        <span class=\"k\">let</span> <span class=\"n\">t</span> <span class=\"bp\">←</span> <span class=\"n\">m.find</span> <span class=\"n\">compare</span> <span class=\"n\">c</span>\n        <span class=\"k\">let</span> <span class=\"n\">t</span> <span class=\"bp\">←</span> <span class=\"n\">loop</span> <span class=\"n\">t</span> <span class=\"n\">i</span>\n        <span class=\"k\">let</span> <span class=\"n\">m</span> <span class=\"o\">:=</span> <span class=\"k\">if</span> <span class=\"n\">t.isEmpty</span> <span class=\"k\">then</span> <span class=\"n\">m.erase</span> <span class=\"n\">compare</span> <span class=\"n\">c</span> <span class=\"k\">else</span> <span class=\"n\">m.insert</span> <span class=\"n\">compare</span> <span class=\"n\">c</span> <span class=\"n\">t</span>\n        <span class=\"n\">some</span> <span class=\"o\">⟨</span><span class=\"n\">val</span><span class=\"o\">,</span> <span class=\"n\">m</span><span class=\"o\">⟩</span>\n  <span class=\"o\">(</span><span class=\"n\">loop</span> <span class=\"n\">t</span> <span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">getD</span> <span class=\"n\">t</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">mkParserModuleContext</span> <span class=\"o\">(</span><span class=\"n\">env</span> <span class=\"o\">:</span> <span class=\"n\">Environment</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">scope</span> <span class=\"o\">:</span> <span class=\"n\">Scope</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ParserModuleContext</span> <span class=\"n\">where</span>\n  <span class=\"n\">env</span> <span class=\"o\">:=</span> <span class=\"n\">env</span>\n  <span class=\"n\">options</span> <span class=\"o\">:=</span> <span class=\"n\">scope.opts</span>\n  <span class=\"n\">currNamespace</span> <span class=\"o\">:=</span> <span class=\"n\">scope.currNamespace</span>\n  <span class=\"n\">openDecls</span> <span class=\"o\">:=</span> <span class=\"n\">scope.openDecls</span>\n\n<span class=\"n\">syntax</span> <span class=\"s2\">\"LEAN_CASSERT\"</span> <span class=\"s2\">\"(\"</span> <span class=\"n\">cExpr</span> <span class=\"s2\">\")\"</span> <span class=\"s2\">\";\"</span> <span class=\"o\">:</span> <span class=\"n\">cCmd</span>\n<span class=\"n\">syntax</span> <span class=\"s2\">\"extern\"</span> <span class=\"n\">str</span> <span class=\"s2\">\"{\"</span> <span class=\"o\">:</span> <span class=\"n\">cCmd</span>\n<span class=\"n\">syntax</span> <span class=\"s2\">\"}\"</span> <span class=\"o\">:</span> <span class=\"n\">cCmd</span>\n\n<span class=\"n\">partial</span> <span class=\"kd\">def</span> <span class=\"n\">test</span> <span class=\"o\">:</span> <span class=\"n\">CommandElabM</span> <span class=\"n\">PUnit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">fileName</span> <span class=\"o\">:=</span> <span class=\"s2\">\"lean.h\"</span>\n  <span class=\"k\">let</span> <span class=\"n\">includeDir</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">Lean.getBuildDir</span><span class=\"o\">)</span> <span class=\"bp\">/</span> <span class=\"s2\">\"include\"</span> <span class=\"bp\">/</span> <span class=\"s2\">\"lean\"</span>\n  <span class=\"k\">let</span> <span class=\"n\">input</span> <span class=\"bp\">←</span> <span class=\"n\">IO.FS.readFile</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">includeDir</span> <span class=\"bp\">/</span> <span class=\"n\">fileName</span>\n  <span class=\"k\">let</span> <span class=\"n\">input</span> <span class=\"o\">:=</span> <span class=\"n\">input.replace</span> <span class=\"s2\">\"--\"</span> <span class=\"s2\">\"-=1\"</span>\n  <span class=\"k\">let</span> <span class=\"n\">p</span> <span class=\"o\">:=</span> <span class=\"n\">categoryParser</span> <span class=\"bp\">`</span><span class=\"n\">cCmd</span> <span class=\"mi\">0</span>\n  <span class=\"k\">let</span> <span class=\"n\">ictx</span> <span class=\"o\">:=</span> <span class=\"n\">mkInputContext</span> <span class=\"n\">input</span> <span class=\"n\">fileName</span>\n  <span class=\"k\">let</span> <span class=\"n\">env</span> <span class=\"bp\">←</span> <span class=\"n\">getEnv</span>\n  <span class=\"k\">let</span> <span class=\"n\">env</span> <span class=\"o\">:=</span> <span class=\"n\">parserExtension.modifyState</span> <span class=\"n\">env</span> <span class=\"k\">fun</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"o\">{</span><span class=\"n\">s</span> <span class=\"k\">with</span> <span class=\"n\">tokens</span> <span class=\"o\">:=</span> <span class=\"n\">s.tokens.insert</span> <span class=\"s2\">\"~\"</span> <span class=\"s2\">\"~\"</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">erase</span> <span class=\"s2\">\"fun\"</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">erase</span> <span class=\"s2\">\"end\"</span><span class=\"o\">}</span>\n  <span class=\"k\">let</span> <span class=\"n\">pmctx</span> <span class=\"o\">:=</span> <span class=\"n\">mkParserModuleContext</span> <span class=\"n\">env</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getScope</span><span class=\"o\">)</span>\n  <span class=\"n\">go</span> <span class=\"n\">p.fn</span> <span class=\"n\">ictx</span> <span class=\"n\">pmctx</span> <span class=\"o\">(</span><span class=\"n\">mkParserState</span> <span class=\"n\">ictx.input</span><span class=\"o\">)</span>\n<span class=\"n\">where</span>\n  <span class=\"n\">go</span> <span class=\"n\">p</span> <span class=\"n\">ictx</span> <span class=\"n\">pmctx</span> <span class=\"n\">s</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">s</span> <span class=\"o\">:=</span> <span class=\"n\">p.run</span> <span class=\"n\">ictx</span> <span class=\"n\">pmctx</span> <span class=\"o\">(</span><span class=\"n\">getTokenTable</span> <span class=\"n\">pmctx.env</span><span class=\"o\">)</span> <span class=\"n\">s</span>\n    <span class=\"k\">if</span> <span class=\"n\">s.hasError</span> <span class=\"k\">then</span>\n      <span class=\"n\">logError</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">s.toErrorMsg</span> <span class=\"n\">ictx</span>\n    <span class=\"k\">else</span> <span class=\"k\">if</span> <span class=\"n\">ictx.input.atEnd</span> <span class=\"n\">s.pos</span> <span class=\"k\">then</span>\n      <span class=\"n\">pure</span> <span class=\"o\">()</span>\n    <span class=\"k\">else</span>\n      <span class=\"n\">go</span> <span class=\"n\">p</span> <span class=\"n\">ictx</span> <span class=\"n\">pmctx</span> <span class=\"n\">s</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">test</span> <span class=\"c1\">-- no error</span>\n</code></pre></div>",
+        "id": 394178041,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1696151717
+    },
+    {
+        "content": "<p>you don't support <code>--</code>?</p>",
+        "id": 394179029,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696152161
+    },
+    {
+        "content": "<p>...oh this is a lean comment issue isn't it</p>",
+        "id": 394179044,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696152174
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Lean.20Backend/near/394156121\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"639630\">Schrodinger ZHU Yifan</span> <a href=\"#narrow/stream/270676-lean4/topic/Lean.20Backend/near/394043753\">said</a>:</p>\n<blockquote>\n<p>I think the LLVM.Backend is also repeating the definitions</p>\n</blockquote>\n<p>It isn't, see lean.h.bc</p>\n</blockquote>\n<p>that is good. unfortunately, libgccjit is so simple that it does not have IR/Bytecode support.</p>",
+        "id": 394223156,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696172332
+    },
+    {
+        "content": "<p>After writing several levels of the wrapper, I have made the codegen straightforward:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">getModuleInitializationFunction</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"n\">Func</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">bool</span> <span class=\"bp\">←</span> <span class=\"n\">bool</span>\n  <span class=\"k\">let</span> <span class=\"n\">uint8_t</span> <span class=\"bp\">←</span> <span class=\"n\">uint8_t</span>\n  <span class=\"k\">let</span> <span class=\"n\">obj_ptr</span> <span class=\"bp\">←</span> <span class=\"bp\">«</span><span class=\"n\">lean_object</span><span class=\"bp\">*»</span>\n  <span class=\"k\">let</span> <span class=\"n\">env</span> <span class=\"bp\">←</span> <span class=\"n\">getEnv</span>\n  <span class=\"k\">let</span> <span class=\"n\">modName</span> <span class=\"bp\">←</span> <span class=\"n\">getModName</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">importedInits</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n  <span class=\"n\">for</span> <span class=\"n\">i</span> <span class=\"k\">in</span> <span class=\"n\">env.imports</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">f</span> <span class=\"bp\">←</span> <span class=\"n\">importFunction</span> <span class=\"o\">(</span><span class=\"n\">mkModuleInitializationFunctionName</span> <span class=\"n\">i.module</span><span class=\"o\">)</span> <span class=\"n\">obj_ptr</span> <span class=\"bp\">#</span><span class=\"o\">[(</span><span class=\"n\">uint8_t</span><span class=\"o\">,</span> <span class=\"s2\">\"builtin\"</span><span class=\"o\">),</span> <span class=\"o\">(</span><span class=\"n\">obj_ptr</span><span class=\"o\">,</span> <span class=\"s2\">\"w\"</span><span class=\"o\">)]</span>\n    <span class=\"n\">importedInits</span> <span class=\"o\">:=</span> <span class=\"n\">importedInits.push</span> <span class=\"n\">f</span>\n  <span class=\"k\">let</span> <span class=\"n\">_G_initialized</span> <span class=\"bp\">←</span> <span class=\"n\">getOrCreateGlobal</span> <span class=\"s2\">\"_G_initialized\"</span> <span class=\"n\">bool</span> <span class=\"o\">(</span><span class=\"n\">init</span> <span class=\"o\">:=</span> <span class=\"bp\">←</span><span class=\"n\">constantZero</span> <span class=\"n\">bool</span><span class=\"o\">)</span>\n  <span class=\"n\">mkFunctionM</span> <span class=\"o\">(</span><span class=\"n\">mkModuleInitializationFunctionName</span> <span class=\"n\">modName</span><span class=\"o\">)</span> <span class=\"n\">obj_ptr</span> <span class=\"bp\">#</span><span class=\"o\">[(</span><span class=\"n\">uint8_t</span><span class=\"o\">,</span> <span class=\"s2\">\"builtin\"</span><span class=\"o\">),</span> <span class=\"o\">(</span><span class=\"n\">obj_ptr</span><span class=\"o\">,</span> <span class=\"s2\">\"w\"</span><span class=\"o\">)]</span> <span class=\"o\">(</span><span class=\"n\">kind</span> <span class=\"o\">:=</span> <span class=\"n\">FunctionKind.Exported</span><span class=\"o\">)</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">res</span> <span class=\"bp\">←</span> <span class=\"n\">mkLocalVarM</span> <span class=\"n\">obj_ptr</span> <span class=\"s2\">\"res\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">epilogue</span> <span class=\"bp\">←</span> <span class=\"n\">mkNewBlock</span> <span class=\"s2\">\"epilogue\"</span>\n    <span class=\"n\">mkIfBranchM</span> <span class=\"n\">_G_initialized</span>\n      <span class=\"o\">(</span><span class=\"k\">do</span>\n        <span class=\"n\">goto</span> <span class=\"n\">epilogue</span>\n      <span class=\"o\">)</span>\n      <span class=\"o\">(</span><span class=\"k\">do</span>\n        <span class=\"n\">mkAssignmentM</span> <span class=\"n\">_G_initialized</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">constantOne</span> <span class=\"n\">bool</span><span class=\"o\">)</span>\n        <span class=\"n\">for</span> <span class=\"n\">i</span> <span class=\"k\">in</span> <span class=\"n\">importedInits</span> <span class=\"k\">do</span>\n          <span class=\"n\">mkAssignmentM</span> <span class=\"n\">res</span> <span class=\"o\">(</span><span class=\"bp\">←</span><span class=\"n\">call</span> <span class=\"n\">i</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getParamM</span><span class=\"bp\">!</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"bp\">←</span> <span class=\"n\">getParamM</span><span class=\"bp\">!</span> <span class=\"mi\">1</span><span class=\"o\">))</span>\n          <span class=\"k\">let</span> <span class=\"n\">isErr</span> <span class=\"bp\">←</span> <span class=\"n\">call</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getLeanIOResultIsError</span><span class=\"o\">)</span> <span class=\"n\">res</span>\n          <span class=\"n\">mkIfBranchM</span> <span class=\"n\">isErr</span>\n            <span class=\"o\">(</span><span class=\"k\">do</span>\n              <span class=\"n\">mkReturnM</span> <span class=\"n\">res</span>\n            <span class=\"o\">)</span>\n            <span class=\"o\">(</span><span class=\"k\">do</span>\n              <span class=\"n\">mkEvalM</span> <span class=\"o\">(</span><span class=\"bp\">←</span><span class=\"n\">call</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getLeanDecRef</span><span class=\"o\">)</span> <span class=\"n\">res</span><span class=\"o\">)</span>\n            <span class=\"o\">)</span>\n        <span class=\"n\">goto</span> <span class=\"n\">epilogue</span>\n      <span class=\"o\">)</span>\n    <span class=\"n\">moveTo</span> <span class=\"n\">epilogue</span>\n    <span class=\"n\">epilogue.addComment</span> <span class=\"n\">none</span> <span class=\"s2\">\"TODO: generate decl init code\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">unit</span> <span class=\"bp\">←</span> <span class=\"n\">call</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getLeanBox</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">constantZero</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">size_t</span><span class=\"o\">))</span>\n    <span class=\"k\">let</span> <span class=\"n\">ok</span> <span class=\"bp\">←</span> <span class=\"n\">call</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getLeanIOResultMkOk</span><span class=\"o\">)</span> <span class=\"n\">unit</span>\n    <span class=\"n\">mkReturnM</span> <span class=\"n\">ok</span>\n</code></pre></div>\n<p>However, I think I will need more help in many ways. Does anyone interested in looking into this and helping me write/review the codegen?</p>",
+        "id": 394737685,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696382615
+    },
+    {
+        "content": "<p><a href=\"/user_uploads/3121/apDkZke7IKRpdznYfNoIlr4j/image.png\">image.png</a><br>\nLean GccJit Backend just compiled its first working example. (There is still a lot of work to do)</p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/apDkZke7IKRpdznYfNoIlr4j/image.png\" title=\"image.png\"><img src=\"/user_uploads/3121/apDkZke7IKRpdznYfNoIlr4j/image.png\"></a></div>",
+        "id": 395582437,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696805918
+    },
+    {
+        "content": "<p>I'm curious, what were the reasons that made you go with GCC instead of LLVM JIT?</p>",
+        "id": 395633243,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1696835541
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Lean.20Backend/near/395633243\">said</a>:</p>\n<blockquote>\n<p>I'm curious, what were the reasons that made you go with GCC instead of LLVM JIT?</p>\n</blockquote>\n<p><span aria-label=\"laughing\" class=\"emoji emoji-1f606\" role=\"img\" title=\"laughing\">:laughing:</span>, just to test around!</p>",
+        "id": 395781686,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696898752
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">getLeanNatSub</span> <span class=\"o\">:</span> <span class=\"n\">CodegenM</span> <span class=\"n\">Func</span> <span class=\"o\">:=</span>\n  <span class=\"n\">getLeanNatBinOp</span> <span class=\"s2\">\"sub\"</span> <span class=\"k\">fun</span> <span class=\"n\">blk</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">size_t</span> <span class=\"bp\">←</span> <span class=\"n\">size_t</span>\n    <span class=\"k\">let</span> <span class=\"n\">one</span> <span class=\"bp\">←</span> <span class=\"n\">constantOne</span> <span class=\"n\">size_t</span>\n    <span class=\"k\">let</span> <span class=\"n\">a</span> <span class=\"bp\">←</span> <span class=\"n\">a</span> <span class=\"o\">::</span><span class=\"bp\">!</span> <span class=\"n\">size_t</span>\n    <span class=\"k\">let</span> <span class=\"n\">b</span> <span class=\"bp\">←</span> <span class=\"o\">(</span><span class=\"bp\">←</span><span class=\"n\">b</span> <span class=\"o\">::</span><span class=\"bp\">!</span> <span class=\"n\">size_t</span><span class=\"o\">)</span> <span class=\"bp\">&amp;&amp;&amp;</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"bp\">·~·</span> <span class=\"n\">one</span><span class=\"o\">)</span>\n    <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">result</span><span class=\"o\">,</span> <span class=\"n\">overflow</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">overflowCheck</span> <span class=\"n\">blk</span> <span class=\"s2\">\"result\"</span> <span class=\"n\">a</span> <span class=\"s2\">\"sub\"</span> <span class=\"n\">b</span>\n    <span class=\"k\">let</span> <span class=\"n\">overflow</span> <span class=\"bp\">←</span> <span class=\"n\">unlikely</span> <span class=\"n\">overflow</span>\n    <span class=\"n\">mkIfBranch</span> <span class=\"n\">blk</span> <span class=\"n\">overflow</span>\n      <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">then_</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n        <span class=\"k\">let</span> <span class=\"n\">unit</span> <span class=\"bp\">←</span> <span class=\"n\">call</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getLeanBox</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">constantZero</span> <span class=\"n\">size_t</span><span class=\"o\">)</span>\n        <span class=\"n\">mkReturn</span> <span class=\"n\">then_</span> <span class=\"n\">unit</span>\n      <span class=\"o\">)</span>\n      <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">else_</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n        <span class=\"n\">mkReturn</span> <span class=\"n\">else_</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">result</span> <span class=\"o\">::</span><span class=\"bp\">!</span> <span class=\"o\">(</span><span class=\"bp\">←«</span><span class=\"n\">lean_object</span><span class=\"bp\">*»</span><span class=\"o\">))</span>\n      <span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 395781836,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696898820
+    },
+    {
+        "content": "<p>I think some nat/int operations in lean.h can be further optimized. For example, the above routine (together with add) in my gccjit backend makes (fib 47) 3 seconds faster than current lean.h implementation.</p>",
+        "id": 395782048,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696898927
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Lean.20Backend/near/395633243\">said</a>:</p>\n<blockquote>\n<p>I'm curious, what were the reasons that made you go with GCC instead of LLVM JIT?</p>\n</blockquote>\n<p>allow me to quote the section in rust’s gccjit backend:</p>\n<p>“The primary goal of this project is to be able to compile Rust code on platforms unsupported by LLVM. A secondary goal is to check if using the gcc backend will provide any run-time speed improvement for the programs compiled using rustc.”</p>",
+        "id": 395782174,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1696899000
+    },
+    {
+        "content": "<p><a href=\"/user_uploads/3121/-7R4YN7IpN38kY68hetJ6KZD/089F081C-775E-41D0-A8FC-E4D2661330DC.jpg\">089F081C-775E-41D0-A8FC-E4D2661330DC.jpg</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/-7R4YN7IpN38kY68hetJ6KZD/089F081C-775E-41D0-A8FC-E4D2661330DC.jpg\" title=\"089F081C-775E-41D0-A8FC-E4D2661330DC.jpg\"><img src=\"/user_uploads/3121/-7R4YN7IpN38kY68hetJ6KZD/089F081C-775E-41D0-A8FC-E4D2661330DC.jpg\"></a></div>",
+        "id": 397424955,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1697688374
+    },
+    {
+        "content": "<p><strong>Call For Help</strong>: </p>\n<p>This project needs more help writing commits as in <a href=\"https://github.com/SchrodingerZhu/LeanGccBackend/pull/1\">https://github.com/SchrodingerZhu/LeanGccBackend/pull/1</a> to support full features from lean's runtime.</p>",
+        "id": 397809811,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1697859897
+    },
+    {
+        "content": "<p>For example, this branch currently failed to build as the compiler does not know some functions from <code>lean.h</code>:<br>\n<a href=\"/user_uploads/3121/bll0Xq-CRcnmtRZZ154K0LxX/image.png\">image.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/bll0Xq-CRcnmtRZZ154K0LxX/image.png\" title=\"image.png\"><img src=\"/user_uploads/3121/bll0Xq-CRcnmtRZZ154K0LxX/image.png\"></a></div><p>One can try to add definitions to these functions to get it work! Believe me --- It is fun writing the code in lean to compose Gimple (GCC's IR)! <br>\nI hope to get people's help just because there are too many of them :D</p>",
+        "id": 397810058,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1697860104
+    },
+    {
+        "content": "<p>Related: <a href=\"#narrow/stream/270676-lean4/topic/.E2.9C.94.20FFI.20to.20C.2B.2B.3A.20GiNaC/near/392446969\">https://leanprover.zulipchat.com/#narrow/stream/270676-lean4/topic/.E2.9C.94.20FFI.20to.20C.2B.2B.3A.20GiNaC/near/392446969</a> , particularly the log in the spoiler.</p>\n<p>Try supplying <code>-v</code>, then you'll see <code>leanc</code> will call <code>gcc</code> or <code>clang</code>, then there should be something like <code>-lLean</code> which I believe to be where these symbols are located.</p>",
+        "id": 397816751,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1697865366
+    },
+    {
+        "content": "<p>Oh, these symbols are not in <code>.a</code> as confirmed by <code>nm</code>, but in the dynamic library <code>libleanshared.so/dylib/dll</code>.</p>",
+        "id": 397818053,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1697866326
+    },
+    {
+        "content": "<p>I thought you were missing some <code>--load-dynlib</code> in <code>weakLeanArgs</code> but they shouldn't be needed for Lean itself. So I suspected your <code>lean.h</code> is incompatible with the toolchain but you are using <code>leanprover/lean4:nightly-2023-10-13</code> which is not too old.</p>",
+        "id": 397818883,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1697867008
+    },
+    {
+        "content": "<p>Finally, I realized that what you are missing are all <code>static inline</code> functions implemented in <code>lean.h</code>, that might be the cause.</p>",
+        "id": 397818963,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1697867049
+    },
+    {
+        "content": "<p>That means these symbols are now in your FFI library, and they need to be linked properly (especially when building a standalone exe as Lean itself is no longer involved during run time), you may check the flags in entries like <code>package</code>, <code>lean_lib</code>, <code>lean_exe</code>, and also <code>target libginac_ffi</code> in <a href=\"https://github.com/utensil/ginac-lean/blob/main/lakefile.lean\">https://github.com/utensil/ginac-lean/blob/main/lakefile.lean</a> to see what might be needed to add, but it would be less as your project is C, not C++.</p>",
+        "id": 397819589,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1697867623
+    },
+    {
+        "content": "<p>Thanks for providing a way to locate similar issues. However, linkage and missing symbol is not a problem here. I am actually looking for people interested in writing yet another backend for Lean to help fill up those static inline functions in Lean. As stated above, there are a lot of inline functions to be ported to GCCJIT runtime so I am hoping to get help :D</p>\n<p>I am using the branch as an example of how specific functions (e.g. <code>lean_nat_mod</code>) are added to the GCCJIT backend.</p>",
+        "id": 397821956,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1697869493
+    },
+    {
+        "content": "<p>Oh sorry, I misunderstood your goal. I read your PR, it seems writing them in Lean would involve lots of boilerplates, is it more fun if you can just parse what's already in lean.h then generate the Lean code?</p>",
+        "id": 397822567,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1697870075
+    },
+    {
+        "content": "<p>Yes and No. C syntax is actually not that simple. for example, typecast/_Atomic actually makes the syntax context-dependent; and generating the code to GIMPLE would potentially require more work.</p>\n<p>On the other hand, I think it is also worth check if rewriting lean.h can give a better codegen. As I mentioned before, lean.h does not seem performance-optimal to me. On aarch64, I speed up Fib 47 from 12s to 9s by saving a few boxing/unboxing instructions (using signed multiplication overflow/making fast path even shorter in bit operations or compare operations). </p>\n<p>BTW, I think upstream should be aware of such optimizations. I guess the reason why these optimizations are not applied to lean.h is just that writing so may affect inter-compiler portability and readability and they are not that important as people seldom do such concentrated computations in Lean, as least for now. Am I correct?</p>\n<p>Anyway, let this project to examine if such codegen optimization works can be helpful.</p>",
+        "id": 397823458,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1697870985
+    },
+    {
+        "content": "<p>I am sorry that project has no update for a while. I am currently burried in my school work and various of other things.</p>",
+        "id": 405731034,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1701658700
+    }
+]

@@ -1,0 +1,344 @@
+[
+    {
+        "content": "<p>I was looking at creating an RFC for implementing \"string gaps\" to be able to break long string literals. It would be good to get some community input before creating the actual RFC. There's a draft PR at <a href=\"https://github.com/leanprover/lean4/pull/2821\">lean4#2821</a>, and in it there's a draft RFC. I'll paste it here on Zulip for comment.</p>",
+        "id": 400354836,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699155372
+    },
+    {
+        "content": "<p><em>Updated from Haskell-style gaps to Rust-style ones after discussion.</em> <em>Switched to more restrictive syntax and parsing after more discussion.</em></p>\n<p><strong>Proposal.</strong> We should implement \"gaps\" for string literals.  These are escape sequences of the form <code>\"\\\" newline whitespace+</code> that have the interpretation of an empty string. For example,</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"s2\">\"this is </span><span class=\"err\">\\</span>\n<span class=\"s2\">     a string\"</span>\n</code></pre></div>\n<p>is equivalent to <code>\"this is a string\"</code>. These are like string continuations in <a href=\"https://doc.rust-lang.org/beta/reference/tokens.html#string-literals\">Rust</a>. It is a parse error for the whitespace after the newline to contain newlines; this is to help prevent confusions such as users believing that they can put comments in the gap.</p>\n<p>The name \"gap\" comes from the <a href=\"https://www.haskell.org/onlinereport/haskell2010/haskellch2.html#x7-200002.6\">Haskell-style</a> lexical syntax, which has the same purpose but instead with the syntax <code>\"\\\" whitespace+ \"\\\"</code>.</p>\n<p><strong>Rationale.</strong> In projects that have a line length limit (such as std and mathlib), long strings need to be wrapped to respect this limit. A workaround one sees is using string interpolation with the empty string, since the expression between curly braces may itself contain whitespace that is ignored:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"this is {</span>\n<span class=\"s2\">  \"\"}a string\"</span>\n</code></pre></div>\n<p>However, this term produces <code>\"this is \" ++ \"\" ++ \"a string\"</code>, which is not an atomic string literal. Note that users do not write</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"s2\">\"this is</span>\n<span class=\"s2\">   a string\"</span>\n</code></pre></div>\n<p>because this includes extraneous whitespace in the string. This particular example is <code>\"this is\\n   a string\"</code>.</p>\n<p><strong>Caveats.</strong></p>\n<ol>\n<li>\n<p>Note that the whitespace in a string gap must be whitespace. Comments are not permitted. The parser does not interpret string literals (that is, it does not do escape sequence replacements), and they are instead interpreted during elaboration time. If the gaps were to admit comments, this interpretation process would need to be able to handle comment syntax. This limitation is also found in the Haskell 2010 language specification.</p>\n</li>\n<li>\n<p>The implementation needs to be careful not to allow string gaps inside character literals. String literals and character literals share code for handling escapes, but the string gap feature only makes sense for strings.</p>\n</li>\n<li>\n<p>The Rust implementation uses a warning instead of a parser error when its gaps contain multiple newlines, since they have found allowing multiple newlines to be confusing. For simplicity, we have this condition raise a parser error (rather than waiting for elaboration time to emit a warning). Note that the lexical syntax for gaps is still <code>\"\\\" newline whitespace*</code>, but we choose to have the parser throw an error if <code>whitespace*</code> contains a newline.</p>\n</li>\n</ol>\n<p><strong>Other designs for multiline strings include:</strong></p>\n<ul>\n<li>Trying to adapt C's automatic string concatenation, where the juxtaposition <code>\"this is\" \" a string\"</code> is equivalent to the concatenated version. However, this creates an ambiguity when passing strings as arguments to functions.</li>\n<li>\n<p>Allowing interpolated strings to include expression-free <code>{}</code> notation<br>\n<code>\n  s!\"this is {\n    }a string\"\n  </code><br>\n  However, this forces users to switch to using an interpolated string if they want a multiline string literal.</p>\n</li>\n<li>\n<p>Using <a href=\"https://www.haskell.org/onlinereport/haskell2010/haskellch2.html#x7-200002.6\">Haskell-style</a> gaps. While they do give the user more precise control over whitespace, the second <code>\\</code> can easily be confused for an escape. Everything you can do with Haskell-style gaps can be represented in some way with Rust gaps, with small variations in line lengths.</p>\n</li>\n<li>Using unrestricted <code>\"\\\" whitespace+</code> gaps. These are easy to parse, but here is an example confusion this can lead to.<br>\n<code>\n  \"this is \\ -- that's the first half\n    a string\" -- and that's the second\n  </code><br>\n  The first \"comment\" is actually part of the string. Requiring that the first whitespace character be a newline prevents this. Even requiring that the first whitespace character be a newline, another example confusion is<br>\n<code>\n  \"this is \\\n      -- that's the first half\n    a string\" -- and that's the second\n  </code><br>\n  Again, the first \"comment\" terminates the string gap and becomes part of the string.</li>\n</ul>\n<p><strong>Summary.</strong> There is no need to reinvent lexical syntax for multiline string literals. The Rust solution satisfactorily solves the problem of long strings that need to be wrapped over multiple lines. There are no downsides to adding gaps to Lean's lexical syntax, and the feature has a simple implementation.</p>",
+        "id": 400354867,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699155419
+    },
+    {
+        "content": "<p>I don't know anything about Haskell, but is it worth considering whether this fits in with yet more kinds of useful string literals, specifically -- dedenting string literals where the common whitespace is trimmed? Some other languages have \"tags\" or other funky prefixes you can put before literals (I have vague memories of some friends telling me the programming language E has some specifically elaborate/nice version of this).</p>\n<p>But perhaps it's worth considering whether <code>s!</code>, dedenting, and this kind of single-line literal can/should have common form?</p>",
+        "id": 400356066,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1699156530
+    },
+    {
+        "content": "<p><a href=\"https://docs.swift.org/swift-book/documentation/the-swift-programming-language/stringsandcharacters/\">Swift's multiline string literals</a> ignore leading indentation up to the indentation of the closing quote, which would be nice to consider for Lean as well. If we're already ignoring that indentation, then the approach with just a <code>\\</code> at the end of the line is more concise.</p>",
+        "id": 400356270,
+        "sender_full_name": "Timo Carlin-Burns",
+        "timestamp": 1699156688
+    },
+    {
+        "content": "<p><em>nod</em> -- there's a collection of some dedent syntaxes <a href=\"https://github.com/tc39/proposal-string-dedent#in-other-languages\">here in the TC39 proposal</a>.</p>",
+        "id": 400356668,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1699156919
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"321696\">@Julian Berman</span> Could you expand on what you mean by \"But perhaps it's worth considering whether s!, dedenting, and this kind of single-line literal can/should have common form?\", in particular with <code>s!</code>? You'll find this <code>{\"\"}</code> trick in <code>s!</code> and <code>m!</code> strings all over std and mathlib too, so multiline literals aren't just about plain string literals.</p>",
+        "id": 400357591,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699157588
+    },
+    {
+        "content": "<p>Essentially I'm asking about \"standardizing\" on <code>&lt;modifiers&gt;*!\"&lt;literal&gt;\"</code> -- (to expose some ignorance I don't know what <code>m!</code> literals do! EDIT: OK I guess I half understand what they do from <code>MessageData</code>). But e.g. if <code>s!</code> did what <code>s!</code> did today, perhaps your string could/should be</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">j</span><span class=\"bp\">!</span><span class=\"s2\">\"foo bar</span>\n<span class=\"s2\">baz quux\"</span>\n</code></pre></div>\n<p><code>j!</code> for \"joined\" perhaps.</p>\n<p>And then similarly dedented strings could/should be</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>    <span class=\"n\">d</span><span class=\"bp\">!</span><span class=\"s2\">\"</span>\n<span class=\"s2\">       foo</span>\n<span class=\"s2\">       bar</span>\n<span class=\"s2\">    \"</span>\n</code></pre></div>\n<p>and when someone dreams up some other one it too becomes <code>whatever!</code>.</p>\n<p>And mixing them perhaps then is just mixing the prefixes, e.g. <code>sd!\"foo\"</code> is a dedented string with string interpolation, <code>sj!\"...\"</code> is a Kyle one-line string with interpolation, etc.</p>",
+        "id": 400357923,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1699157905
+    },
+    {
+        "content": "<p>I don't know, maybe the above fails your \"has a simple implementation\" -- I suppose it's likely it does, given that some combinations don't / will not make sense. But just threw it out as it was the first reaction to your message (of course the idea regardless looks totally reasonable to me.)</p>",
+        "id": 400358425,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1699158455
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"500038\">@Timo Carlin-Burns</span> Swift's multiline string literals seem nice, though they also seem to be somewhat orthogonal. I think the question is whether string gaps now would interfere with multiline string literals later.</p>\n<p>Something I like about gaps is they give you freedom to indent the continuing line as much as you want.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"s2\">\"this is </span><span class=\"err\">\\</span>\n<span class=\"s2\">       </span><span class=\"err\">\\</span><span class=\"s2\">a string\"</span>\n</code></pre></div>\n<p>Your single-<code>\\</code> proposal is concise, but then you would definitely have to write</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"s2\">\"\"\"</span>\n<span class=\"s2\">  this is </span><span class=\"err\">\\</span>\n<span class=\"s2\">  a string</span>\n<span class=\"s2\">  \"\"\"</span>\n</code></pre></div>\n<p>Maybe your proposal and gaps are compatible, though: you can add the rule for <code>\"\"\"</code> strings that if the next line has no additional whitespace then you can omit the second <code>\\</code> for the gap. That way you can write</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"s2\">\"\"\"</span>\n<span class=\"s2\">  this is </span><span class=\"err\">\\</span>\n<span class=\"s2\">    </span><span class=\"err\">\\</span><span class=\"s2\">a string</span>\n<span class=\"s2\">  \"\"\"</span>\n</code></pre></div>\n<p>if you want.</p>",
+        "id": 400358496,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699158516
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"321696\">@Julian Berman</span> I like designs with composable features -- though I think you can get this easily with Lean macros right now. There are two syntax types, <code>str</code> and <code>interpolatedStr</code>, for string literals, and for example <code>s!</code> strings are implemented <a href=\"https://github.com/leanprover/lean4/blob/baa4b68a71926a722b77d4ec2cba34bfc76cc5aa/src/Init/Data/ToString/Macro.lean\">here</a>.</p>\n<p>You could define <code>d!</code> strings in a similar way. If there were a <code>String.dedent</code> function, then you could define</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">syntax</span> <span class=\"s2\">\"d!\"</span> <span class=\"n\">str</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n\n<span class=\"n\">macro_rules</span> <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">d</span><span class=\"bp\">!</span> <span class=\"bp\">$</span><span class=\"n\">s</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">String.dedent</span> <span class=\"bp\">$</span><span class=\"n\">s</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>and then get <code>d!\"...\"</code> syntax.</p>",
+        "id": 400359157,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699159146
+    },
+    {
+        "content": "<blockquote>\n<p>Allowing a \\ at the end of a line to mean string continuation. For example<br>\n<code>\n      \"this is\\\n   a string\"\n  </code><br>\nHowever, such continuations would not respect indentation since any whitespace at the start of the next line would be included. Furthermore, there is the small question of \\r\\n vs \\n for the line ending.</p>\n</blockquote>\n<p>Note that in rust, this exact syntax is supported, but \"any whitespace at the start of the next line would be included\" is not true, the <code>\\</code> consumes both the following newline and all leading indentation on the following line. IMO that's the much better default behavior, although I can see advantages to the haskell style if we want to also include leading indentation in the string itself. (A trick I will use in rust to get leading indentation is to start the next line with <code>\\n   </code>, indented to taste, as the <code>\\n</code> escape inserts a newline but also doesn't count as whitespace for the purpose of the <code>\\</code> escape)</p>",
+        "id": 400359425,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699159381
+    },
+    {
+        "content": "<p>Would anything go wrong making the second <code>\\</code> optional? That gives you the Rust behavior while giving you finer-grained whitespace preservation if you need it.</p>\n<p>The gotcha is if the second line starts with an escape, like say</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"s2\">\"this is</span><span class=\"err\">\\</span>\n<span class=\"s2\">  </span><span class=\"se\">\\t</span><span class=\"s2\">a string\"</span>\n</code></pre></div>\n<p>which would come out as \"this ista string\". You could instead write</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"s2\">\"this is</span><span class=\"err\">\\</span>\n<span class=\"s2\">  </span><span class=\"se\">\\\\</span><span class=\"s2\">ta string\"</span>\n</code></pre></div>\n<p>to get \"this is\\ta string\"</p>",
+        "id": 400359924,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699159844
+    },
+    {
+        "content": "<p>I don't like optional because of the ambiguity around escapes, in particular if the last line is <code>\\\"</code></p>",
+        "id": 400359962,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699159884
+    },
+    {
+        "content": "<p>I suspect this will break regex syntax highlighters everywhere</p>",
+        "id": 400359976,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699159904
+    },
+    {
+        "content": "<p>Not to mention that it looks like an escape on quick reading</p>",
+        "id": 400360059,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699159940
+    },
+    {
+        "content": "<p>or if the trailing <code>\\</code> is off the screen</p>",
+        "id": 400360086,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699159959
+    },
+    {
+        "content": "<p>Yeah, that's something I don't like about Haskell's syntax. The main point in favor is that it's in an established language.</p>\n<p>One alteration is to have the closing of a gap be a different character from <code>\\</code>. Like perhaps \"<code>\\</code> whitespace+ <code>&gt;</code>\"</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"s2\">\"this is </span><span class=\"err\">\\</span>\n<span class=\"s2\">       &gt;a string\"</span>\n</code></pre></div>",
+        "id": 400360175,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699160053
+    },
+    {
+        "content": "<p>Or <code>\\</code> followed by newline is \"rust-style\", and <code>\\&gt;</code> followed by whitespace followed by <code>&gt;</code> is \"haskell-style\"</p>",
+        "id": 400360211,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699160124
+    },
+    {
+        "content": "<p>Note that rust's syntax and several of these other points of comparison have been brought up in a recent <a href=\"https://github.com/rust-lang/rfcs/pull/3450\">RFC</a> for multiline string literals in rust, although as you say this is a somewhat orthogonal feature</p>",
+        "id": 400360273,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699160168
+    },
+    {
+        "content": "<p>in my proposal the \"closing of a gap character\" is <code>\\n</code> (the character escape)</p>",
+        "id": 400360389,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699160295
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"s2\">\"this is </span><span class=\"err\">\\</span>\n<span class=\"s2\">       </span><span class=\"se\">\\n</span><span class=\"s2\">  a string with two space indent\"</span>\n</code></pre></div>",
+        "id": 400360403,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699160318
+    },
+    {
+        "content": "<p>Ah, so \"<code>\\</code> whitespace+ <code>\\n</code>\" would be the lexical syntax for a string gap? (the <code>\\n</code> wouldn't be an actual newline, right?)</p>",
+        "id": 400360454,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699160393
+    },
+    {
+        "content": "<p>the <code>\\n</code> is an actual newline</p>",
+        "id": 400360489,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699160403
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/RFC.3A.20.22String.20gaps.22.20for.20multiline.20string.20literals/near/400359425\">said</a>:</p>\n<blockquote>\n<p>IMO that's the much better default behavior, although I can see advantages to the Haskell style if we want to also include leading indentation in the string itself.</p>\n</blockquote>\n<p>When you say \"include leading indentation\", the indentation that Haskell style allows you to include is in the middle of a line. For example, Haskell style</p>\n<div class=\"codehilite\" data-code-language=\"Haskell\"><pre><span></span><code><span class=\"w\">  </span><span class=\"s\">\"this is </span><span class=\"se\">\\</span>\n<span class=\"w\">    </span><span class=\"se\">\\</span><span class=\"s\">  a string\"</span>\n</code></pre></div>\n<p>is <code>this is   a string</code>.</p>\n<p>It seems rare to want many spaces in the middle of a line, but If you really want that in Rust-style, you can always move them to the previous line:</p>\n<div class=\"codehilite\" data-code-language=\"Rust\"><pre><span></span><code><span class=\"w\">  </span><span class=\"s\">\"this is   \\</span>\n<span class=\"s\">    a string\"</span>\n</code></pre></div>",
+        "id": 400360531,
+        "sender_full_name": "Timo Carlin-Burns",
+        "timestamp": 1699160415
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> that example string has a newline in the middle with one trailing space on the first line and two spaces at the beginning of the second line</p>",
+        "id": 400360594,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699160454
+    },
+    {
+        "content": "<p>If you don't want a newline, then this syntax is not so convenient if you want to have leading spaces on the second line, you would have to use a hex escape <code>\\x20</code> or something to make a space that isn't literally a space character. But this isn't usually a problem, you just put all literal spaces you want before the <code>\\</code> instead of after</p>",
+        "id": 400360793,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699160556
+    },
+    {
+        "content": "<p>Ok, I get it. This seems reasonable, and I'm convinced that you can do everything you'd want out of the Haskell-style gaps.</p>",
+        "id": 400360867,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699160597
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"s2\">\"there are three spaces between the brackets &lt;   </span><span class=\"err\">\\</span>\n<span class=\"s2\">                         &gt;\"</span>\n</code></pre></div>",
+        "id": 400360872,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699160598
+    },
+    {
+        "content": "<p>One thing I will definitely agree with though is that anything is better than</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"s2\">\"a long string {\"\"</span>\n<span class=\"s2\">  }with no line break\"</span>\n</code></pre></div>",
+        "id": 400361231,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699160940
+    },
+    {
+        "content": "<p>I've updated the PR and the RFC with Rust-style gaps, but I didn't make it so that the first whitespace character needs to be a newline like it does in Rust (I don't have any strong opinion on this, other than it's easier to implement without that check)</p>",
+        "id": 400363096,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699162872
+    },
+    {
+        "content": "<p>does that mean that <code>\"foo \\     bar\"</code> is also syntax for <code>\"foo bar\"</code>?</p>",
+        "id": 400363126,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699162912
+    },
+    {
+        "content": "<p>Yeah</p>",
+        "id": 400363237,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699163031
+    },
+    {
+        "content": "<p>I think it's a bit weird for a line continuation character to be allowed in the middle of a line, but I guess it's mostly harmless... unless the <code>\\</code> is followed by some other escape letter like <code>\\n</code> or <code>\\\"</code></p>",
+        "id": 400363240,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699163032
+    },
+    {
+        "content": "<p>it might restrict options for adding more escapes later</p>",
+        "id": 400363285,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699163046
+    },
+    {
+        "content": "<p>or is the rule that the <code>\\</code> has to be followed by \"a whitespace character\" (including \\n \\r \\t etc)</p>",
+        "id": 400363329,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699163096
+    },
+    {
+        "content": "<p>It requires whitespace after the <code>\\</code></p>",
+        "id": 400363337,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699163101
+    },
+    {
+        "content": "<p>seems fine to me, the only related example I can think of is latex where <code>\\ </code> is an actual escape sequence</p>",
+        "id": 400363404,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699163161
+    },
+    {
+        "content": "<p>The Rust-style gaps look great to me, I wasn't aware of them before</p>",
+        "id": 400373680,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1699172952
+    },
+    {
+        "content": "<p>The linked Rust documentation explicitly calls out that it's confusing that a consequence of this rule is that</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"s2\">\"One string </span><span class=\"err\">\\</span>\n<span class=\"s2\">      with a gap\"</span>\n</code></pre></div>\n<p>denotes the same string as</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"s2\">\"One string </span><span class=\"err\">\\</span>\n\n<span class=\"s2\">      with a gap\"</span>\n</code></pre></div>\n<p>and they recommend against using the latter form, as it is a confusing feature that may be changed in the future.</p>\n<p>Why should the rule for a gap be to skip all whitespace, rather than skip spaces, then a single newline, then spaces? This seems to run less risk of obscure corner cases in the language. You state that we could consider adopting a warning mechanism like Rust's later, but I think it would be easier to start with a parser that solves the problem users are having (convenient multi-line string literals that denote long single-line strings) and then add additional flexibility if there is every a use for it.</p>\n<p>That is, I'd propose amending the proposal to replace</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>   <span class=\"n\">string_item</span>  <span class=\"o\">:</span> <span class=\"n\">string_char</span> <span class=\"bp\">|</span> <span class=\"n\">char_escape</span> <span class=\"bp\">|</span> <span class=\"n\">string_gap</span>\n   <span class=\"n\">string_char</span>  <span class=\"o\">:</span> <span class=\"o\">[</span><span class=\"bp\">^</span><span class=\"s2\">\"</span><span class=\"se\">\\\\</span><span class=\"s2\">]</span>\n<span class=\"s2\">   char_escape  : \"</span><span class=\"bp\">\\</span><span class=\"s2\">\" (\"</span><span class=\"bp\">\\</span><span class=\"s2\">\" | '\"</span><span class=\"bp\">'</span> <span class=\"bp\">|</span> <span class=\"s2\">\"'\"</span> <span class=\"bp\">|</span> <span class=\"s2\">\"n\"</span> <span class=\"bp\">|</span> <span class=\"s2\">\"t\"</span> <span class=\"bp\">|</span> <span class=\"s2\">\"x\"</span> <span class=\"n\">hex_char</span><span class=\"o\">{</span><span class=\"mi\">2</span><span class=\"o\">}</span> <span class=\"bp\">|</span> <span class=\"s2\">\"u\"</span> <span class=\"n\">hex_char</span><span class=\"o\">{</span><span class=\"mi\">4</span><span class=\"o\">})</span>\n   <span class=\"n\">hex_char</span>     <span class=\"o\">:</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"bp\">-</span><span class=\"mi\">9</span><span class=\"n\">a</span><span class=\"bp\">-</span><span class=\"n\">fA</span><span class=\"bp\">-</span><span class=\"n\">F</span><span class=\"o\">]</span>\n   <span class=\"n\">string_gap</span>   <span class=\"o\">:</span> <span class=\"s2\">\"</span><span class=\"se\">\\\"</span><span class=\"s2\"> whitespace+</span>\n</code></pre></div>\n<p>with</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>   <span class=\"n\">string_item</span>  <span class=\"o\">:</span> <span class=\"n\">string_char</span> <span class=\"bp\">|</span> <span class=\"n\">char_escape</span> <span class=\"bp\">|</span> <span class=\"n\">string_gap</span>\n   <span class=\"n\">string_char</span>  <span class=\"o\">:</span> <span class=\"o\">[</span><span class=\"bp\">^</span><span class=\"s2\">\"</span><span class=\"se\">\\\\</span><span class=\"s2\">]</span>\n<span class=\"s2\">   char_escape  : \"</span><span class=\"bp\">\\</span><span class=\"s2\">\" (\"</span><span class=\"bp\">\\</span><span class=\"s2\">\" | '\"</span><span class=\"bp\">'</span> <span class=\"bp\">|</span> <span class=\"s2\">\"'\"</span> <span class=\"bp\">|</span> <span class=\"s2\">\"n\"</span> <span class=\"bp\">|</span> <span class=\"s2\">\"t\"</span> <span class=\"bp\">|</span> <span class=\"s2\">\"x\"</span> <span class=\"n\">hex_char</span><span class=\"o\">{</span><span class=\"mi\">2</span><span class=\"o\">}</span> <span class=\"bp\">|</span> <span class=\"s2\">\"u\"</span> <span class=\"n\">hex_char</span><span class=\"o\">{</span><span class=\"mi\">4</span><span class=\"o\">})</span>\n   <span class=\"n\">hex_char</span>     <span class=\"o\">:</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"bp\">-</span><span class=\"mi\">9</span><span class=\"n\">a</span><span class=\"bp\">-</span><span class=\"n\">fA</span><span class=\"bp\">-</span><span class=\"n\">F</span><span class=\"o\">]</span>\n   <span class=\"n\">string_gap</span>   <span class=\"o\">:</span> <span class=\"s2\">\"</span><span class=\"se\">\\\"</span><span class=\"s2\"> space* newline space+</span>\n</code></pre></div>\n<p>What do you think? Is there an important use case for the multi-newline version that Rust warns about that I'm missing?</p>",
+        "id": 400413654,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1699208939
+    },
+    {
+        "content": "<p>If it's going to be like that I would prefer just <code>string_gap : \"\\\" newline space*</code> (possibly including other non-newline whitespace like tabs), I think trailing spaces after the <code>\\</code> should be an error. Or should it allow line comments? <span aria-label=\"thinking\" class=\"emoji emoji-1f914\" role=\"img\" title=\"thinking\">:thinking:</span></p>",
+        "id": 400415548,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699210441
+    },
+    {
+        "content": "<p>That behavior of rust-style gap consuming multiple lines is news to me, I would have guessed that it only consumes one line and agree that makes more sense</p>",
+        "id": 400415642,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699210506
+    },
+    {
+        "content": "<p>On the other hand, I can get behind the rust behavior of just warning on multiline gaps independently of interpretation - it seems like the kind of thing that will inevitably be unclear / misinterpreted</p>",
+        "id": 400415875,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699210692
+    },
+    {
+        "content": "<p>It's worth noting that</p>\n<div class=\"codehilite\" data-code-language=\"Rust\"><pre><span></span><code><span class=\"s\">\"One string\\</span>\n\n<span class=\"s\">      with a gap\"</span>\n</code></pre></div>\n<p>with the proposed one linebreak rule would denote the same string as</p>\n<div class=\"codehilite\" data-code-language=\"Rust\"><pre><span></span><code><span class=\"s\">\"One string</span>\n<span class=\"s\">      with a gap\"</span>\n</code></pre></div>\n<p>which seems like a much clearer way to write it.</p>",
+        "id": 400416589,
+        "sender_full_name": "Timo Carlin-Burns",
+        "timestamp": 1699211196
+    },
+    {
+        "content": "<p>Regarding an error/warning, a question is whether the error should be at the lexical level or at the elaborator level. I would lean toward the elaborator level since you can surface richer warnings/errors that way. The elaborator is what is responsible for decoding escapes.</p>\n<p>Making the lexical grammar of <code>string_gap</code> be <code>\"\\\" space* newline space+</code> would mean that Timo's example would be the interpretation of the first string, unless there's an additional <code>string_gap_error</code> that matches <code>\"\\\" whitespace+</code> minus <code>string_gap</code>. <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>'s suggestion of <code>\"\\\" newline space*</code> seems good, with a lexical error if there's not newline immediately after the \"\\\" (just to check -- when Lean loads a file, it translates all line endings to <code>\\n</code> right?)</p>\n<blockquote>\n<p>Why should the rule for a gap be to skip all whitespace, rather than skip spaces, then a single newline, then spaces?</p>\n</blockquote>\n<p>I could easily flip that question. A technical reason for the reverse is that the proposal's implementation is very simple, and limiting the allowable whitespace that comes after <code>\\</code> means adding restrictions (i.e., adding flexibility later would mean removing code.)</p>\n<p>One good justification for adding restrictions is that it might be surprising to see that</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"s2\">\"this is </span><span class=\"err\">\\</span><span class=\"s2\"> -- that's the first half</span>\n<span class=\"s2\">  a string\"</span> <span class=\"c1\">-- and that's the second</span>\n</code></pre></div>\n<p>would be equivalent to</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"s2\">\"this is -- that's the first half</span>\n<span class=\"s2\"> a string\"</span>\n</code></pre></div>\n<p>with the first \"comment\" included within the string.</p>",
+        "id": 400417997,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699212690
+    },
+    {
+        "content": "<p>I've pushed a change (and adjusted the RFC) to make the lexical syntax be <code>\"\\\" newline whitespace*</code> while making the parser throw an error if <code>whitespace*</code> contains a newline.</p>",
+        "id": 400425534,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699221960
+    },
+    {
+        "content": "<p>At the lexical level, I think it would be simplest to just say that <code>\\&lt;newline&gt;</code> is an escape sequence in the same way that <code>\\n</code> is an escape sequence, and there is nothing else one has to do to find the end of the string, which is all the lexer is responsible for. The elaborator later parses this string and that's when the <code>\"\\\" newline space*</code> rule becomes relevant.</p>\n<p>Regarding <code>\\n</code> vs <code>\\r\\n</code> newlines in the source text: I think you do have to handle both cases. Actually this is a good question because the <em>non</em> escaping behavior of just including the newline literally would mean that the same source text would end up denoting a different string if line endings are converted to CRLF. Quick question for any windows users: are .lean files using CRLF or LF most of the time? (It says one of the two in the bottom right when the lean file is open.)</p>",
+        "id": 400445262,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699237531
+    },
+    {
+        "content": "<p>actually this is easy to test:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#eval</span> <span class=\"s2\">\"</span>\n<span class=\"s2\">\"</span><span class=\"bp\">.</span><span class=\"n\">length</span>\n</code></pre></div>\n<p>prints <code>1</code> when the line endings are LF and <code>2</code> when they are CRLF</p>",
+        "id": 400445495,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699237694
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> I've tested the PR on windows already -- line endings appear to be normalized when read. (I'm assuming the CI changes line endings for windows... I'll have to check this)</p>\n<p>Re lexer vs elaborator: I found this was a lot quicker to implement on the lexer side. Touching the elaborator means changing the metaprogramming api for string Syntax literals, which we could look at revisiting later.</p>",
+        "id": 400452624,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699242663
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/RFC.3A.20.22String.20gaps.22.20for.20multiline.20string.20literals/near/400445495\">said</a>:</p>\n<blockquote>\n<p>actually this is easy to test:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#eval</span> <span class=\"s2\">\"</span>\n<span class=\"s2\">\"</span><span class=\"bp\">.</span><span class=\"n\">length</span>\n</code></pre></div>\n<p>prints <code>1</code> when the line endings are LF and <code>2</code> when they are CRLF</p>\n</blockquote>\n<p>Oh, I think I misread your message. Did you have access to a Windows machine and did you observe <code>2</code> for CRLF line endings?</p>",
+        "id": 400461980,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699246526
+    },
+    {
+        "content": "<p>No, I used vscode to change the line endings to CRLF and observed that the output changed</p>",
+        "id": 400463082,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699247147
+    },
+    {
+        "content": "<p>What is not clear to me is whether windows users normally see CRLF or LF lean files when interacting with them in vscode</p>",
+        "id": 400463175,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1699247224
+    },
+    {
+        "content": "<p>Hm, I see that Lean's file open sets <code>O_BINARY</code> on the windows platform, which means it turns off line ending normalization (without that flag set, your test should show <code>1</code> on Windows no matter if it's LF or CRLF -- the flag has no effect on posix so it's not surprising you'd see <code>2</code>). I'm also curious if anyone is using Lean with CRLFs (and what the result of your <code>#eval</code> test is for them; I'd expect <code>2</code>...)</p>",
+        "id": 400464788,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699248675
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/RFC.3A.20.22String.20gaps.22.20for.20multiline.20string.20literals/near/400360175\">said</a>:</p>\n<blockquote>\n<p>One alteration is to have the closing of a gap be a different character from <code>\\</code>. Like perhaps \"<code>\\</code> whitespace+ <code>&gt;</code>\"</p>\n</blockquote>\n<p>this reminds me of scala's multiline syntax, where the default margin character is a pipe:</p>\n<div class=\"codehilite\" data-code-language=\"Scala\"><pre><span></span><code><span class=\"kd\">val</span><span class=\"w\"> </span><span class=\"n\">whatever</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"s\">\"\"\"this is a</span>\n<span class=\"s\">                 |multiline string</span>\n<span class=\"s\">                 |wahoo\"\"\"</span><span class=\"p\">.</span><span class=\"n\">stripMargin</span>\n</code></pre></div>\n<p>which I found pretty nice and readable. hard to have any unexpected behavior when the syntax is so explicit.</p>",
+        "id": 400632635,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1699316290
+    },
+    {
+        "content": "<p>That is equivalent to <code>\"this is a\\nmultiline string\\nwahoo\"</code> right? For gaps, what we're looking for is a way to continue a string onto the next line without inserting any <code>\\n</code>'s.</p>",
+        "id": 400633229,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699316655
+    },
+    {
+        "content": "<p>yeah, it suggests syntax along the lines of</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">d</span><span class=\"bp\">!</span><span class=\"s2\">\"\"\"blahblah</span><span class=\"err\">\\</span>\n<span class=\"s2\">    |blahblah</span><span class=\"err\">\\</span>\n<span class=\"s2\">    |blah</span>\n<span class=\"s2\">    |now this is a newline\"\"\"</span>\n</code></pre></div>\n<p>to cover the multiline dedent and multiline without <code>\\n</code> needs.</p>",
+        "id": 400634884,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1699317477
+    },
+    {
+        "content": "<p>all of these are <span aria-label=\"bike\" class=\"emoji emoji-1f6b2\" role=\"img\" title=\"bike\">:bike:</span><span aria-label=\"house\" class=\"emoji emoji-1f3e0\" role=\"img\" title=\"house\">:house:</span> but figured it's another datapoint to throw on the pile</p>",
+        "id": 400635233,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1699317634
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"407274\">@James Gallicchio</span> I added a variation on that in the tests for <a href=\"https://github.com/leanprover-community/lean/pull/2821\">lean#2821</a>. It has</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#eval</span> <span class=\"n\">d</span><span class=\"bp\">!</span><span class=\"s2\">\"this is </span><span class=\"err\">\\</span>\n<span class=\"s2\">            line 1</span>\n<span class=\"s2\">        |  line 2, indented</span>\n<span class=\"s2\">        |line 3\"</span>\n</code></pre></div>\n<p>give <code>\"this is line 1\\n  line 2, indented\\nline 3\"</code>. (This <code>d!</code> syntax is just defined within the tests.)</p>",
+        "id": 400681773,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1699342715
+    }
+]

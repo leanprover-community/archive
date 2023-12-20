@@ -1,0 +1,44 @@
+[
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> Any thoughts on why <code>library_search</code> is timing out here?  I tried it on master as well as on <a href=\"https://github.com/leanprover-community/mathlib4/pull/3771\">!4#3771</a> and <a href=\"https://github.com/leanprover-community/mathlib4/pull/3725\">!4#3725</a>.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Data.Real.ENNReal</span>\n<span class=\"kn\">import</span> <span class=\"n\">Mathlib.Tactic.LibrarySearch</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">ENNReal</span>\n\n<span class=\"c1\">-- works</span>\n<span class=\"kd\">example</span> <span class=\"o\">{</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"n\">c</span> <span class=\"n\">d</span> <span class=\"o\">:</span> <span class=\"n\">ℝ</span><span class=\"bp\">≥</span><span class=\"mi\">0</span><span class=\"bp\">∞</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">ac</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">&lt;</span> <span class=\"n\">c</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">bd</span> <span class=\"o\">:</span> <span class=\"n\">b</span> <span class=\"bp\">&lt;</span> <span class=\"n\">d</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">*</span> <span class=\"n\">b</span> <span class=\"bp\">&lt;</span> <span class=\"n\">c</span> <span class=\"bp\">*</span> <span class=\"n\">d</span> <span class=\"o\">:=</span> <span class=\"n\">ENNReal.mul_lt_mul</span> <span class=\"n\">ac</span> <span class=\"n\">bd</span>\n\n<span class=\"c1\">-- times out</span>\n<span class=\"kd\">example</span> <span class=\"o\">{</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"n\">c</span> <span class=\"n\">d</span> <span class=\"o\">:</span> <span class=\"n\">ℝ</span><span class=\"bp\">≥</span><span class=\"mi\">0</span><span class=\"bp\">∞</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">ac</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">&lt;</span> <span class=\"n\">c</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">bd</span> <span class=\"o\">:</span> <span class=\"n\">b</span> <span class=\"bp\">&lt;</span> <span class=\"n\">d</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">*</span> <span class=\"n\">b</span> <span class=\"bp\">&lt;</span> <span class=\"n\">c</span> <span class=\"bp\">*</span> <span class=\"n\">d</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">library_search</span>\n</code></pre></div>",
+        "id": 356406350,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1683433241
+    },
+    {
+        "content": "<p><code>set_option trace.Tactic.librarySearch.lemmas true in</code> reveals two things:</p>\n<ol>\n<li>There are a long list of lemmas to try here. This is because the way <code>DiscrTree</code> works, there's not really a good way to look up \"lemmas that prove <code>_ &lt; _</code> in <code>ℝ≥0∞</code>\". So we just have to try out every lemma that proves a strict inequality. If you add <code>set_option maxHeartbeats 0</code> it does succeed on this example.</li>\n<li>The lemma we're after comes <em>last</em> in that list of lemmas! I'm a bit surprised <a href=\"https://github.com/leanprover-community/mathlib4/pull/3725\">!4#3725</a> doesn't help here. I wonder if just <em>reversing</em> the list of lemmas would be a good idea, on the principle that later defined lemmas are more likely to be more specific?</li>\n</ol>",
+        "id": 356415942,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683439313
+    },
+    {
+        "content": "<p>Interesting ... your idea in (2) does seem plausible.</p>",
+        "id": 356416417,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1683439621
+    },
+    {
+        "content": "<p>Do you know if the mathlib3 implementation did this, intentionally or not?</p>",
+        "id": 356416468,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1683439644
+    },
+    {
+        "content": "<p>I have a great fix in <a href=\"https://github.com/leanprover-community/mathlib4/pull/3725\">!4#3725</a> now. It turns out that the lemmas that come back from <code>DiscrTree.getMatch</code> come in batches, coming from different parts of the discrimination tree. Looking at some typical results, it looks like more specific results tend to come after less specific ones.</p>\n<p>That is the opposite of what we want to do in <code>library_search</code>, where the most specific lemmas are the most useful.</p>\n<p>Hence in <a href=\"https://github.com/leanprover-community/mathlib4/pull/3725\">!4#3725</a> I have just added a <code>.reverse</code>, and at the same time when I put the lemmas into the discrimination tree I sort them by <em>longest</em> first.</p>\n<p>This has the net result that we try the most specific lemmas (according to the discrimination tree) first, and amongst those we try the ones with the shortest names first.</p>\n<p>In your example, this means that <code>ENNReal.mul_lt_mul</code> is actually the very first lemma tried, and so <code>library_search</code> finishes essentially instantly.</p>",
+        "id": 356417708,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683440587
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/3771\">!4#3771</a> should probably be merged first. It is a pretty simple change, that improves performance but shouldn't change behaviour, so hopefully someone can merge that soon. :-)</p>",
+        "id": 356418091,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683440882
+    },
+    {
+        "content": "<p>Patrick merged <a href=\"https://github.com/leanprover-community/mathlib4/pull/3771\">!4#3771</a>, and I've updated <a href=\"https://github.com/leanprover-community/mathlib4/pull/3725\">!4#3725</a> to master, so it is ready for review/merge too.</p>",
+        "id": 356440147,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683449970
+    }
+]

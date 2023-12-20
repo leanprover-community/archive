@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>I just noticed this weird behavior:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"o\">,</span><span class=\"mi\">1</span><span class=\"o\">,</span><span class=\"mi\">2</span><span class=\"o\">,</span><span class=\"mi\">3</span><span class=\"o\">,</span><span class=\"mi\">4</span><span class=\"o\">,</span><span class=\"mi\">5</span><span class=\"o\">,</span><span class=\"mi\">6</span><span class=\"o\">]</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Subarray</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"n\">a</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">:</span><span class=\"mi\">5</span><span class=\"o\">]</span>\n\n<span class=\"k\">#eval</span> <span class=\"o\">(</span><span class=\"n\">b.as</span><span class=\"o\">,</span> <span class=\"n\">b.start</span><span class=\"o\">,</span> <span class=\"n\">b.stop</span><span class=\"o\">)</span> <span class=\"c1\">-- (#[0,1,2,3,4,5,6], 1, 5)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">Subarray</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"n\">b</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">:</span><span class=\"mi\">3</span><span class=\"o\">]</span>\n\n<span class=\"k\">#eval</span> <span class=\"o\">(</span><span class=\"n\">c.as</span><span class=\"o\">,</span> <span class=\"n\">c.start</span><span class=\"o\">,</span> <span class=\"n\">c.stop</span><span class=\"o\">)</span> <span class=\"c1\">-- (#[1,2,3,4], 1, 3) !?</span>\n</code></pre></div>\n<p>I would have expected the last line to give <code>(#[0,1,2,3,4,5,6], 2, 4)</code>.</p>\n<p>The reason for this odd behavior is that the <code>a[start:stop]</code> notation assumes that <code>a</code> is an array. So when calculating <code>c</code>, Lean  first coerces <code>b</code> into an array and then calculates the subarray of that. This is very inefficient but...</p>\n<p>Why is there a coercion from <code>Subarray</code> to <code>Array</code> at all? This is a very expensive coercion that copies the subarray elements one-by-one into a subarray (<code>Array.ofSubarray</code>).  I looked for where this coercion was used. So I modified the Lean code by removing this instance.</p>\n<ul>\n<li>It is used once in <code>src/Init/NotationExtra.lean</code> (easy patch) and nowhere else in <code>Init</code>.</li>\n<li>It is used a lot in <code>src/Lean</code> but I patched that by adding a very conservative <code>scoped instance : CoeTail (Subarray α) (Array α)</code> in <code>Lean/Name.lean</code> (which is imported by a majority of files in <code>src/Lean</code>). </li>\n<li>It is used in Std4 in <code>Array/Merge.lean</code> but what is actually needed there is an instance of <code>HAppend (Array α) (Subarray α) (Array α)</code> or similar.</li>\n<li>I didn't check Mathlib4 since that would take a long while.</li>\n</ul>\n<p>It seems to me that this unusual coercion is not of much use outside of core's <code>src/Lean</code>.  As for the uses there, there's a _lot_. However, they fall into a handful of patterns and it is not at all clear they are necessary. In fact, I would think that all these array copies would have a negative impact on performance. For example, one of the main culprits is <code>Lean.mkAppN</code> but that function doesn't need its own copy of the arguments Array, it would work just as well using a Subarray, eliminating the need to copy the arguments.</p>\n<p>Anyway, long story short, I think that:</p>\n<ol>\n<li>There shouldn't be a coercion from Subarray to Array: it's expensive (which is unusual for a coercion) and not that useful.</li>\n<li>The <code>[start:stop]</code> notation should work correctly on Subarrays, just changing the start/stop points without creating a new copy of the array.</li>\n<li>There could be some use in a coercion from Array to Subarray, which is cheap and would allow to use arrays as streams without explicitly converting to a Subarray every time.</li>\n</ol>",
+        "id": 356388728,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1683420461
+    },
+    {
+        "content": "<p>Is the expected behavior:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#eval</span> <span class=\"o\">(</span><span class=\"n\">c.as</span><span class=\"o\">,</span> <span class=\"n\">c.start</span><span class=\"o\">,</span> <span class=\"n\">c.stop</span><span class=\"o\">)</span> <span class=\"c1\">-- (#[0,1,2,3,4,5,6], 2, 4)</span>\n</code></pre></div>",
+        "id": 356407983,
+        "sender_full_name": "Andrew Carter",
+        "timestamp": 1683434853
+    },
+    {
+        "content": "<p>Yes, fixed. Thanks!</p>",
+        "id": 356410736,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1683436483
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"119741\">@François G. Dorais</span>, if you have a branch for Lean4 with this change, that compiles, I'm happy to benchmark mathlib4 against it.</p>",
+        "id": 356414929,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683438741
+    },
+    {
+        "content": "<p>I agree with all these points. If you want to spend even more time on this, you could port the entire <code>Array</code> API to <code>Subarray</code>. (This can be done in <code>std</code> of course.) <code>Subarray</code> is often the better type for efficiency and therefore deserves just as much API.</p>",
+        "id": 356717817,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1683554381
+    },
+    {
+        "content": "<p>I dropped the ball here but I finally filed an issue about this: <a href=\"https://github.com/leanprover/lean4/issues/2360\">https://github.com/leanprover/lean4/issues/2360</a></p>",
+        "id": 380072889,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1690732828
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"256311\">@Jannis Limperg</span> I'm not sure I want to do this but it might be useful to expand your thoughts a bit...<br>\nPS: Apologies for the belated reply!</p>",
+        "id": 380074002,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1690733023
+    },
+    {
+        "content": "<p>What I meant is just that when you work with parts of an array, it is often much more efficient to consider the slices as <code>Subarray</code>s than as <code>Array</code>s, because the latter means copying the parts around. But the current impoverished API of <code>Subarray</code> discourages its use, so the path of least resistance has suboptimal performance.</p>\n<p>By the way, many functions on <code>Array</code>s already have <code>start</code> and <code>stop</code> arguments that allow you to work only on a part of the array. Porting these to <code>Subarray</code> would be trivial.</p>",
+        "id": 380081612,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1690734930
+    },
+    {
+        "content": "<p>I totally agree! But with a coercion from Subarray to Array in core this is all basically useless optimization, isn't it?</p>",
+        "id": 380085448,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1690735878
+    },
+    {
+        "content": "<p>Not completely useless; you can still be careful and void the coercion. But I agree that the coercion is a footgun and should be removed.</p>",
+        "id": 380086915,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1690736329
+    }
+]

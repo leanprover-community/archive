@@ -1,0 +1,230 @@
+[
+    {
+        "content": "<p>I'd like to experiment with doing some on-disk caching of the <code>library_search</code> cache. If I just want to write out a <code>DiscrTree Name s</code> to disk, where do I start?</p>",
+        "id": 346706366,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680569865
+    },
+    {
+        "content": "<p>I <em>don't</em> want to use environment extensions here, because the intention is to have a single cache for everything in mathlib. This will be a largish file; if we put it in environment extensions it would essentially be stored separately in every olean.</p>",
+        "id": 346706465,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680569904
+    },
+    {
+        "content": "<p>assuming you want it to be memory mapped like oleans are, I don't think it is possible unless you make it a fake module so that you can get <code>lean_save_module_data</code> to do the heavy lifting</p>",
+        "id": 346707512,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680570466
+    },
+    {
+        "content": "<p>It would be great if there was a lean API for the <code>object_compactor</code></p>",
+        "id": 346707572,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680570485
+    },
+    {
+        "content": "<p>For testing purposes you can just <code>unsafeCast</code> to <code>ModuleData</code> and use <code>readModuleData</code> and <code>saveModuleData</code>.</p>",
+        "id": 346708095,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1680570785
+    },
+    {
+        "content": "<p>yeah I was just thinking about making an API which did that</p>",
+        "id": 346708134,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680570801
+    },
+    {
+        "content": "<p>easy peasy:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Std.Util.TermUnsafe</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">System</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">pickle</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">path</span> <span class=\"o\">:</span> <span class=\"n\">FilePath</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">key</span> <span class=\"o\">:</span> <span class=\"n\">Name</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">exact</span> <span class=\"n\">decl_name</span><span class=\"bp\">%</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span>\n  <span class=\"n\">saveModuleData</span> <span class=\"n\">path</span> <span class=\"n\">key</span> <span class=\"o\">(</span><span class=\"n\">unsafe</span> <span class=\"n\">unsafeCast</span> <span class=\"n\">x</span><span class=\"o\">)</span>\n\n<span class=\"n\">unsafe</span> <span class=\"kd\">def</span> <span class=\"n\">unpickle</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">path</span> <span class=\"o\">:</span> <span class=\"n\">FilePath</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"bp\">×</span> <span class=\"n\">CompactedRegion</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">region</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">readModuleData</span> <span class=\"n\">path</span>\n  <span class=\"n\">pure</span> <span class=\"o\">(</span><span class=\"n\">unsafeCast</span> <span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">region</span><span class=\"o\">)</span>\n\n<span class=\"n\">unsafe</span> <span class=\"kd\">def</span> <span class=\"n\">withUnpickle</span> <span class=\"o\">[</span><span class=\"n\">Monad</span> <span class=\"n\">m</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">MonadLiftT</span> <span class=\"n\">IO</span> <span class=\"n\">m</span><span class=\"o\">]</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">}</span>\n    <span class=\"o\">(</span><span class=\"n\">path</span> <span class=\"o\">:</span> <span class=\"n\">FilePath</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">m</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">m</span> <span class=\"n\">β</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">region</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">unpickle</span> <span class=\"n\">α</span> <span class=\"n\">path</span>\n  <span class=\"k\">let</span> <span class=\"n\">r</span> <span class=\"bp\">←</span> <span class=\"n\">f</span> <span class=\"n\">x</span>\n  <span class=\"n\">region.free</span>\n  <span class=\"n\">pure</span> <span class=\"n\">r</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">do</span>\n  <span class=\"n\">pickle</span> <span class=\"s2\">\"test.mylean\"</span> <span class=\"o\">(</span><span class=\"mi\">3</span><span class=\"o\">,</span> <span class=\"mi\">14</span><span class=\"o\">)</span>\n  <span class=\"n\">withUnpickle</span> <span class=\"s2\">\"test.mylean\"</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">×</span> <span class=\"n\">Nat</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"n\">x</span> <span class=\"c1\">-- (3, 14)</span>\n</code></pre></div>",
+        "id": 346709915,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680571691
+    },
+    {
+        "content": "<p><code>.anonymous</code> is a bad choice in <code>pickle</code>.  That will disable mmaping if you have more than one pickled object.</p>",
+        "id": 346710060,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1680571763
+    },
+    {
+        "content": "<p>hm, yeah that is awkward. The user would need to provide a random seed</p>",
+        "id": 346710204,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680571812
+    },
+    {
+        "content": "<p>Or just a name, like <code> `librarySearch.cache </code>.</p>",
+        "id": 346710255,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1680571860
+    },
+    {
+        "content": "<p>heh, it could be <code>decl_name%</code></p>",
+        "id": 346710267,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680571868
+    },
+    {
+        "content": "<p>I think in many cases you want to create more than pickle file per function.  Like if you want to have one file per Lean module.</p>",
+        "id": 346710574,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1680572094
+    },
+    {
+        "content": "<p>well it's just the default, the user can override it to mix in their own key</p>",
+        "id": 346710644,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680572151
+    },
+    {
+        "content": "<p>I don't think the other inputs make a good cache key</p>",
+        "id": 346710701,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680572175
+    },
+    {
+        "content": "<p>Wow, okay, this is pretty good. Building the entire <code>DiscrTree</code> for currently mathlib4 takes about 47 seconds. Pickling it takes about 15, unpickling it is essential instant.</p>",
+        "id": 346715468,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680575025
+    },
+    {
+        "content": "<p>Just how big is it??</p>",
+        "id": 346715533,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1680575054
+    },
+    {
+        "content": "<p>~150mb uncompressed, 20mb compressed</p>",
+        "id": 346715549,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680575068
+    },
+    {
+        "content": "<p>It takes 15 seconds to write a 150M olean file?  That's much slower than I'd expected.</p>",
+        "id": 346715583,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1680575104
+    },
+    {
+        "content": "<p>I'm tempted to try to distribute it alongside the olean cache in some way, so users of library search aren't constructing it themselves.</p>",
+        "id": 346715589,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680575112
+    },
+    {
+        "content": "<p>I think it would require extra features in <code>cache</code>, we can't just sneak this into the existing setup...?</p>",
+        "id": 346715674,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680575170
+    },
+    {
+        "content": "<p>It would fit in better if there was one cache per module.</p>",
+        "id": 346715706,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1680575208
+    },
+    {
+        "content": "<p>Even then, I'm worried that we'd lose all the advantage: we either have to merge all those <code>DiscrTree</code>s, or search for matches in all of them.</p>",
+        "id": 346715766,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680575248
+    },
+    {
+        "content": "<p>Either way it's probably slow again.</p>",
+        "id": 346715778,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680575256
+    },
+    {
+        "content": "<p>With one cache per mathlib, it's a bit of a new thing.  What do we do if the build fails?  How is the cache updated when I locally change something?</p>",
+        "id": 346715794,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1680575269
+    },
+    {
+        "content": "<p>My inclination would be to keep it simple: don't produce anything if the build fails, and the cache isn't updated when you change something! If the cache file is absent, library_search will just follow the current behaviour.</p>",
+        "id": 346715903,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680575352
+    },
+    {
+        "content": "<p>And we'll have a script users can run locally to rebuild it if desired.</p>",
+        "id": 346716073,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680575392
+    },
+    {
+        "content": "<p>I feel like mostly <code>library_search</code> is not being used for finding lemmas in the files you are authoring today. :-)</p>",
+        "id": 346716148,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680575424
+    },
+    {
+        "content": "<p>I guess you'd always have a cache file lying around.  But when you're switching to a branch where CI fails, you'd still be searching in the old one.</p>",
+        "id": 346716157,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1680575436
+    },
+    {
+        "content": "<blockquote>\n<p>I feel like mostly <code>library_search</code> is not being used for finding lemmas in the files you are authoring today. :-)</p>\n</blockquote>\n<p>That's a valid point.  Maybe we could also turn this into a feature and have <code>library_search</code> recommend imports for lemmas you don't have yet.</p>",
+        "id": 346716223,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1680575498
+    },
+    {
+        "content": "<p>The cache only refers to <code>Name</code>s. So obviously if things get renamed/added/etc, if it not going to find those lemmas. But everything is still behind name resolution.</p>",
+        "id": 346716227,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680575502
+    },
+    {
+        "content": "<p>So a partially dirty cache is still completely usable.</p>",
+        "id": 346716296,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680575532
+    },
+    {
+        "content": "<p>For lemmas in files that aren't imported, obviously we can't <code>apply</code> them. So suggesting things from files that haven't been imported yet could only be on the rather weak basis of the <code>DiscrTree</code> returning them.</p>",
+        "id": 346716360,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680575594
+    },
+    {
+        "content": "<blockquote>\n<p>And we'll have a script users can run locally to rebuild it if desired.</p>\n</blockquote>\n<p>I don't think you'd get a chance to use it often since it would only work once everything builds.  When you no longer need library_search.</p>",
+        "id": 346716421,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1680575629
+    },
+    {
+        "content": "<p>Sure, but if you are off on some weird branch with no CI, at least you can build a cache before you start work.</p>",
+        "id": 346716512,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680575674
+    },
+    {
+        "content": "<p>Perhaps for a first implementation I could just try hacking <code>cache</code> to look for this one extra file, and store it under some hash that mixes in the hash for <code>Mathlib.lean</code>.</p>",
+        "id": 346716573,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1680575733
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110043\">Gabriel Ebner</span> <a href=\"#narrow/stream/270676-lean4/topic/exporting.20and.20importing.20a.20.60DiscrTree.60/near/346715583\">said</a>:</p>\n<blockquote>\n<p>It takes 15 seconds to write a 150M olean file?  That's much slower than I'd expected.</p>\n</blockquote>\n<p>It's not just writing the file, it is also compacting the data structure</p>",
+        "id": 346725475,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680581783
+    },
+    {
+        "content": "<p>I would not be surprised if that is comparable to the time it takes to construct in the first place</p>",
+        "id": 346725509,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680581818
+    },
+    {
+        "content": "<p>The benchmarks say ~100s for serialising mathlib4's 1.2GB of .olean files, so that ratio sounds roughly correct</p>",
+        "id": 346764570,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1680595719
+    }
+]

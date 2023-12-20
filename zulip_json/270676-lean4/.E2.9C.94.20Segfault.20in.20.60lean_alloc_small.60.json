@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>When a callback created with <code>libffi</code> or <code>libffcall</code> is called, a SEGFAULT occurs in <code>lean_alloc_small</code>.<br>\nIt was present since nightly.<br>\nThe code using <code>libffcall</code> was lost (rm -rf /*), but the one using <code>libffi</code> is still there and crashes in 4.1.0 too.<br>\nFor context, it is called from an audio thread.<br>\nI don't get a SEGFAULT when the callback is written in C or when Lean is compiled with disabled small allocator.<br>\nWhat specific to ffi libraries could cause this?</p>",
+        "id": 399084852,
+        "sender_full_name": "Daniil Kisel",
+        "timestamp": 1698529567
+    },
+    {
+        "content": "<p>Show some <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a> please, otherwise it's very hard to deduce what exactly is going on.</p>",
+        "id": 399084872,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1698529640
+    },
+    {
+        "content": "<p>Here <a href=\"https://github.com/KislyjKisel/libffi-lean-segfault\">mwe</a>.<br>\nI am using Linux x64.<br>\nGDB:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Program</span> <span class=\"n\">received</span> <span class=\"n\">signal</span> <span class=\"n\">SIGSEGV</span><span class=\"o\">,</span> <span class=\"n\">Segmentation</span> <span class=\"n\">fault.</span>\n<span class=\"mi\">0x00005555555fc9aa</span> <span class=\"k\">in</span> <span class=\"n\">lean_is_st</span> <span class=\"o\">()</span>\n<span class=\"o\">(</span><span class=\"n\">gdb</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n<span class=\"bp\">#</span><span class=\"mi\">0</span>  <span class=\"mi\">0x00005555555fc9aa</span> <span class=\"k\">in</span> <span class=\"n\">lean_is_st</span> <span class=\"o\">()</span>\n<span class=\"bp\">#</span><span class=\"mi\">1</span>  <span class=\"mi\">0x00005555555fc9cb</span> <span class=\"k\">in</span> <span class=\"n\">lean_inc_ref</span> <span class=\"o\">()</span>\n<span class=\"bp\">#</span><span class=\"mi\">2</span>  <span class=\"mi\">0x00005555555fcf93</span> <span class=\"k\">in</span> <span class=\"n\">cb_binding</span> <span class=\"o\">()</span>\n<span class=\"bp\">#</span><span class=\"mi\">3</span>  <span class=\"mi\">0x0000555555602443</span> <span class=\"k\">in</span> <span class=\"n\">ffi_closure_unix64_inner</span> <span class=\"o\">()</span>\n<span class=\"bp\">#</span><span class=\"mi\">4</span>  <span class=\"mi\">0x00005555556031e8</span> <span class=\"k\">in</span> <span class=\"n\">ffi_closure_unix64</span> <span class=\"o\">()</span>\n<span class=\"bp\">#</span><span class=\"mi\">5</span>  <span class=\"mi\">0x00005555555fd100</span> <span class=\"k\">in</span> <span class=\"n\">Cb_run</span> <span class=\"o\">()</span>\n<span class=\"bp\">#</span><span class=\"mi\">6</span>  <span class=\"mi\">0x00005555555fc2ae</span> <span class=\"k\">in</span> <span class=\"n\">_lean_main</span> <span class=\"o\">()</span>\n<span class=\"bp\">#</span><span class=\"mi\">7</span>  <span class=\"mi\">0x00005555555fc733</span> <span class=\"k\">in</span> <span class=\"n\">main</span> <span class=\"o\">()</span>\n</code></pre></div>",
+        "id": 399087204,
+        "sender_full_name": "Daniil Kisel",
+        "timestamp": 1698532088
+    },
+    {
+        "content": "<p>Nevermind, now it's my mistake. I'll fix it and try again.</p>",
+        "id": 399087348,
+        "sender_full_name": "Daniil Kisel",
+        "timestamp": 1698532310
+    },
+    {
+        "content": "<p>looks like a lean_dec_ref/lean_dec problem</p>",
+        "id": 399087423,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1698532374
+    },
+    {
+        "content": "<p>The MWE is wrong because I am passing lean_object* where its external data is expected, fixing it rn.<br>\nAnd the fixed version doesn't crash.</p>",
+        "id": 399087461,
+        "sender_full_name": "Daniil Kisel",
+        "timestamp": 1698532427
+    },
+    {
+        "content": "<p>Can't provide MWE, but the callback doesn't crash when called manually (and valgrind shows nothing), only when called from the audio thread.</p>",
+        "id": 399091831,
+        "sender_full_name": "Daniil Kisel",
+        "timestamp": 1698537018
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"587706\">Daniil Kisel</span> <a href=\"#narrow/stream/270676-lean4/topic/Segfault.20in.20.60lean_alloc_small.60/near/399087204\">said</a>:</p>\n<blockquote>\n<p>Here <a href=\"https://github.com/KislyjKisel/libffi-lean-segfault\">mwe</a>.</p>\n</blockquote>\n<p>I have updated the MWE. It doesn't use libffi, it uses raylib to create an audio stream and assigns a normal C callback to it.<br>\nThe following code crashes with \"invalid read of size 8 in lean_alloc_small ... audioStreamCallback ... ma_device__on_data_inner ...\".</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[</span><span class=\"n\">extern</span> <span class=\"s2\">\"mwe\"</span><span class=\"kd\">]</span>\n<span class=\"n\">opaque</span> <span class=\"n\">mwe</span> <span class=\"o\">:</span> <span class=\"n\">BaseIO</span> <span class=\"n\">Unit</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"n\">mwe</span>\n</code></pre></div>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"cp\">#include</span><span class=\"w\"> </span><span class=\"cpf\">&lt;lean/lean.h&gt;</span>\n<span class=\"cp\">#include</span><span class=\"w\"> </span><span class=\"cpf\">&lt;raylib.h&gt;</span>\n\n<span class=\"kt\">void</span><span class=\"w\"> </span><span class=\"nf\">audioStreamCallback</span><span class=\"p\">(</span><span class=\"kt\">void</span><span class=\"o\">*</span><span class=\"w\"> </span><span class=\"n\">data</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"kt\">unsigned</span><span class=\"w\"> </span><span class=\"kt\">int</span><span class=\"w\"> </span><span class=\"n\">frames</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"n\">lean_alloc_small_object</span><span class=\"p\">(</span><span class=\"mi\">16</span><span class=\"p\">);</span>\n<span class=\"p\">}</span>\n\n<span class=\"n\">LEAN_EXPORT</span><span class=\"w\"> </span><span class=\"n\">lean_obj_res</span><span class=\"w\"> </span><span class=\"n\">mwe</span><span class=\"p\">(</span><span class=\"n\">lean_obj_arg</span><span class=\"w\"> </span><span class=\"n\">world</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"n\">InitWindow</span><span class=\"p\">(</span><span class=\"mi\">640</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"mi\">480</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"s\">\"mwe\"</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"n\">InitAudioDevice</span><span class=\"p\">();</span>\n<span class=\"w\">    </span><span class=\"n\">AudioStream</span><span class=\"w\"> </span><span class=\"n\">audioStream</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">LoadAudioStream</span><span class=\"p\">(</span><span class=\"mi\">44100</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"mi\">16</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"n\">SetAudioStreamCallback</span><span class=\"p\">(</span><span class=\"n\">audioStream</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"n\">audioStreamCallback</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"n\">PlayAudioStream</span><span class=\"p\">(</span><span class=\"n\">audioStream</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"n\">WaitTime</span><span class=\"p\">(</span><span class=\"mf\">0.1</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"n\">CloseWindow</span><span class=\"p\">();</span>\n<span class=\"w\">    </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"n\">lean_io_result_mk_ok</span><span class=\"p\">(</span><span class=\"n\">lean_box</span><span class=\"p\">(</span><span class=\"mi\">0</span><span class=\"p\">));</span>\n<span class=\"p\">}</span>\n</code></pre></div>",
+        "id": 399097531,
+        "sender_full_name": "Daniil Kisel",
+        "timestamp": 1698540968
+    },
+    {
+        "content": "<p>I've found <a href=\"https://github.com/leanprover/lean4/pull/2464\">lean4#2464</a> and <a href=\"https://github.com/leanprover/lean4/pull/2490\">lean4#2490</a> and I think the problem is that the audio stream thread is not initialized by Lean.</p>",
+        "id": 399361396,
+        "sender_full_name": "Daniil Kisel",
+        "timestamp": 1698692633
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"587706\">Daniil Kisel</span> has marked this topic as resolved.</p>",
+        "id": 399361421,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1698692641
+    }
+]

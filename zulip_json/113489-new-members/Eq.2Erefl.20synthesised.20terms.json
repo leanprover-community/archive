@@ -1,0 +1,194 @@
+[
+    {
+        "content": "<p>I'm working through chapter 4 of the Theorem Proving in Lean 4 book. I've reached the part where we use <code>Eq.refl _</code> to mechanically derive some trivial proofs. In the example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"mi\">2</span> <span class=\"bp\">+</span> <span class=\"mi\">3</span> <span class=\"bp\">=</span> <span class=\"mi\">5</span> <span class=\"o\">:=</span> <span class=\"n\">Eq.refl</span> <span class=\"n\">_</span>\n</code></pre></div>\n<p>My vscode is telling me that the <code>Eq.refl _</code> value is <code>2 + 3 = 2 + 3</code> which presumably means that <code>_</code> was instantiated to <code>2 + 3</code>? I still don't see how that completes the proof, since it's not obviously done anything with <code>5</code>. I have essentially the same question about the other examples.</p>",
+        "id": 388705118,
+        "sender_full_name": "Matthew Pocock",
+        "timestamp": 1693669215
+    },
+    {
+        "content": "<p>My naive understanding of this is as follows: <code>Eq.refl _</code> tells lean that you are expecting the rhs to be the same as the lhs (note the asymmetry).  So, it unifies <code>_</code> with <code>2 + 3</code> and then is left with the goal of showing that <code>2 + 3</code> is the same as <code>5</code>.  \"Same\" here means \"they both reduce to the same term\", something that now the kernel works on and realizes that it was indeed the case, after all.</p>",
+        "id": 388705402,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693669442
+    },
+    {
+        "content": "<p>Basically, naturals are defined in the way of Peano, so on the LHS you get SS0 + SSS0, and the recursive definition of + is unfolded to SSS0 + SS0 and then to SSSS0 + S0 and then SSSSS0 + 0 which is defined in the base case of the recursion to be just SSSSS0 which is exactly the RHS</p>",
+        "id": 388705754,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1693669667
+    },
+    {
+        "content": "<p>It looks like my answer was the easy part: \"get the kernel to check this\".<br>\nRuben's answer was: \"and the kernel checks it as follows!\".</p>",
+        "id": 388705948,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693669779
+    },
+    {
+        "content": "<p>And I missed some parentheses: a + Sb is S(a+b), not (Sa)+b</p>",
+        "id": 388706121,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1693669906
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"645990\">@Matthew Pocock</span> there are three kinds of equality which you have to understand in order to see why lean does what it does: I write about them <a href=\"https://www.ma.imperial.ac.uk/~buzzard/xena/formalising-mathematics-2023/Part_B/equality.html\">here</a>. The natural numbers 2+3 and 5 are definitionally equal (but not syntactically equal). The real numbers 2+3 and 5 are not definitionally equal, but they're propositionally equal. These refined concepts of equality are not mathematical notions, they are all to do with how things are implemented under the hood.</p>",
+        "id": 388706780,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1693670309
+    },
+    {
+        "content": "<p>(A technicality: the checking is done as-if it's how Ruben described, but the kernel knows about some basic natural number operations, and when it wants to check that <code>2 + 3</code> and <code>5</code> are definitionally equal it'll use fast operations to reduce both sides to <code>5</code>, rather than using the recursive definition of <code>Nat.add</code>. This is new in Lean 4, and Ruben's explanation is how Lean 3 works. I'm not sure how much it's worth knowing this, but it does mean <code>rfl</code> works for natural number arithmetic with bigger numbers than you might expect.)</p>",
+        "id": 388706788,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693670322
+    },
+    {
+        "content": "<p>Thanks everybody. So what I'm getting from this is that if we have the prop+proof <code>a=b := Eq.refl _</code>, this makes <code>a=b := a=a</code> which then causes the kernel to equalify prop.right with proof.right, which could involve some actual work, like arithmetic or running functions.</p>",
+        "id": 388707793,
+        "sender_full_name": "Matthew Pocock",
+        "timestamp": 1693670984
+    },
+    {
+        "content": "<p><code>set_option trace.Meta.isDefEq in</code> is also useful to see the steps taken in unificación</p>",
+        "id": 388708489,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1693671493
+    },
+    {
+        "content": "<p>Yeah, the fact that typechecking involves doing actual computational work is important to understand.</p>\n<p>Here's an outline of the steps that are taken when processing <code>example : 2 + 3 = 5 := Eq.refl _</code> (and skipping some like parsing).</p>\n<ol>\n<li>The elaborator looks at <code>2 + 3 = 5</code> and figures out eventually that <code>2</code>, <code>3</code>, and <code>5</code> are <code>Nat</code>s and that <code>+</code> is natural number addition. The full expression is close to <code>@Eq Nat (Nat.add 2 3) 5</code>, but if you actually inspect it you'll see <code>HAdd.hAdd Nat Nat Nat instNatAdd (OfNat.ofNat Nat 2 ...) (OfNat.ofNat Nat 3 ...)</code> or something similar.</li>\n<li>The elaborator looks at <code>Eq.refl _</code> with <code>2 + 3 = 5</code> as its expected type. The placeholder (<code>_</code>) becomes a metavariable, call it <code>?m.1</code>, and the implicit argument to <code>Eq.refl</code> becomes a metavariable too, call it <code>?m.2</code>. So far <code>Eq.refl _</code> is <code>@Eq.refl ?m.2 ?m.1</code>.</li>\n<li>It computes the inferred type of this, and we have <code>@Eq.refl ?m.2 ?m.1 : ?m.1 = ?m.1</code> (where that equality is short for <code>@Eq ?m.2 ?m.1 ?m.1</code>).</li>\n<li>Since the expected type is <code>@Eq Nat (2 + 3) 5</code>, it attempts to unify the inferred type with the expected type. This creates the equations <code>?m.2 ≟ Nat</code>, <code>?m.1 ≟ 2 + 3</code>, and <code>?m.1 ≟ 5</code>. Solving them in order, we get <code>?m.2</code> is assigned to be <code>Nat</code>, <code>?m.1</code> is assigned to be <code>2 + 3</code>, and then the last equation is <code>2 + 3 ≟ 5</code>.</li>\n<li>Since this isn't just an equation between a metavariable and an expression, we need a defeq (definitional equality) check. The elaborator sees these are natural numbers and then reduces both sides, yielding <code>5 ≟ 5</code>, which is true by reflexivity, so the check passes.</li>\n<li>Hence, <code>Eq.refl _</code> elaborates to <code>@Eq.refl Nat (2 + 3)</code>.</li>\n<li>Elaboration is finished.</li>\n<li>The elaborator now passes <code>def _example : @Eq Nat (2 + 3) 5 := @Eq.refl Nat (2 + 3)</code> to the kernel for a final check. The kernel follows a similar process when checking that every term has the type it is expected to have, but now there are no metavariables, just definitional equality checks. The kernel also knows about natural number reduction when computing defeq checks.</li>\n</ol>",
+        "id": 388709006,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693671933
+    },
+    {
+        "content": "<p>Since I have the tool available, here is what the expression <code>2 + 3 = 5</code> looks like:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">inspect</span><span class=\"o\">:</span> <span class=\"bp\">'</span><span class=\"mi\">2</span> <span class=\"bp\">+</span> <span class=\"mi\">3</span> <span class=\"bp\">=</span> <span class=\"mi\">5</span><span class=\"bp\">'</span>\n\n<span class=\"bp\">'</span><span class=\"n\">Eq'</span> <span class=\"c1\">-- app</span>\n<span class=\"bp\">|-'</span><span class=\"n\">Nat'</span> <span class=\"bp\">'</span><span class=\"o\">[]</span><span class=\"bp\">'</span> <span class=\"c1\">-- const</span>\n<span class=\"bp\">|-'</span><span class=\"n\">HAdd.hAdd'</span> <span class=\"c1\">-- app</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|-'</span><span class=\"n\">Nat'</span> <span class=\"bp\">'</span><span class=\"o\">[]</span><span class=\"bp\">'</span> <span class=\"c1\">-- const</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|-'</span><span class=\"n\">Nat'</span> <span class=\"bp\">'</span><span class=\"o\">[]</span><span class=\"bp\">'</span> <span class=\"c1\">-- const</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|-'</span><span class=\"n\">Nat'</span> <span class=\"bp\">'</span><span class=\"o\">[]</span><span class=\"bp\">'</span> <span class=\"c1\">-- const</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|-'</span><span class=\"n\">instHAdd'</span> <span class=\"c1\">-- app</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|</span>   <span class=\"bp\">|-'</span><span class=\"n\">Nat'</span> <span class=\"bp\">'</span><span class=\"o\">[]</span><span class=\"bp\">'</span> <span class=\"c1\">-- const</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|</span>   <span class=\"bp\">|-'</span><span class=\"n\">instAddNat'</span> <span class=\"bp\">'</span><span class=\"o\">[]</span><span class=\"bp\">'</span> <span class=\"c1\">-- const</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|-'</span><span class=\"n\">OfNat.ofNat'</span> <span class=\"c1\">-- app</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|</span>   <span class=\"bp\">|-'</span><span class=\"n\">Nat'</span> <span class=\"bp\">'</span><span class=\"o\">[]</span><span class=\"bp\">'</span> <span class=\"c1\">-- const</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|</span>   <span class=\"bp\">|-</span><span class=\"sc\">'2'</span> <span class=\"c1\">-- lit</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|</span>   <span class=\"bp\">|-'</span><span class=\"n\">instOfNatNat'</span> <span class=\"c1\">-- app</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|</span>   <span class=\"bp\">|</span>   <span class=\"bp\">|-</span><span class=\"sc\">'2'</span> <span class=\"c1\">-- lit</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|-'</span><span class=\"n\">OfNat.ofNat'</span> <span class=\"c1\">-- app</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|</span>   <span class=\"bp\">|-'</span><span class=\"n\">Nat'</span> <span class=\"bp\">'</span><span class=\"o\">[]</span><span class=\"bp\">'</span> <span class=\"c1\">-- const</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|</span>   <span class=\"bp\">|-</span><span class=\"sc\">'3'</span> <span class=\"c1\">-- lit</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|</span>   <span class=\"bp\">|-'</span><span class=\"n\">instOfNatNat'</span> <span class=\"c1\">-- app</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|</span>   <span class=\"bp\">|</span>   <span class=\"bp\">|-</span><span class=\"sc\">'3'</span> <span class=\"c1\">-- lit</span>\n<span class=\"bp\">|-'</span><span class=\"n\">OfNat.ofNat'</span> <span class=\"c1\">-- app</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|-'</span><span class=\"n\">Nat'</span> <span class=\"bp\">'</span><span class=\"o\">[]</span><span class=\"bp\">'</span> <span class=\"c1\">-- const</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|-</span><span class=\"sc\">'5'</span> <span class=\"c1\">-- lit</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|-'</span><span class=\"n\">instOfNatNat'</span> <span class=\"c1\">-- app</span>\n<span class=\"bp\">|</span>   <span class=\"bp\">|</span>   <span class=\"bp\">|-</span><span class=\"sc\">'5'</span> <span class=\"c1\">-- lit</span>\n</code></pre></div>",
+        "id": 388709452,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693672215
+    },
+    {
+        "content": "<p>This is the <code>Expr</code> right?</p>",
+        "id": 388711617,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1693673899
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110038\">Kevin Buzzard</span> <a href=\"#narrow/stream/113489-new-members/topic/Eq.2Erefl.20synthesised.20terms/near/388706780\">said</a>:</p>\n<blockquote>\n<p>The real numbers 2+3 and 5 are not definitionally equal, but they're propositionally equal.</p>\n</blockquote>\n<p>Interestingly the only reason for this is \"we decided to not let the kernel see how <code>+</code> (<a href=\"https://github.com/leanprover-community/mathlib4/blob/ab6dac98bb953d089da09ebad00a2ec2b39794ce/Mathlib/Data/Real/Basic.lean#L79-L80\">src</a>) is implemented on real numbers\". If it could see that, it would conclude they were definitionally equal after all.</p>",
+        "id": 388711837,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1693674049
+    },
+    {
+        "content": "<p>Brill. That's all much clearer now. I was a bit thrown by the Calculational Proofs section of chapter 4, as it uses an existential but appears as the section directly before existentials. I don't know if it would make sense to swap the order of these two?</p>",
+        "id": 388711980,
+        "sender_full_name": "Matthew Pocock",
+        "timestamp": 1693674185
+    },
+    {
+        "content": "<p>Kevin, yes, that is the <code>Expr</code>.  Branching in the visualization happens at each subexpression, with the exception that <code>Expr.app</code>s collect all the nested <code>app</code>s and print them as all branching out of their initial parent.</p>\n<p>For instance, you see <code>Nat</code>, <code>HAdd.hAdd</code> and  <code>OfNat.ofNat</code>all branching out of the first <code>Eq</code>, whereas really these would be nested arguments to consecutive <code>app</code>s.  I find it clearer to interpret like this.</p>",
+        "id": 388712153,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693674314
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> This is to keep defeq checking from doing unnecessary expensive defeq computations, right? I wonder what it would be like if you could give unification hints that are allowed to break through this abstraction barrier conditionally, for adding <code>OfNat Real</code> expressions. I feel like I saw someone mention a paper about extending a proof assistant that allowed unfolding certain definitions only within certain scopes, but that's all I'm remembering.</p>",
+        "id": 388712812,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693674809
+    },
+    {
+        "content": "<p>I think it's partly a performance thing, and partly just a moral thing of \"you're not allowed to care about the magic behind the real numbers unless you really ask nicely\"</p>",
+        "id": 388714013,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1693675731
+    },
+    {
+        "content": "<p>In Lean 3 there was extra protection via eta expansion, that effectively prevented <code>add</code> being unfolded anywhere except on numerals</p>",
+        "id": 388714036,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1693675759
+    },
+    {
+        "content": "<p>I think that we should be discouraging <code>rfl</code> proofs for numerals, not considering making them more likely to work. This obsession with <code>rfl</code> proofs is what slowed the area down for decades.</p>",
+        "id": 388715223,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1693676837
+    },
+    {
+        "content": "<p>In NNG4 we explicitly break <code>rfl</code> working as a proof of <code>2+2=4</code>.</p>",
+        "id": 388715253,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1693676864
+    },
+    {
+        "content": "<p>I've got stuck on one of the exercises. The case I can't seem to make progress on is:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"bp\">∀</span> <span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">p</span> <span class=\"n\">x</span> <span class=\"bp\">∨</span> <span class=\"n\">r</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"o\">(</span><span class=\"bp\">∀</span> <span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">p</span> <span class=\"n\">x</span><span class=\"o\">)</span> <span class=\"bp\">∨</span> <span class=\"n\">r</span> <span class=\"o\">:=</span>\n  <span class=\"bp\">λ</span> <span class=\"n\">h</span> <span class=\"bp\">↦</span> <span class=\"gr\">sorry</span>\n</code></pre></div>\n<p>My mental block is that to extract <code>p x ∨ r</code>, I need to first introduce <code>λ a: α</code> to apply to h. But having that lambda on the \"outside\" prevents me exposing <code>r</code> outside of that lambda. The actual exercise uses ↔ in place of → but I've done the proof for the reverse direction.</p>",
+        "id": 388724220,
+        "sender_full_name": "Matthew Pocock",
+        "timestamp": 1693684988
+    },
+    {
+        "content": "<p>Are you allowed to use tactics? I start all my proofs with <code>by</code>.</p>",
+        "id": 388726274,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1693686353
+    },
+    {
+        "content": "<p>I would do cases on r at any rate</p>",
+        "id": 388726347,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1693686422
+    },
+    {
+        "content": "<p>Yes, this statement is lot true intuitionistically, so you need some case-split somewhere.</p>",
+        "id": 388727123,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1693687212
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110038\">Kevin Buzzard</span> <a href=\"#narrow/stream/113489-new-members/topic/Eq.2Erefl.20synthesised.20terms/near/388726274\">said</a>:</p>\n<blockquote>\n<p>Are you allowed to use tactics? I start all my proofs with <code>by</code>.</p>\n</blockquote>\n<p>This is in the tutorial before we reach the tactics chapter, so I am expecting that it can be achieved structurally. I've just spotted in the blurb it states \"one direction of the second of these requires classical logic\", so perhaps I need to try to prove this by contradiction.</p>",
+        "id": 388727136,
+        "sender_full_name": "Matthew Pocock",
+        "timestamp": 1693687231
+    },
+    {
+        "content": "<p>I think you want a case split on <code>r</code> rather than by contradiction, as Kevin said.</p>\n<p>(Also, you should have created a new thread for this)</p>",
+        "id": 388727460,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1693687562
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"307953\">Ruben Van de Velde</span> <a href=\"#narrow/stream/113489-new-members/topic/Eq.2Erefl.20synthesised.20terms/near/388727460\">said</a>:</p>\n<blockquote>\n<p>I think you want a case split on <code>r</code> rather than by contradiction, as Kevin said.</p>\n<p>(Also, you should have created a new thread for this)</p>\n</blockquote>\n<p>Thanks. The byCase function has got me a little further. Sorry - still getting used to how zulip works.</p>",
+        "id": 388728112,
+        "sender_full_name": "Matthew Pocock",
+        "timestamp": 1693688103
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110038\">Kevin Buzzard</span> <a href=\"#narrow/stream/113489-new-members/topic/Eq.2Erefl.20synthesised.20terms/near/388715253\">said</a>:</p>\n<blockquote>\n<p>In NNG4 we explicitly break <code>rfl</code> working as a proof of <code>2+2=4</code>.</p>\n</blockquote>\n<p>how is this done?</p>",
+        "id": 388746757,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1693697645
+    },
+    {
+        "content": "<p>on the other hand, for the specific case of <code>Nat</code>(/maybe <code>Int</code>), I thought we were using GMP so we _should_ use <code>rfl</code>, no?</p>",
+        "id": 388746782,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1693697683
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"284160\">@Eric Rodriguez</span> I think GMP only means that we <em>can</em> not that we <em>should</em>. I think you should feel free to rely on defeq for natural number expressions being fast if you want (i.e., if it helps you write maintainable proofs), but I think we should save reliance on GMP for meta code. You can use <code>by norm_num</code> for something less low-level -- it works for more than just <code>Nat</code>/<code>Int</code>, and it knows how to take advantage of Nat rfls.</p>",
+        "id": 388747300,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693698139
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"284160\">Eric Rodriguez</span> <a href=\"#narrow/stream/113489-new-members/topic/Eq.2Erefl.20synthesised.20terms/near/388746757\">said</a>:</p>\n<blockquote>\n<p>how is this done?</p>\n</blockquote>\n<p>Looks like it's doing <code>rfl</code> at reducible transparency: <a href=\"https://github.com/hhu-adam/NNG4/blob/main/Game/Tactic/Rfl.lean#L22\">https://github.com/hhu-adam/NNG4/blob/main/Game/Tactic/Rfl.lean#L22</a></p>\n<p>while also defining a custom <code>MyNat</code>: <a href=\"https://github.com/hhu-adam/NNG4/blob/main/Game/MyNat/Definition.lean#L2\">https://github.com/hhu-adam/NNG4/blob/main/Game/MyNat/Definition.lean#L2</a></p>",
+        "id": 388747476,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693698311
+    },
+    {
+        "content": "<p>(I said \"we\" but the person who did all the dirty work in NNG4 is Jom Eugster, I'm just writing the levels)</p>",
+        "id": 388798032,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1693729861
+    }
+]

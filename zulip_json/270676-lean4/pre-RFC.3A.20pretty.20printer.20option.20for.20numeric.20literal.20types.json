@@ -1,0 +1,122 @@
+[
+    {
+        "content": "<p>In the Lean 3 community edition, we had the option <code>pp.numeralTypes</code> that would cause numeric literals to pretty print as <code>(2 : Nat)</code> or <code>(2 : Real)</code>. This is useful when working with heterogenous operators like <code>^</code>, since you can see at a glance why a lemma might not apply to a term such as <code>x ^ 2</code> (is it <code>x ^ (2 : Nat)</code> or <code>x ^ (2 : Real)</code>?)</p>\n<ol>\n<li>What should the Lean 4 name of the option be? \"Numeral\" isn't a word used to describe numeric literals, so it might not be discoverable. Some options are <code>pp.numTypes</code>, <code>pp.numLitTypes</code>, and <code>pp.numericTypes</code>.</li>\n<li>What should be the scope of a \"number\"? While we could pretty print only <code>@OfNat.ofNat X 2 _</code> as <code>(2 : X)</code>, for clarity we could take a wider notion of \"number\". Following <code>norm_num</code>, we could have a \"number\" be a natural number, integer, or rational number literal (a natural number is an <code>OfNat.ofNat</code> literal, an integer is either a natural number or negative of one, and a rational is an integer or a quotient of an integer and a natural). This way, we could see <code>(-2 : Int)</code> and <code>(5/4 : Rat)</code>, rather than <code>-(2 : Int)</code> and <code>(5 : Rat) / (4 : Rat)</code>.</li>\n<li>Should raw natural number literals be affected? I'm thinking \"no\". Perhaps we could have <code>pp.natLit</code> to pretty print them as <code>nat_lit 2</code>.</li>\n<li>Should the option have more than two settings? A third setting could be to pretty print types for everything but <code>Nat</code>. That way we get <code>(2 : Fin 5)</code> rather than <code>(2 : Fin (5 : Nat))</code>. We rejected this sort of complexity in the community edition, and I'm leaning toward \"no\" for a first version.</li>\n<li>The community edition also had a feature where you could mark types with the <code>pp_numeral_type</code> attribute. That way, you could for example do <code>attribute [local pp_numeral_type] Fin</code> to cause <code>Fin</code> literals to print with a type ascription. That way, you get <code>(2 : Fin 5)</code> rather than <code>(2 : Fin (5 : Nat))</code>. This does not need to be part of the RFC however since it can be implemented by users easily enough as a custom delaborator (e.g., it could be implemented in std or mathlib)</li>\n</ol>",
+        "id": 404932599,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1701284721
+    },
+    {
+        "content": "<p>I think all names in 1. are equally discoverable since I will use auto-completion starting with <code>pp.num</code> in all cases. So I would go for the most explicit description <code>pp.numericTypes</code>. 2. I like <code>(-2 : Int)</code> and <code>(5/4 : Rat)</code> (especially the second one).  3. I think I should never see a raw literal, so I like <code>nat_lit 2</code> that clearly shows the issue. 4. <code>(2 : Fin (5 : Nat))</code> brings nothing, right? 5. No opinion</p>",
+        "id": 404937778,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1701286932
+    },
+    {
+        "content": "<p>It would be cool if there were a way to detect whether we were pretty printing something that's in a polymorphic context or not. That way we could print <code>Fin 2</code> rather than <code>Fin (2 : Nat)</code> since the argument to <code>Fin</code> is always <code>Nat</code>. I believe this could be implemented by having the <code>app</code> delaborator set <code>pp.numericTypes</code> to <code>false</code> for such arguments, but this would add complexity for not too much benefit.</p>",
+        "id": 404942816,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1701288960
+    },
+    {
+        "content": "<p>I think the best name for (1) depends on how (2) and (5) are resolved. If it is just pretty printing <code>ofNat</code>, a name like <code>pp.numLitTypes</code> makes more sense. If it also doing (2) -- which I think would be wonderful -- then <code>pp.numericTypes</code> sounds better.</p>",
+        "id": 404947333,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1701290984
+    },
+    {
+        "content": "<p>Was this supposed to be handled automatically by <code>pp.analyze</code>?</p>",
+        "id": 404964440,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1701298690
+    },
+    {
+        "content": "<p><code>pp.analyze</code> does not use type ascriptions, it would pass implicits if necessary</p>",
+        "id": 404966480,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1701299624
+    },
+    {
+        "content": "<p><code>pp.ofNat.withType true</code> to match <code>pp.proofs.withType</code>?</p>",
+        "id": 404968923,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1701300984
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> A wrinkle is that <code>pp.ofNat</code> is not an option that this is modifying unlike with <code>pp.proofs</code>.</p>",
+        "id": 405011240,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1701316231
+    },
+    {
+        "content": "<p>Maybe it would be simpler to create a generic attribute-based means of deciding when to add type ascriptions. This would allow us to offload the number-specific infrastructure from core to std4 and mathlib4, and also enable it to be extensible to new notions of numbers.</p>\n<p>One way to do it would be to have a <code>pp.types</code> group, and then register options in this group. The core functionality would consist of looking for options in this group, checking the extension, and applying whatever functions it found to the data at hand. A possible API might consist of writing something like <code>@[type_ascription numeric] def shouldAnnotate (e eType : Expr) (headAndPriorArgs : Option (Expr × Array Expr)) : DelabM Bool := ...</code>; when <code>pp.types.numeric</code> was <code>true</code>, the core delaborators would pass {the expression at hand, its type, the head of the expression it appeared within (if there was one) and any prior arguments to that head} to <code>shouldAnnotate</code> and any other functions tagged with <code>@[type_ascription numeric]</code>. If any of them returned <code>true</code>, we'd annotate it with the type. (It would do this for all registered options in the <code>pp.types</code> group.)</p>\n<p>The implementation in core would be generic and simple, and all of the specific maintenance and design choices could be performed outside of core.</p>",
+        "id": 405213035,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1701381198
+    },
+    {
+        "content": "<p>(Btw, in this version, I'm imagining that an implementation could use the <code>headAndPriorArgs</code> to detect polymorphism if we wanted to. This would open up type ascriptions in other contexts down the road, like annotating only certain things, e.g. <code>Ring</code>s: we could detect if any of the prior args were instances of <code>Ring R</code>, and if <code>eType</code> were <code>R</code>, we could annotate it. Maybe there's a better implementation than passing the head and prior args—not too familiar with what info is available in <code>DelabM</code>—but just wanted to introduce the shape of the idea.)</p>",
+        "id": 405213067,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1701381217
+    },
+    {
+        "content": "<p>One of the features I would like <code>pp.numericTypes</code> to have is that we would see <code>(-2 : Int)</code> and <code>(5 / 4 : Rat)</code>, which I don't see this system being able to support.</p>\n<p>However, this does point toward a way to implement another feature that I want. The pretty printing for <code>Exists</code> doesn't show binder types, unlike in foralls. The underlying problem is that <code>Exists</code> uses an <code>app_unexpander</code>, and so it relies on binder types being included for <code>fun</code>s. If there were a <code>@[pre_delab]</code> attribute that could give \"pre-delaborators\" a chance to look at an expression and annotate it with pretty printing options (including inserting mdata expressions), then there could be a pre-delaborator that annotates the last argument to <code>Exists</code> with <code>pp.funBinderTypes</code>. This concept of pre-delaborators seems to also be a way to implement your idea.</p>\n<p>Something else this could be useful for is to solve the problem that affects overapplied functions that have <code>app_unexpander</code>s, since the pre-delaborator could take <code>f x1 ... xm y1 ... yn</code> and wrap <code>f x1 ... xm</code> in a mdata expression, which would let the <code>app_unexpander</code> see a function with exactly m arguments and then let the standard app delaborator handle the remaining n.</p>",
+        "id": 405217466,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1701382563
+    },
+    {
+        "content": "<p>This has some overlap with <code>pp.analyze</code>, but I'm imagining pre-delaborators to act locally, right before a sub-expression is actually delaborated.</p>",
+        "id": 405217792,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1701382715
+    },
+    {
+        "content": "<p>Mathlib features such as <code>pp_univ</code> could be implemented using pre-delaborators. <a href=\"https://github.com/leanprover-community/mathlib4/blob/392482f224c6fc806146cd1c4a7bebb237b331fe//Mathlib/LinearAlgebra/LinearIndependent.lean#L111-L122\">This delaborator</a> could be one too.</p>",
+        "id": 405218107,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1701382890
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/pre-RFC.3A.20pretty.20printer.20option.20for.20numeric.20literal.20types/near/405217466\">said</a>:</p>\n<blockquote>\n<p>One of the features I would like <code>pp.numericTypes</code> to have is that we would see <code>(-2 : Int)</code> and <code>(5 / 4 : Rat)</code>, which I don't see this system being able to support.</p>\n</blockquote>\n<p>Why would it not be able to support this? If we saw an expression like <code>5 / 4</code> of type <code>Rat</code>, <code>shouldAnnotate</code> would return <code>true</code>, and we would simply insert a type annotation, right?</p>",
+        "id": 405224549,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1701385752
+    },
+    {
+        "content": "<p>(Separately, I do like the notion of pre-delaborators inserting mdata, though. :) )</p>",
+        "id": 405225502,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1701386188
+    },
+    {
+        "content": "<p>You also have to <em>not</em> mark the <code>5</code> and <code>4</code> inside as suitable for annotation</p>",
+        "id": 405225927,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1701386411
+    },
+    {
+        "content": "<p>That seems doable, I think, seeing as we would have full access to the expression we’re inside via <code>headAndPriorArgs</code>, right? And so we could tell whether we were viewing a natural number inside one of these expressions. (Does the <code>DelabM</code> state tell us about the expression we’re in too? Note that <code>shouldAnnotate</code> lands in <code>DelabM Bool</code>.)</p>",
+        "id": 405227932,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1701387548
+    },
+    {
+        "content": "<p>This is now an RFC: <a href=\"https://github.com/leanprover-community/mathlib4/pull/3021\">#3021</a></p>\n<p>The <code>pp.numericTypes</code> is like what we discussed here, but I added <code>pp.natLit</code> for pretty printing raw natural number literals with the <code>nat_lit</code> prefix. If <code>pp.natLit</code> is not set, then setting <code>pp.numericTypes</code> enables <code>pp.natLit</code>.</p>",
+        "id": 405952925,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1701742007
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/pull/3021\">lean4#3021</a></p>",
+        "id": 406055404,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1701782568
+    },
+    {
+        "content": "<p>should <code>natLit</code> just be on by default?</p>",
+        "id": 406055552,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1701782623
+    }
+]

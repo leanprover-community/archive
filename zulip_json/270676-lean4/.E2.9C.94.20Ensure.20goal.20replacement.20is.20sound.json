@@ -1,0 +1,116 @@
+[
+    {
+        "content": "<p>In a funcction such as <code>replaceMainGoal</code> (used in Aesop), how does Lean ensure that the replaced goals, once solved, can fully solve the goal that is being replaced? Aesop's main function is this</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>      <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">profile</span><span class=\"o\">,</span> <span class=\"n\">searchTime</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">time</span> <span class=\"k\">do</span>\n        <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">goals</span><span class=\"o\">,</span> <span class=\"n\">profile</span><span class=\"o\">)</span> <span class=\"bp\">←</span>\n          <span class=\"n\">search</span> <span class=\"n\">goal</span> <span class=\"n\">ruleSet</span> <span class=\"n\">config.options</span> <span class=\"n\">config.simpConfig</span>\n            <span class=\"n\">config.simpConfigSyntax</span><span class=\"bp\">?</span> <span class=\"n\">profile</span>\n        <span class=\"n\">replaceMainGoal</span> <span class=\"n\">goals.toList</span>\n        <span class=\"n\">pure</span> <span class=\"n\">profile</span>\n</code></pre></div>\n<p>and I couldn't find where does Lean check if <code>replaceMainGoal</code>'s result is correct.</p>",
+        "id": 398380440,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1698194176
+    },
+    {
+        "content": "<p>Just to be clear, a \"goal\" in the <code>TacticM</code> monad is a metavariable that's in the goal list. You use <code>replaceMainGoal</code> when the main goal is already assigned to something, and it's up to the tactic to be sure that the metavariables passed to <code>replaceMainGoal</code> are sufficient to fill in all the remaining metavariables in the assigned main goal. The <code>replaceMainGoal</code> function also doesn't validate that the main goal has indeed been assigned.</p>\n<p>There's validation though at the very end, once all tactics have been evaluated and the term has been fully elaborated, where as a definition/theorem is being added to the environment it checks that there are no metavariables in the term. If there are, there's an error message.</p>",
+        "id": 398381248,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1698194639
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Ensure.20goal.20replacement.20is.20sound/near/398381248\">said</a>:</p>\n<blockquote>\n<p>Just to be clear, a \"goal\" in the <code>TacticM</code> monad is a metavariable that's in the goal list. You use <code>replaceMainGoal</code> when the main goal is already assigned to something, and it's up to the tactic to be sure that the metavariables passed to <code>replaceMainGoal</code> are sufficient to fill in all the remaining metavariables in the assigned main goal. The <code>replaceMainGoal</code> function also doesn't validate that the main goal has indeed been assigned.</p>\n<p>There's validation though at the very end, once all tactics have been evaluated and the term has been fully elaborated, where as a definition/theorem is being added to the environment it checks that there are no metavariables in the term. If there are, there's an error message.</p>\n</blockquote>\n<p>so if the tactic is defective in the sense that the replaced goals are insufficient to prove the original goal, this cannot be detected until the very end?</p>",
+        "id": 398382350,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1698195189
+    },
+    {
+        "content": "<p>There's probably something you can do, but <code>replaceMainGoal</code> can't know whether a given metavariable in the assigned main goal needs to be a goal or not (maybe it'll be solved by some other elaboration procedure? maybe it's already accounted for in one of the other goals?)</p>",
+        "id": 398382988,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1698195501
+    },
+    {
+        "content": "<p>But be careful when you say \"are insufficient to prove the original goal\" since <code>replaceMainGoal</code> is supposed to be used when the main goal has already been \"solved for\" in the sense that it's been assigned to something. That thing it's been assigned to might still have more metavariables in it.</p>",
+        "id": 398383142,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1698195569
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Ensure.20goal.20replacement.20is.20sound/near/398383142\">said</a>:</p>\n<blockquote>\n<p>But be careful when you say \"are insufficient to prove the original goal\" since <code>replaceMainGoal</code> is supposed to be used when the main goal has already been \"solved for\" in the sense that it's been assigned to something. That thing it's been assigned to might still have more metavariables in it.</p>\n</blockquote>\n<p>The hypothetical case I was thinking about is if the main goal is of the form <code>f ?m1 ?m2 ?m3</code> and the tactic replaces that with <code>?m1 ?m2</code>, omitting <code>?m3</code>. In this case solving <code>?m1</code> and <code>?m2</code> would be insufficient</p>",
+        "id": 398383673,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1698195822
+    },
+    {
+        "content": "<p>It might be instructive to see what happens when you haven't assigned the goal to anything, and <code>replaceMainGoal</code> with an empty list:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span> <span class=\"n\">Elab</span> <span class=\"n\">Tactic</span> <span class=\"k\">in</span>\n<span class=\"n\">elab</span> <span class=\"s2\">\"give_up\"</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">replaceMainGoal</span> <span class=\"o\">[]</span>\n\n<span class=\"kd\">theorem</span> <span class=\"n\">oh_well</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">give_up</span> <span class=\"c1\">-- (kernel) declaration has metavariables 'oh_well'</span>\n</code></pre></div>\n<p>And just to offer another phrasing, the fundamental point is that <code>replaceMainGoal</code> doesn't use its arguments to try to prove the original goal at all. The responsibility for assigning that goal lies in the body of the tactic that precedes <code>replaceMainGoal</code>. And the responsibility for not losing track of unassigned goals lies with the programmer. :)</p>",
+        "id": 398383765,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1698195848
+    },
+    {
+        "content": "<p>So, yeah, like you said, you can't tell until the very end, and in the <code>f ?m1 ?m2 ?m3</code> example you'd get the same <code>(kernel)</code> error—assuming no other mechanism assigned <code>?m3</code>.</p>\n<p>It'd be cool if we could use lean itself to prove that our tactic programs can't lose track of goals like this... <span aria-label=\"eyes\" class=\"emoji emoji-1f440\" role=\"img\" title=\"eyes\">:eyes:</span></p>",
+        "id": 398384223,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1698196041
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"599027\">@Leni Aniva</span> If the main goal is of the form <code>f ?m1 ?m2 ?m3</code> then the assumption is that the three metavariables are already in a goal list somewhere (or are otherwise going to be elaborated by some process). The <code>replaceMainGoal</code> is for the case where you assign, say, <code>g ?m4 ?m5 : f ?m1 ?m2 ?m3</code> to the main goal, and then you do <code>replaceMainGoal [?m4, ?m5]</code> (but, you know, replacing <code>?m4</code> and <code>?m5</code> here with the actual code you need to represent these metavariables). Once you've assigned the main goal, it doesn't need to be in the goal list anymore, but you do need to add m4 and m5 to the list of goals.</p>",
+        "id": 398384816,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1698196245
+    },
+    {
+        "content": "<p>The function is about adding new goals rather than replacing the main goal (assigned goals are automatically removed anyway between tactics).</p>",
+        "id": 398384970,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1698196302
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Ensure.20goal.20replacement.20is.20sound/near/398384816\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"599027\">Leni Aniva</span> If the main goal is of the form <code>f ?m1 ?m2 ?m3</code> then the assumption is that the three metavariables are already in a goal list somewhere (or are otherwise going to be elaborated by some process). The <code>replaceMainGoal</code> is for the case where you assign, say, <code>g ?m4 ?m5 : f ?m1 ?m2 ?m3</code> to the main goal, and then you do <code>replaceMainGoal [?m4, ?m5]</code> (but, you know, replacing <code>?m4</code> and <code>?m5</code> here with the actual code you need to represent these metavariables). Once you've assigned the main goal, it doesn't need to be in the goal list anymore, but you do need to add m4 and m5 to the list of goals.</p>\n</blockquote>\n<p>What if there's some hypothetical tactic that fills in the mvar <code>?m0</code> with <code>?m0 := f ?m1 ?m2 ?m3</code> but \"forgets\" to add <code>?m3</code> to the goal list? Is there a way to catch this?</p>",
+        "id": 398384997,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1698196313
+    },
+    {
+        "content": "<p>So far tactics are careful to keep track of new metavariables and add them to the goal list. There is no system to catch this error at the moment.</p>",
+        "id": 398385139,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1698196357
+    },
+    {
+        "content": "<p>It seems really subtle.</p>",
+        "id": 398385175,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1698196374
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Ensure.20goal.20replacement.20is.20sound/near/398385139\">said</a>:</p>\n<blockquote>\n<p>So far tactics are careful to keep track of new metavariables and add them to the goal list. There is no system to catch this error at the moment.</p>\n</blockquote>\n<p>Do you think there will be a way to automatically check this in the future? For example building a graph with all of the mvars and checking if its connected</p>",
+        "id": 398385225,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1698196407
+    },
+    {
+        "content": "<p>Doing static analysis to catch this particular error (or developing tactics for proving that your tactics are safe in this way) is something I personally have wanted to think about from time to time. I haven't thought about it yet, but I've wanted to. <span aria-label=\"grinning face with smiling eyes\" class=\"emoji emoji-1f601\" role=\"img\" title=\"grinning face with smiling eyes\">:grinning_face_with_smiling_eyes:</span></p>",
+        "id": 398385391,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1698196490
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> <a href=\"#narrow/stream/270676-lean4/topic/Ensure.20goal.20replacement.20is.20sound/near/398385391\">said</a>:</p>\n<blockquote>\n<p>Doing static analysis to catch this particular error (or developing tactics for proving that your tactics are safe in this way) is something I personally have wanted to think about from time to time. I haven't thought about it yet, but I've wanted to. <span aria-label=\"grinning face with smiling eyes\" class=\"emoji emoji-1f601\" role=\"img\" title=\"grinning face with smiling eyes\">:grinning_face_with_smiling_eyes:</span></p>\n</blockquote>\n<p>Why does it have to be static? If <code>replaceMainGoal</code> simply checks the connectivity of the graph of mvars is it not sufficient?</p>",
+        "id": 398385490,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1698196528
+    },
+    {
+        "content": "<p>Oh, you mean when the tactic actually runs? I'm guessing we want to avoid the overhead, since we replace the main goal a lot. But I'm not really the best person to ask about performance costs; maybe someone else has a more nuanced or confident answer.</p>\n<p>(Also sometimes you do want to \"lose track of\" goals for a moment, but we still could in principle e.g. have a <code>replaceMainGoalSafe</code> which behaves the way you're thinking for use in the majority of cases.)</p>",
+        "id": 398386098,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1698196817
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"599027\">Leni Aniva</span> has marked this topic as resolved.</p>",
+        "id": 398405986,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1698206775
+    },
+    {
+        "content": "<p>Doing checks like this all the time would be quite expensive. But there could be value in coding up various invariants and hiding them behind an option. I did something like this for Aesop with the <code>aesop.check.*</code> options and they did catch some early bugs, though not very many.</p>",
+        "id": 398431476,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1698220584
+    }
+]

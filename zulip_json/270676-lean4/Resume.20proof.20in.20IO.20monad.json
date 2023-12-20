@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>This is a curious thing I found out about <code>CoreM</code> vs <code>IO</code> monads. I'm executing a proof procedurally using a mechanism similar to LeanGym's <code>TermElabM</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">proof_term_elab</span><span class=\"o\">:</span> <span class=\"n\">M</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">context</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"k\">let</span> <span class=\"n\">env</span> <span class=\"o\">:=</span> <span class=\"n\">context.env</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">term_elab_layer</span> <span class=\"bp\">&lt;|</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">expr</span> <span class=\"bp\">←</span> <span class=\"n\">parse_expr</span> <span class=\"n\">env</span> <span class=\"s2\">\"∀ (p q: Prop), p ∨ q → q ∨ p\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">state</span> <span class=\"bp\">←</span> <span class=\"n\">start_tactic_state</span> <span class=\"n\">expr</span>\n    <span class=\"k\">let</span> <span class=\"n\">state</span> <span class=\"bp\">←</span> <span class=\"n\">execute_tactic</span> <span class=\"n\">env</span> <span class=\"n\">state</span> <span class=\"s2\">\"intro p q h\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">state</span> <span class=\"bp\">←</span> <span class=\"n\">execute_tactic</span> <span class=\"n\">env</span> <span class=\"n\">state</span> <span class=\"s2\">\"cases h\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">execute_tactic</span> <span class=\"n\">env</span> <span class=\"n\">state</span> <span class=\"s2\">\"apply Or.inr\"</span>\n  <span class=\"n\">IO.println</span> <span class=\"s2\">\"Completed\"</span>\n</code></pre></div>\n<p>Here the states are just <code>Lean.Elab.Tactic.State</code>s and</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">start_tactic_state</span> <span class=\"o\">(</span><span class=\"n\">expr</span><span class=\"o\">:</span> <span class=\"n\">Lean.Expr</span><span class=\"o\">):</span> <span class=\"n\">Lean.Elab.TermElabM</span> <span class=\"n\">Lean.Elab.Tactic.SavedState</span>\n<span class=\"kd\">def</span> <span class=\"n\">execute_tactic</span> <span class=\"o\">(</span><span class=\"n\">env</span><span class=\"o\">:</span> <span class=\"n\">Lean.Environment</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">state</span><span class=\"o\">:</span> <span class=\"n\">Lean.Elab.Tactic.SavedState</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">tactic</span><span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">):</span> <span class=\"n\">Lean.Elab.TermElabM</span> <span class=\"n\">Lean.Elab.Tactic.SavedState</span>\n</code></pre></div>\n<p>This works well. Then I tried to execute the state monads until I got to <code>IO</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">Context.to_io</span> <span class=\"o\">(</span><span class=\"n\">context</span><span class=\"o\">:</span> <span class=\"n\">Context</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">termElabM</span><span class=\"o\">:</span> <span class=\"n\">Lean.Elab.TermElabM</span> <span class=\"n\">α</span><span class=\"o\">):</span> <span class=\"n\">IO</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">metaM</span> <span class=\"o\">:</span> <span class=\"n\">Lean.MetaM</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"n\">termElabM.run'</span> <span class=\"o\">(</span><span class=\"n\">ctx</span> <span class=\"o\">:=</span> <span class=\"n\">context.elabContext</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">coreM</span> <span class=\"o\">:</span> <span class=\"n\">Lean.CoreM</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"n\">metaM.run'</span>\n  <span class=\"k\">let</span> <span class=\"n\">coreState</span> <span class=\"o\">:</span> <span class=\"n\">Lean.Core.State</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">env</span> <span class=\"o\">:=</span> <span class=\"n\">context.env</span> <span class=\"o\">}</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">ret</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"bp\">&lt;-</span> <span class=\"n\">coreM.toIO</span> <span class=\"n\">context.coreContext</span> <span class=\"n\">coreState</span>\n  <span class=\"n\">return</span> <span class=\"n\">ret</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">proof_io</span><span class=\"o\">:</span> <span class=\"n\">M</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">context</span> <span class=\"bp\">←</span> <span class=\"n\">read</span>\n  <span class=\"k\">let</span> <span class=\"n\">env</span> <span class=\"o\">:=</span> <span class=\"n\">context.env</span>\n  <span class=\"k\">let</span> <span class=\"n\">expr</span> <span class=\"bp\">←</span> <span class=\"n\">context.to_io</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">parse_expr</span> <span class=\"n\">env</span> <span class=\"s2\">\"∀ (p q: Prop), p ∨ q → q ∨ p\"</span>\n  <span class=\"k\">let</span> <span class=\"n\">state</span> <span class=\"bp\">←</span> <span class=\"n\">context.to_io</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">start_tactic_state</span> <span class=\"n\">expr</span>\n  <span class=\"k\">let</span> <span class=\"n\">state</span> <span class=\"bp\">←</span> <span class=\"n\">context.to_io</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">execute_tactic</span> <span class=\"n\">env</span> <span class=\"n\">state</span> <span class=\"s2\">\"intro p q h\"</span>\n  <span class=\"k\">let</span> <span class=\"n\">state</span> <span class=\"bp\">←</span> <span class=\"n\">context.to_io</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">execute_tactic</span> <span class=\"n\">env</span> <span class=\"n\">state</span> <span class=\"s2\">\"cases h\"</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">context.to_io</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">execute_tactic</span> <span class=\"n\">env</span> <span class=\"n\">state</span> <span class=\"s2\">\"apply Or.inr\"</span>\n  <span class=\"n\">IO.println</span> <span class=\"s2\">\"Completed\"</span>\n</code></pre></div>\n<p>Now the same proof doesn't work anymore and it fails at the last step with the message</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">tactic</span> <span class=\"bp\">'</span><span class=\"n\">apply'</span> <span class=\"n\">failed</span><span class=\"o\">,</span> <span class=\"n\">failed</span> <span class=\"n\">to</span> <span class=\"n\">unify</span>\n  <span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"bp\">∨</span> <span class=\"bp\">?</span><span class=\"n\">b</span>\n<span class=\"k\">with</span>\n  <span class=\"n\">q</span> <span class=\"bp\">∨</span> <span class=\"n\">p</span>\n<span class=\"n\">case</span> <span class=\"n\">inl</span>\n<span class=\"n\">p</span> <span class=\"n\">q</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span>\n<span class=\"n\">h</span><span class=\"bp\">✝</span> <span class=\"o\">:</span> <span class=\"n\">p</span>\n<span class=\"bp\">⊢</span> <span class=\"n\">q</span> <span class=\"bp\">∨</span> <span class=\"n\">p</span>\n</code></pre></div>\n<p>It seems like <code>coreState</code> saves some information that makes this unification possible. What information is being stored here?</p>",
+        "id": 360425464,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1684817689
+    },
+    {
+        "content": "<p>yes, you should not discard the core state, this will definitely not work</p>",
+        "id": 360425891,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684817961
+    },
+    {
+        "content": "<p>it should be part of the \"state\"</p>",
+        "id": 360425897,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684817968
+    },
+    {
+        "content": "<p>do you have a <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a>?</p>",
+        "id": 360425972,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684818004
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Resume.20proof.20in.20IO.20monad/near/360425972\">said</a>:</p>\n<blockquote>\n<p>do you have a <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a>?</p>\n</blockquote>\n<p>Yes. <a href=\"https://pastebin.com/tEN0MnMp\">https://pastebin.com/tEN0MnMp</a> (the coreM/IO cases I have described are at the bottom of the file)</p>",
+        "id": 360427338,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1684818704
+    },
+    {
+        "content": "<p>the example doesn't seem to have any errors</p>",
+        "id": 360428310,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684819086
+    },
+    {
+        "content": "<p>this code seems to be a bit lower level than it should be, if you set up all of these states from scratch there is a high probability you will break some invariants</p>",
+        "id": 360428689,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684819237
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Resume.20proof.20in.20IO.20monad/near/360428310\">said</a>:</p>\n<blockquote>\n<p>the example doesn't seem to have any errors</p>\n</blockquote>\n<p>yeah but if you replace <code>proof_term_elab</code> with <code>proof_io</code> it errors</p>",
+        "id": 360429083,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1684819436
+    },
+    {
+        "content": "<p>I just tested if the <code>Lean.Core.State</code> is saved after <code>coreM.toIO</code> run then the error goes away, but I want to know what is causing the error</p>",
+        "id": 360429167,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1684819471
+    },
+    {
+        "content": "<p>you are discarding the state, this stores the result of e.g. the mvar assignments performed by previous steps</p>",
+        "id": 360429763,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684819847
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Resume.20proof.20in.20IO.20monad/near/360429763\">said</a>:</p>\n<blockquote>\n<p>you are discarding the state, this stores the result of e.g. the mvar assignments performed by previous steps</p>\n</blockquote>\n<p>Thanks! That answered my question</p>",
+        "id": 360429877,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1684819921
+    }
+]

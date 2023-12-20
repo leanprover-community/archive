@@ -1,0 +1,164 @@
+[
+    {
+        "content": "<p>Given a <code>List (Task α)</code>, is there any way to find if one is ready?</p>",
+        "id": 350964814,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1681890110
+    },
+    {
+        "content": "<p>On a similar note, do we have a way to go from <code>List (Task X)</code> to <code>Task (List X)</code>?</p>",
+        "id": 350974933,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1681892818
+    },
+    {
+        "content": "<p>Isn't that just</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">L</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"o\">(</span><span class=\"n\">Task</span> <span class=\"n\">X</span><span class=\"o\">))</span> <span class=\"o\">:</span> <span class=\"n\">Task</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">X</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"n\">Task.spawn</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">L.map</span> <span class=\"n\">Task.get</span>\n</code></pre></div>",
+        "id": 350992630,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1681897263
+    },
+    {
+        "content": "<p>Doesn't that run them sequentially rather than in parallel?</p>",
+        "id": 351010504,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1681902103
+    },
+    {
+        "content": "<p>I think tasks run in the background as soon as they're created. <code>Task.get</code> is not driving the task, it's just checking whether the background computation has finished. At least, that is my interpretation of the following doc:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"sd\">/--</span>\n<span class=\"sd\">`spawn fn : Task α` constructs and immediately launches a new task for</span>\n<span class=\"sd\">evaluating the function `fn () : α` asynchronously.</span>\n\n<span class=\"sd\">`prio`, if provided, is the priority of the task.</span>\n<span class=\"sd\">-/</span>\n<span class=\"kd\">@[noinline, extern \"lean_task_spawn\"]</span>\n<span class=\"kn\">protected</span> <span class=\"kd\">def</span> <span class=\"n\">spawn</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">fn</span> <span class=\"o\">:</span> <span class=\"n\">Unit</span> <span class=\"bp\">→</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">prio</span> <span class=\"o\">:=</span> <span class=\"n\">Priority.default</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Task</span> <span class=\"n\">α</span> <span class=\"o\">:=</span>\n  <span class=\"o\">⟨</span><span class=\"n\">fn</span> <span class=\"o\">()⟩</span>\n</code></pre></div>",
+        "id": 351012972,
+        "sender_full_name": "Alex Keizer",
+        "timestamp": 1681902786
+    },
+    {
+        "content": "<p>Ah, sorry for the noise then</p>",
+        "id": 351013690,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1681902979
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/270676-lean4/topic/waiting.20on.20a.20List.20of.20Tasks/near/350992630\">said</a>:</p>\n<blockquote>\n<p>Isn't that just</p>\n<p><div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">L</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"o\">(</span><span class=\"n\">Task</span> <span class=\"n\">X</span><span class=\"o\">))</span> <span class=\"o\">:</span> <span class=\"n\">Task</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">X</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"n\">Task.spawn</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">L.map</span> <span class=\"n\">Task.get</span>\n</code></pre></div><br>\n</p>\n</blockquote>\n<p>While simple, this is inefficient. It spawns a thread solely to wait on others, which is a waste of resources. Ideally, you would use a bind to merge the tasks into one.</p>",
+        "id": 352102661,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1682271675
+    },
+    {
+        "content": "<p><code>Task.spawn</code> with default priority won't spawn a dedicated thread iirc, so that's not so much of an issue. The real problem is that calling <code>Task.get</code> from within another task does not register a dependency with the task manager, so this code can deadlock</p>",
+        "id": 352109024,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1682274814
+    },
+    {
+        "content": "<p>Unfortunately as far as waiting on a list of <code>Task</code>s goes, you may have to write the code yourself using <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Task.bind#doc\">docs4#Task.bind</a> or <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=IO.bindTask#doc\">docs4#IO.bindTask</a> . At one point I wrote <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=IO.AsyncList#doc\">docs4#IO.AsyncList</a> which can do this for you in cases where your computation is producing a list of tasks, kind of like a coinductive stream. However not all computations can be sensibly phrased this way.</p>",
+        "id": 352109566,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1682275093
+    },
+    {
+        "content": "<p>Oh, if you just want to find if <em>one</em> is ready, there is <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=IO.waitAny#doc\">docs4#IO.waitAny</a>. The method that's missing would be <code>IO.waitAll</code>.</p>",
+        "id": 352109658,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1682275183
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> ^</p>",
+        "id": 352109762,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1682275225
+    },
+    {
+        "content": "<p>It looks like the API of <code>waitAny</code> is rather lacking; I'd expect it to either return a list of the non-resolved tasks, or the index of the one that was resolved</p>",
+        "id": 352110535,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1682275633
+    },
+    {
+        "content": "<p>Yeah, it's very low-level. You can easily create the index yourself, though, by returning it from the task.</p>",
+        "id": 352114645,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1682278242
+    },
+    {
+        "content": "<p>Well, the low-level API in C already has the index available as it holds a reference to the task object rather than just its result</p>",
+        "id": 352118888,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1682281163
+    },
+    {
+        "content": "<p>But I see your point</p>",
+        "id": 352118892,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1682281179
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"128280\">Wojciech Nawrocki</span> <a href=\"#narrow/stream/270676-lean4/topic/waiting.20on.20a.20List.20of.20Tasks/near/352109658\">said</a>:</p>\n<blockquote>\n<p>Oh, if you just want to find if <em>one</em> is ready, there is <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=IO.waitAny#doc\">docs4#IO.waitAny</a>. The method that's missing would be <code>IO.waitAll</code>.</p>\n</blockquote>\n<p>In contrast to <code>waitAny</code>, you can build a reasonably efficient version of <code>waitAll</code> using <code>bindTask</code></p>",
+        "id": 352123933,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1682285441
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac</span> <a href=\"#narrow/stream/270676-lean4/topic/waiting.20on.20a.20List.20of.20Tasks/near/352102661\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/270676-lean4/topic/waiting.20on.20a.20List.20of.20Tasks/near/350992630\">said</a>:</p>\n<blockquote>\n<p>Isn't that just</p>\n<p><div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">L</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"o\">(</span><span class=\"n\">Task</span> <span class=\"n\">X</span><span class=\"o\">))</span> <span class=\"o\">:</span> <span class=\"n\">Task</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">X</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"n\">Task.spawn</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">L.map</span> <span class=\"n\">Task.get</span>\n</code></pre></div><br>\n</p>\n</blockquote>\n<p>While simple, this is inefficient. It spawns a thread solely to wait on others, which is a waste of resources. Ideally, you would use a bind to merge the tasks into one.</p>\n</blockquote>\n<p>Would using <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=List.mapA#doc\">docs4#List.mapA</a> be the right approach?</p>",
+        "id": 352124717,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1682286182
+    },
+    {
+        "content": "<p>Is that different to <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=List.traverse#doc\">docs4#List.traverse</a> ?</p>",
+        "id": 352125019,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1682286441
+    },
+    {
+        "content": "<p>For some reason the docs webpage isn’t letting me look at the source of that function.</p>",
+        "id": 352125099,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1682286498
+    },
+    {
+        "content": "<p>I think source links are broken for all of mathlib</p>",
+        "id": 352125158,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1682286579
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/doc-gen4/blob/9ebc79338e28872a64cce39d6f6ff84c638313bc/DocGen4/Output/SourceLinker.lean#L78-L83\">These lines</a> are failing, cc <span class=\"user-mention\" data-user-id=\"395550\">@Henrik Böving</span></p>",
+        "id": 352125252,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1682286638
+    },
+    {
+        "content": "<p>Ah, doc-gen is not capable of understanding that a dependnecy that is given as a directory instead of a git thing in lake is an issue, that's annoying, I'll try to fix the action</p>",
+        "id": 352125404,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1682286787
+    },
+    {
+        "content": "<p>Okay I pushed a fix to doc-gen and tested it locally, the source links should work again with the next build so in at max 9 hours</p>",
+        "id": 352127135,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1682288338
+    },
+    {
+        "content": "<p>Ah no! the mathlib4 dooc-gen4 build is failing due to some other weird reason that I dont have influence on from the doc-gen4 repo so you might have to wait a little longer until that is fixed as well.</p>",
+        "id": 352128244,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1682289216
+    },
+    {
+        "content": "<p>Ah, <code>waitAll</code> is essentially already there as <code>BaseIO.mapTasks pure : List (Task α) → BaseIO (Task (List α))</code>.</p>",
+        "id": 352263650,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1682340461
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/3620\">!4#3620</a> has <code>waitAny'</code>, which also returns the remaining tasks, and <code>sequenceTasks := BaseIO.mapTasks pure</code>.</p>",
+        "id": 352264069,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1682340554
+    },
+    {
+        "content": "<p><del>Is \"traverse\" a better word than \"sequence\"?</del> nevermind</p>",
+        "id": 352268676,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1682341552
+    }
+]

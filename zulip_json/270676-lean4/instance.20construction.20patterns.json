@@ -1,0 +1,266 @@
+[
+    {
+        "content": "<p>We can speed up mathlib by modifying instance construction patterns to align more closely with the inheritance pattern of structures in Lean 4. In particular, we want to have a compact terms which Lean can unify without unfolding. If unfolding is required, we want to make sure we unfold as little as possible. </p>\n<p>Small changes can have some major impact, for example <a href=\"https://github.com/leanprover-community/mathlib4/pull/7430\">#7430</a> and <a href=\"https://github.com/leanprover-community/mathlib4/pull/7434\">#7434</a> by <span class=\"user-mention\" data-user-id=\"110044\">@Chris Hughes</span> are significant speed ups. </p>\n<p>Chris has a library note <a href=\"https://github.com/leanprover-community/mathlib4/pull/7432\">#7432</a> to explicate changes like these. Reading it, I realize that calls <code>Function.Injective/Surjective.x</code> make for more unfolding than direct extending existing instances but my precise understanding is hazy. What is the main driver for the performance penalty we are paying during unification with these? </p>\n<p>For example, here is <code>Function.Injective.addMonoidWithOne</code> </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[</span><span class=\"n\">reducible</span><span class=\"kd\">]</span>\n<span class=\"kd\">def</span> <span class=\"n\">addMonoidWithOne</span> <span class=\"o\">{</span><span class=\"n\">M₁</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">Zero</span> <span class=\"n\">M₁</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">One</span> <span class=\"n\">M₁</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">Add</span> <span class=\"n\">M₁</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">SMul</span> <span class=\"n\">ℕ</span> <span class=\"n\">M₁</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">NatCast</span> <span class=\"n\">M₁</span><span class=\"o\">]</span>\n    <span class=\"o\">[</span><span class=\"n\">AddMonoidWithOne</span> <span class=\"n\">M₂</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">M₁</span> <span class=\"bp\">→</span> <span class=\"n\">M₂</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">hf</span> <span class=\"o\">:</span> <span class=\"n\">Injective</span> <span class=\"n\">f</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">zero</span> <span class=\"o\">:</span> <span class=\"n\">f</span> <span class=\"mi\">0</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">one</span> <span class=\"o\">:</span> <span class=\"n\">f</span> <span class=\"mi\">1</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span><span class=\"o\">)</span>\n    <span class=\"o\">(</span><span class=\"n\">add</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"n\">x</span> <span class=\"n\">y</span><span class=\"o\">,</span> <span class=\"n\">f</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"bp\">+</span> <span class=\"n\">y</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">f</span> <span class=\"n\">x</span> <span class=\"bp\">+</span> <span class=\"n\">f</span> <span class=\"n\">y</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">nsmul</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">x</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">),</span> <span class=\"n\">f</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">•</span> <span class=\"n\">x</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">n</span> <span class=\"bp\">•</span> <span class=\"n\">f</span> <span class=\"n\">x</span><span class=\"o\">)</span>\n    <span class=\"o\">(</span><span class=\"n\">nat_cast</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">,</span> <span class=\"n\">f</span> <span class=\"n\">n</span> <span class=\"bp\">=</span> <span class=\"n\">n</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">AddMonoidWithOne</span> <span class=\"n\">M₁</span> <span class=\"o\">:=</span>\n  <span class=\"o\">{</span> <span class=\"n\">hf.addMonoid</span> <span class=\"n\">f</span> <span class=\"n\">zero</span> <span class=\"n\">add</span> <span class=\"n\">nsmul</span> <span class=\"k\">with</span>\n    <span class=\"n\">natCast</span> <span class=\"o\">:=</span> <span class=\"n\">Nat.cast</span><span class=\"o\">,</span>\n    <span class=\"n\">natCast_zero</span> <span class=\"o\">:=</span> <span class=\"n\">hf</span> <span class=\"o\">(</span><span class=\"kd\">by</span> <span class=\"n\">erw</span> <span class=\"o\">[</span><span class=\"n\">nat_cast</span><span class=\"o\">,</span> <span class=\"n\">Nat.cast_zero</span><span class=\"o\">,</span> <span class=\"n\">zero</span><span class=\"o\">]),</span>\n    <span class=\"n\">natCast_succ</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">n</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">hf</span> <span class=\"o\">(</span><span class=\"kd\">by</span> <span class=\"n\">erw</span> <span class=\"o\">[</span><span class=\"n\">nat_cast</span><span class=\"o\">,</span> <span class=\"n\">Nat.cast_succ</span><span class=\"o\">,</span> <span class=\"n\">add</span><span class=\"o\">,</span> <span class=\"n\">one</span><span class=\"o\">,</span> <span class=\"n\">nat_cast</span><span class=\"o\">]),</span> <span class=\"n\">one</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span> <span class=\"o\">}</span>\n</code></pre></div>\n<p>Is it just that we need to repeatedly unify all the data carrying instances like <code>One M₁</code> <code>Zero M₁</code> etc vs them being hidden inside terms that get unified without unfolding with direct inheritance? This aligns with my trace diving where these seemed to be at the bottom and to cost a nontrivial amount. </p>\n<p><span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> and <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span></p>",
+        "id": 394629512,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1696337705
+    },
+    {
+        "content": "<p>The first PR where I noticed these sorts of changes making a significant difference was <a href=\"https://github.com/leanprover-community/mathlib4/pull/6803\">#6803</a>. It's a fairly good case study. In particular the lemma <code>inf_of_range_eq_base_range</code>. This lemma does not unfold the type <code>PushoutI</code> anywhere in the proof I don't think.</p>\n<p>Changing the group instance from </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Group</span> <span class=\"o\">(</span><span class=\"n\">PushoutI</span> <span class=\"n\">φ</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"o\">{</span> <span class=\"n\">Con.group</span> <span class=\"o\">(</span><span class=\"n\">PushoutI.con</span> <span class=\"n\">φ</span><span class=\"o\">)</span> <span class=\"k\">with</span>\n    <span class=\"n\">toMonoid</span> <span class=\"o\">:=</span> <span class=\"n\">PushoutI.monoid</span> <span class=\"o\">}</span>\n</code></pre></div>\n<p>to</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Group</span> <span class=\"o\">(</span><span class=\"n\">PushoutI</span> <span class=\"n\">φ</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"n\">Con.group</span> <span class=\"o\">(</span><span class=\"n\">PushoutI.con</span> <span class=\"n\">φ</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>worsens the speed of <code>inf_of_range_eq_base_range</code> from aournd 2s to timing out. Note that the <code>Con.group</code> instance is defined in an optimised way, with the <code>toMonoid</code> field being given by <code>Con.monoid</code>.</p>\n<p>It's also interesting that changing the definition of the monoid instance from </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">protected</span> <span class=\"kd\">instance</span> <span class=\"n\">mul</span> <span class=\"o\">:</span> <span class=\"n\">Mul</span> <span class=\"o\">(</span><span class=\"n\">PushoutI</span> <span class=\"n\">φ</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">delta</span> <span class=\"n\">PushoutI</span><span class=\"bp\">;</span> <span class=\"n\">infer_instance</span>\n\n<span class=\"kn\">protected</span> <span class=\"kd\">instance</span> <span class=\"n\">one</span> <span class=\"o\">:</span> <span class=\"n\">One</span> <span class=\"o\">(</span><span class=\"n\">PushoutI</span> <span class=\"n\">φ</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">delta</span> <span class=\"n\">PushoutI</span><span class=\"bp\">;</span> <span class=\"n\">infer_instance</span>\n\n<span class=\"kd\">instance</span> <span class=\"n\">monoid</span> <span class=\"o\">:</span> <span class=\"n\">Monoid</span> <span class=\"o\">(</span><span class=\"n\">PushoutI</span> <span class=\"n\">φ</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"o\">{</span> <span class=\"n\">Con.monoid</span> <span class=\"n\">_</span> <span class=\"k\">with</span>\n    <span class=\"n\">toMul</span> <span class=\"o\">:=</span> <span class=\"n\">PushoutI.mul</span>\n    <span class=\"n\">toOne</span> <span class=\"o\">:=</span> <span class=\"n\">PushoutI.one</span> <span class=\"o\">}</span>\n</code></pre></div>\n<p>to </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">instance</span> <span class=\"n\">monoid</span> <span class=\"o\">:</span> <span class=\"n\">Monoid</span> <span class=\"o\">(</span><span class=\"n\">PushoutI</span> <span class=\"n\">φ</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n   <span class=\"n\">Con.monoid</span> <span class=\"n\">_</span>\n</code></pre></div>\n<p>worsens the speed of <code>inf_of_range_eq_base_range</code> from around 2s to around 5s. This is particularly surprising to me, as there are no other instances on <code>PushoutI</code> other than <code>Group</code>, <code>Monoid</code>, <code>Mul</code> and <code>One</code>. I don't really see why this one would make a difference.</p>\n<p>I guessed that it was something to do with unfolding <code>Con.Group</code> that was slowing things down, but I don't really know that. Also, this does not explain why changing the <code>Monoid</code> instance makes a difference.</p>",
+        "id": 394671895,
+        "sender_full_name": "Chris Hughes",
+        "timestamp": 1696351086
+    },
+    {
+        "content": "<p>A guess for <code>monoid</code>: when you write <code>toMul</code> and <code>toOne</code> explicitly then Lean has to apply enough constructors to get down to those two fields. Perhaps unification sees this \"open path\" and prioritizes it when it appears on one side of =?= and it has to decide how to unfold things.</p>",
+        "id": 394673655,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1696351861
+    },
+    {
+        "content": "<p>Another possibility: whatever it has to unify <code>monoid</code> with is already expanded in this way.</p>",
+        "id": 394674743,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1696352324
+    },
+    {
+        "content": "<p>What trace settings are you using to analyze this?</p>",
+        "id": 394696023,
+        "sender_full_name": "Chris Hughes",
+        "timestamp": 1696361076
+    },
+    {
+        "content": "<p>I am just guessing</p>",
+        "id": 394696121,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1696361130
+    },
+    {
+        "content": "<p>You mentionned trace diving earlier. Which settings did you use for that?</p>",
+        "id": 394697641,
+        "sender_full_name": "Chris Hughes",
+        "timestamp": 1696361804
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">set_option</span> <span class=\"n\">profiler</span> <span class=\"n\">true</span> <span class=\"k\">in</span>\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.Meta.synthInstance</span> <span class=\"k\">in</span>\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.Meta.isDefEq</span> <span class=\"k\">in</span>\n</code></pre></div>",
+        "id": 394704814,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1696365133
+    },
+    {
+        "content": "<p>that's usually what I'm tracing too.</p>",
+        "id": 394716616,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1696370311
+    },
+    {
+        "content": "<p>It's a different issue but it seems to fall under the name of the thread, so let me report it here: when investigating some slowness of typeclass inference regarding <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=BoundedContinuousFunction#doc\">docs#BoundedContinuousFunction</a>, I realized that the definitions like <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=BoundedContinuousFunction.instAddBoundedContinuousFunction#doc\">docs#BoundedContinuousFunction.instAddBoundedContinuousFunction</a> which use <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=BoundedContinuousFunction.mkOfBound#doc\">docs#BoundedContinuousFunction.mkOfBound</a> to construct data are bad, because the constant appears as data and Lean doesn't see that it won't be useful in the end, so it spends a lot of time trying to unify the constants... I suppose the same thing could also explain some of the performane problems around <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=ContinuousLinearMap#doc\">docs#ContinuousLinearMap</a> and <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=ContinuousMultilinearMap#doc\">docs#ContinuousMultilinearMap</a>, where we use this pattern quite frequently too.</p>",
+        "id": 394717321,
+        "sender_full_name": "Anatole Dedecker",
+        "timestamp": 1696370722
+    },
+    {
+        "content": "<p>One thing that I didn't realise until today, is that the kernel still typechecks the declaration <code>inf_of_range_eq_base_range</code> very fast (0.02s).</p>",
+        "id": 394820375,
+        "sender_full_name": "Chris Hughes",
+        "timestamp": 1696419282
+    },
+    {
+        "content": "<p>So one way of speeding up mathlib might be to basically assume all terms of type <code>Group G</code> are equal during elaboration and tactic execution and then maybe you get a proof that fails in the kernel if you happen to have two different terms of type <code>Group G</code>. If not exactly that there are surely optimisations in unification that rely on the assumption that two different terms of the same class is unusual.</p>",
+        "id": 394822944,
+        "sender_full_name": "Chris Hughes",
+        "timestamp": 1696420183
+    },
+    {
+        "content": "<p>The observation about use of <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=BoundedCountinuousFunction.mkOfBound#doc\">docs#BoundedCountinuousFunction.mkOfBound</a> is nice and squares with “expose only the minimal amount data you need” from <code>Function.InjSurj</code></p>\n<p>Implicit in this question is the fact that “things were fine in Lean 3” (right?). Are there lessons there?</p>",
+        "id": 394827491,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1696421772
+    },
+    {
+        "content": "<p>I guess a refinement is “expose only the minimal amount of data you need to construct data”</p>",
+        "id": 394828058,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1696421975
+    },
+    {
+        "content": "<p>I still don’t understand <a href=\"https://github.com/leanprover-community/mathlib4/pull/6803\">#6803</a> though since it goes in the opposite direction. In the best of possible worlds, something else is exposed already that shouldn’t be. Fixing that would give the better performance overall</p>",
+        "id": 394831229,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1696423082
+    },
+    {
+        "content": "<p>A data point for the “misalignment” of instances causing slowdowns is <code>RingTheory.Jacobson</code> <a href=\"http://speed.lean-fro.org/mathlib4/compare/5261bbc8-eb01-4423-9eeb-7d2833cd668d/to/2fbb4d8e-1a69-4916-822f-7afcb1a2dd87\">here</a>. I combined the changes from <a href=\"https://github.com/leanprover/lean4/pull/2478\">lean4#2478</a> and the ones moving away from <code>Function.Injective/Surjective.x</code>. Without the latter, <code>Jacobson</code> slowed significantly with <a href=\"https://github.com/leanprover/lean4/pull/2478\">lean4#2478</a> (~ +40%). Without it, it is sped up even more (~ -40%). </p>\n<p>Optimistic me hopes that this is the cause of other regressions for changes here.</p>",
+        "id": 394882219,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1696438984
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306577\">Matthew Ballard</span> <a href=\"#narrow/stream/270676-lean4/topic/instance.20construction.20patterns/near/394882219\">said</a>:</p>\n<blockquote>\n<p>A data point for the “misalignment” of instances causing slowdowns is <code>RingTheory.Jacobson</code> <a href=\"http://speed.lean-fro.org/mathlib4/compare/5261bbc8-eb01-4423-9eeb-7d2833cd668d/to/2fbb4d8e-1a69-4916-822f-7afcb1a2dd87\">here</a>. I combined the changes from <a href=\"https://github.com/leanprover/lean4/pull/2478\">lean4#2478</a> and the ones moving away from <code>Function.Injective/Surjective.x</code>. Without the latter, <code>Jacobson</code> slowed significantly with <a href=\"https://github.com/leanprover/lean4/pull/2478\">lean4#2478</a> (~ +40%). Without it, it is sped up even more (~ -40%). </p>\n<p>Optimistic me hopes that this is the cause of other regressions for changes here.</p>\n</blockquote>\n<p>What do you mean by misalignment of instances?</p>",
+        "id": 395694951,
+        "sender_full_name": "Chris Hughes",
+        "timestamp": 1696856613
+    },
+    {
+        "content": "<p>First a caveat. My understanding unification is akin to the apes understanding of the obelisk in 2001. </p>\n<p>Given that. <a href=\"https://github.com/leanprover-community/Lean4/pull/2478\">Lean4#2478</a> has a very mild change: in some cases, replace <code>A.mk ...</code> with <code>a</code> where <code>def a : A := sorry</code>. This results in some very surprising speed ups for unification. My guess is that unification sees <code>A.mk ...</code> and says \"oh hey, this is already unfolded, I should unfold the other side to continue\". But the other side is just <code>a</code> itself. Once it unfolds <code>a</code> is has to recheck all the constituent  pieces. With the change it becomes <code>a = a</code> done. </p>\n<p>So misalignment here means two quickly defeq terms appearing in unification with different levels of unfolding.</p>",
+        "id": 395697294,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1696857361
+    },
+    {
+        "content": "<p>From this experience, I default to \"pack the instance as tightly as possible\" for constructions (unless there is good reason not to.) Then I hope that makes unification happy. <span aria-label=\"monkey face\" class=\"emoji emoji-1f435\" role=\"img\" title=\"monkey face\">:monkey_face:</span></p>",
+        "id": 395697696,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1696857482
+    },
+    {
+        "content": "<p>Well I'll add another data point. Building up all the instances up to <code>Semiring</code> in <code>Polynomial</code> did give a significant speedup in <a href=\"https://github.com/leanprover-community/mathlib4/pull/7520\">#7520</a> (with slowdowns in some files). Doing the same thing in <code>FGModuleCat</code> in <a href=\"https://github.com/leanprover-community/mathlib4/pull/7563\">#7563</a> made things worse.</p>",
+        "id": 395701962,
+        "sender_full_name": "Chris Hughes",
+        "timestamp": 1696858808
+    },
+    {
+        "content": "<p>Can I steer this discussion in the direction of a conclusion? Right now I am suffering from painful slowdowns in my code, which are fixed by applying these changes. So I would like to advocate for the following pragmatic approach:</p>\n<ul>\n<li>Finish the library note as best as we can. We can make clear his is the current state of knowledge and may be updated or invalidated as we better understand and upgrade Lean 4.</li>\n<li>In all the speedup PRs, annotate the changes with this library note.</li>\n<li>Merge the speedup PRs that give a notable improvement in the majority of the cases, while not regressing too badly on the remaining cases.</li>\n<li>I am happy, because it doesn't take minutes to put a <code>Basis</code> structure on my module.</li>\n<li>If we know better how to speed up things, we can search for references to the library note and optimize further.</li>\n<li>If Lean 4 is upgraded so everything just goes fast, we can search for references to the library note and put back things in the \"natural\" way.</li>\n</ul>\n<p>The danger of going this way is that we go for a greedy approach to optimizing when a more reasoned solution can be better overall. However, I believe the current gains are from barely working to working fine, which is a lot more profit than going from working fine to working optimally. Moreover, by being careful to annotate our changes with the library note, we gain a way to back out if we learn new things.</p>",
+        "id": 396049348,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1697017306
+    },
+    {
+        "content": "<p>My feat is that by going for a greedy approach, we lose the ability to evaluate other solutions that come from a change in core; as to test them we first have to revert all the mathlib changes</p>",
+        "id": 396051576,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1697018079
+    },
+    {
+        "content": "<blockquote>\n<p>change in core</p>\n</blockquote>\n<p>Indeed, <a href=\"https://github.com/leanprover/lean4/pull/2644\">lean4#2644</a> may or may not significantly speed up these kinds of declarations. The current problem with it that it actually uncovered existing bugs in Lean that sadly mathlib depends on. We will see how much work it is to fix mathlib but if someone has a completely or at least somewhat freestanding example of this kind of issue, it might be good to first test it under that PR.</p>",
+        "id": 396054243,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1697019027
+    },
+    {
+        "content": "<p>The problem seems to be that the slowdowns only really appear at scale, so reducing examples is hard. Maybe I should spend some time on an auto-MWE script...</p>",
+        "id": 396056838,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1697020066
+    },
+    {
+        "content": "<p>I completely understand, and such a script would be incredibly useful I'd say. In this case, we \"already\" can compile at least 400 files in mathlib, so <em>early in mathlib</em> might be sufficient</p>",
+        "id": 396068173,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1697024236
+    },
+    {
+        "content": "<p>If we want to speed up mathlib now, there is also <a href=\"https://github.com/leanprover/lean4/pull/2478\">lean4#2478</a>. Currently we are waiting until we can fix AG to make everything green but that might take quite a bit since the problems run deeper than the changes there. But it does improve performance in many of the same places these changes are (and drops instructions overall by ~4% or so). It is hard to gauge how independent things are when you have to update a separate PR with that toolchain each time in addition to <code>master</code>. </p>\n<p>Also I worry that we are improving things at the expense of creating bigger blockers to more systemic improvements in the future. Leaving problems we just \"live with\". In particular, expanding terms while improving speed seems like something that could bite us.</p>",
+        "id": 396092097,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697031767
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/pull/2644\">lean4#2644</a> is a great idea!</p>",
+        "id": 396092201,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697031802
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"238446\">Anne Baanen</span> <a href=\"#narrow/stream/270676-lean4/topic/instance.20construction.20patterns/near/396056838\">said</a>:</p>\n<blockquote>\n<p>The problem seems to be that the slowdowns only really appear at scale, so reducing examples is hard. Maybe I should spend some time on an auto-MWE script...</p>\n</blockquote>\n<p>Okay, I spent some time on an auto-MWE script: <a href=\"#narrow/stream/113488-general/topic/Minimizer.20script\">https://leanprover.zulipchat.com/#narrow/stream/113488-general/topic/Minimizer.20script</a> Let's see if we can reduce the DirectLimit field instance...</p>",
+        "id": 396110162,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1697036928
+    },
+    {
+        "content": "<p>Re: <a href=\"https://github.com/leanprover/lean4/pull/2644\">lean4#2644</a> I've only seen things become less reducible in the errors. A good place to focus for  mwe would be  <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=WithTop.aux#doc\">docs#WithTop.aux</a> failures in  <code>Order.LocallyFinite.lean</code></p>",
+        "id": 396151520,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697051850
+    },
+    {
+        "content": "<p>It looks like <a href=\"https://github.com/leanprover/lean4/pull/2644\">lean4#2644</a> fixes some very broken things in <code>RingTheory.Kaehler</code></p>",
+        "id": 396182085,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697069185
+    },
+    {
+        "content": "<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n<p>Before</p>\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<div class=\"codehilite\" data-code-language=\"Bash\"><pre><span></span><code>cumulative<span class=\"w\"> </span>profiling<span class=\"w\"> </span>times:\n<span class=\"w\">    </span>attribute<span class=\"w\"> </span>application<span class=\"w\"> </span><span class=\"m\">16</span>.5ms\n<span class=\"w\">    </span>compilation<span class=\"w\"> </span>114ms\n<span class=\"w\">    </span>compilation<span class=\"w\"> </span>new<span class=\"w\"> </span>178ms\n<span class=\"w\">    </span>dsimp<span class=\"w\"> </span>260ms\n<span class=\"w\">    </span>elaboration<span class=\"w\"> </span><span class=\"m\">6</span>.32s\n<span class=\"w\">    </span>import<span class=\"w\"> </span>455ms\n<span class=\"w\">    </span>initialization<span class=\"w\"> </span><span class=\"m\">14</span>.9ms\n<span class=\"w\">    </span>interpretation<span class=\"w\"> </span>11s\n<span class=\"w\">    </span>linting<span class=\"w\"> </span>277ms\n<span class=\"w\">    </span>norm_num<span class=\"w\"> </span><span class=\"m\">0</span>.717ms\n<span class=\"w\">    </span>parsing<span class=\"w\"> </span><span class=\"m\">24</span>.4ms\n<span class=\"w\">    </span>simp<span class=\"w\"> </span><span class=\"m\">1</span>.78s\n<span class=\"w\">    </span>tactic<span class=\"w\"> </span>execution<span class=\"w\"> </span><span class=\"m\">8</span>.14s\n<span class=\"w\">    </span><span class=\"nb\">type</span><span class=\"w\"> </span>checking<span class=\"w\"> </span><span class=\"m\">3</span>.51s\n<span class=\"w\">    </span>typeclass<span class=\"w\"> </span>inference<span class=\"w\"> </span><span class=\"m\">40</span>.2s\n<span class=\"w\">    </span>Command<span class=\"w\"> </span>being<span class=\"w\"> </span>timed:<span class=\"w\"> </span><span class=\"s2\">\"lake env lean --profile Mathlib/RingTheory/Kaehler.lean\"</span>\n<span class=\"w\">    </span>User<span class=\"w\"> </span><span class=\"nb\">time</span><span class=\"w\"> </span><span class=\"o\">(</span>seconds<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">62</span>.40\n<span class=\"w\">    </span>System<span class=\"w\"> </span><span class=\"nb\">time</span><span class=\"w\"> </span><span class=\"o\">(</span>seconds<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">0</span>.99\n<span class=\"w\">    </span>Percent<span class=\"w\"> </span>of<span class=\"w\"> </span>CPU<span class=\"w\"> </span>this<span class=\"w\"> </span>job<span class=\"w\"> </span>got:<span class=\"w\"> </span><span class=\"m\">87</span>%\n<span class=\"w\">    </span>Elapsed<span class=\"w\"> </span><span class=\"o\">(</span>wall<span class=\"w\"> </span>clock<span class=\"o\">)</span><span class=\"w\"> </span><span class=\"nb\">time</span><span class=\"w\"> </span><span class=\"o\">(</span>h:mm:ss<span class=\"w\"> </span>or<span class=\"w\"> </span>m:ss<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">1</span>:12.53\n<span class=\"w\">    </span>Average<span class=\"w\"> </span>shared<span class=\"w\"> </span>text<span class=\"w\"> </span>size<span class=\"w\"> </span><span class=\"o\">(</span>kbytes<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Average<span class=\"w\"> </span>unshared<span class=\"w\"> </span>data<span class=\"w\"> </span>size<span class=\"w\"> </span><span class=\"o\">(</span>kbytes<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Average<span class=\"w\"> </span>stack<span class=\"w\"> </span>size<span class=\"w\"> </span><span class=\"o\">(</span>kbytes<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Average<span class=\"w\"> </span>total<span class=\"w\"> </span>size<span class=\"w\"> </span><span class=\"o\">(</span>kbytes<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Maximum<span class=\"w\"> </span>resident<span class=\"w\"> </span><span class=\"nb\">set</span><span class=\"w\"> </span>size<span class=\"w\"> </span><span class=\"o\">(</span>kbytes<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">1290672</span>\n<span class=\"w\">    </span>Average<span class=\"w\"> </span>resident<span class=\"w\"> </span><span class=\"nb\">set</span><span class=\"w\"> </span>size<span class=\"w\"> </span><span class=\"o\">(</span>kbytes<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Major<span class=\"w\"> </span><span class=\"o\">(</span>requiring<span class=\"w\"> </span>I/O<span class=\"o\">)</span><span class=\"w\"> </span>page<span class=\"w\"> </span>faults:<span class=\"w\"> </span><span class=\"m\">74</span>\n<span class=\"w\">    </span>Minor<span class=\"w\"> </span><span class=\"o\">(</span>reclaiming<span class=\"w\"> </span>a<span class=\"w\"> </span>frame<span class=\"o\">)</span><span class=\"w\"> </span>page<span class=\"w\"> </span>faults:<span class=\"w\"> </span><span class=\"m\">216369</span>\n<span class=\"w\">    </span>Voluntary<span class=\"w\"> </span>context<span class=\"w\"> </span>switches:<span class=\"w\"> </span><span class=\"m\">24</span>\n<span class=\"w\">    </span>Involuntary<span class=\"w\"> </span>context<span class=\"w\"> </span>switches:<span class=\"w\"> </span><span class=\"m\">53417</span>\n<span class=\"w\">    </span>Swaps:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>File<span class=\"w\"> </span>system<span class=\"w\"> </span>inputs:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>File<span class=\"w\"> </span>system<span class=\"w\"> </span>outputs:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Socket<span class=\"w\"> </span>messages<span class=\"w\"> </span>sent:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Socket<span class=\"w\"> </span>messages<span class=\"w\"> </span>received:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Signals<span class=\"w\"> </span>delivered:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Page<span class=\"w\"> </span>size<span class=\"w\"> </span><span class=\"o\">(</span>bytes<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">16384</span>\n<span class=\"w\">    </span>Exit<span class=\"w\"> </span>status:<span class=\"w\"> </span><span class=\"m\">0</span>\n</code></pre></div>\n</div></div>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n<p>After</p>\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<div class=\"codehilite\" data-code-language=\"Bash\"><pre><span></span><code>cumulative<span class=\"w\"> </span>profiling<span class=\"w\"> </span>times:\n<span class=\"w\">    </span>attribute<span class=\"w\"> </span>application<span class=\"w\"> </span><span class=\"m\">12</span>.7ms\n<span class=\"w\">    </span>compilation<span class=\"w\"> </span>13s\n<span class=\"w\">    </span>compilation<span class=\"w\"> </span>new<span class=\"w\"> </span>244ms\n<span class=\"w\">    </span>dsimp<span class=\"w\"> </span>197ms\n<span class=\"w\">    </span>elaboration<span class=\"w\"> </span><span class=\"m\">2</span>.44s\n<span class=\"w\">    </span>import<span class=\"w\"> </span>546ms\n<span class=\"w\">    </span>initialization<span class=\"w\"> </span><span class=\"m\">18</span>.6ms\n<span class=\"w\">    </span>interpretation<span class=\"w\"> </span><span class=\"m\">2</span>.35s\n<span class=\"w\">    </span>linting<span class=\"w\"> </span>203ms\n<span class=\"w\">    </span>norm_num<span class=\"w\"> </span><span class=\"m\">0</span>.657ms\n<span class=\"w\">    </span>parsing<span class=\"w\"> </span><span class=\"m\">21</span>.3ms\n<span class=\"w\">    </span>simp<span class=\"w\"> </span><span class=\"m\">1</span>.13s\n<span class=\"w\">    </span>tactic<span class=\"w\"> </span>execution<span class=\"w\"> </span><span class=\"m\">3</span>.51s\n<span class=\"w\">    </span><span class=\"nb\">type</span><span class=\"w\"> </span>checking<span class=\"w\"> </span><span class=\"m\">2</span>.75s\n<span class=\"w\">    </span>typeclass<span class=\"w\"> </span>inference<span class=\"w\"> </span><span class=\"m\">24</span>.7s\n<span class=\"w\">    </span>Command<span class=\"w\"> </span>being<span class=\"w\"> </span>timed:<span class=\"w\"> </span><span class=\"s2\">\"lake env lean --profile Mathlib/RingTheory/Kaehler.lean\"</span>\n<span class=\"w\">    </span>User<span class=\"w\"> </span><span class=\"nb\">time</span><span class=\"w\"> </span><span class=\"o\">(</span>seconds<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">49</span>.85\n<span class=\"w\">    </span>System<span class=\"w\"> </span><span class=\"nb\">time</span><span class=\"w\"> </span><span class=\"o\">(</span>seconds<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">0</span>.87\n<span class=\"w\">    </span>Percent<span class=\"w\"> </span>of<span class=\"w\"> </span>CPU<span class=\"w\"> </span>this<span class=\"w\"> </span>job<span class=\"w\"> </span>got:<span class=\"w\"> </span><span class=\"m\">98</span>%\n<span class=\"w\">    </span>Elapsed<span class=\"w\"> </span><span class=\"o\">(</span>wall<span class=\"w\"> </span>clock<span class=\"o\">)</span><span class=\"w\"> </span><span class=\"nb\">time</span><span class=\"w\"> </span><span class=\"o\">(</span>h:mm:ss<span class=\"w\"> </span>or<span class=\"w\"> </span>m:ss<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">0</span>:51.44\n<span class=\"w\">    </span>Average<span class=\"w\"> </span>shared<span class=\"w\"> </span>text<span class=\"w\"> </span>size<span class=\"w\"> </span><span class=\"o\">(</span>kbytes<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Average<span class=\"w\"> </span>unshared<span class=\"w\"> </span>data<span class=\"w\"> </span>size<span class=\"w\"> </span><span class=\"o\">(</span>kbytes<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Average<span class=\"w\"> </span>stack<span class=\"w\"> </span>size<span class=\"w\"> </span><span class=\"o\">(</span>kbytes<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Average<span class=\"w\"> </span>total<span class=\"w\"> </span>size<span class=\"w\"> </span><span class=\"o\">(</span>kbytes<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Maximum<span class=\"w\"> </span>resident<span class=\"w\"> </span><span class=\"nb\">set</span><span class=\"w\"> </span>size<span class=\"w\"> </span><span class=\"o\">(</span>kbytes<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">1397312</span>\n<span class=\"w\">    </span>Average<span class=\"w\"> </span>resident<span class=\"w\"> </span><span class=\"nb\">set</span><span class=\"w\"> </span>size<span class=\"w\"> </span><span class=\"o\">(</span>kbytes<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Major<span class=\"w\"> </span><span class=\"o\">(</span>requiring<span class=\"w\"> </span>I/O<span class=\"o\">)</span><span class=\"w\"> </span>page<span class=\"w\"> </span>faults:<span class=\"w\"> </span><span class=\"m\">70</span>\n<span class=\"w\">    </span>Minor<span class=\"w\"> </span><span class=\"o\">(</span>reclaiming<span class=\"w\"> </span>a<span class=\"w\"> </span>frame<span class=\"o\">)</span><span class=\"w\"> </span>page<span class=\"w\"> </span>faults:<span class=\"w\"> </span><span class=\"m\">215477</span>\n<span class=\"w\">    </span>Voluntary<span class=\"w\"> </span>context<span class=\"w\"> </span>switches:<span class=\"w\"> </span><span class=\"m\">20</span>\n<span class=\"w\">    </span>Involuntary<span class=\"w\"> </span>context<span class=\"w\"> </span>switches:<span class=\"w\"> </span><span class=\"m\">32504</span>\n<span class=\"w\">    </span>Swaps:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>File<span class=\"w\"> </span>system<span class=\"w\"> </span>inputs:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>File<span class=\"w\"> </span>system<span class=\"w\"> </span>outputs:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Socket<span class=\"w\"> </span>messages<span class=\"w\"> </span>sent:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Socket<span class=\"w\"> </span>messages<span class=\"w\"> </span>received:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Signals<span class=\"w\"> </span>delivered:<span class=\"w\"> </span><span class=\"m\">0</span>\n<span class=\"w\">    </span>Page<span class=\"w\"> </span>size<span class=\"w\"> </span><span class=\"o\">(</span>bytes<span class=\"o\">)</span>:<span class=\"w\"> </span><span class=\"m\">16384</span>\n<span class=\"w\">    </span>Exit<span class=\"w\"> </span>status:<span class=\"w\"> </span><span class=\"m\">0</span>\n</code></pre></div>\n</div></div>",
+        "id": 396183797,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697070405
+    },
+    {
+        "content": "<p>Cuts significantly into the build time for <code>AlgebraicGeometry.Morphisms.RingHomProperties</code>. It goes from 7:45 to 6:33 on my machine.</p>",
+        "id": 396191480,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697074804
+    },
+    {
+        "content": "<p>And <code>RepresentationTheory.GroupCohomology.Basic</code> is free of bumps to heartbeats</p>",
+        "id": 396197410,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697077823
+    },
+    {
+        "content": "<p><a href=\"http://speed.lean-fro.org/mathlib4/compare/1367ad5c-c959-46b8-8475-15d3d1210f0e/to/27b72717-b7f2-4755-b932-9fdc34a159d4\">Bench</a></p>",
+        "id": 396214727,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697086702
+    },
+    {
+        "content": "<p>Hilarious. Some files have 90% drops</p>",
+        "id": 396214805,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697086803
+    },
+    {
+        "content": "<p>So the explanation for the regressions (requiring <code>erw</code> instead of <code>rw</code> or <code>simp</code>) that we're seeing in either <a href=\"https://github.com/leanprover-community/mathlib4/pull/7606\">#7606</a>, or <span class=\"user-mention\" data-user-id=\"306577\">@Matthew Ballard</span> version at <a href=\"https://github.com/leanprover-community/mathlib4/pull/7634\">#7634</a>, is that the DefEq cache has up to now been cheating. It has been reusing cached <code>isDefEq</code> results obtained with <code>transparency := .default</code>for <code>transparency := .reducible</code>. And Mathlib has been taking advantage of this!</p>\n<p>I posted a mostly-minimised example of a <code>simp</code> -&gt; <code>erw</code> regression at <a href=\"https://github.com/leanprover/lean4/pull/2644#issuecomment-1758955555\">https://github.com/leanprover/lean4/pull/2644#issuecomment-1758955555</a>. If anyone would like to try further minimising that it would be helpful!</p>",
+        "id": 396220079,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1697090520
+    },
+    {
+        "content": "<p>Reading more carefully, for <code>RingTheory.Kaehler</code> we have</p>\n<blockquote>\n<p>compilation 114ms</p>\n</blockquote>\n<p>before and</p>\n<blockquote>\n<p>compilation 13s</p>\n</blockquote>\n<p>after</p>",
+        "id": 396278828,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697113967
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span>, could you use <code> ```lean </code> for that code block on github so that it highlights?</p>",
+        "id": 396279153,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1697114103
+    },
+    {
+        "content": "<p>If you merge master on the branch, then you will benefit from <code>suppress_compilation</code> in <code>RingTheory.Kaehler</code>and these 13s of compilation should go away.</p>",
+        "id": 396281364,
+        "sender_full_name": "Sebastien Gouezel",
+        "timestamp": 1697115002
+    },
+    {
+        "content": "<p>I would also like to know more precisely why this is happening</p>",
+        "id": 396285150,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697116274
+    },
+    {
+        "content": "<p>Usually, it's because a declaration becomes fast enough that the compiler doesn't give up right away, and instead compiles things even if it is costly. So, it's a clear sign that things got better!</p>",
+        "id": 396287100,
+        "sender_full_name": "Sebastien Gouezel",
+        "timestamp": 1697116974
+    },
+    {
+        "content": "<p>I follow it until C++ code and then I've run away. There is a <code>try</code> branch and it seems the compiler could theoretically just try forever.</p>",
+        "id": 396287728,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697117174
+    },
+    {
+        "content": "<p>Good news everyone. It looks like <a href=\"https://github.com/leanprover/lean4/pull/2644\">lean4#2644</a> fixes AG enough to make <a href=\"https://github.com/leanprover/lean4/pull/2478\">lean4#2478</a> now improve the wall clock. <a href=\"http://speed.lean-fro.org/mathlib4/compare/f0137381-73a4-41b8-b835-9fa63b70d6f0/to/06e7bc2b-b99a-436c-ae78-1c27cba66373\">Here</a> is a benchmark for a toolchain containing both fixes vs current master. We go from -11% reduction in instructions and -14.5% reduction in wall clock with <a href=\"https://github.com/leanprover/lean4/pull/2644\">lean4#2644</a> alone to -14% instructions and -15% wall clock.</p>",
+        "id": 396350485,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697138407
+    },
+    {
+        "content": "<p>So, what's the conclusion about instances using <code>Function.Injective.addCommGroup</code> etc?</p>",
+        "id": 404715028,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1701204353
+    }
+]

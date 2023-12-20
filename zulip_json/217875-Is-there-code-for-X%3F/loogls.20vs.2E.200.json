@@ -1,0 +1,212 @@
+[
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/217875-Is-there-code-for-X.3F/topic/Should.20nlinarith.20know.20about.20x.5E2.20.5Cgeq.200.20when.20x.20is.20real.3F/near/397022127\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> any idea why this doesn't work:</p>\n<p><span class=\"user-mention silent\" data-user-id=\"644391\">loogle</span> 0 ≤ ?a * ?a</p>\n</blockquote>\n<p>No, not directly. <code>_ ≤ ?a * ?a</code> works (after a long wait, unsurprisingly), so it seems to be related to the <code>0</code>. <br>\nIn fact, <code>_ ≤ ?a * ?a, 0</code> doesn't work, while <code>_ ≤ ?a * ?a, OfNat.ofNat</code> works again.</p>\n<p>So the problem is <em>not</em> the index (the lemma is among the “Found 1399 definitions mentioning HMul.hMul, LE.le and OfNat.ofNat”), but somehow the pattern <code>0</code> is elaborated into something that doesn't match <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=mul_self_nonneg#doc\">docs#mul_self_nonneg</a>…</p>",
+        "id": 397063290,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697533832
+    },
+    {
+        "content": "<p>On the <code>joachim/find</code> branch (has a warm cache, so don’t hesitate :-))  this reproduces the issue:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Mathlib.Tactic.Find</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Command</span>\n\n<span class=\"c1\">-- #find 0 ≤ ?a * ?a, \"mul_self_nonneg\"</span>\n\n<span class=\"n\">elab</span> <span class=\"n\">s</span><span class=\"o\">:</span><span class=\"s2\">\"#assert_match \"</span> <span class=\"n\">name_s</span><span class=\"o\">:</span><span class=\"n\">ident</span> <span class=\"n\">concl</span><span class=\"o\">:(</span><span class=\"n\">turnstyle</span><span class=\"o\">)</span><span class=\"bp\">?</span> <span class=\"n\">query</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">command</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">liftTermElabM</span> <span class=\"k\">do</span>\n    <span class=\"c1\">-- let pat ← Lean.Elab.Term.elabTerm query none</span>\n    <span class=\"k\">let</span> <span class=\"n\">pat</span> <span class=\"bp\">←</span> <span class=\"n\">Mathlib.Tactic.Find.elabTerm'</span> <span class=\"n\">query</span> <span class=\"n\">none</span>\n    <span class=\"k\">let</span> <span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">Lean.TSyntax.getId</span> <span class=\"n\">name_s</span>\n    <span class=\"k\">let</span> <span class=\"n\">matcher</span> <span class=\"bp\">←</span>\n      <span class=\"k\">if</span> <span class=\"n\">concl.isSome</span>\n      <span class=\"k\">then</span> <span class=\"n\">matchConclusion</span> <span class=\"n\">pat</span>\n      <span class=\"k\">else</span> <span class=\"n\">matchAnywhere</span> <span class=\"n\">pat</span>\n    <span class=\"k\">let</span> <span class=\"n\">c</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getEnv</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"kd\">constants</span><span class=\"bp\">.</span><span class=\"n\">find</span><span class=\"bp\">!</span> <span class=\"n\">name</span>\n    <span class=\"n\">logInfoAt</span> <span class=\"n\">query</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"Pattern: {pat}\"</span>\n    <span class=\"n\">logInfoAt</span> <span class=\"n\">name_s</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"Const type: {c.type}\"</span>\n    <span class=\"n\">unless</span> <span class=\"bp\">←</span> <span class=\"n\">matcher</span> <span class=\"n\">c</span> <span class=\"k\">do</span>\n      <span class=\"n\">logErrorAt</span> <span class=\"n\">s</span> <span class=\"s2\">\"Pattern does not match when it should!\"</span>\n\n<span class=\"bp\">#</span><span class=\"n\">assert_match</span> <span class=\"n\">mul_self_nonneg</span> <span class=\"mi\">0</span> <span class=\"bp\">≤</span> <span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"bp\">*</span> <span class=\"bp\">?</span><span class=\"n\">a</span>\n</code></pre></div>\n<p>It works fine if I use <code>Lean.Elab.Term.elabTerm</code> instead of <code>Mathlib.Tactic.Find.elabTerm'</code>. The latter is defined as</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"sd\">/-- A variant of `Lean.Elab.Term.elabTerm` that does not complain for example</span>\n<span class=\"sd\">when a type class constraint has no instances.  -/</span>\n<span class=\"kd\">def</span> <span class=\"n\">elabTerm'</span> <span class=\"o\">(</span><span class=\"n\">t</span> <span class=\"o\">:</span> <span class=\"n\">Term</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">expectedType</span><span class=\"bp\">?</span> <span class=\"o\">:</span> <span class=\"n\">Option</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">TermElabM</span> <span class=\"n\">Expr</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">withTheReader</span> <span class=\"n\">Term.Context</span> <span class=\"o\">({</span> <span class=\"bp\">·</span>  <span class=\"k\">with</span> <span class=\"n\">ignoreTCFailures</span> <span class=\"o\">:=</span> <span class=\"n\">true</span><span class=\"o\">,</span> <span class=\"n\">errToSorry</span> <span class=\"o\">:=</span> <span class=\"n\">false</span> <span class=\"o\">})</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">t</span> <span class=\"bp\">←</span> <span class=\"n\">Term.elabTerm</span> <span class=\"n\">t</span> <span class=\"n\">expectedType</span><span class=\"bp\">?</span>\n    <span class=\"n\">Term.synthesizeSyntheticMVars</span> <span class=\"o\">(</span><span class=\"n\">mayPostpone</span> <span class=\"o\">:=</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">ignoreStuckTC</span> <span class=\"o\">:=</span> <span class=\"n\">true</span><span class=\"o\">)</span>\n    <span class=\"n\">return</span> <span class=\"n\">t</span>\n</code></pre></div>\n<p>With the plain <code>elabTerm</code> I get</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">@</span><span class=\"n\">OfNat.ofNat</span> <span class=\"bp\">?</span><span class=\"n\">m.4722</span> <span class=\"mi\">0</span> <span class=\"bp\">?</span><span class=\"n\">m.4678</span> <span class=\"o\">:</span> <span class=\"bp\">?</span><span class=\"n\">m.472</span>\n</code></pre></div>\n<p>for <code>0</code> which then matches fine; with <code>elabTerm'</code> I get</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">@</span><span class=\"n\">OfNat.ofNat</span> <span class=\"n\">ℕ</span> <span class=\"mi\">0</span> <span class=\"o\">(</span><span class=\"n\">instOfNatNat</span> <span class=\"mi\">0</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span>\n</code></pre></div>\n<p>which may explain why it does not match the <code>@OfNat.ofNat α 0 Zero.toOfNat0 : α</code> in the lemma type.</p>\n<p>Maybe someone can tell me how to adjust <code>elabTerm</code>' to fix this? Why does it want to specialize to <code>Nat</code> here when I didn’t ask for it?</p>",
+        "id": 397065014,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697534484
+    },
+    {
+        "content": "<blockquote>\n<p>Why does it want to specialize to Nat here when I didn’t ask for it?</p>\n</blockquote>\n<p>That's <code>@[default_instance]</code> kicking in</p>",
+        "id": 397065662,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697534723
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"644391\">@loogle</span> (0 : ?b) ≤ ?a * ?a</p>",
+        "id": 397065994,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1697534846
+    },
+    {
+        "content": "<p><span aria-label=\"shrug\" class=\"emoji emoji-1f937\" role=\"img\" title=\"shrug\">:shrug:</span> nothing found</p>",
+        "id": 397066001,
+        "sender_full_name": "loogle",
+        "timestamp": 1697534849
+    },
+    {
+        "content": "<p>Can I tell the elaborator that I don’t want any defaulting?</p>",
+        "id": 397066178,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697534910
+    },
+    {
+        "content": "<p>If you set <code>mayPostpone := true</code> then it won't use default instances</p>",
+        "id": 397066270,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697534945
+    },
+    {
+        "content": "<p>Let me try that, I wonder if that flag was set for some other reason here.</p>",
+        "id": 397066515,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697535032
+    },
+    {
+        "content": "<p>At least my rudimentary test suite passes :-)<br>\nI’ll try that, and wait for reports about what broke…</p>\n<p>Thanks for the help!</p>",
+        "id": 397067307,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697535333
+    },
+    {
+        "content": "<p>(I got the <code>elabTerm'</code> originally from <a href=\"#narrow/stream/270676-lean4/topic/meta.20variable.20confusion/near/387525132\">https://leanprover.zulipchat.com/#narrow/stream/270676-lean4/topic/meta.20variable.20confusion/near/387525132</a>, but maybe the <code>mayPostpone := false</code> wasn’t important to fix the issue there.)</p>",
+        "id": 397067929,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697535536
+    },
+    {
+        "content": "<p>This works now:<br>\n<span class=\"user-mention\" data-user-id=\"644391\">@loogle</span> |- 0 ≤ ?a * ?a</p>",
+        "id": 397081320,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697539681
+    },
+    {
+        "content": "<p>Failure! Bot is unavailable</p>",
+        "id": 397081400,
+        "sender_full_name": "loogle",
+        "timestamp": 1697539703
+    },
+    {
+        "content": "<p>The variant without <code>|-</code> times out with</p>\n<blockquote>\n<p>(deterministic) timeout at 'isDefEq', maximum number of heartbeats (200000) has been reached (use 'set_option maxHeartbeats &lt;num&gt;' to set the limit)</p>\n</blockquote>",
+        "id": 397081422,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697539710
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"644391\">@loogle</span>  |- 0 ≤ ?a * ?a</p>",
+        "id": 397081478,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697539729
+    },
+    {
+        "content": "<p>Failure! Bot is unavailable</p>",
+        "id": 397081530,
+        "sender_full_name": "loogle",
+        "timestamp": 1697539750
+    },
+    {
+        "content": "<p>Odd. <br>\n<span class=\"user-mention\" data-user-id=\"644391\">@loogle</span> |- 0 ≤ ?a * ?a</p>",
+        "id": 397081589,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697539772
+    },
+    {
+        "content": "<p>Failure! Bot is unavailable</p>",
+        "id": 397081632,
+        "sender_full_name": "loogle",
+        "timestamp": 1697539793
+    },
+    {
+        "content": "<p>Maybe I was just racing with someone else using the bot. Last try:<br>\n<span class=\"user-mention\" data-user-id=\"644391\">@loogle</span> |- 0 ≤ ?a * ?a</p>",
+        "id": 397081820,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697539854
+    },
+    {
+        "content": "<p>Failure! Bot is unavailable</p>",
+        "id": 397081874,
+        "sender_full_name": "loogle",
+        "timestamp": 1697539875
+    },
+    {
+        "content": "<p>It seems it’s <em>just</em> too slow for zulip’s 5s timeout. But <a href=\"https://loogle.lean-lang.org/?q=%7C-+0+%E2%89%A4+%3Fa+*+%3Fa\">https://loogle.lean-lang.org/?q=%7C-+0+%E2%89%A4+%3Fa+*+%3Fa</a> gives it.</p>",
+        "id": 397082107,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697539950
+    },
+    {
+        "content": "<p>Is the bot able to differentiate between a missing connection and a timeout?</p>",
+        "id": 397082138,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697539959
+    },
+    {
+        "content": "<p>maybe you need a less (deterministic) timeout</p>",
+        "id": 397082190,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697539985
+    },
+    {
+        "content": "<p>It’s not the bot, it’s the zulip server. I think it’s a timeout in all these cases.</p>",
+        "id": 397082195,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697539986
+    },
+    {
+        "content": "<p>and a more wall-clock based one</p>",
+        "id": 397082215,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697539995
+    },
+    {
+        "content": "<p>isn't the bot the one that says the bot is unavailable?</p>",
+        "id": 397082401,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697540063
+    },
+    {
+        "content": "<p>Yes, the python server wrapper could be more zulip-friendly here. Contributions welcome, if someone feels like dealing with concurrent programming and cross-process communication in python :-)</p>",
+        "id": 397082416,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697540070
+    },
+    {
+        "content": "<p>which I suppose is confusing in itself, there are I guess two bots involved</p>",
+        "id": 397082446,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697540081
+    },
+    {
+        "content": "<p>No, the zulip server, when the bot (my server) doesn’t respond fast enough. I could also make my server post the response via POST, then there would be no timeout… maybe I’ll do that.</p>",
+        "id": 397082518,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697540117
+    },
+    {
+        "content": "<p>I wonder whether it has to be so slow, or if <code>isDefEq</code> is doing some unnecessary or unwanted steps, such as trying to solve type class constraints or so.</p>\n<p>Looking at</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.Meta.isDefEq</span> <span class=\"n\">true</span> <span class=\"k\">in</span>\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.Meta.isDefEq.assign</span> <span class=\"n\">true</span> <span class=\"k\">in</span>\n<span class=\"bp\">#</span><span class=\"n\">find</span> <span class=\"mi\">0</span> <span class=\"bp\">≤</span> <span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"bp\">*</span> <span class=\"bp\">?</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"s2\">\"mul_self_nonneg\"</span><span class=\"o\">,</span> <span class=\"n\">LinearOrderedRing</span>\n</code></pre></div>\n<p>I see</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Scratch3.lean</span><span class=\"o\">:</span><span class=\"mi\">5</span><span class=\"o\">:</span><span class=\"mi\">6</span>\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.3</span> <span class=\"mi\">0</span> <span class=\"bp\">=?=</span> <span class=\"n\">OfNat</span> <span class=\"n\">ℕ</span><span class=\"bp\">+</span> <span class=\"o\">(</span><span class=\"bp\">?</span><span class=\"n\">m.10</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.3</span> <span class=\"mi\">0</span> <span class=\"bp\">=?=</span> <span class=\"n\">OfNat</span> <span class=\"n\">ℕ</span><span class=\"bp\">+</span> <span class=\"o\">(</span><span class=\"bp\">?</span><span class=\"n\">m.17</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.3</span> <span class=\"mi\">0</span> <span class=\"bp\">=?=</span> <span class=\"n\">OfNat</span> <span class=\"n\">ℕ</span><span class=\"bp\">+</span> <span class=\"o\">(</span><span class=\"bp\">?</span><span class=\"n\">m.28</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.49</span> <span class=\"mi\">0</span> <span class=\"bp\">=?=</span> <span class=\"n\">OfNat</span> <span class=\"n\">ℕ</span><span class=\"bp\">+</span> <span class=\"o\">(</span><span class=\"bp\">?</span><span class=\"n\">m.130</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.49</span> <span class=\"mi\">0</span> <span class=\"bp\">=?=</span> <span class=\"n\">OfNat</span> <span class=\"n\">ℕ</span><span class=\"bp\">+</span> <span class=\"o\">(</span><span class=\"bp\">?</span><span class=\"n\">m.227</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">▶</span>\n<span class=\"n\">Scratch3.lean</span><span class=\"o\">:</span><span class=\"mi\">5</span><span class=\"o\">:</span><span class=\"mi\">6</span>\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">✅</span> <span class=\"bp\">?</span><span class=\"n\">m.31</span> <span class=\"bp\">=?=</span> <span class=\"bp\">?</span><span class=\"n\">m.3</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">✅</span> <span class=\"bp\">?</span><span class=\"n\">m.3</span> <span class=\"bp\">=?=</span> <span class=\"bp\">?</span><span class=\"n\">m.49</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">✅</span> <span class=\"bp\">?</span><span class=\"n\">m.49</span> <span class=\"bp\">=?=</span> <span class=\"bp\">?</span><span class=\"n\">m.49</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">LE</span> <span class=\"bp\">?</span><span class=\"n\">m.49</span> <span class=\"bp\">=?=</span> <span class=\"n\">LE</span> <span class=\"o\">(</span><span class=\"n\">Set</span> <span class=\"bp\">?</span><span class=\"n\">m.124</span><span class=\"o\">)</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">LE</span> <span class=\"bp\">?</span><span class=\"n\">m.49</span> <span class=\"bp\">=?=</span> <span class=\"n\">LE</span> <span class=\"o\">(</span><span class=\"n\">Set</span> <span class=\"bp\">?</span><span class=\"n\">m.222</span><span class=\"o\">)</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">LE</span> <span class=\"bp\">?</span><span class=\"n\">m.49</span> <span class=\"bp\">=?=</span> <span class=\"n\">LE</span> <span class=\"o\">(</span><span class=\"n\">Set</span> <span class=\"bp\">?</span><span class=\"n\">m.314</span><span class=\"o\">)</span> <span class=\"bp\">▶</span>\n<span class=\"n\">Scratch3.lean</span><span class=\"o\">:</span><span class=\"mi\">5</span><span class=\"o\">:</span><span class=\"mi\">10</span>\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">✅</span> <span class=\"bp\">?</span><span class=\"n\">m.22</span> <span class=\"bp\">=?=</span> <span class=\"bp\">?</span><span class=\"n\">m.29</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">✅</span> <span class=\"bp\">?</span><span class=\"n\">m.29</span> <span class=\"bp\">=?=</span> <span class=\"bp\">?</span><span class=\"n\">m.30</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">HMul</span> <span class=\"bp\">?</span><span class=\"n\">m.30</span> <span class=\"bp\">?</span><span class=\"n\">m.30</span>\n      <span class=\"bp\">?</span><span class=\"n\">m.33</span> <span class=\"bp\">=?=</span> <span class=\"n\">HMul</span> <span class=\"o\">(</span><span class=\"n\">MonoidAlgebra</span> <span class=\"bp\">?</span><span class=\"n\">m.42</span> <span class=\"bp\">?</span><span class=\"n\">m.43</span><span class=\"o\">)</span>\n      <span class=\"o\">(</span><span class=\"n\">Representation.asModule</span> <span class=\"o\">(</span><span class=\"n\">Representation.ofMulAction</span> <span class=\"bp\">?</span><span class=\"n\">m.42</span> <span class=\"bp\">?</span><span class=\"n\">m.43</span> <span class=\"bp\">?</span><span class=\"n\">m.43</span><span class=\"o\">))</span> <span class=\"o\">(</span><span class=\"n\">MonoidAlgebra</span> <span class=\"bp\">?</span><span class=\"n\">m.42</span> <span class=\"bp\">?</span><span class=\"n\">m.43</span><span class=\"o\">)</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">HMul</span> <span class=\"bp\">?</span><span class=\"n\">m.30</span> <span class=\"bp\">?</span><span class=\"n\">m.30</span>\n      <span class=\"bp\">?</span><span class=\"n\">m.133</span> <span class=\"bp\">=?=</span> <span class=\"n\">HMul</span> <span class=\"o\">(</span><span class=\"n\">MonoidAlgebra</span> <span class=\"bp\">?</span><span class=\"n\">m.142</span> <span class=\"bp\">?</span><span class=\"n\">m.143</span><span class=\"o\">)</span>\n      <span class=\"o\">(</span><span class=\"n\">Representation.asModule</span> <span class=\"o\">(</span><span class=\"n\">Representation.ofMulAction</span> <span class=\"bp\">?</span><span class=\"n\">m.142</span> <span class=\"bp\">?</span><span class=\"n\">m.143</span> <span class=\"bp\">?</span><span class=\"n\">m.143</span><span class=\"o\">))</span> <span class=\"o\">(</span><span class=\"n\">MonoidAlgebra</span> <span class=\"bp\">?</span><span class=\"n\">m.142</span> <span class=\"bp\">?</span><span class=\"n\">m.143</span><span class=\"o\">)</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">HMul</span> <span class=\"bp\">?</span><span class=\"n\">m.30</span> <span class=\"bp\">?</span><span class=\"n\">m.30</span>\n      <span class=\"bp\">?</span><span class=\"n\">m.228</span> <span class=\"bp\">=?=</span> <span class=\"n\">HMul</span> <span class=\"o\">(</span><span class=\"n\">MonoidAlgebra</span> <span class=\"bp\">?</span><span class=\"n\">m.237</span> <span class=\"bp\">?</span><span class=\"n\">m.238</span><span class=\"o\">)</span>\n      <span class=\"o\">(</span><span class=\"n\">Representation.asModule</span> <span class=\"o\">(</span><span class=\"n\">Representation.ofMulAction</span> <span class=\"bp\">?</span><span class=\"n\">m.237</span> <span class=\"bp\">?</span><span class=\"n\">m.238</span> <span class=\"bp\">?</span><span class=\"n\">m.238</span><span class=\"o\">))</span> <span class=\"o\">(</span><span class=\"n\">MonoidAlgebra</span> <span class=\"bp\">?</span><span class=\"n\">m.237</span> <span class=\"bp\">?</span><span class=\"n\">m.238</span><span class=\"o\">)</span> <span class=\"bp\">▶</span>\n<span class=\"n\">Scratch3.lean</span><span class=\"o\">:</span><span class=\"mi\">5</span><span class=\"o\">:</span><span class=\"mi\">0</span>\n<span class=\"n\">Found</span> <span class=\"mi\">17</span> <span class=\"n\">definitions</span> <span class=\"n\">mentioning</span> <span class=\"n\">HMul.hMul</span><span class=\"o\">,</span> <span class=\"n\">LinearOrderedRing</span><span class=\"o\">,</span> <span class=\"n\">LE.le</span> <span class=\"n\">and</span> <span class=\"n\">OfNat.ofNat.</span>\n<span class=\"n\">Of</span> <span class=\"n\">these</span><span class=\"o\">,</span> <span class=\"mi\">1</span> <span class=\"k\">have</span> <span class=\"n\">a</span> <span class=\"n\">name</span> <span class=\"n\">containing</span> <span class=\"s2\">\"mul_self_nonneg\"</span><span class=\"bp\">.</span>\n<span class=\"n\">Of</span> <span class=\"n\">these</span><span class=\"o\">,</span> <span class=\"mi\">1</span> <span class=\"k\">match</span> <span class=\"n\">your</span> <span class=\"n\">patterns.</span>\n<span class=\"bp\">•</span> <span class=\"n\">mul_self_nonneg</span>\n<span class=\"n\">Scratch3.lean</span><span class=\"o\">:</span><span class=\"mi\">5</span><span class=\"o\">:</span><span class=\"mi\">0</span>\n<span class=\"o\">[</span><span class=\"n\">Meta.isDefEq</span><span class=\"o\">]</span> <span class=\"bp\">✅</span> <span class=\"mi\">0</span> <span class=\"bp\">≤</span> <span class=\"n\">a</span> <span class=\"bp\">*</span> <span class=\"n\">a</span> <span class=\"bp\">=?=</span> <span class=\"mi\">0</span> <span class=\"bp\">≤</span> <span class=\"bp\">?</span><span class=\"n\">m.335</span> <span class=\"bp\">*</span> <span class=\"bp\">?</span><span class=\"n\">m.335</span> <span class=\"bp\">▶</span>\n</code></pre></div>\n<p>and I am a bit surprised to see mention of <code>MonoidAlgebra</code>, or <code>OfNat ?m.3 0 =?= OfNat ℕ+ (?m.10 + 1)</code>, or <code>LE (Set…)</code> here.  It seems to be performing some kind of search.</p>\n<p>Any ideas what <code>isDefEq</code> is doing here?</p>",
+        "id": 397112707,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697550426
+    },
+    {
+        "content": "<p>What does <code>trace.Meta.synthInstance</code> say? Also should I be able to copy and paste that code?</p>",
+        "id": 397114617,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697550971
+    },
+    {
+        "content": "<p>On branch joachim/find you should (has a working cache, so should be quick)</p>",
+        "id": 397117138,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697551664
+    },
+    {
+        "content": "<p>It does try to synth instances for <code>PNat</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[</span><span class=\"n\">Meta.synthInstance</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.3</span> <span class=\"mi\">0</span> <span class=\"bp\">▼</span>\n  <span class=\"o\">[]</span> <span class=\"n\">new</span> <span class=\"n\">goal</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.3</span> <span class=\"mi\">0</span> <span class=\"bp\">▶</span>\n  <span class=\"o\">[]</span> <span class=\"bp\">💥</span> <span class=\"n\">apply</span> <span class=\"n\">instOfNatPNatHAddNatInstHAddInstAddNatOfNat</span> <span class=\"n\">to</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.3</span> <span class=\"mi\">0</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.synthInstance</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.3</span> <span class=\"mi\">0</span> <span class=\"bp\">▼</span>\n  <span class=\"o\">[]</span> <span class=\"n\">new</span> <span class=\"n\">goal</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.3</span> <span class=\"mi\">0</span> <span class=\"bp\">▶</span>\n  <span class=\"o\">[]</span> <span class=\"bp\">💥</span> <span class=\"n\">apply</span> <span class=\"n\">instOfNatPNatHAddNatInstHAddInstAddNatOfNat</span> <span class=\"n\">to</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.3</span> <span class=\"mi\">0</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.synthInstance</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.3</span> <span class=\"mi\">0</span> <span class=\"bp\">▼</span>\n  <span class=\"o\">[]</span> <span class=\"n\">new</span> <span class=\"n\">goal</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.3</span> <span class=\"mi\">0</span> <span class=\"bp\">▶</span>\n  <span class=\"o\">[]</span> <span class=\"bp\">💥</span> <span class=\"n\">apply</span> <span class=\"n\">instOfNatPNatHAddNatInstHAddInstAddNatOfNat</span> <span class=\"n\">to</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.3</span> <span class=\"mi\">0</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.synthInstance</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.49</span> <span class=\"mi\">0</span> <span class=\"bp\">▼</span>\n  <span class=\"o\">[]</span> <span class=\"n\">new</span> <span class=\"n\">goal</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.49</span> <span class=\"mi\">0</span> <span class=\"bp\">▶</span>\n  <span class=\"o\">[]</span> <span class=\"bp\">💥</span> <span class=\"n\">apply</span> <span class=\"n\">instOfNatPNatHAddNatInstHAddInstAddNatOfNat</span> <span class=\"n\">to</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.49</span> <span class=\"mi\">0</span> <span class=\"bp\">▶</span>\n\n<span class=\"o\">[</span><span class=\"n\">Meta.synthInstance</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.49</span> <span class=\"mi\">0</span> <span class=\"bp\">▼</span>\n  <span class=\"o\">[]</span> <span class=\"n\">new</span> <span class=\"n\">goal</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.49</span> <span class=\"mi\">0</span> <span class=\"bp\">▶</span>\n  <span class=\"o\">[]</span> <span class=\"bp\">💥</span> <span class=\"n\">apply</span> <span class=\"n\">instOfNatPNatHAddNatInstHAddInstAddNatOfNat</span> <span class=\"n\">to</span> <span class=\"n\">OfNat</span> <span class=\"bp\">?</span><span class=\"n\">m.49</span> <span class=\"mi\">0</span> <span class=\"bp\">▶</span>\n</code></pre></div>\n<p>and</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[</span><span class=\"n\">Meta.synthInstance</span><span class=\"o\">]</span> <span class=\"bp\">💥</span> <span class=\"n\">HMul</span> <span class=\"bp\">?</span><span class=\"n\">m.30</span> <span class=\"bp\">?</span><span class=\"n\">m.30</span> <span class=\"bp\">?</span><span class=\"n\">m.31</span> <span class=\"bp\">▼</span>\n  <span class=\"o\">[]</span> <span class=\"n\">new</span> <span class=\"n\">goal</span> <span class=\"n\">HMul</span> <span class=\"bp\">?</span><span class=\"n\">m.30</span> <span class=\"bp\">?</span><span class=\"n\">m.30</span> <span class=\"n\">_tc.0</span> <span class=\"bp\">▶</span>\n  <span class=\"o\">[]</span> <span class=\"bp\">💥</span> <span class=\"n\">apply</span> <span class=\"bp\">@</span><span class=\"n\">Representation.instHMulMonoidAlgebraToSemiringAsModuleFinsuppToZeroToCommMonoidWithZeroToMonoidToDivInvMonoidAddCommMonoidToAddCommMonoidToNonUnitalNonAssocSemiringToNonAssocSemiringModuleToModuleOfMulActionToMulAction</span> <span class=\"n\">to</span> <span class=\"n\">HMul</span>\n        <span class=\"bp\">?</span><span class=\"n\">m.30</span> <span class=\"bp\">?</span><span class=\"n\">m.30</span> <span class=\"bp\">?</span><span class=\"n\">m.33</span> <span class=\"bp\">▶</span>\n</code></pre></div>\n<p>Nice instance name… is that intentional?</p>",
+        "id": 397117932,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697551893
+    },
+    {
+        "content": "<p><code>cache</code> is misbehaving.</p>\n<p>That name is tame compared to some. <a href=\"https://github.com/leanprover/lean4/pull/2343\">lean4#2343</a></p>",
+        "id": 397118340,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1697552003
+    },
+    {
+        "content": "<p>Oh, how annoying that the cache doesn't work.</p>",
+        "id": 397119115,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697552217
+    },
+    {
+        "content": "<p>But you might be on the right track, with it seems that most time is spent in instance inference:</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<div class=\"codehilite\"><pre><span></span><code>set_option profiler true in\nset_option profiler.threshold 10 in\n#find |- 0 ≤ ?a * ?a\n…\ntypeclass inference of OfNat took 14ms\ntypeclass inference of OfNat took 13.9ms\ntypeclass inference of OfNat took 14.1ms\ntypeclass inference of OfNat took 14.9ms\ntypeclass inference of OfNat took 14.8ms\ntypeclass inference of OfNat took 14.9ms\ntypeclass inference of OfNat took 15.1ms\ntypeclass inference of OfNat took 15.3ms\ntypeclass inference of AddZeroClass took 20.6ms\ntypeclass inference of AddMonoid took 19.2ms\ntypeclass inference of AddCommMonoid took 16.7ms\ntypeclass inference of OfNat took 15.9ms\ntypeclass inference of OfNat took 15.5ms\ntypeclass inference of AddZeroClass took 21.7ms\ntypeclass inference of AddMonoid took 19.7ms\ntypeclass inference of AddCommMonoid took 16.4ms\ntypeclass inference of OfNat took 15.8ms\ntypeclass inference of OfNat took 15.5ms\ntypeclass inference of OfNat took 16.2ms\ntypeclass inference of OfNat took 15.4ms\ntypeclass inference of OfNat took 15.3ms\ntypeclass inference of OfNat took 14.8ms\ntypeclass inference of OfNat took 14.9ms\ntypeclass inference of OfNat took 14.7ms\ntypeclass inference of OfNat took 14.4ms\ntypeclass inference of OfNat took 15.3ms\ntypeclass inference of OfNat took 14.6ms\ntypeclass inference of OfNat took 14.7ms\ntypeclass inference of OfNat took 15ms\ntypeclass inference of OfNat took 14.7ms\ntypeclass inference of OfNat took 14.6ms\ntypeclass inference of OfNat took 15.1ms\ntypeclass inference of OfNat took 14.7ms\ntypeclass inference of OfNat took 14.7ms\ntypeclass inference of OfNat took 15.3ms\ntypeclass inference of OfNat took 14.8ms\ntypeclass inference of OfNat took 14.6ms\ntypeclass inference of OfNat took 14.7ms\ntypeclass inference of OfNat took 14.6ms\ntypeclass inference of OfNat took 14.5ms\ntypeclass inference of OfNat took 14.4ms\ntypeclass inference of OfNat took 14.5ms\ntypeclass inference of OfNat took 14.9ms\ntypeclass inference of OfNat took 14.7ms\ntypeclass inference of OfNat took 15.3ms\ntypeclass inference of OfNat took 14.7ms\ntypeclass inference of OfNat took 14.8ms\ntypeclass inference of OfNat took 14.6ms\ntypeclass inference of OfNat took 14.6ms\ntypeclass inference of AddZeroClass took 46.3ms\ntypeclass inference of AddMonoid took 46.1ms\ntypeclass inference of AddCommMonoid took 41.1ms\ntypeclass inference of OfNat took 68ms\ntypeclass inference of OfNat took 15.5ms\ntypeclass inference of OfNat took 15.5ms\ntypeclass inference of OfNat took 14.9ms\ntypeclass inference of OfNat took 14.7ms\ntypeclass inference of OfNat took 14.9ms\ntypeclass inference of OfNat took 14.8ms\ntypeclass inference of OfNat took 15.2ms\ntypeclass inference of OfNat took 14.8ms\ntypeclass inference of OfNat took 15.1ms\ntypeclass inference of OfNat took 15.6ms\ntypeclass inference of OfNat took 15.5ms\ntypeclass inference of OfNat took 15.2ms\ntypeclass inference of OfNat took 16.4ms\ntypeclass inference of OfNat took 17.5ms\ntypeclass inference of OfNat took 15.3ms\ntypeclass inference of OfNat took 15.5ms\ntypeclass inference of OfNat took 15.8ms\ntypeclass inference of OfNat took 185ms\ntypeclass inference of OfNat took 15.4ms\n#find took 302ms\n</code></pre></div>\n</div></div>\n<p>So the question is why <code>isDefEq</code> is even trying to infer instances here, and if really has to, and if not, how it can be told not to.</p>",
+        "id": 397121219,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1697552853
+    }
+]

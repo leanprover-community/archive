@@ -1,0 +1,38 @@
+[
+    {
+        "content": "<p>I'm trying to debug a slow <code>erw</code> and I noticed the following. I have some definition <code>foobar</code> and this is slow (4 seconds):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">set_option</span> <span class=\"n\">trace.profiler</span> <span class=\"n\">true</span> <span class=\"k\">in</span>\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">foobar</span> <span class=\"n\">n</span> <span class=\"n\">A</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">foobar</span> <span class=\"n\">n</span> <span class=\"n\">A</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">rfl</span>\n</code></pre></div>\n<p>But the trace looks like this:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>[Elab.command] [4.021643s] example : foobar n A (n + 1 + 1) = foobar n A (n + 2) :=\n      rfl ▼\n  [step] [0.904533s] expected type: Sort ?u.127734, term\n      foobar n A (n + 1 + 1) = foobar n A (n + 2) ▶\n  [step] [1.555596s] expected type: GroupCohomology.foobar n A (n + 1 + 1) = GroupCohomology.foobar n A (n + 2), term\n      rfl ▼\n    [Meta.isDefEq] [1.555313s] ✅ GroupCohomology.foobar n A (n + 1 + 1) = GroupCohomology.foobar n A (n + 2) =?= ?m.131706 = ?m.131706 ▼\n      [] [1.555200s] ✅ GroupCohomology.foobar n A (n + 2) =?= GroupCohomology.foobar n A (n + 1 + 1) ▶\n  [Meta.isDefEq] [1.542510s] ✅ GroupCohomology.foobar n A (n + 1 + 1) =\n        GroupCohomology.foobar n A\n          (n + 1 + 1) =?= GroupCohomology.foobar n A (n + 1 + 1) = GroupCohomology.foobar n A (n + 2) ▼\n    [] [1.542491s] ✅ GroupCohomology.foobar n A (n + 1 + 1) =?= GroupCohomology.foobar n A (n + 2) ▶\n</code></pre></div>\n<p>The <code>[Elab.command]</code> becomes two <code>[step]</code>s and a <code>[Meta.isDefEq]</code>.  The final <code>[Meta.isDefEq]</code> expands into a <code>[]</code> which is this (and takes 1.5 seconds):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>    <span class=\"o\">[]</span> <span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"bp\">.</span><span class=\"mi\">542491</span><span class=\"n\">s</span><span class=\"o\">]</span> <span class=\"bp\">✅</span> <span class=\"n\">GroupCohomology.foobar</span> <span class=\"n\">n</span> <span class=\"n\">A</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">=?=</span> <span class=\"n\">GroupCohomology.foobar</span> <span class=\"n\">n</span> <span class=\"n\">A</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">2</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>But the second <code>[step]</code> expands intp a <code>[Meta.isDefEq]</code> and then a <code>[]</code> which is this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[]</span> <span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"bp\">.</span><span class=\"mi\">555200</span><span class=\"n\">s</span><span class=\"o\">]</span> <span class=\"bp\">✅</span> <span class=\"n\">GroupCohomology.foobar</span> <span class=\"n\">n</span> <span class=\"n\">A</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"bp\">=?=</span> <span class=\"n\">GroupCohomology.foobar</span> <span class=\"n\">n</span> <span class=\"n\">A</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>and that's taking another 1.5 seconds to answer the same equation up to <code>isDefEq.symm</code>. In particular the system is doing twice as much work as needed here. Is this expected?</p>",
+        "id": 390120796,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1694336524
+    },
+    {
+        "content": "<p>Note that <code>by rfl</code> avoids this. It might still be worth filing an issue for this but generally speaking it is expected that tactics have more fine-grained control over what's happening than general elaboration has.</p>",
+        "id": 390127430,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694341063
+    },
+    {
+        "content": "<p>Indeed using even more control as in <code>by with_reducible rfl</code> makes the proof time insignificant, only the type elaboration is left in the trace. By allowing fewer definitions to be unfolded by Lean, we force it to consider earlier that the function applications <code>foobar ... (n + 1 + 1) =?= foobar ... (n + 2)</code> are defeq because the arguments <code>n + 1 + 1 =?= n + 2</code> are defeq.</p>",
+        "id": 390131764,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694343898
+    },
+    {
+        "content": "<p>I was surprised by your diagnosis because I had not even supplied a mwe, but indeed <code>by rfl</code> is twice as quick and <code>by with_reducible rfl</code> even quicker (under a second). Thanks!</p>",
+        "id": 390137422,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1694347184
+    },
+    {
+        "content": "<p>I assumed it would be easier to use your full example from the other thread than to build my own :)</p>",
+        "id": 390140035,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694348908
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110038\">@Kevin Buzzard</span> <a href=\"#narrow/stream/270676-lean4/topic/rfl.20repeating.20itself/near/390120796\">said</a>:</p>\n<blockquote>\n<p>But the second <code>[step]</code> expands intp a <code>[Meta.isDefEq]</code> and then a <code>[]</code> </p>\n</blockquote>\n<p>By the way, the symbology here is that a <code>[]</code> step has the same label as its parent, so these are both <code>Meta.isDefEq</code> traces</p>",
+        "id": 393584188,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1695857084
+    }
+]

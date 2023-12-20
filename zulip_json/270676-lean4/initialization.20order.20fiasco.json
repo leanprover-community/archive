@@ -1,0 +1,116 @@
+[
+    {
+        "content": "<p>I've been debugging <a href=\"https://github.com/leanprover-community/mathlib4/pull/4573\">!4#4573</a>, which has a random failure in the first file to import <code>Mathlib.Tactic.LabelAttr</code> after disabling the compiler. (Spoilers, the new compiler is completely unrelated to the bug.) Isolating only the important parts, the code looks something like this (without the print statements):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">initialize</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">IO.Ref</span> <span class=\"n\">Nat</span> <span class=\"bp\">←</span> <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"1\"</span><span class=\"bp\">;</span> <span class=\"n\">IO.mkRef</span> <span class=\"mi\">0</span>\n<span class=\"n\">initialize</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Unit</span> <span class=\"bp\">←</span> <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"2\"</span><span class=\"bp\">;</span> <span class=\"n\">a.modify</span> <span class=\"o\">(</span><span class=\"bp\">·</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>In actual practice the first initialize is <code>initialize labelExtensionMapRef</code> and the second one is created indirectly by</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"sd\">/-- A dummy label attribute, to ease testing. -/</span>\n<span class=\"n\">register_label_attr</span> <span class=\"n\">dummy_label_attr</span>\n</code></pre></div>\n<p>Now my first reaction to this was, how is this allowed in the first place? You can't evaluate initialize variables which were declared in the same file. But since it's in another <code>initialize</code> it doesn't actually run in the file itself, the initialize blocks are run when the next file imports this one. So far so good.</p>\n<p>But then when one tries to minimize this, you randomly get either a failure <code>error: cannot evaluate </code>[init]<code> declaration 'a' in the same module</code> when you try to import this file in another, or everything works fine. For example, this works:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">initialize</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">IO.Ref</span> <span class=\"n\">Nat</span> <span class=\"bp\">←</span> <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"1\"</span><span class=\"bp\">;</span> <span class=\"n\">IO.mkRef</span> <span class=\"mi\">0</span>\n<span class=\"n\">initialize</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Unit</span> <span class=\"bp\">←</span> <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"2\"</span><span class=\"bp\">;</span> <span class=\"n\">a.modify</span> <span class=\"o\">(</span><span class=\"bp\">·</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>but this fails</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">initialize</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">IO.Ref</span> <span class=\"n\">Nat</span> <span class=\"bp\">←</span> <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"1\"</span><span class=\"bp\">;</span> <span class=\"n\">IO.mkRef</span> <span class=\"mi\">0</span>\n<span class=\"n\">initialize</span> <span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">Unit</span> <span class=\"bp\">←</span> <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"2\"</span><span class=\"bp\">;</span> <span class=\"n\">a.modify</span> <span class=\"o\">(</span><span class=\"bp\">·</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>where the only difference is that the second <code>initialize</code> is named <code>c</code> instead of <code>b</code>. It is also affected by adding or removing definitions with other names between and around the <code>initialize</code>. I am at this point fairly sure that the effect I am seeing is hashmap iteration order. Finally, we see that in the <code>a,b</code> case we see <code>1, 2</code> and no error, and in the <code>a,c</code> case we see <code>2</code> and then the failure.</p>\n<p>In other words <strong><code>[init]</code> declarations are executed in random order</strong>, which is bad when there are dependencies between them as in this case. It is surprising we don't run into this more often, but for the most part dependency relations have to go via separate files anyway because the body code of a lean file executes before any <code>[init]</code> declarations made in the same file.</p>\n<p>So I guess this is a PSA, or possibly a bug report if the <code>[init]</code> declarations are supposed to be happening in declaration order (which would be more sensible).</p>",
+        "id": 363247722,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1685783345
+    },
+    {
+        "content": "<p>Yes, this is definitely a bug in <code>[init]</code></p>",
+        "id": 363249788,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1685783880
+    },
+    {
+        "content": "<p>Do you think there is any hope to fix that today? It is not crucial of course but it would allow to start the MSRI summer school on Monday with 50 people downloading a lot less.</p>",
+        "id": 363251922,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1685784438
+    },
+    {
+        "content": "<p>I have a patch for this particular issue open at <a href=\"https://github.com/leanprover-community/mathlib4/pull/4623\">!4#4623</a> . Putting the <code>dummy_label_attr</code> in the same file was ill-advised to begin with.</p>",
+        "id": 363252137,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1685784490
+    },
+    {
+        "content": "<p>if we can get that merged I can try to rebase the compiler.enableNew PR on it</p>",
+        "id": 363252290,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1685784541
+    },
+    {
+        "content": "<p>(BTW, the title is a reference to <a href=\"https://en.cppreference.com/w/cpp/language/siof\">https://en.cppreference.com/w/cpp/language/siof</a>, where C++ had exactly this issue of static initializers getting run in a random order and bad things happening.)</p>",
+        "id": 363253057,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1685784742
+    },
+    {
+        "content": "<p>Thanks!</p>",
+        "id": 363256154,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1685785580
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> Do you understand the new failure in <a href=\"https://github.com/leanprover-community/mathlib4/pull/4573\">!4#4573</a>?</p>",
+        "id": 363295988,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1685795721
+    },
+    {
+        "content": "<p><code>fpowerSeries</code> shouldn't be marked <code>simp</code></p>",
+        "id": 363297264,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1685796090
+    },
+    {
+        "content": "<p>And how is that related to disabling the new compiler?</p>",
+        "id": 363297343,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1685796110
+    },
+    {
+        "content": "<p>it's probably latent nondeterminism like the other error</p>",
+        "id": 363297527,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1685796157
+    },
+    {
+        "content": "<p>if I use <code>simp [-fpowerSeries]</code> it works</p>",
+        "id": 363297626,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1685796186
+    },
+    {
+        "content": "<p>I don't think simp should be nondeterministic in this way, so it could be another bug to track down</p>",
+        "id": 363297895,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1685796264
+    },
+    {
+        "content": "<p>but also the inputs are non-confluent so <span aria-label=\"shrug\" class=\"emoji emoji-1f937\" role=\"img\" title=\"shrug\">:shrug:</span></p>",
+        "id": 363297941,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1685796280
+    },
+    {
+        "content": "<p>I'm a little concerned about these issues, is it actual nondeterminism in this case? In the case of <code>[init]</code>, it is probably the <code>Name.quickLt</code> order, so unpredictable ordering based on the hash, but ultimately determined solely by the corresponding declaration names</p>",
+        "id": 363309229,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1685799525
+    },
+    {
+        "content": "<p>I think it's not just the declaration names but also the other declarations that exist. After all, turning off the new compiler basically had the effect of deleting a large number of constants that are otherwise unused, which probably affected the size of some hashmaps and hence the relative order of existing constants</p>",
+        "id": 363325392,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1685804242
+    },
+    {
+        "content": "<p>I would expect the result of <code>quickLt</code> not to be affected by the existence of other declarations, except that they might have used up some unique names, making some hygienic names have different numbers in them, making them have a different hash...</p>",
+        "id": 363325829,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1685804364
+    },
+    {
+        "content": "<p>still I don't see why that would arise in simp. Aren't the lemmas applied strictly in declaration / priority order once we have a candidate list from the discrimination tree?</p>",
+        "id": 363326212,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1685804459
+    },
+    {
+        "content": "<p>Ah, shifted hygiene scopes are a good point. I don't know why simp could be affected either though</p>",
+        "id": 363329468,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1685805352
+    }
+]

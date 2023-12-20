@@ -1,0 +1,194 @@
+[
+    {
+        "content": "<p>I just came across some weird behaviour with <code>simpa using</code>. I was under the impression that <code>simpa using foo</code> is supposed to be more robust than plain <code>simp</code> -- less likely to be broken by changes to the simp-lemma set. But I just encountered a case where adding a new simp lemma elsewhere in the library broke a proof of the form <code>by simpa using foo</code>, causing it to fail with the error <code>match failed: no goals</code>.</p>\n<p>Given the nature of this bug it's rather hard to produce an MWE. You can reproduce it as follows:</p>\n<ul>\n<li>grab a copy of the current mathlib3</li>\n<li>in the file <code>src/analysis/upper_half_plane/basic.lean</code>, add the following lemma at line 314 (just after <code>modular_S_smul</code>):</li>\n</ul>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[simp]</span> <span class=\"kd\">lemma</span> <span class=\"n\">modular_T_smul</span> <span class=\"o\">(</span><span class=\"n\">z</span> <span class=\"o\">:</span> <span class=\"n\">ℍ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">modular_group.T</span> <span class=\"bp\">•</span> <span class=\"n\">z</span> <span class=\"bp\">=</span> <span class=\"o\">(</span><span class=\"mi\">1</span> <span class=\"o\">:</span> <span class=\"n\">ℝ</span><span class=\"o\">)</span> <span class=\"bp\">+ᵥ</span> <span class=\"n\">z</span> <span class=\"o\">:=</span>\n<span class=\"kd\">begin</span>\n  <span class=\"k\">suffices</span> <span class=\"o\">:</span> <span class=\"o\">((</span><span class=\"n\">modular_group.T</span> <span class=\"bp\">•</span> <span class=\"n\">z</span> <span class=\"o\">:</span> <span class=\"n\">ℍ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ℂ</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"bp\">↑</span><span class=\"o\">((</span><span class=\"mi\">1</span> <span class=\"o\">:</span> <span class=\"n\">ℝ</span><span class=\"o\">)</span> <span class=\"bp\">+ᵥ</span> <span class=\"n\">z</span><span class=\"o\">),</span> <span class=\"kd\">by</span> <span class=\"n\">rwa</span> <span class=\"n\">subtype.coe_inj</span> <span class=\"n\">at</span> <span class=\"n\">this</span><span class=\"o\">,</span>\n  <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">coe_vadd</span><span class=\"o\">,</span> <span class=\"n\">add_comm</span><span class=\"o\">,</span> <span class=\"n\">special_linear_group_apply</span><span class=\"o\">,</span> <span class=\"n\">coe_mk</span><span class=\"o\">,</span> <span class=\"n\">modular_group.coe_T</span><span class=\"o\">],</span>\n  <span class=\"n\">simp</span> <span class=\"n\">only</span> <span class=\"o\">[</span><span class=\"n\">of_apply</span><span class=\"o\">,</span> <span class=\"n\">cons_val_zero</span><span class=\"o\">,</span> <span class=\"n\">algebra_map.coe_one</span><span class=\"o\">,</span> <span class=\"n\">complex.of_real_one</span><span class=\"o\">,</span> <span class=\"n\">one_mul</span><span class=\"o\">,</span>\n    <span class=\"n\">cons_val_one</span><span class=\"o\">,</span> <span class=\"n\">head_cons</span><span class=\"o\">,</span> <span class=\"n\">algebra_map.coe_zero</span><span class=\"o\">,</span> <span class=\"n\">zero_mul</span><span class=\"o\">,</span> <span class=\"n\">zero_add</span><span class=\"o\">,</span> <span class=\"n\">div_one</span><span class=\"o\">],</span>\n<span class=\"kd\">end</span>\n</code></pre></div>\n<ul>\n<li>open <code>src/number_theory/modular.lean</code> and wait for it to recompile as far as line 327, which has the lemma</li>\n</ul>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">lemma</span> <span class=\"n\">im_T_smul</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">T</span> <span class=\"bp\">•</span> <span class=\"n\">z</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">im</span> <span class=\"bp\">=</span> <span class=\"n\">z.im</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">simpa</span> <span class=\"n\">using</span> <span class=\"n\">im_T_zpow_smul</span> <span class=\"n\">z</span> <span class=\"mi\">1</span>\n</code></pre></div>\n<p>This will now fail, where it previously worked before. The new simp lemma in <code>basic.lean</code> means that <code>im_T_smul</code> can now be proved just with <code>by simp</code>, and apparently that causes <code>by simpa using ...</code> to fail.</p>\n<p>The documentation says that <code>simpa using h</code> calls the simplifier on both <code>h</code> and the goal, and succeeds if they simplify to the same thing. My guess is that here the simplifier has simplified the goal away to nothing, then complains because it hasn't got anything to match <code>h</code> against. But surely an unexpectedly easy success shouldn't count as a failure!</p>\n<p>Is this the intended behaviour, or am I correct that it's a bug in the simpa tactic?</p>",
+        "id": 341301062,
+        "sender_full_name": "David Loeffler",
+        "timestamp": 1678636387
+    },
+    {
+        "content": "<p>We were discussing <code>simpa</code> on Discord yesterday. If I understood correctly what I was told, it behaves as follows:<br>\nIf <code>simp</code> succeeds on its own, then <code>simpa</code> will fail.</p>\n<p>Calling <code>simpa using foo</code> is supposed to do something like <code>simp [foo] at ⊢ foo, assumption</code> and, therefore, if the <code>simp</code> itself manages to close the goal (possibly because a new simp lemma was added), then <code>assumption</code> has no goals to work on.</p>\n<blockquote>\n<p>But surely an unexpectedly easy success shouldn't count as a failure!</p>\n</blockquote>\n<p>This is exactly what I thought, and I was wrong.</p>",
+        "id": 341301901,
+        "sender_full_name": "Martin Dvořák",
+        "timestamp": 1678636788
+    },
+    {
+        "content": "<p>It's not clear to me that <code>modular_T_smul </code> is a good simp lemma</p>",
+        "id": 341302209,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1678636900
+    },
+    {
+        "content": "<p>At least, it doesn't seem confluent with the rest of the simp set</p>",
+        "id": 341302241,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1678636912
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> Why do you say that? It was intended as a counterpart to the existing simp lemma</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[simp]</span> <span class=\"kd\">lemma</span> <span class=\"n\">modular_S_smul</span> <span class=\"o\">(</span><span class=\"n\">z</span> <span class=\"o\">:</span> <span class=\"n\">ℍ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">modular_group.S</span> <span class=\"bp\">•</span> <span class=\"n\">z</span> <span class=\"bp\">=</span> <span class=\"n\">mk</span> <span class=\"o\">(</span><span class=\"bp\">-</span><span class=\"n\">z</span> <span class=\"o\">:</span> <span class=\"n\">ℂ</span><span class=\"o\">)</span><span class=\"bp\">⁻¹</span> <span class=\"n\">z.im_inv_neg_coe_pos</span>\n</code></pre></div>\n<p>(S and T are the two standard generators of the modular group). Do you consider that one to be morally unsound too?</p>",
+        "id": 341302924,
+        "sender_full_name": "David Loeffler",
+        "timestamp": 1678637166
+    },
+    {
+        "content": "<p>That looks like a weird simp lemma to me too, yes; usually we don't introduce constructors (<code>mk</code>) on the RHS like that</p>",
+        "id": 341303120,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1678637247
+    },
+    {
+        "content": "<p>It's a good lemma but weird to be <code>simp</code></p>",
+        "id": 341303162,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1678637267
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"417654\">Martin Dvořák</span> <a href=\"#narrow/stream/113488-general/topic/simpa.20using/near/341301901\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>But surely an unexpectedly easy success shouldn't count as a failure!</p>\n</blockquote>\n<p>This is exactly what I thought, and I was wrong.</p>\n</blockquote>\n<p>Well, I think we've established that it <em>does</em> count as a failure, but I think there's still a case to be made that it <em>shouldn't</em>! But tactic hacking is beyond my pay grade -- let's wait and see if any metaprogramming experts can weigh in on this.</p>",
+        "id": 341304634,
+        "sender_full_name": "David Loeffler",
+        "timestamp": 1678637936
+    },
+    {
+        "content": "<blockquote>\n<p>Is this the intended behaviour, or am I correct that it's a bug in the simpa tactic?</p>\n</blockquote>\n<p>To answer your question, this is intended behavior; it forces you to simplify downstream proofs (or re-evaluate the addition of a simp lemma) when the simp set gets bigger</p>",
+        "id": 341305363,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1678638267
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"481963\">David Loeffler</span> <a href=\"#narrow/stream/113488-general/topic/simpa.20using/near/341301062\">said</a>:</p>\n<blockquote>\n<p>I was under the impression that <code>simpa using foo</code> is supposed to be more robust than plain <code>simp</code> -- less likely to be broken by changes to the simp-lemma set.</p>\n</blockquote>\n<p>I think the correct conclusion is that <code>simpa using foo</code> is more robust than <code>simp at foo, simp [foo]</code></p>",
+        "id": 341305464,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1678638331
+    },
+    {
+        "content": "<p>I think this behaviour of simpa is fixed in lean4. You will get a warning telling you that simp suffices instead of an unhelpful failure</p>",
+        "id": 341305890,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1678638524
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/113488-general/topic/simpa.20using/near/341305363\">said</a>:</p>\n<blockquote>\n<p>To answer your question, this is intended behavior; it forces you to simplify downstream proofs (or re-evaluate the addition of a simp lemma) when the simp set gets bigger</p>\n</blockquote>\n<p>If that's the case, then why do we have the rule against non-terminal <code>simp</code>s? I thought the primary reason for that rule was that authors of downstream proofs were responsible for ensuring robustness against future additions to the simp set -- rather than anyone changing the simp set being responsible for changing a whole load of other people's downstream code! I think this principle is a good one, so I'm puzzled that the policy for<code>simpa</code> is apparently the exact opposite of that for <code>simp</code>.</p>",
+        "id": 341306543,
+        "sender_full_name": "David Loeffler",
+        "timestamp": 1678638855
+    },
+    {
+        "content": "<p>I think the rule against non-terminal <code>simp</code>s is not to prevent failures when the set of simp lemmas changes, but to make corrections easier (because the immediate goal of the <code>simp</code> is always known).</p>",
+        "id": 341306826,
+        "sender_full_name": "Martin Dvořák",
+        "timestamp": 1678638982
+    },
+    {
+        "content": "<p>The problem with non-terminal <code>simp</code>s is when <code>simp, rw foo</code> fails because <code>foo</code> no longer matches; and then the person editing the file has no idea what went wrong. If <code>simp, rw foo</code> fails because the goal is already solved it's trivial to fix the proof</p>",
+        "id": 341306971,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1678639047
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"481963\">David Loeffler</span> <a href=\"#narrow/stream/113488-general/topic/simpa.20using/near/341304634\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"417654\">Martin Dvořák</span> <a href=\"#narrow/stream/113488-general/topic/simpa.20using/near/341301901\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>But surely an unexpectedly easy success shouldn't count as a failure!<br>\nWell, I think we've established that it <em>does</em> count as a failure, but I think there's still a case to be made that it <em>shouldn't</em>! </p>\n</blockquote>\n</blockquote>\n</blockquote>\n<p>Maybe I read too quickly but I certainly hope to get an error if <code>simpa using foo</code> succeeds without using <code>foo</code>. Leaving it like this would be a really really misleading proof script. Or are you saying something else?</p>",
+        "id": 341308697,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1678639870
+    },
+    {
+        "content": "<p>Lean4 has a better approach to this where we can use warning messages for \"this proof doesn't use <code>foo</code>\" and errors  for \"this proof doesn't work\", as Adam remarks above.</p>",
+        "id": 341309107,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1678640089
+    },
+    {
+        "content": "<blockquote>\n<p>Maybe I read too quickly but I certainly hope to get an error if <code>simpa using foo</code> succeeds without using <code>foo</code>. Leaving it like this would be a really really misleading proof script. Or are you saying something else?</p>\n</blockquote>\n<p>Yes, you have read correctly what I am saying. It definitely does not seem reasonable to me that the result of a tactic <em>succeeding too easily</em> should be an opaque, incomprehensible error. However, it's clearly optimal to return an informative message instructing the user how to fix the issue, so I'm happy to concede that the Lean 4 solution is the best one.</p>",
+        "id": 341310180,
+        "sender_full_name": "David Loeffler",
+        "timestamp": 1678640679
+    },
+    {
+        "content": "<p>Oh yes, better error messages are always welcome, but very often it's a lot of work.</p>",
+        "id": 341310402,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1678640765
+    },
+    {
+        "content": "<p>It emitting a warning is still annoying if you're using <code>simpa</code> to solve several goals in parallel: <code>tac1; simpa</code></p>",
+        "id": 341312073,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1678641628
+    },
+    {
+        "content": "<p>Maybe have a version of <code>simpa</code> that succeeds also when the <code>simp</code> was successful for cases like this?</p>",
+        "id": 341323390,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1678647214
+    },
+    {
+        "content": "<p>I think <code>simpa</code> vs <code>simpa using x</code> has different considerations here. What does <code>rwa</code> do if no assumption is needed?</p>",
+        "id": 341323728,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1678647441
+    },
+    {
+        "content": "<p><code>rwa</code> seems to be happy in that case.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h'</span> <span class=\"o\">:</span> <span class=\"n\">b</span> <span class=\"bp\">=</span> <span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span>\n<span class=\"kd\">begin</span>\n  <span class=\"n\">rwa</span> <span class=\"n\">h</span><span class=\"o\">,</span>\n<span class=\"kd\">end</span>\n</code></pre></div>\n<p>succeds without complaint.</p>",
+        "id": 341324732,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1678648013
+    },
+    {
+        "content": "<p>(As an aside: I think that <code>rwa ... at h</code> behaves a bit strangely, as it seems to only work when the goal can be closed by <code>h</code> after the rewrite. I.e., it seems to be equivalent to <code>rw ... at h, exact h</code> and not to <code>rw ... at h, assumption</code>. Is this impression correct, and if so, is the behavior indended?)</p>",
+        "id": 341324894,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1678648117
+    },
+    {
+        "content": "<p>I did not have this impression, and this test seems to suggest that my model is OK (i.e. the goal is closed by a random assumption here)</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">P</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">hP</span> <span class=\"o\">:</span> <span class=\"n\">P</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h'</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">=</span> <span class=\"n\">b</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">=</span> <span class=\"n\">c</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">P</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">rwa</span> <span class=\"n\">h'</span> <span class=\"n\">at</span> <span class=\"n\">h</span>\n</code></pre></div>",
+        "id": 341325692,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1678648542
+    },
+    {
+        "content": "<p>Here's the tactic code: I don't know much about tactics but I can guess what's going on here:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">meta</span> <span class=\"kd\">def</span> <span class=\"n\">rwa</span> <span class=\"o\">(</span><span class=\"n\">q</span> <span class=\"o\">:</span> <span class=\"n\">parse</span> <span class=\"n\">rw_rules</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">l</span> <span class=\"o\">:</span> <span class=\"n\">parse</span> <span class=\"n\">location</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">cfg</span> <span class=\"o\">:</span> <span class=\"n\">rewrite_cfg</span> <span class=\"o\">:=</span> <span class=\"o\">{})</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"n\">unit</span> <span class=\"o\">:=</span>\n<span class=\"n\">rewrite</span> <span class=\"n\">q</span> <span class=\"n\">l</span> <span class=\"n\">cfg</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"n\">try</span> <span class=\"n\">assumption</span>\n</code></pre></div>\n<p>(just right click on <code>rwa</code> to see it)</p>",
+        "id": 341325819,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1678648620
+    },
+    {
+        "content": "<p>Ah, OK, sorry, I may have confused things.<br>\nI think, <code>simpa [...] at h</code> does not work as I would expect (i.e., like <code>simp [...] at h, assumption</code>) -- the syntax is not even accepted.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">b</span> <span class=\"bp\">=</span> <span class=\"n\">c</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h'</span> <span class=\"o\">:</span> <span class=\"n\">b</span> <span class=\"bp\">=</span> <span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h''</span> <span class=\"o\">:</span> <span class=\"n\">c</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span>\n<span class=\"kd\">begin</span>\n  <span class=\"n\">simpa</span> <span class=\"o\">[</span><span class=\"n\">h'</span><span class=\"o\">,</span> <span class=\"n\">h''</span><span class=\"o\">]</span> <span class=\"n\">at</span> <span class=\"n\">h</span><span class=\"o\">,</span>\n<span class=\"kd\">end</span>\n</code></pre></div>\n<p>gives <code>invalid 'begin-end' expression, ',' expected</code>.</p>",
+        "id": 341326784,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1678649183
+    },
+    {
+        "content": "<p>I'm confused why you want this? Surely <code>simpa [...] using h</code> does all you would ever need? Do you just think the syntax is inconsistent (indeed it sortof is but by now we all got used to it)?</p>",
+        "id": 341327154,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1678649384
+    },
+    {
+        "content": "<p>Maybe my mental model of <code>simpa</code> was not quite correct. I guess I did not realize that <code>simpa ... using h</code> would also simplify <code>h</code>; my model was rather <code>simp ..., exact h</code>, with simplification of the goal only.<br>\nSo thanks; I've learned something!</p>",
+        "id": 341327706,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1678649668
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"387244\">Yaël Dillies</span> <a href=\"#narrow/stream/113488-general/topic/simpa.20using/near/341312073\">said</a>:</p>\n<blockquote>\n<p>It emitting a warning is still annoying if you're using <code>simpa</code> to solve several goals in parallel: <code>tac1; simpa</code></p>\n</blockquote>\n<p>The linter framework is capable of handling this case. (Individual linters have to opt in to the behavior, but) if you use <code>simpa</code> twice with the same syntax then you only get the linter warning if <em>both</em> uses are unnecessary</p>",
+        "id": 341371031,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1678683918
+    },
+    {
+        "content": "<p>Some linter-like behavior is done directly in tactic execution, which will have the indicated failure mode. An example of a linter which does this correctly is the unreachable tactic linter - <code>split &lt;;&gt; simp &lt;;&gt; rfl</code> doesn't complain on <code>rfl</code> even if it was only used in one subgoal, but if <code>simp</code> closes both goals then you will get a warning on <code>rfl</code> saying it wasn't called</p>",
+        "id": 341371328,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1678684127
+    },
+    {
+        "content": "<p>(This is all regarding lean 4 behavior. In lean 3 the error message is the best we can do.)</p>",
+        "id": 341371492,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1678684245
+    },
+    {
+        "content": "<p>Oh perfect! Then I'm very happy with the warning solution.</p>",
+        "id": 341393435,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1678694977
+    }
+]

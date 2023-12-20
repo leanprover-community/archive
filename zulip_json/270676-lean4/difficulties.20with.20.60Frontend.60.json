@@ -1,0 +1,434 @@
+[
+    {
+        "content": "<p>I am trying to use <code>Lean.Elab.Frontend</code>, and running into difficulties with persistent extensions. I'm not sure if I'm \"doing it wrong\", or what I want isn't feasible.</p>\n<p>To begin, I define a</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">compileModule</span> <span class=\"o\">(</span><span class=\"n\">module</span> <span class=\"o\">:</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">initializers</span> <span class=\"o\">:=</span> <span class=\"n\">true</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Environment</span> <span class=\"bp\">×</span> <span class=\"n\">List</span> <span class=\"n\">Message</span> <span class=\"bp\">×</span> <span class=\"n\">List</span> <span class=\"n\">InfoTree</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>function which is intended to load the source for a specified <code>module</code>, and compile it, return the resulting <code>Environment</code> and any <code>Message</code>s and <code>InfoTree</code>s produced.</p>\n<p>I also pass <code>initializers</code>, which can control whether <code>enableInitializersExecution</code> will be run.</p>",
+        "id": 383134713,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691553763
+    },
+    {
+        "content": "<p>Here's the implementation:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- `Frontend/Compile.lean`</span>\n<span class=\"kn\">import</span> <span class=\"n\">Lean.Elab.Frontend</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">System</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">Wrapper for `IO.processCommands` that enables info states, and returns</span>\n<span class=\"sd\">* the new environment</span>\n<span class=\"sd\">* messages</span>\n<span class=\"sd\">* info trees</span>\n<span class=\"sd\">-/</span>\n<span class=\"kd\">def</span> <span class=\"n\">processCommandsWithInfoTrees</span>\n    <span class=\"o\">(</span><span class=\"n\">inputCtx</span> <span class=\"o\">:</span> <span class=\"n\">Parser.InputContext</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">parserState</span> <span class=\"o\">:</span> <span class=\"n\">Parser.ModuleParserState</span><span class=\"o\">)</span>\n    <span class=\"o\">(</span><span class=\"n\">commandState</span> <span class=\"o\">:</span> <span class=\"n\">Command.State</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Environment</span> <span class=\"bp\">×</span> <span class=\"n\">List</span> <span class=\"n\">Message</span> <span class=\"bp\">×</span> <span class=\"n\">List</span> <span class=\"n\">InfoTree</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">commandState</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">commandState</span> <span class=\"k\">with</span> <span class=\"n\">infoState.enabled</span> <span class=\"o\">:=</span> <span class=\"n\">true</span> <span class=\"o\">}</span>\n  <span class=\"k\">let</span> <span class=\"n\">s</span> <span class=\"bp\">←</span> <span class=\"n\">IO.processCommands</span> <span class=\"n\">inputCtx</span> <span class=\"n\">parserState</span> <span class=\"n\">commandState</span> <span class=\"bp\">&lt;&amp;&gt;</span> <span class=\"n\">Frontend.State.commandState</span>\n  <span class=\"n\">pure</span> <span class=\"o\">(</span><span class=\"n\">s.env</span><span class=\"o\">,</span> <span class=\"n\">s.messages.msgs.toList</span><span class=\"o\">,</span> <span class=\"n\">s.infoState.trees.toList</span><span class=\"o\">)</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">Process some text input, with or without an existing environment.</span>\n<span class=\"sd\">If there is no existing environment, we parse the input for headers (e.g. import statements),</span>\n<span class=\"sd\">and create a new environment.</span>\n<span class=\"sd\">Otherwise, we add to the existing environment.</span>\n<span class=\"sd\">Returns the resulting environment, along with a list of messages and info trees.</span>\n<span class=\"sd\">-/</span>\n<span class=\"n\">unsafe</span> <span class=\"kd\">def</span> <span class=\"n\">processInput</span> <span class=\"o\">(</span><span class=\"n\">input</span> <span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">initializers</span> <span class=\"o\">:=</span> <span class=\"n\">true</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">env</span><span class=\"bp\">?</span> <span class=\"o\">:</span> <span class=\"n\">Option</span> <span class=\"n\">Environment</span><span class=\"o\">)</span>\n    <span class=\"o\">(</span><span class=\"n\">opts</span> <span class=\"o\">:</span> <span class=\"n\">Options</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">fileName</span> <span class=\"o\">:</span> <span class=\"n\">Option</span> <span class=\"n\">String</span> <span class=\"o\">:=</span> <span class=\"n\">none</span><span class=\"o\">)</span> <span class=\"o\">:</span>\n    <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Environment</span> <span class=\"bp\">×</span> <span class=\"n\">List</span> <span class=\"n\">Message</span> <span class=\"bp\">×</span> <span class=\"n\">List</span> <span class=\"n\">InfoTree</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">fileName</span>   <span class=\"o\">:=</span> <span class=\"n\">fileName.getD</span> <span class=\"s2\">\"&lt;input&gt;\"</span>\n  <span class=\"k\">let</span> <span class=\"n\">inputCtx</span>   <span class=\"o\">:=</span> <span class=\"n\">Parser.mkInputContext</span> <span class=\"n\">input</span> <span class=\"n\">fileName</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">parserState</span><span class=\"o\">,</span> <span class=\"n\">commandState</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"k\">match</span> <span class=\"n\">env</span><span class=\"bp\">?</span> <span class=\"k\">with</span>\n  <span class=\"bp\">|</span> <span class=\"n\">none</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">if</span> <span class=\"n\">initializers</span> <span class=\"k\">then</span> <span class=\"n\">enableInitializersExecution</span>\n    <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">header</span><span class=\"o\">,</span> <span class=\"n\">parserState</span><span class=\"o\">,</span> <span class=\"n\">messages</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">Parser.parseHeader</span> <span class=\"n\">inputCtx</span>\n    <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">env</span><span class=\"o\">,</span> <span class=\"n\">messages</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">processHeader</span> <span class=\"n\">header</span> <span class=\"n\">opts</span> <span class=\"n\">messages</span> <span class=\"n\">inputCtx</span>\n    <span class=\"n\">pure</span> <span class=\"o\">(</span><span class=\"n\">parserState</span><span class=\"o\">,</span> <span class=\"o\">(</span><span class=\"n\">Command.mkState</span> <span class=\"n\">env</span> <span class=\"n\">messages</span> <span class=\"n\">opts</span><span class=\"o\">))</span>\n  <span class=\"bp\">|</span> <span class=\"n\">some</span> <span class=\"n\">env</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"n\">pure</span> <span class=\"o\">({</span> <span class=\"o\">:</span> <span class=\"n\">Parser.ModuleParserState</span> <span class=\"o\">},</span> <span class=\"n\">Command.mkState</span> <span class=\"n\">env</span> <span class=\"o\">{}</span> <span class=\"n\">opts</span><span class=\"o\">)</span>\n  <span class=\"n\">processCommandsWithInfoTrees</span> <span class=\"n\">inputCtx</span> <span class=\"n\">parserState</span> <span class=\"n\">commandState</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">findLean</span> <span class=\"o\">(</span><span class=\"n\">mod</span> <span class=\"o\">:</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">FilePath</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">return</span> <span class=\"n\">FilePath.mk</span> <span class=\"o\">((</span><span class=\"bp\">←</span> <span class=\"n\">findOLean</span> <span class=\"n\">mod</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">toString.replace</span> <span class=\"s2\">\"build/lib/\"</span> <span class=\"s2\">\"\"</span><span class=\"o\">)</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">withExtension</span> <span class=\"s2\">\"lean\"</span>\n\n<span class=\"sd\">/-- Read the source code of the named module. -/</span>\n<span class=\"kd\">def</span> <span class=\"n\">moduleSource</span> <span class=\"o\">(</span><span class=\"n\">mod</span> <span class=\"o\">:</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">String</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">IO.FS.readFile</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">findLean</span> <span class=\"n\">mod</span><span class=\"o\">)</span>\n\n<span class=\"n\">unsafe</span> <span class=\"kd\">def</span> <span class=\"n\">compileModule</span> <span class=\"o\">(</span><span class=\"n\">mod</span> <span class=\"o\">:</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">initializers</span> <span class=\"o\">:=</span> <span class=\"n\">true</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Environment</span> <span class=\"bp\">×</span> <span class=\"n\">List</span> <span class=\"n\">Message</span> <span class=\"bp\">×</span> <span class=\"n\">List</span> <span class=\"n\">InfoTree</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">processInput</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">moduleSource</span> <span class=\"n\">mod</span><span class=\"o\">)</span> <span class=\"n\">initializers</span> <span class=\"n\">none</span> <span class=\"o\">{}</span>\n</code></pre></div>",
+        "id": 383134719,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691553768
+    },
+    {
+        "content": "<p>Now, suppose I build a dummy <code>PersistentEnvExtension</code>, e.g. as:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- `Frontend/DummyExt.lean`</span>\n<span class=\"kn\">import</span> <span class=\"n\">Lean.Environment</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span>\n\n<span class=\"n\">initialize</span> <span class=\"n\">dummyExt</span> <span class=\"o\">:</span>\n    <span class=\"n\">PersistentEnvExtension</span> <span class=\"n\">Unit</span> <span class=\"n\">Unit</span> <span class=\"n\">Unit</span> <span class=\"bp\">←</span>\n  <span class=\"n\">registerPersistentEnvExtension</span> <span class=\"o\">{</span>\n    <span class=\"n\">mkInitial</span> <span class=\"o\">:=</span> <span class=\"n\">pure</span> <span class=\"o\">()</span>\n    <span class=\"n\">addImportedFn</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">pure</span> <span class=\"o\">()</span>\n    <span class=\"n\">addEntryFn</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">()</span>\n    <span class=\"n\">exportEntriesFn</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n  <span class=\"o\">}</span>\n</code></pre></div>",
+        "id": 383134901,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691553849
+    },
+    {
+        "content": "<p>and create a file that imports it:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- `Frontend/Main.lean`</span>\n<span class=\"kn\">import</span> <span class=\"n\">Frontend.DummyExt</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">f</span> <span class=\"o\">:=</span> <span class=\"mi\">37</span>\n</code></pre></div>",
+        "id": 383134980,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691553911
+    },
+    {
+        "content": "<p>Now I try to compile it:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- `Frontend/Test1.lean`</span>\n<span class=\"kn\">import</span> <span class=\"n\">Frontend.Compile</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">show</span> <span class=\"n\">MetaM</span> <span class=\"n\">_</span> <span class=\"k\">from</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">msgs</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">compileModule</span> <span class=\"bp\">`</span><span class=\"n\">Frontend.Main</span>\n  <span class=\"n\">for</span> <span class=\"n\">m</span> <span class=\"k\">in</span> <span class=\"n\">msgs</span> <span class=\"k\">do</span> <span class=\"n\">dbg_trace</span> <span class=\"bp\">←</span> <span class=\"n\">m.data.format</span>\n  <span class=\"n\">return</span> <span class=\"n\">msgs.length</span>\n</code></pre></div>\n<p>and all is well: no messages are printed.</p>",
+        "id": 383135131,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691554004
+    },
+    {
+        "content": "<p>However I now try to compile it from a file that also depends on <code>Frontend.DummyExt</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- `Frontend/Test2/lean`</span>\n<span class=\"kn\">import</span> <span class=\"n\">Frontend.Compile</span>\n<span class=\"kn\">import</span> <span class=\"n\">Frontend.DummyExt</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">show</span> <span class=\"n\">MetaM</span> <span class=\"n\">_</span> <span class=\"k\">from</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">msgs</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">compileModule</span> <span class=\"bp\">`</span><span class=\"n\">Frontend.Main</span>\n  <span class=\"n\">for</span> <span class=\"n\">m</span> <span class=\"k\">in</span> <span class=\"n\">msgs</span> <span class=\"k\">do</span> <span class=\"n\">dbg_trace</span> <span class=\"bp\">←</span> <span class=\"n\">m.data.format</span>\n  <span class=\"n\">return</span> <span class=\"n\">msgs.length</span>\n</code></pre></div>\n<p>and I get the error message from compilation:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">invalid</span> <span class=\"n\">environment</span> <span class=\"n\">extension</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">dummyExt'</span> <span class=\"n\">has</span> <span class=\"n\">already</span> <span class=\"n\">been</span> <span class=\"n\">used</span><span class=\"bp\">`</span>\n</code></pre></div>",
+        "id": 383135262,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691554106
+    },
+    {
+        "content": "<blockquote>\n<p>Is this feasible? I want to be able to compile other files, without having  to worry about what I've already imported myself.</p>\n</blockquote>",
+        "id": 383135437,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691554267
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> First thing, I would advise defining the following to avoid marking meaningful functions as <code>unsafe</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[implemented_by enableInitializersExecution]</span>\n<span class=\"n\">opaque</span> <span class=\"n\">enableInitializersExecutionWrapper</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span>\n</code></pre></div>",
+        "id": 383135458,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1691554293
+    },
+    {
+        "content": "<p>(In my real use case I just use <code>unsafe</code> from <code>Std.Util.TermUnsafe</code>.)</p>",
+        "id": 383135532,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691554340
+    },
+    {
+        "content": "<p>For completeness, I'll note that this test does work fine if I don't run <code>enableInitializersExecution</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">--- `Frontend/Test3.lean`</span>\n<span class=\"kn\">import</span> <span class=\"n\">Frontend.Compile</span>\n<span class=\"kn\">import</span> <span class=\"n\">Frontend.DummyExt</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">show</span> <span class=\"n\">MetaM</span> <span class=\"n\">_</span> <span class=\"k\">from</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">msgs</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">compileModule</span> <span class=\"bp\">`</span><span class=\"n\">Frontend.Main</span> <span class=\"o\">(</span><span class=\"n\">initializers</span> <span class=\"o\">:=</span> <span class=\"n\">false</span><span class=\"o\">)</span>\n  <span class=\"n\">for</span> <span class=\"n\">m</span> <span class=\"k\">in</span> <span class=\"n\">msgs</span> <span class=\"k\">do</span> <span class=\"n\">dbg_trace</span> <span class=\"bp\">←</span> <span class=\"n\">m.data.format</span>\n  <span class=\"n\">return</span> <span class=\"n\">msgs.length</span>\n</code></pre></div>",
+        "id": 383135636,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691554422
+    },
+    {
+        "content": "<p>However I'm pretty sure that's not the right approach? Certainly it prevents me from compiling interesting files. One example is:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">--- `Frontend/Test4.lean`</span>\n<span class=\"c1\">-- Requires Mathlib on the path:</span>\n<span class=\"kn\">import</span> <span class=\"n\">Frontend.Compile</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">show</span> <span class=\"n\">MetaM</span> <span class=\"n\">_</span> <span class=\"k\">from</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">msgs</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">compileModule</span> <span class=\"bp\">`</span><span class=\"n\">Mathlib.Init.ZeroOne</span> <span class=\"o\">(</span><span class=\"n\">initializers</span> <span class=\"o\">:=</span> <span class=\"n\">false</span><span class=\"o\">)</span>\n  <span class=\"n\">for</span> <span class=\"n\">m</span> <span class=\"k\">in</span> <span class=\"n\">msgs</span> <span class=\"k\">do</span> <span class=\"n\">dbg_trace</span> <span class=\"bp\">←</span> <span class=\"n\">m.data.format</span>\n  <span class=\"n\">return</span> <span class=\"n\">msgs.length</span>\n</code></pre></div>\n<p>which will crash the Lean server with:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">libc</span><span class=\"bp\">++</span><span class=\"n\">abi</span><span class=\"o\">:</span> <span class=\"n\">terminating</span> <span class=\"k\">with</span> <span class=\"n\">uncaught</span> <span class=\"n\">exception</span> <span class=\"n\">of</span> <span class=\"n\">type</span> <span class=\"n\">lean</span><span class=\"o\">::</span><span class=\"n\">exception</span><span class=\"o\">:</span> <span class=\"n\">cannot</span> <span class=\"n\">evaluate</span> <span class=\"bp\">`</span><span class=\"o\">[</span><span class=\"n\">init</span><span class=\"o\">]</span><span class=\"bp\">`</span> <span class=\"n\">declaration</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Prelude.Rename.linter.uppercaseLean3'</span> <span class=\"k\">in</span> <span class=\"n\">the</span> <span class=\"n\">same</span> <span class=\"n\">module</span>\n</code></pre></div>",
+        "id": 383135782,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691554524
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> Do you need to run initializers? Generally,  frontends that are not producing oleans to import (or oleans with initializers) do not need it.</p>",
+        "id": 383135812,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1691554559
+    },
+    {
+        "content": "<p>(I am a bit confused there, in any case: compiling either of the dependencies of <code>Mathlib.Init.ZeroOne</code> works fine.)</p>",
+        "id": 383135876,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691554578
+    },
+    {
+        "content": "<p>Certainly I want to be able to run this on any single file from Mathlib (retrieving the resulting <code>Environment</code> and <code>InfoTree</code>s).</p>",
+        "id": 383135952,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691554653
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> does running your frontend from the command line (via <code>lake env lean</code>) work?</p>",
+        "id": 383136125,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1691554795
+    },
+    {
+        "content": "<p>Regardless, I am bit concerned where that linter <code>@[init]</code> is coming from. It seems to me that this may be some oddity (perhaps a bug) with how the linter works (or perhaps to <code>to_additive</code>?)</p>",
+        "id": 383136226,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1691554850
+    },
+    {
+        "content": "<p>Running <code>lake env lean Frontend/Test4.lean</code> gives the same error:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">cannot</span> <span class=\"n\">evaluate</span> <span class=\"bp\">`</span><span class=\"o\">[</span><span class=\"n\">init</span><span class=\"o\">]</span><span class=\"bp\">`</span> <span class=\"n\">declaration</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Prelude.Rename.linter.uppercaseLean3'</span> <span class=\"k\">in</span> <span class=\"n\">the</span> <span class=\"n\">same</span> <span class=\"n\">module</span>\n</code></pre></div>",
+        "id": 383142544,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691554963
+    },
+    {
+        "content": "<p>I was expecting it to, just wanted to make sure. <span aria-label=\"thumbs up\" class=\"emoji emoji-1f44d\" role=\"img\" title=\"thumbs up\">:thumbs_up:</span></p>",
+        "id": 383142569,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1691554989
+    },
+    {
+        "content": "<p>Assuming you do, in fact, need to initialize the extension twice (i.e., use <code>initializers := true</code>). You can do what I do in Alloy's <a href=\"https://github.com/tydeu/lean4-alloy/blob/2e996c3c6dc0c99112f72ff82393fafdc5b60e85/Alloy/C/Extension.lean#L15-L16\">extensions</a> and create a <code>findOrRegisterPersistentExtension</code> <a href=\"https://github.com/tydeu/lean4-alloy/blob/2e996c3c6dc0c99112f72ff82393fafdc5b60e85/Alloy/Util/Extension.lean\">helper</a>.</p>",
+        "id": 383142663,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1691555075
+    },
+    {
+        "content": "<p>Interesting. It seems though that we would have to use it everywhere, which feels like it might be a workaround for a deeper issue.</p>",
+        "id": 383142823,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691555198
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> no, this is expected when using a persistent extension that is both part of imported compiled module and used by the frontend (and is not builtin).</p>",
+        "id": 383144373,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1691555263
+    },
+    {
+        "content": "<p>Both the  imported module and the frontend wish to initialize the extension, so you have to tell it to pick one.</p>",
+        "id": 383144528,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1691555344
+    },
+    {
+        "content": "<p>But then shouldn't every persistent extension be registered this way? i.e. this <code>findOrRegisterPersistentExtension</code> should be moved to core, possibly replacing<code>registerPersistentExtension</code>?</p>",
+        "id": 383144686,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691555428
+    },
+    {
+        "content": "<p>The source of this is that <code>persistentEnvExtensionsRef</code> is a static ref for all of lean and not part of the individual environment.</p>",
+        "id": 383144714,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1691555454
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> In core, <code>builtin_initialize</code> avoids this.</p>",
+        "id": 383144781,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1691555497
+    },
+    {
+        "content": "<p>Okay, but what is everyone else meant to be doing?</p>",
+        "id": 383144810,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691555519
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> I am not sure custom frontends are a well-specified feature of Lean at the moment (so I doubt anything is currently meant). Recall that custom user-defined extensions did not even exist when Lake was first developed.</p>",
+        "id": 383144957,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1691555619
+    },
+    {
+        "content": "<p>In any case, is your suggestion:</p>\n<ul>\n<li>I should not be using <code>enableInitializersExecution</code> for my use case, and instead</li>\n<li>I should try to minimize the crash when compiling <code>Mathlib.Init.ZeroOne</code>, and see if that reveals something?</li>\n</ul>",
+        "id": 383145107,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691555729
+    },
+    {
+        "content": "<p>Originally, the idea was that end users would also use <code>builtin_initialize</code> and add extensions via <code>---plugin</code>. However, that has yet to come to pass due to the fact that custom frontends themselves cannot support plugins (though they can utilize them). That is, a custom frontend can be built with a plugin, but it cannot build things with plugins.</p>",
+        "id": 383145121,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1691555748
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> Yes. I think your use case should not need <code>enableInitializersExecution</code>. However, I would like you to try compile and running your custom frontend as executable. I may be mixing up the rules for executables with interpreted contexts.</p>",
+        "id": 383145411,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1691555951
+    },
+    {
+        "content": "<p>Ahha! When compiled, I do not get the <code>invalid environment extension, 'dummyExt' has already been used</code> error message, even when running with <code>enableInitializersExecution</code>, and <code>import Frontend.DummyExt</code>.</p>",
+        "id": 383147243,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691557058
+    },
+    {
+        "content": "<p>I can also compile things from all over Mathlib successfully, extracting InfoTrees!</p>\n<p>It would certainly be nice to be able to do this interpreted, because I want to write code that manipulates these InfoTrees in complicated ways and it's easiest to do that in a live session in the editor.</p>",
+        "id": 383148620,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691557648
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac Malone</span>, I'm surprised that your <code>findOrRegisterPersistentExtension</code> is not implemented as:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">unsafe</span> <span class=\"kd\">def</span> <span class=\"n\">findOrRegisterPersistentEnvExtensionUnsafe</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"n\">σ</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">Inhabited</span> <span class=\"n\">σ</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">descr</span> <span class=\"o\">:</span> <span class=\"n\">PersistentEnvExtensionDescr</span> <span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"n\">σ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">PersistentEnvExtension</span> <span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"n\">σ</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">pExts</span> <span class=\"bp\">←</span> <span class=\"n\">persistentEnvExtensionsRef.get</span>\n  <span class=\"k\">match</span> <span class=\"n\">pExts.find</span><span class=\"bp\">?</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">ext</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">ext.name</span> <span class=\"bp\">==</span> <span class=\"n\">descr.name</span><span class=\"o\">)</span> <span class=\"k\">with</span>\n  <span class=\"bp\">|</span> <span class=\"n\">some</span> <span class=\"n\">ext</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"n\">unsafeCast</span> <span class=\"n\">ext</span>\n  <span class=\"bp\">|</span> <span class=\"n\">none</span> <span class=\"bp\">=&gt;</span>\n  <span class=\"k\">let</span> <span class=\"n\">ext</span> <span class=\"bp\">←</span> <span class=\"n\">registerEnvExtension</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">initial</span> <span class=\"bp\">←</span> <span class=\"n\">descr.mkInitial</span>\n    <span class=\"k\">let</span> <span class=\"n\">s</span> <span class=\"o\">:</span> <span class=\"n\">PersistentEnvExtensionState</span> <span class=\"n\">α</span> <span class=\"n\">σ</span> <span class=\"o\">:=</span> <span class=\"o\">{</span>\n      <span class=\"n\">importedEntries</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[],</span>\n      <span class=\"n\">state</span>           <span class=\"o\">:=</span> <span class=\"n\">initial</span>\n    <span class=\"o\">}</span>\n    <span class=\"n\">pure</span> <span class=\"n\">s</span>\n  <span class=\"k\">let</span> <span class=\"n\">pExt</span> <span class=\"o\">:</span> <span class=\"n\">PersistentEnvExtension</span> <span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"n\">σ</span> <span class=\"o\">:=</span> <span class=\"o\">{</span>\n    <span class=\"n\">toEnvExtension</span>  <span class=\"o\">:=</span> <span class=\"n\">ext</span><span class=\"o\">,</span>\n    <span class=\"n\">name</span>            <span class=\"o\">:=</span> <span class=\"n\">descr.name</span><span class=\"o\">,</span>\n    <span class=\"n\">addImportedFn</span>   <span class=\"o\">:=</span> <span class=\"n\">descr.addImportedFn</span><span class=\"o\">,</span>\n    <span class=\"n\">addEntryFn</span>      <span class=\"o\">:=</span> <span class=\"n\">descr.addEntryFn</span><span class=\"o\">,</span>\n    <span class=\"n\">exportEntriesFn</span> <span class=\"o\">:=</span> <span class=\"n\">descr.exportEntriesFn</span><span class=\"o\">,</span>\n    <span class=\"n\">statsFn</span>         <span class=\"o\">:=</span> <span class=\"n\">descr.statsFn</span>\n  <span class=\"o\">}</span>\n  <span class=\"n\">persistentEnvExtensionsRef.modify</span> <span class=\"k\">fun</span> <span class=\"n\">pExts</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">pExts.push</span> <span class=\"o\">(</span><span class=\"n\">unsafeCast</span> <span class=\"n\">pExt</span><span class=\"o\">)</span>\n  <span class=\"n\">return</span> <span class=\"n\">pExt</span>\n\n<span class=\"kd\">@[implemented_by findOrRegisterPersistentEnvExtensionUnsafe]</span>\n<span class=\"n\">opaque</span> <span class=\"n\">findOrRegisterPersistentEnvExtension</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"n\">σ</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">Inhabited</span> <span class=\"n\">σ</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">descr</span> <span class=\"o\">:</span> <span class=\"n\">PersistentEnvExtensionDescr</span> <span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"n\">σ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">PersistentEnvExtension</span> <span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"n\">σ</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>i.e. having the same signature as <code>registerPersistentEnvExtension</code>.</p>",
+        "id": 383150323,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691558417
+    },
+    {
+        "content": "<p>In any case, using this one, if I just replace my</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">initialize</span> <span class=\"n\">dummyExt</span> <span class=\"o\">:</span>\n    <span class=\"n\">PersistentEnvExtension</span> <span class=\"n\">Unit</span> <span class=\"n\">Unit</span> <span class=\"n\">Unit</span> <span class=\"bp\">←</span>\n  <span class=\"n\">registerPersistentEnvExtension</span> <span class=\"o\">{</span> <span class=\"bp\">...</span> <span class=\"o\">}</span>\n</code></pre></div>\n<p>with</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">initialize</span> <span class=\"n\">dummyExt</span> <span class=\"o\">:</span>\n    <span class=\"n\">PersistentEnvExtension</span> <span class=\"n\">Unit</span> <span class=\"n\">Unit</span> <span class=\"n\">Unit</span> <span class=\"bp\">←</span>\n  <span class=\"n\">findOrRegisterPersistentEnvExtension</span> <span class=\"o\">{</span> <span class=\"bp\">...</span> <span class=\"o\">}</span>\n</code></pre></div>\n<p>then the interpreted version of my examples above all start working.</p>",
+        "id": 383150425,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691558471
+    },
+    {
+        "content": "<p>I'm not really sure what to do with this observation, however. Should I try to persuade <code>Std</code> and <code>Mathlib</code> that they should be using <code>findOrRegister...</code> rather than <code>register...</code>?</p>",
+        "id": 383150554,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691558523
+    },
+    {
+        "content": "<p>I might try pinging <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> at this point (sorry it is mid-thread!) to see what they think.</p>",
+        "id": 383150653,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691558558
+    },
+    {
+        "content": "<p>Loading lean files from within lean is basically unsupported because of the way initializers work</p>",
+        "id": 383151282,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691558848
+    },
+    {
+        "content": "<p>honestly it seems like a design mistake to me</p>",
+        "id": 383151355,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691558879
+    },
+    {
+        "content": "<p>(you mean, the current way initializers work?)</p>",
+        "id": 383151434,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691558897
+    },
+    {
+        "content": "<p>(or: trying to load lean files from within lean?)</p>",
+        "id": 383151476,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691558912
+    },
+    {
+        "content": "<p>yes, you basically have to load every lean file in its own process</p>",
+        "id": 383151518,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691558924
+    },
+    {
+        "content": "<p>the reason is because initializer state is a global</p>",
+        "id": 383151601,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691558951
+    },
+    {
+        "content": "<p>and the set of environment extensions is part of that</p>",
+        "id": 383151623,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691558964
+    },
+    {
+        "content": "<p>this is the same reason why it's impossible to interact with an environment extension defined in the current file without crashing lean</p>",
+        "id": 383151708,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691559003
+    },
+    {
+        "content": "<p>That's not to say that you can't hack around it though: the affected statics are basically append-only arrays so it's possible that something like Mac's <code>findOrRegisterPersistentExtension</code> will work</p>",
+        "id": 383152375,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691559242
+    },
+    {
+        "content": "<p>I think <code>enableInitializersExecution</code> should already be on for an interactive lean session</p>",
+        "id": 383152666,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691559332
+    },
+    {
+        "content": "<p>you usually only need to call it if you are calling lean code from <code>main</code></p>",
+        "id": 383152768,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691559362
+    },
+    {
+        "content": "<p>It definitely has an effect here: see the difference between <code>Test2</code> and <code>Test3</code> above.</p>",
+        "id": 383152944,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691559415
+    },
+    {
+        "content": "<p>oh, looks like the flag is reset to false after processing the imports (of Test2.lean itself)</p>",
+        "id": 383153419,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691559618
+    },
+    {
+        "content": "<p>so you indeed have to call it again to turn it back on for the imports of the target module</p>",
+        "id": 383153508,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691559657
+    },
+    {
+        "content": "<p>on further review I think <code>findOrRegisterPersistentExtension</code> is a solution at the wrong level: it is trying to handle the case of multiple initialization of a module but modules already track whether they have been initialized and skip repeat initialization</p>",
+        "id": 383154655,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691560122
+    },
+    {
+        "content": "<p>Okay, so my summary of the situation is as follows:</p>\n<ul>\n<li>initializer state is global, so </li>\n<li>if you either run <code>compileModule</code> from an interpreted session (where initializers have already been initialized), or if you run <code>compileModule</code> twice on different files from any session, global state will clash in interesting and unfun ways.</li>\n<li>but in a compiled session, you can turn on <code>enableInitializerExecution</code> and then get a successful compile of one other file.</li>\n</ul>",
+        "id": 383155162,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691560330
+    },
+    {
+        "content": "<p>That's not what I was hoping for, but if that is correct the situation is probably workable, and at least no longer confusing.</p>",
+        "id": 383155235,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691560372
+    },
+    {
+        "content": "<p>there is some internal state to prevent multiple <code>import</code> from causing multiple initialization of the same files; I think it should be possible to hook into that to avoid this issue (lean modifications will be required though)</p>",
+        "id": 383156130,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691560744
+    },
+    {
+        "content": "<p>woohoo, I have a working patch for this issue: <a href=\"https://github.com/leanprover/lean4/pull/2398\">lean4#2398</a></p>",
+        "id": 383175803,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691566576
+    },
+    {
+        "content": "<p>this now compiles error-free:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#eval</span> <span class=\"k\">show</span> <span class=\"n\">MetaM</span> <span class=\"n\">_</span> <span class=\"k\">from</span> <span class=\"k\">do</span>\n  <span class=\"n\">enableReinitialization</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getEnv</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">msgs</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">compileModule</span> <span class=\"bp\">`</span><span class=\"n\">Frontend.Main</span>\n  <span class=\"n\">for</span> <span class=\"n\">m</span> <span class=\"k\">in</span> <span class=\"n\">msgs</span> <span class=\"k\">do</span> <span class=\"n\">dbg_trace</span> <span class=\"bp\">←</span> <span class=\"n\">m.data.format</span>\n  <span class=\"n\">return</span> <span class=\"n\">msgs.length</span>\n</code></pre></div>",
+        "id": 383176040,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691566631
+    },
+    {
+        "content": "<p>This is working well! I can run <code>compileModule</code> all over Mathlib, in the same session, without initialization errors.</p>",
+        "id": 383220282,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691576195
+    },
+    {
+        "content": "<p>If you'd like I can make a self-contained test to add to your PR?</p>",
+        "id": 383220405,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691576219
+    },
+    {
+        "content": "<p>Please do!</p>",
+        "id": 383221978,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691576483
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/270676-lean4/topic/difficulties.20with.20.60Frontend.60/near/383150323\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac Malone</span>, I'm surprised that your <code>findOrRegisterPersistentExtension</code> is not implemented as:</p>\n</blockquote>\n<p>There was no deep though beyond it. <span aria-label=\"laughing\" class=\"emoji emoji-1f606\" role=\"img\" title=\"laughing\">:laughing:</span> I just needed to get Alloy to work and went with the first thing that worked and seemed reasonably principled (even if the not the most optimal).</p>",
+        "id": 383362385,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1691600954
+    },
+    {
+        "content": "<p>I've also been fighting similar issues recently. Here's something curious...</p>\n<p>I have a copy of mathlib4 with an additional entry in the lakefile: </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">lean_exe</span> <span class=\"n\">compile</span> <span class=\"n\">where</span>\n  <span class=\"n\">root</span> <span class=\"o\">:=</span> <span class=\"bp\">`</span><span class=\"n\">Compile.Main</span>\n  <span class=\"n\">supportInterpreter</span> <span class=\"o\">:=</span> <span class=\"n\">true</span>\n</code></pre></div>\n<p>and, obviously, a file called <code>Compile/Main.lean</code>.</p>\n<p>First, suppose that the following is the contents of this file:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Parser</span> <span class=\"n\">System</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">compile</span> <span class=\"o\">(</span><span class=\"n\">module</span> <span class=\"o\">:</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">contents</span> <span class=\"bp\">←</span> <span class=\"n\">IO.FS.readFile</span> <span class=\"o\">(</span><span class=\"n\">modToFilePath</span> <span class=\"s2\">\".\"</span> <span class=\"n\">module</span> <span class=\"s2\">\"lean\"</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">inputCtx</span> <span class=\"o\">:</span> <span class=\"n\">InputContext</span> <span class=\"o\">:=</span> <span class=\"n\">mkInputContext</span> <span class=\"n\">contents</span> <span class=\"s2\">\"&lt;input&gt;\"</span>\n  <span class=\"k\">let</span> <span class=\"o\">⟨</span><span class=\"n\">header</span><span class=\"o\">,</span> <span class=\"n\">parserState</span><span class=\"o\">,</span> <span class=\"n\">messages</span><span class=\"o\">⟩</span> <span class=\"bp\">←</span> <span class=\"n\">parseHeader</span> <span class=\"n\">inputCtx</span>\n  <span class=\"k\">if</span> <span class=\"n\">messages.toList.length</span> <span class=\"bp\">!=</span> <span class=\"mi\">0</span> <span class=\"k\">then</span>\n    <span class=\"n\">for</span> <span class=\"n\">m</span> <span class=\"k\">in</span> <span class=\"n\">messages.toList</span> <span class=\"k\">do</span>\n      <span class=\"n\">IO.println</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">←</span> <span class=\"n\">m.toString</span>\n  <span class=\"k\">let</span> <span class=\"o\">⟨</span><span class=\"n\">env</span><span class=\"o\">,</span> <span class=\"n\">messages</span><span class=\"o\">⟩</span> <span class=\"bp\">←</span> <span class=\"n\">processHeader</span> <span class=\"n\">header</span> <span class=\"o\">{}</span> <span class=\"n\">messages</span> <span class=\"n\">inputCtx</span>\n  <span class=\"k\">if</span> <span class=\"n\">messages.toList.length</span> <span class=\"bp\">!=</span> <span class=\"mi\">0</span> <span class=\"k\">then</span>\n    <span class=\"n\">for</span> <span class=\"n\">m</span> <span class=\"k\">in</span> <span class=\"n\">messages.toList</span> <span class=\"k\">do</span>\n      <span class=\"n\">IO.println</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">←</span> <span class=\"n\">m.toString</span>\n  <span class=\"k\">let</span> <span class=\"n\">cmdState</span> <span class=\"o\">:</span> <span class=\"n\">Command.State</span> <span class=\"o\">:=</span>\n    <span class=\"o\">{</span> <span class=\"n\">Command.mkState</span> <span class=\"n\">env</span> <span class=\"n\">messages</span> <span class=\"o\">{}</span> <span class=\"k\">with</span> <span class=\"n\">infoState.enabled</span> <span class=\"o\">:=</span> <span class=\"n\">true</span> <span class=\"o\">}</span>\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">IO.processCommands</span> <span class=\"n\">inputCtx</span> <span class=\"n\">parserState</span> <span class=\"n\">cmdState</span>\n  <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"Success! {module}\"</span>\n  <span class=\"n\">return</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">modules</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">out</span> <span class=\"bp\">←</span> <span class=\"n\">IO.FS.lines</span> <span class=\"s2\">\"Mathlib.lean\"</span>\n  <span class=\"k\">let</span> <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"n\">out.map</span> <span class=\"k\">fun</span> <span class=\"n\">i</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">i.splitOn</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">]</span><span class=\"bp\">!</span>\n  <span class=\"k\">let</span> <span class=\"n\">out</span> <span class=\"o\">:=</span> <span class=\"n\">out.map</span> <span class=\"k\">fun</span> <span class=\"n\">i</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">i.toName</span>\n  <span class=\"n\">return</span> <span class=\"n\">out</span>\n\n<span class=\"n\">unsafe</span> <span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">(</span><span class=\"n\">arg</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">arg</span> <span class=\"o\">:=</span> <span class=\"n\">arg</span><span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"o\">]</span><span class=\"bp\">!.</span><span class=\"n\">toName</span>\n  <span class=\"n\">enableInitializersExecution</span>\n  <span class=\"n\">initSearchPath</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">findSysroot</span><span class=\"o\">)</span>\n  <span class=\"n\">compile</span> <span class=\"n\">arg</span>\n</code></pre></div>\n<p>In this case, <code>lake exe compile Mathlib.Algebra.Abs</code> succeeds with <code>Success! Mathlib.Algebra.Abs</code>. <br>\nA similar result happens with <code>Mathlib.Algebra.AddTorsor</code>, which is the second import appearing in our current <code>Mathlib.lean</code> file.</p>\n<p>Now, consider the following variant of the <code>main</code> function above:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">unsafe</span> <span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">enableInitializersExecution</span>\n  <span class=\"n\">initSearchPath</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">findSysroot</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">modules</span> <span class=\"bp\">←</span> <span class=\"n\">modules</span>\n  <span class=\"n\">for</span> <span class=\"n\">module</span> <span class=\"k\">in</span> <span class=\"n\">modules</span> <span class=\"k\">do</span>\n    <span class=\"n\">compile</span> <span class=\"n\">module</span>\n</code></pre></div>\n<p>This fails, with the following</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Success</span><span class=\"bp\">!</span> <span class=\"n\">Mathlib.Algebra.Abs</span>\n<span class=\"n\">libc</span><span class=\"bp\">++</span><span class=\"n\">abi</span><span class=\"o\">:</span> <span class=\"n\">terminating</span> <span class=\"n\">due</span> <span class=\"n\">to</span> <span class=\"n\">uncaught</span> <span class=\"n\">exception</span> <span class=\"n\">of</span> <span class=\"n\">type</span> <span class=\"n\">lean</span><span class=\"o\">::</span><span class=\"n\">exception</span><span class=\"o\">:</span> <span class=\"n\">cannot</span> <span class=\"n\">evaluate</span> <span class=\"bp\">`</span><span class=\"o\">[</span><span class=\"n\">init</span><span class=\"o\">]</span><span class=\"bp\">`</span> <span class=\"n\">declaration</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Tactic.reflExt'</span> <span class=\"k\">in</span> <span class=\"n\">the</span> <span class=\"n\">same</span> <span class=\"n\">module</span>\n</code></pre></div>\n<p>suggesting it failed on <code>Mathlib.Algebra.AddTorsor</code>. </p>\n<p>So, basically I'm very confused. I tried a few other files from mathlib4 with the successful variant, and they all worked fine. What am I doing wrong?</p>",
+        "id": 383811048,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1691722209
+    },
+    {
+        "content": "<p>Haha, looks we have been doing almost identical things. :-) I am trying to write something up that describes every possible variation here.</p>",
+        "id": 383821898,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691728199
+    },
+    {
+        "content": "<p>For me, these experiments give the same results whether or not I specify <code>supportInterpreter := true</code> in the <code>lakefile</code>. <span class=\"user-mention\" data-user-id=\"243562\">@Adam Topaz</span>, could you check if that is the same for you?</p>",
+        "id": 383822396,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691728513
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"243562\">@Adam Topaz</span>, my summary is at <a href=\"https://github.com/leanprover/lean4/pull/2408\">lean4#2408</a>, with a (failing) test case at <a href=\"https://github.com/leanprover/lean4/pull/2407\">lean4#2407</a>, and <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>'s relevant PR, updated to including the (succeeding) test case, is at <a href=\"https://github.com/leanprover/lean4/pull/2398\">lean4#2398</a>.</p>",
+        "id": 383859205,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691740988
+    },
+    {
+        "content": "<p>In the single-file example without supportInterpreter, it seems to compile, but I get an error:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">&lt;</span><span class=\"n\">input</span><span class=\"bp\">&gt;</span><span class=\"o\">:</span><span class=\"mi\">6</span><span class=\"o\">:</span><span class=\"mi\">0</span><span class=\"o\">:</span> <span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">could</span> <span class=\"n\">not</span> <span class=\"n\">find</span> <span class=\"n\">native</span> <span class=\"n\">implementation</span> <span class=\"n\">of</span> <span class=\"n\">external</span> <span class=\"n\">declaration</span> <span class=\"bp\">'</span><span class=\"n\">IO.getRandomBytes'</span> <span class=\"o\">(</span><span class=\"n\">symbols</span> <span class=\"bp\">'</span><span class=\"n\">l_IO_getRandomBytes___boxed'</span> <span class=\"n\">or</span> <span class=\"bp\">'</span><span class=\"n\">l_IO_getRandomBytes'</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 383927646,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1691754403
+    },
+    {
+        "content": "<p>Same with the for loop, and in that case the error pops up for each file.</p>",
+        "id": 383928235,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1691754511
+    },
+    {
+        "content": "<p>But the original error doesn't appear in this case.</p>",
+        "id": 383928383,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1691754532
+    },
+    {
+        "content": "<p>Strange. I still don't really understand what's going on internally...</p>",
+        "id": 383928450,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1691754544
+    },
+    {
+        "content": "<p>I don't understand at all when <code>supportInterpreter := true</code> is needed. I don't seem to need it in any of my tests locally, but it was needed in the test case <a href=\"https://github.com/leanprover/lean4/pull/2407\">lean4#2407</a>?</p>",
+        "id": 383933209,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1691755442
+    },
+    {
+        "content": "<p>I believe this option does not have any effect on non-Linux (even on macOS where it is at least accepted by the linker)</p>",
+        "id": 383934776,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1691755724
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac Malone</span> Perhaps <code>true</code> would be a better default for it then, the Linux binary size overhead is probably insignificant compared to the footgun size</p>",
+        "id": 383935446,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1691755871
+    },
+    {
+        "content": "<p>FWIW, my main use case for such things right now is in the following file:<br>\n<a href=\"https://github.com/adamtopaz/lean_grader/blob/master/Main.lean\">https://github.com/adamtopaz/lean_grader/blob/master/Main.lean</a></p>\n<p>I'm setting up something for automatic grading in github classroom. Right now I'm only checking things in a single file whose name is hardcoded, but it would be nice to generalize and allow multiple files.</p>",
+        "id": 383944761,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1691757501
+    }
+]

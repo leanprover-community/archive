@@ -1,0 +1,74 @@
+[
+    {
+        "content": "<p>When using the multiplication in a monoid, the current instance search chooses to go through <code>MulOneClass</code>, as can be shown by clicking on the <code>*</code> in the output of the following print:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Algebra.Group.Defs</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">Monoid</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"n\">a</span> <span class=\"bp\">*</span> <span class=\"n\">b</span>\n\n<span class=\"k\">#print</span> <span class=\"n\">foo</span>\n</code></pre></div>\n<p>This is not great. Monoid is declared as follows:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">Monoid</span> <span class=\"o\">(</span><span class=\"n\">M</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">)</span> <span class=\"kd\">extends</span> <span class=\"n\">Semigroup</span> <span class=\"n\">M</span><span class=\"o\">,</span> <span class=\"n\">MulOneClass</span> <span class=\"n\">M</span> <span class=\"o\">[</span><span class=\"bp\">...</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>Since <code>Semigroup</code> and <code>MulOneClass</code> share a field (multiplication), this means that <code>Semigroup</code> is an actual field of <code>Monoid</code>, but <code>MulOneClass</code> is not: the <code>One</code> field and others are inlined (as can be seen with <code>#print Monoid</code>). This means that <code>Monoid.toMulOneClass</code> is not a projection, but an actual function that unpackages and repackages data. This could have performance issues for both unification and compilation of definitions. I have no idea whether we're talking about a 0.1% or a 10+% performance issue, but it's probably worth trying to fix it.</p>\n<p>I think the easiest way to fix it is to make sure that all instance priorities are compatible with the order classes extend other classes. In this case, it would mean that <code>Semigroup.toMul</code> has a higher priority than <code>MulOneClass.toMul</code> (so that when looking for a <code>Mul</code> we're going in the <code>SemiGroup</code> path before trying the <code>MulOneClass</code> path). We can probably fix all cases by giving some instances manual priorities and maybe shuffling around some <code>extend</code> lines. It's probably best to ensure that this property holds using a linter (that checks for each structure whether the corresponding instances have compatible priorities), which I'm happy to write.</p>",
+        "id": 328220682,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1676549517
+    },
+    {
+        "content": "<p>I wonder if this is related to the <code>Ring.toNonAssocRing</code> issue</p>",
+        "id": 328234616,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1676553617
+    },
+    {
+        "content": "<blockquote>\n<p>This means that Monoid.toMulOneClass is not a projection, but an actual function that unpackages and repackages data. This could have performance issues for both unification and compilation of definitions. </p>\n</blockquote>\n<p>Of course, in Lean3 old-style structure <em>every</em> typeclass instance through <code>extend</code> worked this way; so this is more of a possible optimization than a regression</p>",
+        "id": 328236643,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1676554139
+    },
+    {
+        "content": "<p>Oh, I think a linter like this will also solve the issues in <a href=\"https://github.com/leanprover/lean4/pull/2074\">lean4#2074</a>, so this seems quite useful. Let me work on this.</p>",
+        "id": 328979281,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1676899412
+    },
+    {
+        "content": "<p>My hunch is that no amount of extends reordering /priority tweaking can fully solve <a href=\"https://github.com/leanprover/lean4/pull/2074\">lean4#2074</a>, and that we really need eta turned on for TC resolution.</p>",
+        "id": 328979693,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1676899524
+    },
+    {
+        "content": "<p>Isn't there always going to be a diamond inheritance path that's possible, through which different constructions will necessarily take different paths around the diamond, which in turn unfold inner structures to a different depth?</p>",
+        "id": 328980199,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1676899682
+    },
+    {
+        "content": "<p>For instance, IIRC for <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Semiring.toModule#doc\">docs4#Semiring.toModule</a> we require that everything that extends semiring \"truly\" inherits from <code>Semiring</code>, else we end up needing structure eta. But we have the same for <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Algebra.Id#doc\">docs4#Algebra.Id</a> with <code>CommSemiring</code>, and could quite conceivably end up with something similar for <code>Ring</code>; and we can only make <code>CommRing</code> \"truly\" extend one of <code>CommSemiring</code> and <code>Ring</code>.</p>",
+        "id": 328980798,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1676899839
+    },
+    {
+        "content": "<p>Maybe with your suggestion the performance implications of enabling TC eta in <a href=\"https://github.com/leanprover/lean4/pull/2074\">lean4#2074</a> are much less though.</p>",
+        "id": 328981167,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1676899927
+    },
+    {
+        "content": "<p>I maybe shouldn't have used the word \"solve\", but I think this can mitigate some of the issues.</p>",
+        "id": 328984601,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1676900965
+    },
+    {
+        "content": "<p>You're probably right that we also want to have structure eta turned on in many cases.</p>",
+        "id": 328984685,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1676900995
+    },
+    {
+        "content": "<p>Except that I don't think there is a way to change the instance priorities of automatically generated instances by the <code>structure</code> command.<br>\nThe structure command adds the instances with default priority (<a href=\"https://github.com/leanprover/lean4/blob/master/src/Lean/Elab/Structure.lean#L796\">here</a> and <a href=\"https://github.com/leanprover/lean4/blob/master/src/Lean/Elab/Structure.lean#L851\">here</a>), and I don't think that there is a way to change the instance priority afterwards. In particular, running <code>attribute [instance 10] ...</code> doesn't affect the instance priority:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">A</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n  <span class=\"o\">(</span><span class=\"n\">one</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n\n<span class=\"kd\">class</span> <span class=\"n\">B</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"kd\">extends</span> <span class=\"n\">A</span> <span class=\"n\">α</span> <span class=\"n\">where</span>\n  <span class=\"o\">(</span><span class=\"n\">two</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n\n<span class=\"kd\">class</span> <span class=\"n\">C</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"kd\">extends</span> <span class=\"n\">A</span> <span class=\"n\">α</span> <span class=\"n\">where</span>\n  <span class=\"o\">(</span><span class=\"n\">three</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span>\n\n<span class=\"kd\">class</span> <span class=\"n\">D</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"kd\">extends</span> <span class=\"n\">B</span> <span class=\"n\">α</span><span class=\"o\">,</span> <span class=\"n\">C</span> <span class=\"n\">α</span>\n\n<span class=\"kn\">attribute</span> <span class=\"o\">[</span><span class=\"kd\">instance</span> <span class=\"mi\">10</span><span class=\"o\">]</span> <span class=\"n\">C.toA</span>\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">[</span><span class=\"n\">D</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"n\">inferInstance</span> <span class=\"c1\">-- still uses `C.toA`</span>\n<span class=\"k\">#print</span> <span class=\"n\">foo</span>\n</code></pre></div>\n<p>(to be more precise, the command <code>attribute [instance 10] C.toA</code> doesn't change the discrimination tree used to find instances).</p>",
+        "id": 329010517,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1676907247
+    },
+    {
+        "content": "<p>I opened <a href=\"https://github.com/leanprover/lean4/pull/2115\">lean4#2115</a> to track this.</p>",
+        "id": 329012638,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1676907793
+    }
+]

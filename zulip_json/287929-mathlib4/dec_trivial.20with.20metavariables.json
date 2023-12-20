@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>What's the equivalent of <code>dec_trivial</code> where the statement has metavariables? Mathport tells me it's <code>decide</code> but it can't solve <code>0 &lt; n + 1</code> where <code>n</code> is a natural number since it has the metavariable <code>n</code>.</p>",
+        "id": 368350439,
+        "sender_full_name": "David Ang",
+        "timestamp": 1687377814
+    },
+    {
+        "content": "<p>That looks like a variable, not a metavariable</p>",
+        "id": 368350699,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1687377891
+    },
+    {
+        "content": "<p>I think that <code>dec_trivial</code> in Lean 3 tried to start the decision procedure even if the goal had variables. It looks like in Lean 4 it doesn't.</p>",
+        "id": 368357964,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1687380237
+    },
+    {
+        "content": "<p>So, you should use a lemma (e.g., <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Nat.succ_pos#doc\">docs4#Nat.succ_pos</a> in this case) and add a  porting note.</p>",
+        "id": 368358228,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1687380326
+    },
+    {
+        "content": "<p>The word you're looking for is \"free variable\" by the way. The error that <code>decide</code> gives is \"expected type must not contain free or meta variables\". A metavariable pretty prints as <code>?m</code> for some name <code>m</code>.</p>\n<p>When the issue is free variables, sometimes you can <code>revert</code> all the variables that the goal depends on before doing <code>decide</code>. That said, <code>decide</code> doesn't seem like the right solution for this goal.</p>",
+        "id": 368361148,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1687381275
+    },
+    {
+        "content": "<p>As far as I understand, in Lean 3 <code>dec_trivial</code> tried to apply the algorithm from the <code>decidable</code> instance and succeeded if the algorithm didn't need any structural information that is not available.</p>",
+        "id": 368363288,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1687381946
+    },
+    {
+        "content": "<p>E.g., in this case we know that RHS is <code>Nat.succ _</code>, so we can immediately say that <code>0 &lt; n + 1</code> is true.</p>",
+        "id": 368363354,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1687381978
+    },
+    {
+        "content": "<p>I tried turning off the check, and in this case it still can't decide that <code>0 &lt; n + 1</code> is true.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Term</span> <span class=\"n\">Meta</span> <span class=\"n\">Tactic</span>\n\n<span class=\"kn\">private</span> <span class=\"kd\">def</span> <span class=\"n\">preprocessPropToDecide</span> <span class=\"o\">(</span><span class=\"n\">expectedType</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">TermElabM</span> <span class=\"n\">Expr</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">expectedType</span> <span class=\"bp\">←</span> <span class=\"n\">instantiateMVars</span> <span class=\"n\">expectedType</span>\n  <span class=\"k\">if</span> <span class=\"n\">expectedType.hasFVar</span> <span class=\"k\">then</span>\n    <span class=\"n\">expectedType</span> <span class=\"bp\">←</span> <span class=\"n\">zetaReduce</span> <span class=\"n\">expectedType</span>\n  <span class=\"n\">return</span> <span class=\"n\">expectedType</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"decide'\"</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"n\">closeMainGoalUsing</span> <span class=\"k\">fun</span> <span class=\"n\">expectedType</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">expectedType</span> <span class=\"bp\">←</span> <span class=\"n\">preprocessPropToDecide</span> <span class=\"n\">expectedType</span>\n    <span class=\"k\">let</span> <span class=\"n\">d</span> <span class=\"bp\">←</span> <span class=\"n\">mkDecide</span> <span class=\"n\">expectedType</span>\n    <span class=\"k\">let</span> <span class=\"n\">d</span> <span class=\"bp\">←</span> <span class=\"n\">instantiateMVars</span> <span class=\"n\">d</span>\n    <span class=\"k\">let</span> <span class=\"n\">r</span> <span class=\"bp\">←</span> <span class=\"n\">withDefault</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">whnf</span> <span class=\"n\">d</span>\n    <span class=\"n\">unless</span> <span class=\"n\">r.isConstOf</span> <span class=\"bp\">``</span><span class=\"n\">true</span> <span class=\"k\">do</span>\n      <span class=\"n\">throwError</span> <span class=\"s2\">\"failed to reduce to 'true'{indentExpr r}\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">s</span> <span class=\"o\">:=</span> <span class=\"n\">d.appArg</span><span class=\"bp\">!</span> <span class=\"c1\">-- get instance from `d`</span>\n    <span class=\"k\">let</span> <span class=\"n\">rflPrf</span> <span class=\"bp\">←</span> <span class=\"n\">mkEqRefl</span> <span class=\"o\">(</span><span class=\"n\">toExpr</span> <span class=\"n\">true</span><span class=\"o\">)</span>\n    <span class=\"n\">return</span> <span class=\"n\">mkApp3</span> <span class=\"o\">(</span><span class=\"n\">Lean.mkConst</span> <span class=\"bp\">``</span><span class=\"n\">of_decide_eq_true</span><span class=\"o\">)</span> <span class=\"n\">expectedType</span> <span class=\"n\">s</span> <span class=\"n\">rflPrf</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"mi\">0</span> <span class=\"bp\">&lt;</span> <span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">decide'</span>\n  <span class=\"c\">/-</span>\n<span class=\"cm\">  failed to reduce to 'true'</span>\n<span class=\"cm\">  Decidable.rec (fun h ↦ (fun x ↦ false) h) (fun h ↦ (fun x ↦ true) h) (Nat.decLt 0 (n + 1))</span>\n<span class=\"cm\">  -/</span>\n</code></pre></div>",
+        "id": 368365636,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1687382766
+    },
+    {
+        "content": "<p>It seems like when it reduces the expression it's able to get <code>Nat.rec (fun x ↦ true) (fun n n_ih x ↦ true) n PUnit.unit</code>, but it's not able to see that this is true independent of the value of <code>n</code>.</p>",
+        "id": 368366011,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1687382892
+    },
+    {
+        "content": "<p>Yeah it's a free variable (my bad), but in my defense I did have a (more complicated) example that has a bunch of metavariables :P</p>",
+        "id": 368366105,
+        "sender_full_name": "David Ang",
+        "timestamp": 1687382939
+    }
+]

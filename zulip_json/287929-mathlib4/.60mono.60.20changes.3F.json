@@ -1,0 +1,284 @@
+[
+    {
+        "content": "<p>There are two things I want to consider changing about <code>mono</code> behavior from mathlib3, and wanted to get people's opinion on whether I should go for it.</p>",
+        "id": 342187824,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678923444
+    },
+    {
+        "content": "<ol>\n<li><code>mono with P</code> in mathlib3 asserts <code>P</code> as a new goal, but does not attempt to prove it. I think it makes sense to try to prove it via <code>mono</code>, right? (And if we can't close the goal, backtrack)</li>\n</ol>",
+        "id": 342187827,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678923448
+    },
+    {
+        "content": "<ol start=\"2\">\n<li><code>mono*</code> in mathlib3 just<code>repeat</code>s <code>mono</code> and finishes with all goals it couldn't close or apply <code>mono</code> to further. This is fine, but I was wondering if we should instead take advantage of <code>solve_by_elim</code> for <code>mono*</code> specifically. I noticed that I had to lengthen one proof that the old, temporary, <code>solve_by_elim</code> version did better! This would entail refactoring <code>solve_by_elim</code> so that <code>applyFirst</code> was passed as a (default) argument, and could be changed to something custom if desired (which in this case would be the one-pass version of <code>mono</code> that uses a <code>DiscrTree</code>). What are the pros and cons?</li>\n</ol>",
+        "id": 342188047,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678923602
+    },
+    {
+        "content": "<p>Can you explain what you mean with the <code>solve_by_elim</code> refactor?</p>",
+        "id": 342188169,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678923682
+    },
+    {
+        "content": "<p>So, currently the behind-the-scenes <code>solveByElim</code> uses <code>applyFirst</code> to apply the lemmas to a goal via a continuation, right? I would give <code>solveByElim</code> an argument <code>applyLemmas</code> which had a similar type signature to <code>applyFirst</code>, and was <code>applyFirst</code> by default. (That way, existing calls to <code>solveByElim</code> wouldn't have to change.)</p>\n<p>In my case, I would call <code>solveByElim</code> with an empty set of lemmas, and pass in a function for <code>applyLemmas</code> that actually just ignored the <code>lemmas</code> argument and relied on my <code>mono</code> DiscrTree to act on the goal.</p>",
+        "id": 342188519,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678923886
+    },
+    {
+        "content": "<p>(I would hope this refactor wouldn't impact the performance of <code>solveByElim</code>, but I'm not familiar with the details of e.g. compilation here, so that's a question to address.)</p>",
+        "id": 342188862,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678924127
+    },
+    {
+        "content": "<p>You might look at <code>solve_by_elim (config := { proc := ... })</code> (see <a href=\"https://github.com/leanprover-community/mathlib4/blob/master/Mathlib/Tactic/SolveByElim.lean#L83\">docs</a>) or <code>solve_by_elim (config := { discharge := ... })</code> (see <a href=\"https://github.com/leanprover-community/mathlib4/blob/master/Mathlib/Tactic/SolveByElim.lean#L96\">docs</a>), which enable you to run arbitrary tactics either before or after <code>solve_by_elim</code> tries its lemmas. Between these it should be completely configurable!</p>",
+        "id": 342189408,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678924574
+    },
+    {
+        "content": "<p>Could you explain how much of <code>solveByElim</code> is being used here with your proposal? Is it just to make use of the main loop that applies a tactic and continues to apply that tactic recursively on any goals that  arise?</p>",
+        "id": 342189491,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1678924670
+    },
+    {
+        "content": "<p>Hmm, if I used <code>proc</code>, would that have the same behavior? If I'm not calling <code>solveByElim</code> with any lemmas, what happens when <code>applyFirst</code> is run?</p>",
+        "id": 342189562,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678924710
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/287929-mathlib4/topic/.60mono.60.20changes.3F/near/342189491\">said</a>:</p>\n<blockquote>\n<p>Could you explain how much of <code>solveByElim</code> is being used here with your proposal? Is it just to make use of the main loop that applies a tactic and continues to apply that tactic recursively on any goals that  arise?</p>\n</blockquote>\n<p>That's actually part of what I wanted to find out with the \"pros and cons\" question. How would this be different from just iteratively repeating on a list of goals? Does <code>solveByElim</code> do backtracking if some branch doesn't work out?</p>",
+        "id": 342189623,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678924780
+    },
+    {
+        "content": "<p><code>solveByElim</code> will by default use the local hypotheses in <code>applyFirst</code> (unless you turn them off with the <code>only</code> flag).</p>",
+        "id": 342189624,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678924782
+    },
+    {
+        "content": "<p>Yes, <code>solveByElim</code> is all about backtracking.</p>",
+        "id": 342189639,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678924797
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/.60mono.60.20changes.3F/near/342189639\">said</a>:</p>\n<blockquote>\n<p>Yes, <code>solveByElim</code> is all about backtracking.</p>\n</blockquote>\n<p>That's what I thought! So, that feature is mainly what I'd be using. Applying recursively to goals that arise is not really a problem.</p>",
+        "id": 342189746,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678924838
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/.60mono.60.20changes.3F/near/342189624\">said</a>:</p>\n<blockquote>\n<p><code>solveByElim</code> will by default use the local hypotheses in <code>applyFirst</code> (unless you turn them off with the <code>only</code> flag).</p>\n</blockquote>\n<p>Right, ok—but if these fail, does it backtrack? If so I would like to not do that (but I <em>would</em> like to backtrack after applying my DiscrTree-based procedure)</p>",
+        "id": 342189876,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678924917
+    },
+    {
+        "content": "<p>Hmm... why don't you like backtracking on applying local hypotheses?</p>",
+        "id": 342189973,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678924965
+    },
+    {
+        "content": "<p>Oh...</p>",
+        "id": 342190137,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678925083
+    },
+    {
+        "content": "<p>I see, sorry, my suggestion isn't what you want.</p>",
+        "id": 342190152,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678925091
+    },
+    {
+        "content": "<p>the <code>proc</code> customisation doesn't allow that tactic to come up with multiple alternatives. it either succeeds or doesn't.</p>",
+        "id": 342190185,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678925124
+    },
+    {
+        "content": "<p>Also, what sort of backtracking do you want? Is it \"try discrimination tree mono then try regular mono\" or something? I'm curious how many alternatives you're thinking.</p>",
+        "id": 342190295,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1678925197
+    },
+    {
+        "content": "<p>Currently DiscrTree mono <em>is</em> regular mono! :) That's the new implementation.</p>",
+        "id": 342190335,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678925240
+    },
+    {
+        "content": "<p>The issue is that <code>mono*</code> applies this new <code>mono</code> iteratively, which <code>solveByElim</code> might be good at. (...or not. I'm still exploring it as an idea.)</p>",
+        "id": 342190450,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678925306
+    },
+    {
+        "content": "<p>Okay, I will see if I can generalise solveByElim a bit. :-)</p>",
+        "id": 342190803,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678925562
+    },
+    {
+        "content": "<p>Ok, great, thanks! Having an argument that lets a custom function be dropped in for <code>applyFirst</code> is probably all I need, but any other ways of achieving something equivalent would be welcome :)</p>",
+        "id": 342191051,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678925699
+    },
+    {
+        "content": "<p>I'm not really following where the backtracking comes in -- for backtracking to be useful you need alternatives, right? Otherwise you can use a main loop structured like <code>congr</code>'s or something.</p>",
+        "id": 342191697,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1678926033
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> Just to check, in solveByElim it's <code>List.firstM</code> in <code>applyFirst</code> that more-or-less responsible for restoring the metavariable context when each alternative fails, right?</p>",
+        "id": 342191789,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1678926098
+    },
+    {
+        "content": "<p>Yes.</p>",
+        "id": 342191821,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678926118
+    },
+    {
+        "content": "<p>Generally, the DiscrTree matches several different mono lemmas which wind up being applicable, so these are the alternatives.</p>",
+        "id": 342191883,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678926139
+    },
+    {
+        "content": "<p>If all the nondeterminism is in <code>applyFirst</code>, I'm wondering if you're gaining anything by abstracting it out of <code>solveByElim</code> for your use case?</p>",
+        "id": 342194360,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1678927481
+    },
+    {
+        "content": "<p>Anyway, I was messing around with making a nondeterministic main loop, and here's something that seems somewhat configurable (though I definitely haven't really tested it in any way):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"sd\">/-- `choices` is a function that produces alternatives given a goal,</span>\n<span class=\"sd\">`run` is a function that evaluates a choice, producing new goals.</span>\n<span class=\"sd\">For each produced goal, `tryRecursive` is run if `recur` evaluates to `true`. -/</span>\n<span class=\"kd\">def</span> <span class=\"n\">Lean.MVarId.tryRecursive</span> <span class=\"o\">(</span><span class=\"n\">mvarId</span> <span class=\"o\">:</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">maxSteps</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span>\n    <span class=\"o\">(</span><span class=\"n\">choices</span> <span class=\"o\">:</span> <span class=\"n\">MVarId</span> <span class=\"bp\">→</span> <span class=\"n\">MetaM</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">α</span><span class=\"o\">))</span>\n    <span class=\"o\">(</span><span class=\"n\">run</span> <span class=\"o\">:</span> <span class=\"n\">MVarId</span> <span class=\"bp\">→</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">MetaM</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">MVarId</span><span class=\"o\">))</span>\n    <span class=\"o\">(</span><span class=\"n\">shouldRecur</span> <span class=\"o\">:</span> <span class=\"n\">MVarId</span> <span class=\"bp\">→</span> <span class=\"n\">MetaM</span> <span class=\"n\">Bool</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">match</span> <span class=\"n\">maxSteps</span> <span class=\"k\">with</span>\n  <span class=\"bp\">|</span> <span class=\"mi\">0</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">failure</span>\n  <span class=\"bp\">|</span> <span class=\"n\">maxSteps</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"n\">for</span> <span class=\"n\">choice</span> <span class=\"k\">in</span> <span class=\"bp\">←</span> <span class=\"n\">choices</span> <span class=\"n\">mvarId</span> <span class=\"k\">do</span>\n      <span class=\"k\">let</span> <span class=\"n\">mvars</span><span class=\"bp\">?</span> <span class=\"bp\">←</span> <span class=\"n\">observing</span><span class=\"bp\">?</span> <span class=\"k\">do</span>\n        <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">mvars'</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n        <span class=\"n\">for</span> <span class=\"n\">mvar</span> <span class=\"k\">in</span> <span class=\"bp\">←</span> <span class=\"n\">run</span> <span class=\"n\">mvarId</span> <span class=\"n\">choice</span> <span class=\"k\">do</span>\n          <span class=\"k\">if</span> <span class=\"bp\">←</span> <span class=\"n\">shouldRecur</span> <span class=\"n\">mvar</span> <span class=\"k\">then</span>\n            <span class=\"n\">mvars'</span> <span class=\"o\">:=</span> <span class=\"n\">mvars'</span> <span class=\"bp\">++</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mvar.tryRecursive</span> <span class=\"n\">maxSteps</span> <span class=\"n\">choices</span> <span class=\"n\">run</span> <span class=\"n\">shouldRecur</span><span class=\"o\">)</span>\n          <span class=\"k\">else</span>\n            <span class=\"n\">mvars'</span> <span class=\"o\">:=</span> <span class=\"n\">mvars'.push</span> <span class=\"n\">mvar</span>\n        <span class=\"n\">return</span> <span class=\"n\">mvars'</span>\n      <span class=\"k\">if</span> <span class=\"k\">let</span> <span class=\"n\">some</span> <span class=\"n\">mvars</span> <span class=\"o\">:=</span> <span class=\"n\">mvars</span><span class=\"bp\">?</span> <span class=\"k\">then</span>\n        <span class=\"n\">return</span> <span class=\"n\">mvars</span>\n    <span class=\"n\">failure</span>\n</code></pre></div>",
+        "id": 342194441,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1678927530
+    },
+    {
+        "content": "<p>Though you can simplify this loop a lot by putting the nondeterminism into your <code>run</code> function (i.e., let it do an <code>observing?</code> loop or use <code>List.firstM</code> or whatever) and also let it determine whether to recur for each metavariable:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">Lean.MVarId.tryRecursive</span> <span class=\"o\">(</span><span class=\"n\">mvarId</span> <span class=\"o\">:</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">maxSteps</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span>\n    <span class=\"o\">(</span><span class=\"n\">run</span> <span class=\"o\">:</span> <span class=\"n\">MVarId</span> <span class=\"bp\">→</span> <span class=\"n\">MetaM</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"o\">(</span><span class=\"n\">Bool</span> <span class=\"bp\">×</span> <span class=\"n\">MVarId</span><span class=\"o\">)))</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">match</span> <span class=\"n\">maxSteps</span> <span class=\"k\">with</span>\n  <span class=\"bp\">|</span> <span class=\"mi\">0</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">failure</span>\n  <span class=\"bp\">|</span> <span class=\"n\">maxSteps</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">mvars</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n    <span class=\"n\">for</span> <span class=\"o\">(</span><span class=\"n\">recur</span><span class=\"o\">,</span> <span class=\"n\">mvar</span><span class=\"o\">)</span> <span class=\"k\">in</span> <span class=\"bp\">←</span> <span class=\"n\">run</span> <span class=\"n\">mvarId</span> <span class=\"k\">do</span>\n      <span class=\"k\">if</span> <span class=\"n\">recur</span> <span class=\"k\">then</span>\n        <span class=\"n\">mvars</span> <span class=\"o\">:=</span> <span class=\"n\">mvars</span> <span class=\"bp\">++</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mvar.tryRecursive</span> <span class=\"n\">maxSteps</span> <span class=\"n\">run</span><span class=\"o\">)</span>\n      <span class=\"k\">else</span>\n        <span class=\"n\">mvars</span> <span class=\"o\">:=</span> <span class=\"n\">mvars.push</span> <span class=\"n\">mvar</span>\n    <span class=\"n\">return</span> <span class=\"n\">mvars</span>\n</code></pre></div>",
+        "id": 342195277,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1678927972
+    },
+    {
+        "content": "<p>The first version seems like it's useful if you really do have separate <code>choices</code>/<code>run</code>/<code>shouldRecur</code> functions that commonly appear.</p>",
+        "id": 342195432,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1678928048
+    },
+    {
+        "content": "<p>Very interesting!! I’m open to other ways to intervene, and also wondering (low priority)—maybe there are ways to refactor <code>solveByElim</code> so that it’s built of components like these? Just from an organizational point of view, it would be nice to have “canonical” definitions we use for each conceptual task, rather than a couple of slightly-different ways to achieve the same thing.</p>",
+        "id": 342195920,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678928310
+    },
+    {
+        "content": "<p>So I just finished a refactor of <code>solveByElim</code> to keep separate the \"wrangling hypotheses and lemmas\" and \"handling backtracking\" stuff.</p>",
+        "id": 342197522,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678929271
+    },
+    {
+        "content": "<p>and indeed, I think the backtracking stuff could be rewritten to use Kyle's <code>tryRecursive</code>.</p>",
+        "id": 342197544,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678929294
+    },
+    {
+        "content": "<p>It's a bit weird at the moment, because the interface for <code>solveByElim</code> allows these <code>proc</code>, <code>suspend</code>, and <code>discharge</code> hooks to controlling how goals are handled.</p>",
+        "id": 342197592,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678929332
+    },
+    {
+        "content": "<p>But these could all be compiled down to a call to <code>tryRecursive</code>, I think/perhaps.</p>",
+        "id": 342197663,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678929367
+    },
+    {
+        "content": "<p>The semantics of <code>discharge</code> make it rather annoying to compile the core of <code>solveByElim</code> down to <code>tryRecursive</code>.</p>",
+        "id": 342198304,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678929829
+    },
+    {
+        "content": "<p>There's also some extra features in the <code>proc</code> handler in solve_by_elim, that allow it to make decisions (about new goals, or whether it should recurse) based on the values of the original metavariables. Although I guess that is doable, too.</p>",
+        "id": 342198417,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678929893
+    },
+    {
+        "content": "<p>Okay, my refactor is at <a href=\"https://github.com/leanprover-community/mathlib4/pull/2920\">!4#2920</a>.</p>",
+        "id": 342200324,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678931407
+    },
+    {
+        "content": "<p>Nice! :) So, if I’m reading correctly, I would simply call <code>backtracking</code> instead of <code>solveByElim</code>…is the point of the double <code>MetaM</code> in the type of <code>alternatives</code> to prevent us from actually having to compute all of the alternatives up front (and only compute as needed)? (Just guessing—I’m still developing my mental model of lean’s computation. If this is true, I’m not totally sure <em>why</em> it is—it just reminds me of the <code>TermElabM</code> thunks used for the lemmas, and I’m not totally sure why that works, either!)</p>",
+        "id": 342203026,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678933381
+    },
+    {
+        "content": "<p>(Also I think <code>backtracking</code> may be missing a docstring)</p>",
+        "id": 342204101,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1678934125
+    },
+    {
+        "content": "<p>Yes, if you're not applying lemmas, just use <code>backtracking</code>, or Kyle's <code>tryRecursive</code>. (The main advantage of <code>backtracking</code> is that there's an existing test suite...)</p>",
+        "id": 342208414,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678936922
+    },
+    {
+        "content": "<p>and yes, the double <code>MetaM</code> was to avoid computation. Ideally the outer list would be a <code>Stream</code> of some sort, but I don't think we have a stream-that-computes-successive-elements-in-a-monad developed yet.</p>",
+        "id": 342208515,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678936974
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span>, I put a slight variation of your solution into this refactor PR. It's not used at the moment, but at least it's there if people want it. :-)</p>",
+        "id": 342217281,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678943455
+    },
+    {
+        "content": "<p>(Hope it's alright, just updated the branch with some trivial fixes (Mathlib.lean, using the right name in Mathlib.Tactic.SolveByElim) so I could start using it!)</p>",
+        "id": 342854399,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1679184124
+    },
+    {
+        "content": "<p>Update on <code>mono</code> after a while: I haven’t had much time the past couple months, but I hacked away at mono this past day to finish it off when I heard it was useful for a current PR. The hard work is now done! There are now just some docstrings/refactorings/very small tweaks to do, but I think it works the way it should. I hope to have it polished and out for review later today or, if necessary, tomorrow.</p>\n<p>(Note: it’s (by nature) a large PR, but I’m trying to keep the git history nice for reviewing—and so I’m not committing the current work just yet until it’s all organized.)</p>",
+        "id": 354835517,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1682936310
+    },
+    {
+        "content": "<p>just an update for those waiting on <code>mono</code>: aiming for tomorrow or the day after, as I found myself pushing through a headache all day today and just couldn’t get it done. almost there. :)</p>\n<p>Update: found and dealt with a stubborn bug! as far as I can tell everything works now. docstrings are done; now I’m adding trace nodes, seeing if I can improve this one function, and then doing git surgery.</p>\n<p>Update 2 (1 day later): \"as far as I can tell\" wasn't far enough, turns out. Wrote some more tests, found another bug, rewrote some of how the new part works—and it's better for it, tbh. Continuing tomorrow...</p>\n<p>Update 3: was occupied these past couple days, unfortunately. Continuing asap.</p>",
+        "id": 355317476,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1683089808
+    }
+]

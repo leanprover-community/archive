@@ -1,0 +1,104 @@
+[
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"197836\">@Jireh Loreaux</span> reported a bug with the new <code>#find</code> command. Here is a self-contained reproducer, <br>\nIt prints <code>(true, false)</code>. Why does the second one fail? I assume I am doing something wrong with the metavariables, but what?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Tactic.Basic</span>\n<span class=\"kn\">import</span> <span class=\"n\">Mathlib.Tactic.RunCmd</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">autoImplicit</span> <span class=\"n\">false</span>\n<span class=\"c1\">-- set_option pp.raw false</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span> <span class=\"n\">Elab</span> <span class=\"n\">Command</span>\n\n<span class=\"kd\">class</span> <span class=\"n\">Star</span> <span class=\"o\">(</span><span class=\"n\">R</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"n\">where</span> <span class=\"n\">star</span> <span class=\"o\">:</span> <span class=\"n\">R</span> <span class=\"bp\">→</span> <span class=\"n\">R</span>\n<span class=\"kn\">export</span> <span class=\"n\">Star</span><span class=\"o\">(</span><span class=\"n\">star</span><span class=\"o\">)</span>\n<span class=\"c1\">-- Without an instance, `#check (star _)` will always fail</span>\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">Star</span> <span class=\"n\">Unit</span> <span class=\"n\">where</span> <span class=\"n\">star</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"o\">()</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">()</span>\n<span class=\"kd\">theorem</span> <span class=\"n\">star_comm_self'</span> <span class=\"o\">{</span><span class=\"n\">R</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">Mul</span> <span class=\"n\">R</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">Star</span> <span class=\"n\">R</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">R</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">star</span> <span class=\"n\">x</span> <span class=\"bp\">*</span> <span class=\"n\">x</span> <span class=\"bp\">=</span> <span class=\"n\">x</span> <span class=\"bp\">*</span> <span class=\"n\">star</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">ConstMatcher</span> <span class=\"o\">:=</span> <span class=\"n\">ConstantInfo</span> <span class=\"bp\">→</span> <span class=\"n\">MetaM</span> <span class=\"n\">Bool</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">matchAnywhere</span> <span class=\"o\">(</span><span class=\"n\">t</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"n\">ConstMatcher</span> <span class=\"o\">:=</span> <span class=\"n\">withReducible</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">head</span> <span class=\"o\">:=</span> <span class=\"n\">t.toHeadIndex</span>\n  <span class=\"k\">let</span> <span class=\"n\">head_args</span> <span class=\"o\">:=</span> <span class=\"n\">t.headNumArgs</span>\n  <span class=\"k\">let</span> <span class=\"n\">pat</span> <span class=\"bp\">←</span> <span class=\"n\">abstractMVars</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">instantiateMVars</span> <span class=\"n\">t</span><span class=\"o\">)</span>\n  <span class=\"c1\">-- dbg_trace (pat.expr)</span>\n  <span class=\"n\">pure</span> <span class=\"k\">fun</span> <span class=\"o\">(</span><span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">ConstantInfo</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">withReducible</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">found</span>  <span class=\"bp\">←</span> <span class=\"n\">IO.mkRef</span> <span class=\"n\">false</span>\n    <span class=\"k\">let</span> <span class=\"n\">cTy</span> <span class=\"o\">:=</span> <span class=\"n\">c.instantiateTypeLevelParams</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mkFreshLevelMVars</span> <span class=\"n\">c.numLevelParams</span><span class=\"o\">)</span>\n    <span class=\"n\">Lean.Meta.forEachExpr'</span> <span class=\"n\">cTy</span> <span class=\"k\">fun</span> <span class=\"n\">sub_e</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n      <span class=\"k\">if</span> <span class=\"n\">head</span> <span class=\"bp\">==</span> <span class=\"n\">sub_e.toHeadIndex</span> <span class=\"bp\">&amp;&amp;</span> <span class=\"n\">head_args</span> <span class=\"bp\">==</span> <span class=\"n\">sub_e.headNumArgs</span> <span class=\"k\">then</span> <span class=\"k\">do</span>\n        <span class=\"n\">withNewMCtxDepth</span> <span class=\"bp\">$</span> <span class=\"k\">do</span>\n          <span class=\"k\">let</span> <span class=\"n\">pat</span> <span class=\"o\">:=</span> <span class=\"n\">pat.expr.instantiateLevelParamsArray</span> <span class=\"n\">pat.paramNames</span>\n            <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mkFreshLevelMVars</span> <span class=\"n\">pat.numMVars</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">toArray</span>\n          <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">pat</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">lambdaMetaTelescope</span> <span class=\"n\">pat</span>\n          <span class=\"c1\">-- dbg_trace (pat, sub_e)</span>\n          <span class=\"n\">Lean.logInfo</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"{pat}</span><span class=\"se\">\\n</span><span class=\"s2\">{sub_e}\"</span>\n          <span class=\"k\">if</span> <span class=\"bp\">←</span> <span class=\"n\">isDefEq</span> <span class=\"n\">pat</span> <span class=\"n\">sub_e</span>\n          <span class=\"k\">then</span> <span class=\"n\">found.set</span> <span class=\"n\">true</span>\n      <span class=\"n\">not</span> <span class=\"bp\">&lt;$&gt;</span> <span class=\"n\">found.get</span>\n    <span class=\"n\">found.get</span>\n\n<span class=\"kd\">run_cmd</span> <span class=\"n\">liftTermElabM</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">s1</span> <span class=\"bp\">←</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">term</span><span class=\"bp\">|</span><span class=\"n\">star</span> <span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"bp\">*</span> <span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"bp\">=</span> <span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"bp\">*</span> <span class=\"n\">star</span> <span class=\"bp\">?</span><span class=\"n\">_</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">t1</span> <span class=\"bp\">←</span> <span class=\"n\">Lean.Elab.Term.elabTerm</span> <span class=\"n\">s1</span> <span class=\"n\">none</span>\n  <span class=\"k\">let</span> <span class=\"n\">matcher1</span> <span class=\"bp\">←</span> <span class=\"n\">matchAnywhere</span> <span class=\"n\">t1</span>\n\n  <span class=\"k\">let</span> <span class=\"n\">s2</span> <span class=\"bp\">←</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">term</span><span class=\"bp\">|</span><span class=\"n\">star</span> <span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"bp\">*</span> <span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"bp\">=</span> <span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"bp\">*</span> <span class=\"n\">star</span> <span class=\"bp\">?</span><span class=\"n\">a</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">t2</span> <span class=\"bp\">←</span> <span class=\"n\">Lean.Elab.Term.elabTerm</span> <span class=\"n\">s2</span> <span class=\"n\">none</span>\n  <span class=\"k\">let</span> <span class=\"n\">matcher2</span> <span class=\"bp\">←</span> <span class=\"n\">matchAnywhere</span> <span class=\"n\">t2</span>\n\n  <span class=\"k\">let</span> <span class=\"n\">ci</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getEnv</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"kd\">constants</span><span class=\"bp\">.</span><span class=\"n\">find</span><span class=\"bp\">!</span> <span class=\"bp\">``</span><span class=\"n\">star_comm_self'</span>\n  <span class=\"n\">dbg_trace</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">matcher1</span> <span class=\"n\">ci</span><span class=\"o\">,</span> <span class=\"bp\">←</span> <span class=\"n\">matcher2</span> <span class=\"n\">ci</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 387510439,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1693126369
+    },
+    {
+        "content": "<p>this line is wrong:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>          <span class=\"k\">let</span> <span class=\"n\">pat</span> <span class=\"o\">:=</span> <span class=\"n\">pat.expr.instantiateLevelParamsArray</span> <span class=\"n\">pat.paramNames</span>\n            <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mkFreshLevelMVars</span> <span class=\"n\">pat.numMVars</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">toArray</span>\n</code></pre></div>\n<p><code>pat.numMVars</code> is the number of expr metavariables abstracted (which you should be passing to <code>lambdaMetaTelescope</code>), while the number of universe metavariables is <code>pat.paramNames.size</code></p>",
+        "id": 387512264,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693127799
+    },
+    {
+        "content": "<p>Spot on, thanks!</p>",
+        "id": 387512471,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1693127980
+    },
+    {
+        "content": "<p>I guess I could just write</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>          <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">pat</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">openAbstractMVarsResult</span> <span class=\"n\">pat</span>\n</code></pre></div>\n<p>instead</p>",
+        "id": 387512621,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1693128113
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"470149\">@Joachim Breitner</span> Here's a way to elaborate the term while allowing typeclass failures. That lets you delete <code>instance : Star Unit where star := fun () =&gt; ()</code>.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">open</span> <span class=\"n\">Lean.Elab</span> <span class=\"k\">in</span>\n<span class=\"kd\">def</span> <span class=\"n\">elabTerm'</span> <span class=\"o\">(</span><span class=\"n\">t</span> <span class=\"o\">:</span> <span class=\"n\">Term</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">expectedType</span><span class=\"bp\">?</span> <span class=\"o\">:</span> <span class=\"n\">Option</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">TermElabM</span> <span class=\"n\">Expr</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">withTheReader</span> <span class=\"n\">Term.Context</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">ctx</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">ctx</span> <span class=\"k\">with</span> <span class=\"n\">ignoreTCFailures</span> <span class=\"o\">:=</span> <span class=\"n\">true</span> <span class=\"o\">})</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">t</span> <span class=\"bp\">←</span> <span class=\"n\">Term.elabTerm</span> <span class=\"n\">t</span> <span class=\"n\">expectedType</span><span class=\"bp\">?</span>\n    <span class=\"n\">Term.synthesizeSyntheticMVars</span> <span class=\"o\">(</span><span class=\"n\">mayPostpone</span> <span class=\"o\">:=</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">ignoreStuckTC</span> <span class=\"o\">:=</span> <span class=\"n\">true</span><span class=\"o\">)</span>\n    <span class=\"n\">return</span> <span class=\"n\">t</span>\n</code></pre></div>",
+        "id": 387525132,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693138425
+    },
+    {
+        "content": "<p>Thanks! <code>ignoreTcFailures</code> looks scary … what kind of errors would I not catch this way?</p>",
+        "id": 387526111,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1693139176
+    },
+    {
+        "content": "<p>And why does the presence of an instance which does not even apply make a difference to the elaborator in the first place? This is not just my code, it’s even</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">Star</span> <span class=\"o\">(</span><span class=\"n\">R</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"n\">where</span> <span class=\"n\">star</span> <span class=\"o\">:</span> <span class=\"n\">R</span> <span class=\"bp\">→</span> <span class=\"n\">R</span>\n<span class=\"c1\">-- instance : Star Unit where star := fun () =&gt; ()</span>\n<span class=\"k\">#check</span> <span class=\"o\">(</span><span class=\"n\">Star.star</span> <span class=\"n\">_</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>where I didn’t expect this to fail.</p>",
+        "id": 387526278,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1693139326
+    },
+    {
+        "content": "<p>It fails because when it elaborates <code>Star.star _</code>, it triggers typeclass inference to fill in the instance argument, and it quickly detects that this problem will never have a solution (there are no instances), so it fails.</p>",
+        "id": 387527057,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693139931
+    },
+    {
+        "content": "<p><code>ignoreTCFailures</code> is used when elaborating patterns in <code>match</code> expressions for example. You don't care if there are actually any instances out there when you're elaborating a pattern.</p>",
+        "id": 387527095,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693139988
+    },
+    {
+        "content": "<p>Hmm, it seems strange to rely on the absence of type class instances, due to their open world nature. But it’s probably a corner case that doesn’t matter a lot. I’ll copy your <code>elabTerm'</code> into the <code>#find</code> implementation.</p>",
+        "id": 387528170,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1693140895
+    },
+    {
+        "content": "<p>When you're elaborating a term, it switches to a closed world assumption -- no one is going to add new instances while a term is being elaborated.</p>",
+        "id": 387528880,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693141465
+    },
+    {
+        "content": "<p>I didn't mention that the concrete consequence of these options is that all the instance argument metavariables become plain metavariables when they fail to be synthesized. That seems to be what you want for a pattern.</p>",
+        "id": 387529976,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693142410
+    },
+    {
+        "content": "<p>I just pushed a failing test to the <code>joachim/find</code> branch, where </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">assert_match</span> <span class=\"n\">List.map</span> <span class=\"o\">(</span><span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"bp\">-&gt;</span> <span class=\"bp\">?</span><span class=\"n\">b</span><span class=\"o\">)</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">List</span> <span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">List</span> <span class=\"bp\">?</span><span class=\"n\">b</span>\n</code></pre></div>\n<p>doesn’t match (using the <code>#find</code> machinery), at the end of <code>test/Find.lean</code> – if someone wants to have a look why.</p>\n<p>Oddly,</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">assert_match</span> <span class=\"n\">List.map</span> <span class=\"bp\">|-</span> <span class=\"o\">(</span><span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"bp\">-&gt;</span> <span class=\"bp\">?</span><span class=\"n\">b</span><span class=\"o\">)</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">List</span> <span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">List</span> <span class=\"bp\">?</span><span class=\"n\">b</span>\n</code></pre></div>\n<p>using the “conclusion matcher” rather than the “everywhere matcher” works.</p>",
+        "id": 387836968,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1693299550
+    },
+    {
+        "content": "<p>isn't that a parsing issue? you just asked to find something of the form <code>((List.map (?a -&gt; ?b)) -&gt; List ?a -&gt; List ?b)</code></p>",
+        "id": 387859222,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693307261
+    },
+    {
+        "content": "<p>i.e. you got bit by the parsing problem I had but in reverse</p>",
+        "id": 387859265,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693307279
+    },
+    {
+        "content": "<p>No, the <code>#assert_match</code> is an ad-hoc command I created for the test, takes an ident, an optional turnstile, and an expression. Probably I should add a mandatory <code>matches</code> keyword there, for clarity :-)</p>",
+        "id": 387873243,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1693312445
+    },
+    {
+        "content": "<p>I found the problem: <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Meta.forEachExpr%27#doc\">docs#Lean.Meta.forEachExpr'</a> did not quite work as I thought it does: Given a type <code>a → b → c</code>, it does not visit <code>b → c</code>.  Now (not yet deployed, have to rebuild mathlib…) <code>List.map</code> is found as it should.<br>\n(And that every deployment takes 3h because I rebuild all of mathlib using the nix setup is a bit silly…)</p>",
+        "id": 388729867,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1693689665
+    }
+]

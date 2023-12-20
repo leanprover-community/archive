@@ -1,0 +1,176 @@
+[
+    {
+        "content": "<p>library_search in mathlib4 is smarter than it was in mathlib3 --- we store all the declarations in a discrimination tree, rather than a single big bucket. This means that we can use the goal to quickly identify only the lemmas that could possibly match.</p>\n<p>The basic idea here is that for each lemma, we look at the conclusion (i.e. the type, after all binders), and write down a linearised version of the type, with various things (arguments of the lemma, and typeclass instances) replaced with wildcards.</p>\n<p>However, there are many lemmas that the discrimination tree claims are relevant for any possible goal (or, relatedly, any possible equational goal). Usually these lemmas are pretty unlikely --- they will in fact successfully <code>apply</code> against the goal, but there's no chance we will be able to fill in the arguments from the local hypotheses (this step is handled by <code>solve_by_elim</code>).</p>\n<p>Moreover, these \"bad\" lemmas really clutter up the output of <code>library_search</code> when it fails to close the goal (i.e. what the output that we used to get from <code>suggest</code> in mathlib3).</p>\n<p>A few possible proposals:</p>\n<ol>\n<li>just discard these universal lemmas, so library_search doesn't even try them (anything with discrimination key <code>#[*]</code> or <code>#[Eq, *, *, *]</code>).</li>\n<li>try the universal lemmas, but only after the more specific ones?</li>\n<li>try the universal lemmas, but don't report them in the output when we fail to close the goal.</li>\n</ol>\n<p>Proposal 1. does speed up library_search measurably, but at a slight cost: I can post some examples where we'd now fail. Proposal 2. probably doesn't gain us much --- maybe a slight speed up on successful runs, because we're trying out fewer of the unlikely lemmas before we get to the right one. Proposal 3. would additionally give much better output when <code>library_search</code> fails.</p>\n<p>I've implemented 1. on a branch, but thought I'd check for feedback or suggestions before trying out 2. / 3.</p>",
+        "id": 340801629,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678440107
+    },
+    {
+        "content": "<p>If anyone had ideas for how to better filter the \"matches everything\" lemmas according to the <em>hypotheses</em>, that would be cool, but I don't see anything practicable yet.</p>",
+        "id": 340801764,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678440149
+    },
+    {
+        "content": "<p>One fix for \"these lemmas clutter up the output when library_search fails to close the goal\" is to go the Lean 3 way and just report that library_search failed, without showing the 100 near-misses.</p>",
+        "id": 340876552,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1678458479
+    },
+    {
+        "content": "<p>How hard would it be to implement 1 and then implement 2 when we pass <code>!</code> or just a <code>config</code>? It seems like both options would be useful.</p>",
+        "id": 340884310,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1678460197
+    },
+    {
+        "content": "<p>I think (1) is a reasonable choice.</p>",
+        "id": 340963925,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1678482088
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> Can you post examples of where we get a <code>#[*]</code> key for a useful lemma?</p>",
+        "id": 340963928,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1678482089
+    },
+    {
+        "content": "<p>Also <code>library_search</code> doesn't see through semireducible definitions at the moment.  How problematic is this in practice?  I have wanted to implement this by inserting reduced versions of the theorem statement into the discrimination tree, but I've never got around to it.</p>",
+        "id": 340964180,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1678482199
+    },
+    {
+        "content": "<p>Uh... you want to unfold semireducible definitions?</p>",
+        "id": 340979695,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1678488278
+    },
+    {
+        "content": "<p>That's nearly everything</p>",
+        "id": 340979719,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1678488292
+    },
+    {
+        "content": "<p>I was thinking about only the root function at first, e.g. apply lemmas about <code>HasDerivAtFilter</code> to a <code>HasDerivAt</code> goal.  But yeah, that could be super expensive if done recursively.</p>",
+        "id": 340980637,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1678488701
+    },
+    {
+        "content": "<p>what did mathlib3 library_search use for its heuristic?</p>",
+        "id": 341215095,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678591877
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110043\">@Gabriel Ebner</span>, here are some examples that rely on allowing lemmas with a <code>#[*]</code> key:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">p</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"bp\">¬¬</span><span class=\"n\">p</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">p</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">library_search</span> <span class=\"c1\">-- says: `exact not_not.mp`</span>\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">∧</span> <span class=\"n\">b</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">library_search</span> <span class=\"c1\">-- says: `exact h.left`</span>\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">P</span> <span class=\"n\">Q</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"bp\">¬</span> <span class=\"n\">Q</span> <span class=\"bp\">→</span> <span class=\"bp\">¬</span> <span class=\"n\">P</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"o\">(</span><span class=\"n\">P</span> <span class=\"bp\">→</span> <span class=\"n\">Q</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">library_search</span> <span class=\"c1\">-- says:`exact Function.mtr`</span>\n<span class=\"kd\">example</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Sort</span> <span class=\"n\">u</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">Empty</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">library_search</span> <span class=\"c1\">-- says: `exact Empty.elim h`</span>\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">C</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">g</span> <span class=\"o\">:</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">C</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">A</span> <span class=\"bp\">⊕</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">library_search</span> <span class=\"c1\">-- says: `exact Sum.elim f g`</span>\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">r</span> <span class=\"o\">:</span> <span class=\"n\">ℚ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ℚ</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">library_search</span> <span class=\"n\">using</span> <span class=\"n\">n</span><span class=\"o\">,</span> <span class=\"n\">r</span> <span class=\"c1\">-- says: `exact nsmulRec n r`</span>\n</code></pre></div>\n<p>I think I would be happy to \"lose\" these ones. With the exception of the last one (which is not the most useful answer anyway), these all feel like \"basic logic\" things, an perhaps out of scope for library_search.</p>",
+        "id": 341360311,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678675499
+    },
+    {
+        "content": "<p>Here's the timing data:</p>\n<hr>\n<p>With all lemmas:<br>\nlake env lean test/librarySearch.lean  212.08s user 2.17s system 98% cpu 3:36.44 total<br>\nlake env lean test/librarySearch.lean  194.68s user 1.49s system 99% cpu 3:18.03 total</p>\n<p>With all lemmas, just building the cache:<br>\nlake env lean test/librarySearch.lean  59.59s user 1.07s system 99% cpu 1:00.69 total</p>\n<p>Without #[*] lemmas:<br>\nlake env lean test/librarySearch.lean  96.73s user 1.33s system 99% cpu 1:38.33 total<br>\nlake env lean test/librarySearch.lean  96.44s user 1.31s system 99% cpu 1:37.93 total</p>\n<p>Without #[*] lemmas, just building the cache:<br>\nlake env lean test/librarySearch.lean  55.84s user 1.10s system 99% cpu 57.008 total</p>\n<hr>\n<p>That is, just starting out the library_search cache takes almost a minute now (with all of current mathlib4 imported). After that, the library_search test file takes approximately 140s to run, or approximately 36s to run if we drop all the \"non-specific\" lemmas.</p>\n<p>I think that's a pretty strong argument in favour of doing this filtering!</p>",
+        "id": 341360430,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678675571
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"407274\">@James Gallicchio</span>, in mathlib3 we did not use a discrimination tree, we just tried everything every time, so these non-specific lemmas were always considered.</p>",
+        "id": 341360468,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678675607
+    },
+    {
+        "content": "<p>like a defeq check against every lemma?</p>",
+        "id": 341360844,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678675926
+    },
+    {
+        "content": "<p>In mathlib3, there is also <code>library_search!</code>, but I have no idea what the difference is (the documentation is silent on this).<br>\nMaybe we can use <code>library_search!</code> for a variant that includes the non-specific lemmas?<br>\nThen <code>library_serach</code> would be reasonably fast and good for most cases, but if one wants to find something fairly general, but does not remember the name, <code>library_search!</code> would do it.</p>",
+        "id": 341361118,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1678676179
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"407274\">@James Gallicchio</span>, <code>library_search</code> uses <code>apply</code>, so it's not exactly a defeq check, but pretty close. It is trying to unify the conclusion of the lemma with the current goal, and then use <code>solve_by_elim</code> to fill in any arguments.</p>",
+        "id": 341361261,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678676327
+    },
+    {
+        "content": "<p>To enable <code>library_search!</code> (or something similar) to use the non-specific lemmas, we'd have to actually keep track of them (my proposal at the moment is just to drop them during indexing). I can do this, but it's slightly more work so I'm happy to hear other opinions. :-)</p>",
+        "id": 341361555,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678676554
+    },
+    {
+        "content": "<p>Is there a way to cache the discrimination tree?</p>",
+        "id": 341362297,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1678677281
+    },
+    {
+        "content": "<p>At present there isn't a way to cache it across files. (That is, the first time you use <code>library_search</code> in a given file, it takes a long time to \"boot up\", but then is fast for repeated uses in that file.)</p>",
+        "id": 341364259,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678678959
+    },
+    {
+        "content": "<p>I would like to see this, and in fact to have the libary_search caches built into oleans, so that the work can be done in CI.</p>",
+        "id": 341364298,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678679003
+    },
+    {
+        "content": "<p>I haven't thought about how to do this. If someone has an outline of how this could be achieved, I'd be happy to try to implement it.</p>",
+        "id": 341364317,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678679029
+    },
+    {
+        "content": "<p>Having the cache built automatically by CI sounds like the right thing to do.</p>",
+        "id": 341367002,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1678681144
+    },
+    {
+        "content": "<p>I think that having a fast <code>library_search</code> is really useful. When this tactic first came to Lean 3  I was using it everyday, multiple times per day, even for lemma I knew I could find rather easily (say I would have known precisely in which file it would be). Then mathlib3 grew and it became slower and slower and I mostly stopped using it.</p>",
+        "id": 341442150,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1678709299
+    },
+    {
+        "content": "<p>...perhaps because your knowledge of the library had got greater. I am using it all the time in my teaching, because I'm supposed to be demonstrating most of the undergraduate-level contents of the library and there are parts of it which I don't know at all well. However another advantage of experience is knowing about the naming convention (and also knowing how to search, e.g. I realised that writing <code>rw continuouscomp&lt;ctrl-space&gt;</code> is a better idea than <code>rw continuous_comp&lt;ctrl-space&gt;</code> or <code>rw continuous.comp&lt;ctrl-space&gt;</code> because it will find whichever one is the right one.</p>",
+        "id": 341454188,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1678712497
+    },
+    {
+        "content": "<p>A 4x improvement in applying the lemmas sounds like an excellent reason to remove the <code>#[*]</code> lemmas by default. I think it would be good to have a configuration option to still apply these lemmas, but I think the default should be quick.<br>\nIt is unfortunate that building the cache takes a full minute. <br>\nAm I correct that currently, if I'm in the middle of writing a proof where I'm using <code>library_search</code>, and I am not leaving any existing occurrences of <code>library_search</code> around (so I'll have 0 or 1 occurrences at all times), the server will recompute the cache whenever I write a new occurrence of <code>library_search</code>? That sounds not very nice to use, and it suggests that we also want a command <code>compute_library_search_cache</code> (or something) that we can put at the start of the file.</p>\n<p>Or, to build the caches into the oleans, you can probably use an environment extension and update the extension each time a declaration is added.</p>",
+        "id": 341466820,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1678715437
+    },
+    {
+        "content": "<blockquote>\n<p>not leaving any existing occurrences of library_search around (so I'll have 0 or 1 occurrences at all times), the server will recompute the cache whenever I write a new occurrence</p>\n</blockquote>\n<p>The cache is stored in a global variable.  It will only be recomputed if you restart the server (for the file).</p>",
+        "id": 341523279,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1678727769
+    },
+    {
+        "content": "<p>Ah, I see. That is nice!</p>",
+        "id": 341539114,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1678730995
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/2888\">mathlib4#2888</a></p>",
+        "id": 341930783,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1678838862
+    }
+]

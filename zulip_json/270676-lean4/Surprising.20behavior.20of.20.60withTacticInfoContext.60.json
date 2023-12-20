@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>I just spent a few hours debugging a tactic and it turns out the cause is that <code>withTacticInfoContext</code> implicitly prunes the solved goals after it has completed. It does this because <code>getUnsolvedGoals</code> calls <code>pruneSolvedGoals</code> as a side effect.</p>\n<p>I found this extremely surprising. Now that I know why it happens it is easy to work around, but I doubt I'm the last guy who will run into this issue. If it is intended that <code>getUnsolvedGoals</code> should have this side effect, then I would strongly suggest that it should be renamed.</p>",
+        "id": 402079992,
+        "sender_full_name": "Sebastian Zimmer",
+        "timestamp": 1700000110
+    },
+    {
+        "content": "<p>The fact that there can be assigned mvars in the goal list is just a performance optimisation -- ideally any assignment would immediately remove the assigned mvar (since it's not a goal anymore). So you should never rely on assigned mvars staying in the goal list, and you should always prune the goal list before reading it, which is why <code>getUnsolvedGoals</code> does just that. I'm curious why your use case would require assigned mvars to be preserved as 'goals'.</p>",
+        "id": 402085346,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1700002532
+    },
+    {
+        "content": "<p>I was solving the goal and then doing <code>replaceMainGoal</code> afterwards, but because withTacticInfoContext was being used the goal was being removed from the list too early and the wrong goal was replaced.</p>",
+        "id": 402085530,
+        "sender_full_name": "Sebastian Zimmer",
+        "timestamp": 1700002621
+    },
+    {
+        "content": "<p>I see how that might be confusing. I wouldn't object to renaming <code>getUnsolvedGoals</code> to <code>pruneAndGetUnsolvedGoal</code> or something, but I doubt you're going to get this past Leo.</p>",
+        "id": 402086331,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1700002942
+    },
+    {
+        "content": "<p>If the tactic author is supposed to handle solved goals nondeterministically going away then I don't see how you could ever safely use <code>replaceMainGoal</code></p>\n<p>Maybe instead of <code>replaceMainGoal</code> there should be a function which prepends to the list of goals and then prunes them.</p>",
+        "id": 402086885,
+        "sender_full_name": "Sebastian Zimmer",
+        "timestamp": 1700003195
+    },
+    {
+        "content": "<p>I find <code>replaceMainGoal</code> to be sketchy, and you should only use it if you're sure of the current state of the goal list.</p>\n<p>There are functions like <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.Tactic.liftMetaTactic#doc\">docs#Lean.Elab.Tactic.liftMetaTactic</a> for running a MetaM tactic on the main goal and prepending the list.</p>",
+        "id": 402087233,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1700003396
+    },
+    {
+        "content": "<p>It seems like it'd make sense to have a <code>popMainGoal</code> function and a <code>prependGoals</code> function (like <code>appendGoals</code>)</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">prependGoals</span> <span class=\"o\">(</span><span class=\"n\">mvarIds</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">TacticM</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span>\n  <span class=\"n\">modify</span> <span class=\"k\">fun</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">s</span> <span class=\"k\">with</span> <span class=\"n\">goals</span> <span class=\"o\">:=</span> <span class=\"n\">mvarIds</span> <span class=\"bp\">++</span> <span class=\"n\">s.goals</span> <span class=\"o\">}</span>\n\n<span class=\"sd\">/-- Returns `getMainGoal` and removes it from the goal list. -/</span>\n<span class=\"kd\">def</span> <span class=\"n\">popMainGoal</span> <span class=\"o\">:</span> <span class=\"n\">TacticM</span> <span class=\"n\">MVarId</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">mvarId</span> <span class=\"o\">::</span> <span class=\"n\">mvarIds'</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">getUnsolvedGoals</span> <span class=\"bp\">|</span> <span class=\"n\">throwNoGoalsToBeSolved</span>\n  <span class=\"n\">modify</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">goals</span> <span class=\"o\">:=</span> <span class=\"n\">mvarIds'</span> <span class=\"o\">}</span>\n  <span class=\"n\">return</span> <span class=\"n\">mvarId</span>\n</code></pre></div>",
+        "id": 402087463,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1700003516
+    },
+    {
+        "content": "<blockquote>\n<p>There are functions like <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.Tactic.liftMetaTactic#doc\">docs#Lean.Elab.Tactic.liftMetaTactic</a> for running a MetaM tactic on the main goal and prepending the list.</p>\n</blockquote>\n<p>Glancing at the code I don't think that avoids the issue I was having. If you do </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">liftMetaTactic</span> <span class=\"k\">do</span>\n  <span class=\"n\">withTacticInfoContext</span> <span class=\"o\">[</span><span class=\"bp\">...</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n    <span class=\"c1\">-- assign the goal to something</span>\n</code></pre></div>\n<p>I'm pretty sure this fails since the assigned goal gets pruned before <code>liftMetaTacticAux</code> calls <code>replaceMainGoal</code></p>\n<blockquote>\n<p>It seems like it'd make sense to have a popMainGoal function and a prependGoals function (like appendGoals)</p>\n</blockquote>\n<p>This makes sense to me and avoids these issues</p>",
+        "id": 402088168,
+        "sender_full_name": "Sebastian Zimmer",
+        "timestamp": 1700003859
+    },
+    {
+        "content": "<p>The trick is that <code>liftMetaTactic</code> only takes a <code>MetaM</code>, so it can't modify the goals list. (In particular you can't use <code>withTacticInfoContext</code> in <code>MetaM</code>)</p>",
+        "id": 402088604,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1700004083
+    },
+    {
+        "content": "<p>Ah I see</p>",
+        "id": 402088655,
+        "sender_full_name": "Sebastian Zimmer",
+        "timestamp": 1700004116
+    },
+    {
+        "content": "<p>Doing as much as possible down in MetaM is usually a good idea. I try and escape TacticM at the first available opportunity. :-)</p>",
+        "id": 402094734,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700006813
+    }
+]

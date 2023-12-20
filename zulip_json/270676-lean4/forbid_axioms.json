@@ -1,0 +1,122 @@
+[
+    {
+        "content": "<p>Is it possible to have a Lean 4 command</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">forbid_axioms</span> <span class=\"n\">My.Fancy.Constant</span> <span class=\"n\">My.Other.Axiom</span>\n</code></pre></div>\n<p>at the top of some file, which makes sure that all the decls in that file can not depend on those axioms? (If they try to depend on the axioms, this should result in an error.)</p>\n<p>It might be easier to have some linter at the bottom of the file, with errors reported at the line that invokes the linter. That would be a good start. But it would be really nice if errors are reported while writing the decl, at the line where a \"forbidden\" lemma is used.</p>",
+        "id": 358416911,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1684146512
+    },
+    {
+        "content": "<p>If it goes at the start, it might be good to make it section-scoped rather than file-scoped</p>",
+        "id": 358417695,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1684146725
+    },
+    {
+        "content": "<p>You might be able to hack that together with a \"linter\" that makes errors instead of warnings</p>",
+        "id": 358418262,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684146882
+    },
+    {
+        "content": "<p>since linters get to spy on every command as they go by</p>",
+        "id": 358418377,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684146923
+    },
+    {
+        "content": "<p>it won't catch decls created directly via <code>addDecl</code> though</p>",
+        "id": 358418457,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684146950
+    },
+    {
+        "content": "<p>plus you have to reconstruct the declaration to check from the syntax, since you are just given the raw command syntax</p>",
+        "id": 358418679,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684147001
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib/pull/10954\">#10954</a> seems relevant here</p>",
+        "id": 358443521,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1684153418
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/forbid_axioms/near/358418457\">said</a>:</p>\n<blockquote>\n<p>it won't catch decls created directly via <code>addDecl</code> though</p>\n</blockquote>\n<p>You can always do what <code>whatsnew</code> does and just compare the two environments.  (Beware of the quadratic runtime though.)</p>",
+        "id": 358515063,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1684168977
+    },
+    {
+        "content": "<p>How do I programmatically ask for the axioms of a certain decl?</p>",
+        "id": 358632159,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1684217899
+    },
+    {
+        "content": "<p>Oooh cool! You can go-to-defn on <code>#print axioms</code> <span aria-label=\"bulb\" class=\"emoji emoji-1f4a1\" role=\"img\" title=\"bulb\">:bulb:</span></p>",
+        "id": 358632272,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1684217951
+    },
+    {
+        "content": "<p>Here is my current broken attempt:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean.Elab.Print</span>\n<span class=\"kn\">import</span> <span class=\"n\">Std.Tactic.Lint</span>\n<span class=\"kn\">import</span> <span class=\"n\">Mathlib.Tactic.RunCmd</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">Parser.Command</span>\n<span class=\"kd\">@[builtin_command_parser]</span> <span class=\"kd\">def</span> <span class=\"n\">forbiddenAxioms</span>    <span class=\"o\">:=</span> <span class=\"n\">leading_parser</span>\n  <span class=\"s2\">\"#forbiddenAxioms \"</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"n\">ident</span>\n<span class=\"kd\">end</span> <span class=\"n\">Parser.Command</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">Elab.Command</span>\n\n<span class=\"kn\">private</span> <span class=\"kd\">def</span> <span class=\"n\">forbiddenAxioms</span> <span class=\"o\">(</span><span class=\"n\">bad</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">CommandElabM</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">env</span> <span class=\"bp\">←</span> <span class=\"n\">getEnv</span>\n  <span class=\"k\">let</span> <span class=\"n\">decls</span> <span class=\"bp\">←</span> <span class=\"n\">liftCoreM</span> <span class=\"n\">Std.Tactic.Lint.getDeclsInCurrModule</span>\n  <span class=\"n\">decls.forM</span> <span class=\"k\">fun</span> <span class=\"n\">n</span> <span class=\"bp\">↦</span>\n    <span class=\"k\">let</span> <span class=\"n\">axs</span> <span class=\"o\">:=</span> <span class=\"o\">((((</span><span class=\"n\">CollectAxioms.collect</span> <span class=\"n\">n</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">run</span> <span class=\"n\">env</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">run</span> <span class=\"o\">{})</span><span class=\"bp\">.</span><span class=\"mi\">2</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"kd\">axioms</span><span class=\"bp\">.</span><span class=\"n\">toList</span>\n    <span class=\"k\">let</span> <span class=\"n\">l</span> <span class=\"o\">:=</span> <span class=\"n\">bad.filter</span> <span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"bp\">↦</span> <span class=\"n\">a</span> <span class=\"bp\">∈</span> <span class=\"n\">axs</span>\n    <span class=\"k\">if</span> <span class=\"n\">l.isEmpty</span> <span class=\"k\">then</span> <span class=\"n\">pure</span> <span class=\"o\">()</span>\n    <span class=\"k\">else</span> <span class=\"n\">logInfo</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"'{n}' depends on: {l}\"</span>\n\n<span class=\"kd\">@[builtin_command_elab Parser.Command.forbiddenAxioms]</span>\n<span class=\"kd\">def</span> <span class=\"n\">elabForbiddenAxioms</span> <span class=\"o\">:</span> <span class=\"n\">CommandElab</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">#</span><span class=\"n\">forbiddenAxioms</span><span class=\"bp\">%$</span><span class=\"n\">tk</span> <span class=\"bp\">$</span><span class=\"n\">id</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">withRef</span> <span class=\"n\">tk</span> <span class=\"k\">do</span> <span class=\"c1\">-- &lt;== ERROR: expected token</span>\n    <span class=\"k\">let</span> <span class=\"n\">cs</span> <span class=\"bp\">←</span> <span class=\"n\">resolveGlobalConstWithInfos</span> <span class=\"n\">id</span>\n    <span class=\"n\">cs.forM</span> <span class=\"n\">printAxiomsOf</span>\n  <span class=\"bp\">|</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">throwUnsupportedSyntax</span>\n\n<span class=\"kd\">end</span> <span class=\"n\">Elab.Command</span>\n\n<span class=\"kd\">end</span> <span class=\"n\">Lean</span>\n\n<span class=\"kd\">axiom</span> <span class=\"n\">LEM</span> <span class=\"o\">(</span><span class=\"n\">P</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">P</span> <span class=\"bp\">∨</span> <span class=\"bp\">¬</span><span class=\"n\">P</span>\n\n<span class=\"kd\">theorem</span> <span class=\"n\">test1</span> <span class=\"o\">(</span><span class=\"n\">P</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"bp\">¬</span><span class=\"n\">P</span> <span class=\"bp\">∨</span> <span class=\"n\">P</span> <span class=\"o\">:=</span>\n  <span class=\"o\">(</span><span class=\"n\">LEM</span> <span class=\"n\">P</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">elim</span> <span class=\"bp\">.</span><span class=\"n\">inr</span> <span class=\"bp\">.</span><span class=\"n\">inl</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">test2</span> <span class=\"o\">(</span><span class=\"n\">P</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"n\">trivial</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Command</span> <span class=\"k\">in</span>\n<span class=\"kd\">run_cmd</span>\n  <span class=\"n\">forbiddenAxioms</span> <span class=\"o\">[</span><span class=\"bp\">`</span><span class=\"n\">LEM</span><span class=\"o\">]</span> <span class=\"c1\">-- prints: 'LEM' depends on [LEM], 'test1' depends on [LEM]</span>\n</code></pre></div>",
+        "id": 358638739,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1684220438
+    },
+    {
+        "content": "<p>There is red squiggles under <code>#forbiddenAxioms</code> at the indicated line</p>",
+        "id": 358638808,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1684220464
+    },
+    {
+        "content": "<p><code>@[builtin_*]</code> attributes should not be used outside lean core</p>",
+        "id": 358639806,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684220779
+    },
+    {
+        "content": "<p>you should just use <code>syntax</code></p>",
+        "id": 358639854,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684220793
+    },
+    {
+        "content": "<p>could you please tell me how to do just that?</p>",
+        "id": 358640055,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1684220864
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">namespace</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Elab</span> <span class=\"n\">Command</span>\n<span class=\"kn\">private</span> <span class=\"kd\">def</span> <span class=\"n\">forbiddenAxioms</span> <span class=\"o\">(</span><span class=\"n\">bad</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">CommandElabM</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">env</span> <span class=\"bp\">←</span> <span class=\"n\">getEnv</span>\n  <span class=\"k\">let</span> <span class=\"n\">decls</span> <span class=\"bp\">←</span> <span class=\"n\">liftCoreM</span> <span class=\"n\">Std.Tactic.Lint.getDeclsInCurrModule</span>\n  <span class=\"n\">decls.forM</span> <span class=\"k\">fun</span> <span class=\"n\">n</span> <span class=\"bp\">↦</span>\n    <span class=\"k\">let</span> <span class=\"n\">axs</span> <span class=\"o\">:=</span> <span class=\"o\">((((</span><span class=\"n\">CollectAxioms.collect</span> <span class=\"n\">n</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">run</span> <span class=\"n\">env</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">run</span> <span class=\"o\">{})</span><span class=\"bp\">.</span><span class=\"mi\">2</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"kd\">axioms</span><span class=\"bp\">.</span><span class=\"n\">toList</span>\n    <span class=\"k\">let</span> <span class=\"n\">l</span> <span class=\"o\">:=</span> <span class=\"n\">bad.filter</span> <span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"bp\">↦</span> <span class=\"n\">a</span> <span class=\"bp\">∈</span> <span class=\"n\">axs</span>\n    <span class=\"k\">if</span> <span class=\"n\">l.isEmpty</span> <span class=\"k\">then</span> <span class=\"n\">pure</span> <span class=\"o\">()</span>\n    <span class=\"k\">else</span> <span class=\"n\">logInfo</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"'{n}' depends on: {l}\"</span>\n\n<span class=\"kn\">open</span> <span class=\"kn\">private</span> <span class=\"n\">printAxiomsOf</span> <span class=\"k\">from</span> <span class=\"n\">Lean.Elab.Print</span>\n<span class=\"n\">elab</span> <span class=\"n\">tk</span><span class=\"o\">:</span><span class=\"s2\">\"#forbiddenAxioms \"</span> <span class=\"n\">id</span><span class=\"o\">:</span><span class=\"n\">ident</span> <span class=\"o\">:</span> <span class=\"n\">command</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">cs</span> <span class=\"bp\">←</span> <span class=\"n\">resolveGlobalConstWithInfos</span> <span class=\"n\">id</span>\n  <span class=\"n\">withRef</span> <span class=\"n\">tk</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">cs.forM</span> <span class=\"n\">printAxiomsOf</span>\n\n<span class=\"kd\">end</span> <span class=\"n\">Lean</span>\n</code></pre></div>",
+        "id": 358640451,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684221007
+    },
+    {
+        "content": "<p>Ok, thanks, I'll try to take it from there</p>",
+        "id": 358640742,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1684221117
+    },
+    {
+        "content": "<p>Result so far</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean.Elab.Print</span>\n<span class=\"kn\">import</span> <span class=\"n\">Std.Tactic.Lint</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">Lean</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">Parser.Command.forbiddenAxioms</span> <span class=\"o\">:=</span> <span class=\"n\">leading_parser</span>\n  <span class=\"s2\">\"#forbiddenAxioms \"</span> <span class=\"bp\">&gt;&gt;</span> <span class=\"n\">termParser</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Elab</span> <span class=\"n\">Command</span>\n<span class=\"kn\">private</span> <span class=\"kd\">def</span> <span class=\"n\">forbiddenAxioms</span> <span class=\"o\">(</span><span class=\"n\">bad</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">CommandElabM</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">env</span> <span class=\"bp\">←</span> <span class=\"n\">getEnv</span>\n  <span class=\"k\">let</span> <span class=\"n\">decls</span> <span class=\"bp\">←</span> <span class=\"n\">liftCoreM</span> <span class=\"n\">Std.Tactic.Lint.getDeclsInCurrModule</span>\n  <span class=\"n\">decls.forM</span> <span class=\"k\">fun</span> <span class=\"n\">n</span> <span class=\"bp\">↦</span>\n    <span class=\"k\">let</span> <span class=\"n\">axs</span> <span class=\"o\">:=</span> <span class=\"o\">((((</span><span class=\"n\">CollectAxioms.collect</span> <span class=\"n\">n</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">run</span> <span class=\"n\">env</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">run</span> <span class=\"o\">{})</span><span class=\"bp\">.</span><span class=\"mi\">2</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"kd\">axioms</span><span class=\"bp\">.</span><span class=\"n\">toList</span>\n    <span class=\"k\">let</span> <span class=\"n\">l</span> <span class=\"o\">:=</span> <span class=\"n\">bad.filter</span> <span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"bp\">↦</span> <span class=\"n\">a</span> <span class=\"bp\">∈</span> <span class=\"n\">axs</span>\n    <span class=\"k\">if</span> <span class=\"n\">l.isEmpty</span> <span class=\"k\">then</span> <span class=\"n\">pure</span> <span class=\"o\">()</span>\n    <span class=\"k\">else</span> <span class=\"n\">logInfo</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"'{n}' depends on: {l}\"</span>\n\n<span class=\"kn\">open</span> <span class=\"kn\">private</span> <span class=\"n\">printAxiomsOf</span> <span class=\"k\">from</span> <span class=\"n\">Lean.Elab.Print</span>\n<span class=\"n\">elab</span> <span class=\"n\">tk</span><span class=\"o\">:</span><span class=\"s2\">\"#forbiddenAxioms \"</span> <span class=\"n\">ids</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"bp\">*</span> <span class=\"o\">:</span> <span class=\"n\">command</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">withRef</span> <span class=\"n\">tk</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">ns</span> <span class=\"bp\">←</span> <span class=\"n\">ids.mapM</span> <span class=\"n\">resolveGlobalConstNoOverloadWithInfo</span>\n  <span class=\"n\">withRef</span> <span class=\"n\">tk</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">forbiddenAxioms</span> <span class=\"n\">ns.toList</span>\n\n<span class=\"kd\">end</span> <span class=\"n\">Lean</span>\n</code></pre></div>",
+        "id": 358645891,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1684222715
+    },
+    {
+        "content": "<p>you don't want the first <code>def</code> there, the <code>elab</code> already does everything</p>",
+        "id": 358677207,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684230966
+    },
+    {
+        "content": "<p>good point, thanks!</p>",
+        "id": 358684626,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1684232931
+    }
+]

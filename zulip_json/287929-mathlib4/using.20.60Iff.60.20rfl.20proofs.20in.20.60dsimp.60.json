@@ -1,0 +1,188 @@
+[
+    {
+        "content": "<p>Update: this is a little more subtle than I thought. I have an idea for what's wrong, but on second thought, I'm not completely certain about it. I'll think more carefully about this. :)</p>",
+        "id": 396428657,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697175936
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> <a href=\"#narrow/stream/287929-mathlib4/topic/Tactic.20state.20explosion/near/396377962\">said</a>:</p>\n<blockquote>\n<p>Issue: <a href=\"https://github.com/leanprover-community/mathlib4/pull/2678\">#2678</a><br>\nDraft PR forthcoming...</p>\n</blockquote>\n<p>It seems to be <a href=\"https://github.com/leanprover/lean4/pull/2678\">lean4#2678</a> actually.</p>",
+        "id": 396430050,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1697176865
+    },
+    {
+        "content": "<p>Ah, thank you, you're right—I always forget the prefix. Edited. :)</p>",
+        "id": 396435608,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697179659
+    },
+    {
+        "content": "<p>So, I believe the issue was that <code>simp</code> preprocesses <code>Iff</code> lemmas by applying <code>propext</code> to them. As such, we can't just look for <code>Iff.rfl</code> and the like when determining if something is a <code>rfl</code> theorem (i.e. is fit for use by <code>dsimp</code>); we need to peel away <code>propext</code> as well. We'll see if this notion holds up after the toolchain compiles and I test it. :)</p>",
+        "id": 396436269,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697179972
+    },
+    {
+        "content": "<p>Good news: it works correctly! Bad news: std is now broken.</p>",
+        "id": 396561476,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697225578
+    },
+    {
+        "content": "<p>But maybe only a little. :) It looks to be just a single proof (so far). Though I'm a bit worried as to what that means for mathlib...</p>",
+        "id": 396561720,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697225690
+    },
+    {
+        "content": "<p>I think I've finally understood the issue with the std breakage. It's interesting!</p>\n<p>The offending line is of the form <code>simp [by simpa using foo]</code>. This essentially means \"simplify the type of <code>foo</code>, then use it as a <code>simp</code> lemma\".</p>\n<p>The <code>simp</code> in <code>simpa</code> here (and in general) doesn't include <code>dsimp</code> lemmas in its construction of the term. This PR makes more <code>simp</code> lemmas into <code>dsimp</code> lemmas, so when we elaborate <code>by simpa using foo</code>, we get a term that potentially has <em>fewer</em> lemmas in it. This means that when we now infer the type of that term, we might get one which is not as (d)simplified.</p>\n<p>However, this is only the case if we <code>instantiateMVars</code> <em>before</em> inferring the type. Note that <code>elab_type</code> has some extra machinery in it to replicate some of the conditions of elaboration within <code>simp</code> (and this affects the result). (I'm guessing this is because something caches the specific type of the mvar being worked on by <code>by simpa using foo</code>, but I'm not sure; <code>inferType</code> is opaque.)</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">import</span> <span class=\"n\">Std.Tactic.Simpa</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span> <span class=\"n\">Elab</span> <span class=\"n\">Tactic</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"elab_type\"</span> <span class=\"n\">stx</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">withMainContext</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">withReducible</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">e</span> <span class=\"bp\">←</span> <span class=\"n\">Term.elabTerm</span> <span class=\"n\">stx</span> <span class=\"n\">none</span>\n  <span class=\"n\">Term.synthesizeSyntheticMVars</span> <span class=\"o\">(</span><span class=\"n\">mayPostpone</span> <span class=\"o\">:=</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">ignoreStuckTC</span> <span class=\"o\">:=</span> <span class=\"n\">true</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">type</span> <span class=\"bp\">←</span> <span class=\"n\">inferType</span> <span class=\"n\">e</span>\n  <span class=\"n\">logInfoAt</span> <span class=\"n\">stx</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"type: {indentD type}\"</span>\n  <span class=\"k\">let</span> <span class=\"n\">typeOfInstantiated</span> <span class=\"bp\">←</span> <span class=\"n\">inferType</span> <span class=\"bp\">&lt;|←</span> <span class=\"n\">instantiateMVars</span> <span class=\"n\">e</span>\n  <span class=\"n\">logInfoAt</span> <span class=\"n\">stx</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"type of instantiated expr: {indentD typeOfInstantiated}\"</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">Foo</span> <span class=\"n\">where</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">LE</span> <span class=\"n\">Foo</span> <span class=\"n\">where</span> <span class=\"n\">le</span> <span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">x.a</span> <span class=\"bp\">≤</span> <span class=\"n\">y.a</span>\n\n<span class=\"c1\">-- Now counts as a `dsimp` theorem</span>\n<span class=\"kd\">@[</span><span class=\"n\">simp</span><span class=\"kd\">]</span> <span class=\"kd\">theorem</span> <span class=\"n\">Foo.mk_le_mk</span> <span class=\"o\">{</span><span class=\"n\">a₁</span> <span class=\"n\">a₂</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"o\">{</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">a₁</span> <span class=\"o\">:</span> <span class=\"n\">Foo</span> <span class=\"o\">}</span> <span class=\"bp\">≤</span> <span class=\"o\">{</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">a₂</span> <span class=\"o\">}</span> <span class=\"bp\">↔</span> <span class=\"n\">a₁</span> <span class=\"bp\">≤</span> <span class=\"n\">a₂</span> <span class=\"o\">:=</span> <span class=\"n\">Iff.rfl</span>\n\n<span class=\"kd\">theorem</span> <span class=\"n\">Foo.le_iff_zero</span> <span class=\"o\">(</span><span class=\"n\">l</span> <span class=\"n\">r</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">{</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">l</span> <span class=\"bp\">+</span> <span class=\"n\">r</span> <span class=\"o\">:</span> <span class=\"n\">Foo</span><span class=\"o\">}</span> <span class=\"bp\">≤</span> <span class=\"o\">{</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">l</span> <span class=\"o\">}</span> <span class=\"bp\">↔</span> <span class=\"n\">r</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">elab_type</span> <span class=\"kd\">by</span> <span class=\"n\">simpa</span> <span class=\"n\">using</span> <span class=\"n\">Foo.le_iff_zero</span>\n  <span class=\"n\">exact</span> <span class=\"mi\">0</span>\n<span class=\"c\">/-</span>\n<span class=\"cm\">Currently, without `Foo.mk_le_mk` as a `dsimp` theorem:</span>\n<span class=\"cm\">type:</span>\n<span class=\"cm\">  ∀ (l r : Nat), l + r ≤ l ↔ r = 0</span>\n<span class=\"cm\">type of instantiated expr:</span>\n<span class=\"cm\">  ∀ (a a_1 : Nat), a + a_1 ≤ a ↔ a_1 = 0</span>\n\n<span class=\"cm\">Now, with `Foo.mk_le_mk` as a `dsimp` theorem:</span>\n<span class=\"cm\">type:</span>\n<span class=\"cm\">  ∀ (l r : Nat), l + r ≤ l ↔ r = 0</span>\n<span class=\"cm\">type of instantiated expr:</span>\n<span class=\"cm\">  ∀ (l r : Nat), { a := l + r } ≤ { a := l } ↔ r = 0</span>\n<span class=\"cm\">-- ^ note that this is just `Foo.le_iff_zero`, since `simpa` doesn't use `Foo.mk_le_mk` to construct the term</span>\n<span class=\"cm\">-/</span>\n</code></pre></div>\n<p>Note that this is <strong>not</strong> because of an outright defeq failure in <code>Foo.mk_le_mk</code>—if the two sides weren't defeq, we couldn't have used <code>Iff.rfl</code>. However, these are not reducibly defeq, which might contribute.</p>\n<p>Note also that this is <strong>not</strong> specific to any details of how this PR handles <code>Iff</code> theorems—it only comes from the fact that <em>more</em> theorems are now able to behave this way. This behavior already happens with <code>=</code>—and, in fact, replacing <code>↔</code> with <code>=</code> in the above example causes current Lean to behave in the same way the PR behaves.</p>",
+        "id": 396680097,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697320746
+    },
+    {
+        "content": "<p>So, here are the questions that this leaves me with:</p>\n<ul>\n<li>Is the failure of reducible defeq really why <code>simp</code> can't use the new result of <code>by simpa using ...</code>?</li>\n<li>Would simply inferring the type before instantiating mvars \"fix\" the situation? Or might it break many other things? (There's an easy way to find out, I guess...)</li>\n<li>Should this simply be ignored for now/for this functionality? After all, it's extremely easy to patch over: <code>simp [show &lt;intended type&gt; from by simpa using foo]</code>.</li>\n</ul>",
+        "id": 396680219,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697320860
+    },
+    {
+        "content": "<p>(I've just realized I never linked the draft PR here directly. Here it is: <a href=\"https://github.com/leanprover/lean4/pull/2679\">lean4#2679</a>)</p>",
+        "id": 396680991,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697321722
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"548935\">@Thomas Murrills</span> <a href=\"#narrow/stream/287929-mathlib4/topic/Tactic.20state.20explosion/near/396680097\">said</a>:</p>\n<blockquote>\n<p>The <code>simp</code> in <code>simpa</code> here (and in general) doesn't include <code>dsimp</code> lemmas in its construction of the term. This PR makes more <code>simp</code> lemmas into <code>dsimp</code> lemmas, so when we elaborate <code>by simpa using foo</code>, we get a term that potentially has <em>fewer</em> lemmas in it. This means that when we now infer the type of that term, we might get one which is not as (d)simplified.</p>\n</blockquote>\n<p>This seems counterintuitive to me. Why would <code>simp</code> not use a theorem because it is a dsimp lemma?</p>",
+        "id": 396681187,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697321922
+    },
+    {
+        "content": "<p>I would expect <code>simp</code> to use <code>@[simp]</code> lemmas whether or not they are dsimp lemmas</p>",
+        "id": 396681210,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697321956
+    },
+    {
+        "content": "<p>(Admittedly, I am still looking for where in the code that decision is actually made, but the only difference affecting a lemma's in- or exclusion seems to be its status as a dsimp lemma. It's possible the actual criterion is different.)</p>",
+        "id": 396681401,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697322135
+    },
+    {
+        "content": "<p>Do you have a simpa-free example?</p>",
+        "id": 396681766,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697322499
+    },
+    {
+        "content": "<p>Oh, I think the crucial thing might be here, in <code>..Simp.Rewrite</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">private</span> <span class=\"kd\">def</span> <span class=\"n\">tryTheoremCore</span> <span class=\"bp\">...</span> <span class=\"o\">(</span><span class=\"n\">thm</span> <span class=\"o\">:</span> <span class=\"n\">SimpTheorem</span><span class=\"o\">)</span> <span class=\"bp\">...</span> <span class=\"o\">:</span> <span class=\"n\">SimpM</span> <span class=\"o\">(</span><span class=\"n\">Option</span> <span class=\"n\">Result</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"bp\">...</span>\n      <span class=\"k\">let</span> <span class=\"n\">proof</span><span class=\"bp\">?</span> <span class=\"bp\">←</span> <span class=\"k\">if</span> <span class=\"n\">thm.rfl</span> <span class=\"k\">then</span>\n        <span class=\"n\">pure</span> <span class=\"n\">none</span>\n</code></pre></div>",
+        "id": 396681815,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697322521
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/287929-mathlib4/topic/Tactic.20state.20explosion/near/396681766\">said</a>:</p>\n<blockquote>\n<p>Do you have a simpa-free example?</p>\n</blockquote>\n<p>I'll try to make one.</p>",
+        "id": 396681819,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697322527
+    },
+    {
+        "content": "<p>that just says that if the lemma is a dsimp lemma then no proof is required</p>",
+        "id": 396681841,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697322555
+    },
+    {
+        "content": "<p>it is still simplifying the expression itself</p>",
+        "id": 396681847,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697322566
+    },
+    {
+        "content": "<p>Isn't saying no proof is required what we're talking about here, though? Like, <code>simp</code>(<code>a</code>) therefore doesn't insert the proof into the term it's constructing.</p>",
+        "id": 396681963,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697322641
+    },
+    {
+        "content": "<p>Or is it used differently?</p>",
+        "id": 396681970,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697322650
+    },
+    {
+        "content": "<p>Here's a <code>simpa</code>-free <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a> that doesn't require you to change your toolchain to observe the change in behavior.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span> <span class=\"n\">Elab</span> <span class=\"n\">Tactic</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"elab_term\"</span> <span class=\"n\">stx</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">withMainContext</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">withReducible</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">e</span> <span class=\"bp\">←</span> <span class=\"n\">Term.elabTerm</span> <span class=\"n\">stx</span> <span class=\"n\">none</span>\n  <span class=\"n\">Term.synthesizeSyntheticMVars</span> <span class=\"o\">(</span><span class=\"n\">mayPostpone</span> <span class=\"o\">:=</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">ignoreStuckTC</span> <span class=\"o\">:=</span> <span class=\"n\">true</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">type</span> <span class=\"bp\">←</span> <span class=\"n\">instantiateMVars</span> <span class=\"bp\">&lt;|←</span> <span class=\"n\">inferType</span> <span class=\"n\">e</span>\n  <span class=\"n\">logInfoAt</span> <span class=\"n\">stx</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"term: {indentD e}\"</span>\n  <span class=\"n\">logInfoAt</span> <span class=\"n\">stx</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"type: {indentD type}\"</span>\n  <span class=\"k\">let</span> <span class=\"n\">typeOfInstantiated</span> <span class=\"bp\">←</span> <span class=\"n\">inferType</span> <span class=\"bp\">&lt;|←</span> <span class=\"n\">instantiateMVars</span> <span class=\"n\">e</span>\n  <span class=\"n\">logInfoAt</span> <span class=\"n\">stx</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"type of instantiated expr: {indentD typeOfInstantiated}\"</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">Foo</span> <span class=\"n\">where</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">LE</span> <span class=\"n\">Foo</span> <span class=\"n\">where</span> <span class=\"n\">le</span> <span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">x.a</span> <span class=\"bp\">≤</span> <span class=\"n\">y.a</span>\n\n<span class=\"kd\">theorem</span> <span class=\"n\">Foo.le_iff_zero</span> <span class=\"o\">(</span><span class=\"n\">l</span> <span class=\"n\">r</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">{</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">l</span> <span class=\"bp\">+</span> <span class=\"n\">r</span> <span class=\"o\">:</span> <span class=\"n\">Foo</span> <span class=\"o\">}</span> <span class=\"bp\">≤</span> <span class=\"o\">{</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">l</span> <span class=\"o\">}</span> <span class=\"bp\">↔</span> <span class=\"n\">r</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n\n<span class=\"c1\">-- NOT a dsimp lemma currently:</span>\n<span class=\"kd\">@[</span><span class=\"n\">simp</span><span class=\"kd\">]</span> <span class=\"kd\">theorem</span> <span class=\"n\">Foo.mk_le_mk</span> <span class=\"o\">{</span><span class=\"n\">a₁</span> <span class=\"n\">a₂</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"o\">({</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">a₁</span> <span class=\"o\">:</span> <span class=\"n\">Foo</span> <span class=\"o\">}</span> <span class=\"bp\">≤</span> <span class=\"o\">{</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">a₂</span> <span class=\"o\">})</span> <span class=\"bp\">↔</span> <span class=\"o\">(</span><span class=\"n\">a₁</span> <span class=\"bp\">≤</span> <span class=\"n\">a₂</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">Iff.rfl</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">l</span> <span class=\"n\">r</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">):</span> <span class=\"n\">l</span> <span class=\"bp\">+</span> <span class=\"n\">r</span> <span class=\"bp\">≤</span> <span class=\"n\">l</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">simp</span> <span class=\"n\">only</span> <span class=\"o\">[</span><span class=\"kd\">by</span>\n    <span class=\"k\">have</span> <span class=\"n\">h</span> <span class=\"o\">:=</span> <span class=\"n\">Foo.le_iff_zero</span>\n    <span class=\"n\">simp</span> <span class=\"n\">at</span> <span class=\"n\">h</span>\n    <span class=\"n\">exact</span> <span class=\"n\">h</span><span class=\"o\">]</span>\n  <span class=\"c1\">-- unsolved goal: ⊢ r = 0</span>\n\n<span class=\"c1\">-- display term and type used by `simp only`</span>\n<span class=\"kd\">example</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">elab_term</span> <span class=\"kd\">by</span>\n    <span class=\"k\">have</span> <span class=\"n\">h</span> <span class=\"o\">:=</span> <span class=\"n\">Foo.le_iff_zero</span>\n    <span class=\"n\">simp</span> <span class=\"n\">at</span> <span class=\"n\">h</span>\n    <span class=\"n\">exact</span> <span class=\"n\">h</span>\n  <span class=\"n\">exact</span> <span class=\"mi\">0</span>\n\n<span class=\"kn\">attribute</span> <span class=\"o\">[</span><span class=\"bp\">-</span><span class=\"n\">simp</span><span class=\"o\">]</span> <span class=\"n\">Foo.mk_le_mk</span>\n<span class=\"c1\">-- A dsimp lemma:</span>\n<span class=\"kd\">@[</span><span class=\"n\">simp</span><span class=\"kd\">]</span> <span class=\"kd\">theorem</span> <span class=\"n\">Foo.mk_le_mk_eq</span> <span class=\"o\">{</span><span class=\"n\">a₁</span> <span class=\"n\">a₂</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"o\">({</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">a₁</span> <span class=\"o\">:</span> <span class=\"n\">Foo</span> <span class=\"o\">}</span> <span class=\"bp\">≤</span> <span class=\"o\">{</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">a₂</span> <span class=\"o\">})</span> <span class=\"bp\">=</span> <span class=\"o\">(</span><span class=\"n\">a₁</span> <span class=\"bp\">≤</span> <span class=\"n\">a₂</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">rfl</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">l</span> <span class=\"n\">r</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">):</span> <span class=\"n\">l</span> <span class=\"bp\">+</span> <span class=\"n\">r</span> <span class=\"bp\">≤</span> <span class=\"n\">l</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">simp</span> <span class=\"n\">only</span> <span class=\"o\">[</span><span class=\"kd\">by</span>\n    <span class=\"k\">have</span> <span class=\"n\">h</span> <span class=\"o\">:=</span> <span class=\"n\">Foo.le_iff_zero</span>\n    <span class=\"n\">simp</span> <span class=\"n\">at</span> <span class=\"n\">h</span>\n    <span class=\"n\">exact</span> <span class=\"n\">h</span><span class=\"o\">]</span>\n  <span class=\"c1\">-- simp made no progress</span>\n\n<span class=\"c1\">-- display term and type used by `simp only`</span>\n<span class=\"kd\">example</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">elab_term</span> <span class=\"kd\">by</span>\n    <span class=\"k\">have</span> <span class=\"n\">h</span> <span class=\"o\">:=</span> <span class=\"n\">Foo.le_iff_zero</span>\n    <span class=\"n\">simp</span> <span class=\"n\">at</span> <span class=\"n\">h</span>\n    <span class=\"n\">exact</span> <span class=\"n\">h</span>\n  <span class=\"n\">exact</span> <span class=\"mi\">0</span>\n</code></pre></div>",
+        "id": 396683140,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697324063
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/287929-mathlib4/topic/Tactic.20state.20explosion/near/396681847\">said</a>:</p>\n<blockquote>\n<p>it is still simplifying the expression itself</p>\n</blockquote>\n<p>I'm guessing the thing here is that when <code>simp [bar]</code> is called, it has to infer the type of the term <code>bar</code>. When <code>bar</code> is e.g. <code>by simpa using foo</code>, <code>simp</code> only sees the proof term created by <code>by simpa using foo</code>, and infers the type from there. But you wind up inferring <em>different</em> types depending on whether you instantiate the mvar that <code>by simpa using foo</code> was working on. If you <em>do</em> instantiate that mvar before inferring the type, the exclusion of dsimp lemmas from the proof term means the inferred type isn't dsimp'd. If you don't, you get to use the mvar context, I'm guessing—which is what remembers that simplified expression.</p>",
+        "id": 396685153,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697326367
+    },
+    {
+        "content": "<p>Hmm, it looks like making some things <code>rfl</code> theorems which weren't before just...causes things to act differently. There are a few odd breakages over at the <code>lean-pr-testing-2679</code> branch (<a href=\"https://github.com/leanprover-community/mathlib4/pull/7686\">#7686</a>), including a <code>whnf</code> timeout (maybe it's working on a different expression now?) and an <code>aesop_cat</code> failure. If anyone would like to investigate these and add to the branch, feel free; otherwise I'll get to them soon. :)</p>",
+        "id": 396706632,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697340789
+    },
+    {
+        "content": "<p>One of them might be indicative of something a little more serious...a <code>simp</code> invocation now fails. The following used to work (Mathlib.Order.Atoms):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">theorem</span> <span class=\"n\">covby_iff_atom_Ici</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">≤</span> <span class=\"n\">b</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">⋖</span> <span class=\"n\">b</span> <span class=\"bp\">↔</span> <span class=\"n\">IsAtom</span> <span class=\"o\">(⟨</span><span class=\"n\">b</span><span class=\"o\">,</span> <span class=\"n\">h</span><span class=\"o\">⟩</span> <span class=\"o\">:</span> <span class=\"n\">Set.Ici</span> <span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">simp</span>\n</code></pre></div>\n<p>It now (technically) makes progress but doesn't close the goal. Squeezing, we see that now it uses <code>Set.mem_Ici</code>, whereas the goal-closing invocation used to be equivalent to <code>simp only [Set.Ici.isAtom_iff]</code>.</p>\n<p>I suspect a crucial fact is that <code>dsimp</code> now makes progress on the type of <code>Set.Ici.isAtom_iff</code> (via <code>Set.mem_Ici</code>)—it rewrites something in an instance argument, so <code>pp.explicit</code> is required to see it. But there are still details to work out; I'm not totally sure where in <code>simp</code> things go wrong.</p>",
+        "id": 396711361,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697343685
+    },
+    {
+        "content": "<p>It seems that the reason this changes is that <code>simp</code> calls <code>dsimp</code> specifically at certain points, e.g. <code>mkCongrFun r (← dsimp arg)</code> (which is the specific difference in this case). I'm not sure what the best way to proceed here is—just fix the broken cases?</p>\n<p>It'd be nice to have an actual \"solution\" (maybe something else needs to be <code>dsimp</code>d as well), but I'd guess it's not worth holding up the <code>dsimp</code> <code>Iff</code> feature.</p>",
+        "id": 397579321,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697750526
+    },
+    {
+        "content": "<p>24 messages were moved here from <a class=\"stream-topic\" data-stream-id=\"287929\" href=\"/#narrow/stream/287929-mathlib4/topic/Tactic.20state.20explosion\">#mathlib4 &gt; Tactic state explosion</a> by <span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span>.</p>",
+        "id": 397580071,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1697750962
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"256311\">@Jannis Limperg</span> , I was just wondering—do you happen to have any opinion on <code>Iff.rfl</code> lemmas being used by <code>dsimp</code>? I ask because in the testing this change (<a href=\"https://github.com/leanprover-community/mathlib4/pull/7686\">#7686</a>), an <code>aesop</code> invocation breaks. I'm not sure how <code>aesop</code> depends on <code>simp</code>, so I thought I'd just ask. :) (<code>aesop</code> may also possibly involved in a separate <code>whnf</code> category theory timeout.) </p>\n<p>(There are two major effects of such a change (as you might be aware): (1) the proofs of these lemmas are now not inserted into the constructed proof term (2) invocations specifically of <code>dsimp</code> during certain parts of <code>simp</code> can change how <code>simp</code> behaves.)</p>",
+        "id": 398423566,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1698217339
+    },
+    {
+        "content": "<p>Aesop runs <code>simp_all</code> on every goal before it does anything else (more or less). It treats <code>simp_all</code> as a black box, so changing <code>simp</code>'s behaviour shouldn't affect Aesop itself. As such, I don't mind <code>Iff.rfl</code> lemmas being included. Any breakage would most likely be due to interactions with the current <code>CategoryTheory</code> rule set, which can hopefully be fixed.</p>",
+        "id": 398433384,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1698221389
+    },
+    {
+        "content": "<p>Ok, sounds good!</p>",
+        "id": 398778128,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1698360272
+    },
+    {
+        "content": "<p>General update for those interested: this causes &gt;30 breakages in mathlib so far, which I've been fixing in a back-and-forth with CI.</p>\n<p>Some of them are because simp is now more powerful (and thus there are no goals to be solved), which is nice, but most are resolved only by turning off <code>dsimp</code> via the config. I'm not sure I love the notion of \"try it again with <code>dsimp := false</code>\" being a more common strategy (albeit still quite uncommon) for making <code>simp</code> work.</p>\n<p>The most common issue seems to be rewriting under a <code>fun</code> in the argument of a <code>Subtype</code>, which occurs because <code>simp</code> specifically runs <code>dsimp</code> before <code>mkCongrFun</code>. This can prevent other simp lemmas from applying. It can also change the lemmas that <code>simps</code> (or at least <code>simps!</code>) generates.</p>\n<p>I wonder if we should either</p>\n<ol>\n<li>just accept the <code>dsimp := false</code> strategy, at least for now</li>\n<li>try out removing <code>dsimp</code> before <code>mkCongrFun</code> in <code>simp</code> (might break things)</li>\n<li>consider <code>dsimp</code>ing something <em>else</em> inside <code>simp</code> (or when we register the <code>simp</code> lemma) so that these simp lemmas still apply (might not actually solve the issue)</li>\n<li>something else?</li>\n</ol>",
+        "id": 398778892,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1698360767
+    },
+    {
+        "content": "<p>(I think I might try (2) just out of curiosity, and see what breaks.)</p>",
+        "id": 398779098,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1698360914
+    },
+    {
+        "content": "<p>Can you give an example of the type of thing that causes trouble?</p>",
+        "id": 399090227,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1698535321
+    }
+]

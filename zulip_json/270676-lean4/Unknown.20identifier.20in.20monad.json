@@ -1,0 +1,74 @@
+[
+    {
+        "content": "<p>Is the following <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a> a bug?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Option</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"n\">Bool</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">r</span> <span class=\"o\">:=</span> <span class=\"k\">if</span> <span class=\"k\">let</span> <span class=\"n\">some</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">x</span> <span class=\"k\">then</span>\n    <span class=\"k\">match</span> <span class=\"bp\">←</span> <span class=\"n\">pure</span> <span class=\"n\">y</span> <span class=\"k\">with</span> <span class=\"c1\">-- unknown identifier 'y'</span>\n    <span class=\"bp\">|</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">true</span>\n  <span class=\"k\">else</span>\n    <span class=\"n\">true</span>\n  <span class=\"n\">pure</span> <span class=\"n\">r</span>\n</code></pre></div>\n<p>Or is this something equivalent to \"not being able to lift ← over a binder\", maybe? (If <code>y</code> were extracted with a match expression, that's the error we'd get for <em>any</em> <code>←</code> expression—but I wonder if the macros here are \"smarter\" and just know what to exclude from the local context when instead.)</p>",
+        "id": 342893358,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1679213294
+    },
+    {
+        "content": "<p>yes this is a \"lift ← over a binder\" issue</p>",
+        "id": 342895281,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1679214465
+    },
+    {
+        "content": "<p>If you want to stay in the monad so you can use <code>&lt;-</code> you should use <code>let r &lt;- if let some y := x ...</code> instead</p>",
+        "id": 342895411,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1679214543
+    },
+    {
+        "content": "<p>the bug is that it did not report the correct error, probably because it didn't recognize <code>if let</code> as a binder</p>",
+        "id": 342895529,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1679214618
+    },
+    {
+        "content": "<p>this is probably even more problematic if you use <code>&lt;- pure x</code> instead, since it will almost certainly lift the effect outside the <code>if let</code> and this will be very strange</p>",
+        "id": 342895600,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1679214675
+    },
+    {
+        "content": "<p>does the same thing happen if you use <code>if</code>?</p>",
+        "id": 342895614,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1679214686
+    },
+    {
+        "content": "<p>... it does</p>",
+        "id": 342895797,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1679214791
+    },
+    {
+        "content": "<p>This seems like a footgun, e.g. you might guess that this program reads either <code>foo</code> or <code>bar</code> but it actually reads both</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">readFooOrBar</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Bool</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">String</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">result</span> <span class=\"o\">:=</span> <span class=\"k\">if</span> <span class=\"n\">x</span> <span class=\"k\">then</span>\n    <span class=\"bp\">←</span> <span class=\"n\">IO.FS.readFile</span> <span class=\"s2\">\"foo\"</span>\n  <span class=\"k\">else</span>\n    <span class=\"bp\">←</span> <span class=\"n\">IO.FS.readFile</span> <span class=\"s2\">\"bar\"</span>\n  <span class=\"n\">return</span> <span class=\"n\">result</span>\n\n<span class=\"k\">#print</span> <span class=\"n\">readFooOrBar</span>\n</code></pre></div>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">readFooOrBar</span> <span class=\"o\">:</span> <span class=\"n\">Bool</span> <span class=\"bp\">→</span> <span class=\"n\">IO</span> <span class=\"n\">String</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">__do_lift</span> <span class=\"bp\">←</span> <span class=\"n\">IO.FS.readFile</span> <span class=\"o\">{</span> <span class=\"n\">toString</span> <span class=\"o\">:=</span> <span class=\"s2\">\"foo\"</span> <span class=\"o\">}</span>\n  <span class=\"k\">let</span> <span class=\"n\">__do_lift_1</span> <span class=\"bp\">←</span> <span class=\"n\">IO.FS.readFile</span> <span class=\"o\">{</span> <span class=\"n\">toString</span> <span class=\"o\">:=</span> <span class=\"s2\">\"bar\"</span> <span class=\"o\">}</span>\n  <span class=\"k\">let</span> <span class=\"n\">result</span> <span class=\"o\">:</span> <span class=\"n\">String</span> <span class=\"o\">:=</span> <span class=\"k\">if</span> <span class=\"n\">x</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"k\">then</span> <span class=\"n\">__do_lift</span> <span class=\"k\">else</span> <span class=\"n\">__do_lift_1</span>\n  <span class=\"n\">pure</span> <span class=\"n\">result</span>\n</code></pre></div>",
+        "id": 342896212,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1679215029
+    },
+    {
+        "content": "<p>if you use <code>match</code> instead of <code>if</code> you get the \"lift &lt;- over binder\" error</p>",
+        "id": 342896360,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1679215094
+    },
+    {
+        "content": "<p>Yes, this is indeed a common footgun we've fired in the past: <a href=\"https://github.com/leanprover/lean4/pull/1987\">lean4#1987</a></p>",
+        "id": 343500541,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1679426511
+    },
+    {
+        "content": "<p>Note that this issue is carefully explained in <em>Functional programming in Lean</em>.</p>",
+        "id": 343501001,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1679426671
+    },
+    {
+        "content": "<p>But it's still a footgun.</p>",
+        "id": 343501038,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1679426687
+    }
+]

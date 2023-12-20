@@ -1,0 +1,128 @@
+[
+    {
+        "content": "<p>I'm working on creating a Lean 4 binding to C++ library <a href=\"https://www.ginac.de/\">GiNaC</a>, which is an open-source symbolic computation library. I've successfully got some simple FFI call to it compiled,  linked and run under Mac (both M1 and Intel  <span aria-label=\"check\" class=\"emoji emoji-2705\" role=\"img\" title=\"check\">:check:</span> ), mostly following the practice of LeanInfer. But I'm struggling to get it to work under Ubuntu ( <span aria-label=\"cross mark\" class=\"emoji emoji-274c\" role=\"img\" title=\"cross mark\">:cross_mark:</span> ).</p>\n<h2>TL;DR</h2>\n<p>The call chain <code>Lean -&gt; FFI C++ glue code -&gt; C++ GiNaC code -&gt; GNU C++ stdlib</code> works as shown by <code>#eval</code> from Lean during <code>lake build</code>, but <code>leanc</code> dropped GNU C++ stdlib linker flags, causing linker error during generating the final binary.</p>\n<p>My question is whether it's an issue that can be solved from the <code>leanc</code> end, or do I have to make heavy patches to GiNaC's build config to make it work with LLVM C++ stdlib under Linux? It seems so close to the final goal, lacking only a final leap.</p>\n<p>Details are as follows:</p>\n<h2>Some backgrounds that I figured out</h2>\n<ol>\n<li><strong>Lean 4 bundles LLVM stdlib</strong>: </li>\n</ol>\n<p>Lean 4 bundles tailored binaries from LLVM/Clang for its own bootstrapping from C. Under both Linux and Mac, internally it links to the standard C++ library from LLVM project (i.e. <code>libc++</code> + <code>libc++abi</code> + <code>libunwind</code>) instead of the one from GCC project (i.e. <code>libstdc++</code>).</p>\n<ol start=\"2\">\n<li><strong>Better to compile C++ FFI project with LLVM stdlib</strong>: </li>\n</ol>\n<p>Due to 1, from the practice of LeanInfer, it's advisable to compile C++ FFI using <code>clang++</code> and the LLVM standard C++ library (via <code>-stdlib=libc++</code>), or it would encounter various linking issues.</p>\n<ol start=\"3\">\n<li><strong>GiNaC can't be compiled with LLVM stdlib</strong>:</li>\n</ol>\n<p>GiNaC and its dependency CLN both use a <code>autoconf</code>(i.e. <code>./configure &amp;&amp; make</code> style) building system, when <code>-stdlib=libc++</code> is specified via <code>CPPFLAGS</code>, <code>./configure</code> fails to create necessary platform-dependent header files, and it seems requiring heavy patching to fix this.</p>\n<p>Even if I bypass this by only setting <code>CPPFLAGS=-stdlib=libc++</code> during make, it still uses GNU std lib, as confirmed by using <code>nm ./build/lib/libginac.so|grep basic_string|head|c++filt</code> to inspect its exported symbols, they export GNU style <code>std::__cxx11::basic_string</code> instead of LLVM style <code>std::__1::basic_string</code>.</p>\n<p>Well, point 3 requires further investigation to confirm, welcome to experiment based on my build script <a href=\"https://github.com/utensil/ginac-lean/blob/main/scripts/build_ginac.sh\">here</a>. But let's accept that for now, as it might be the case for quite some C++ libraries.</p>\n<h2>The issue</h2>\n<p>I've managed to make Lean code successfully call GiNaC compiled under GNU std lib, a C++ code like this</p>\n<div class=\"codehilite\" data-code-language=\"C++\"><pre><span></span><code><span class=\"k\">extern</span><span class=\"w\"> </span><span class=\"s\">\"C\"</span><span class=\"w\"> </span><span class=\"n\">lean_obj_res</span><span class=\"w\"> </span><span class=\"n\">my_lean_fun</span><span class=\"p\">()</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"n\">symbol</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"p\">(</span><span class=\"s\">\"x\"</span><span class=\"p\">),</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"p\">(</span><span class=\"s\">\"y\"</span><span class=\"p\">),</span><span class=\"w\"> </span><span class=\"n\">z</span><span class=\"p\">(</span><span class=\"s\">\"z\"</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"n\">ex</span><span class=\"w\"> </span><span class=\"n\">MyEx1</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"mi\">5</span><span class=\"p\">;</span><span class=\"w\">                       </span><span class=\"c1\">// simple number</span>\n<span class=\"w\">    </span><span class=\"n\">ex</span><span class=\"w\"> </span><span class=\"n\">MyEx2</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">+</span><span class=\"w\"> </span><span class=\"mi\">2</span><span class=\"o\">*</span><span class=\"n\">y</span><span class=\"p\">;</span><span class=\"w\">                 </span><span class=\"c1\">// polynomial in x and y</span>\n<span class=\"w\">    </span><span class=\"n\">ex</span><span class=\"w\"> </span><span class=\"n\">MyEx3</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">+</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"p\">)</span><span class=\"o\">/</span><span class=\"p\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">-</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"p\">);</span><span class=\"w\">         </span><span class=\"c1\">// rational expression</span>\n<span class=\"w\">    </span><span class=\"n\">ex</span><span class=\"w\"> </span><span class=\"n\">MyEx4</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">sin</span><span class=\"p\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">+</span><span class=\"w\"> </span><span class=\"mi\">2</span><span class=\"o\">*</span><span class=\"n\">y</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"o\">+</span><span class=\"w\"> </span><span class=\"mi\">3</span><span class=\"o\">*</span><span class=\"n\">z</span><span class=\"w\"> </span><span class=\"o\">+</span><span class=\"w\"> </span><span class=\"mi\">41</span><span class=\"p\">;</span><span class=\"w\"> </span><span class=\"c1\">// containing a function</span>\n<span class=\"w\">    </span><span class=\"n\">ex</span><span class=\"w\"> </span><span class=\"n\">MyEx5</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">MyEx4</span><span class=\"w\"> </span><span class=\"o\">+</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"p\">;</span><span class=\"w\">               </span><span class=\"c1\">// similar to above</span>\n\n<span class=\"w\">    </span><span class=\"n\">cout</span><span class=\"w\"> </span><span class=\"o\">&lt;&lt;</span><span class=\"w\"> </span><span class=\"n\">MyEx5</span><span class=\"w\"> </span><span class=\"o\">&lt;&lt;</span><span class=\"w\"> </span><span class=\"n\">endl</span><span class=\"p\">;</span>\n\n<span class=\"w\">    </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"n\">lean_io_result_mk_ok</span><span class=\"p\">(</span><span class=\"n\">lean_box</span><span class=\"p\">(</span><span class=\"mi\">0</span><span class=\"p\">));</span>\n<span class=\"p\">}</span>\n</code></pre></div>\n<p>and Lean code like this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">GinacFFI</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">myLeanFun</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">main</span>\n</code></pre></div>\n<p>will output during <code>lake build</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[</span><span class=\"mi\">3</span><span class=\"bp\">/</span><span class=\"mi\">5</span><span class=\"o\">]</span> <span class=\"n\">Building</span> <span class=\"n\">Main</span>\n<span class=\"n\">stdout</span><span class=\"o\">:</span>\n<span class=\"mi\">42</span><span class=\"bp\">+</span><span class=\"n\">sin</span><span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"bp\">*</span><span class=\"n\">y</span><span class=\"bp\">+</span><span class=\"n\">x</span><span class=\"o\">)</span><span class=\"bp\">+</span><span class=\"mi\">3</span><span class=\"bp\">*</span><span class=\"n\">z</span>\n<span class=\"o\">[</span><span class=\"mi\">4</span><span class=\"bp\">/</span><span class=\"mi\">5</span><span class=\"o\">]</span> <span class=\"n\">Compiling</span> <span class=\"n\">Main</span>\n</code></pre></div>\n<p>which indicates <code>Lean -&gt; FFI C++ glue code -&gt; C++ GiNaC code -&gt; GNU C++ stdlib</code> works .</p>\n<p>But it fails at the last step (more logs omitted):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[</span><span class=\"mi\">5</span><span class=\"bp\">/</span><span class=\"mi\">5</span><span class=\"o\">]</span> <span class=\"n\">Linking</span> <span class=\"n\">ginac</span><span class=\"bp\">-</span><span class=\"n\">lean</span>\n<span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"bp\">&gt;</span> <span class=\"bp\">/</span><span class=\"n\">home</span><span class=\"bp\">/</span><span class=\"n\">vscode</span><span class=\"bp\">/.</span><span class=\"n\">elan</span><span class=\"bp\">/</span><span class=\"n\">toolchains</span><span class=\"bp\">/</span><span class=\"n\">leanprover</span><span class=\"c1\">--lean4---4.0.0/bin/leanc -o ./build/bin/ginac-lean ./build/ir/Main.o ./build/ir/GinacFFI.o ./build/lib/libginac_ffi.a -L./build/lib -v -lginac -lcln -lstdc++</span>\n<span class=\"bp\">......</span>\n<span class=\"n\">ld.lld</span><span class=\"o\">:</span> <span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">undefined</span> <span class=\"n\">symbol</span><span class=\"o\">:</span> <span class=\"n\">std</span><span class=\"o\">::</span><span class=\"n\">allocator</span><span class=\"bp\">&lt;</span><span class=\"n\">char</span><span class=\"bp\">&gt;</span><span class=\"o\">::</span><span class=\"n\">allocator</span><span class=\"o\">()</span>\n<span class=\"bp\">......</span>\n</code></pre></div>\n<p>which indicates failure to link to C++ stdlib despite I have specified <code>-lstdc++</code> which is the GNU std lib.</p>\n<p>After some investigation, it seems that <code>leanc</code> intentionally dropped <code>-lstdc++</code>, and replaced it with only <code> -lc++ -lc++abi </code>that cause the linker issue:</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<p>[5/5] Linking ginac-lean<br>\nerror: &gt; /home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/bin/leanc -o ./build/bin/ginac-lean ./build/ir/Main.o ./build/ir/GinacFFI.o ./build/lib/libginac_ffi.a -L./build/lib -v -lginac -lcln -lstdc++<br>\nerror: stderr:<br>\n/home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/bin/clang -I /home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/include -fstack-clash-protection -fPIC -fvisibility=hidden -nostdinc -isystem /home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/include/clang -o ./build/bin/ginac-lean ./build/ir/Main.o ./build/ir/GinacFFI.o ./build/lib/libginac_ffi.a -L./build/lib -v -lginac -lcln -lstdc++ -L /home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/lib -L /home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/lib/glibc /home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/lib/glibc/libc_nonshared.a -Wl,--as-needed -static-libgcc -Wl,-Bstatic -lgmp -lunwind -Wl,-Bdynamic -Wl,--no-as-needed -fuse-ld=lld -L /home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/lib/lean -Wl,--start-group -lleancpp -lLean -Wl,--end-group -Wl,--start-group -lInit -lleanrt -Wl,--end-group -lLake -Wl,-Bstatic -lc++ -lc++abi -Wl,-Bdynamic -Wl,--as-needed -lgmp -Wl,--no-as-needed -lm -ldl -pthread -Wno-unused-command-line-argument<br>\nclang version 15.0.1 (<a href=\"https://github.com/llvm/llvm-project\">https://github.com/llvm/llvm-project</a> b73d2c8c720a8c8e6e73b11be4e27afa6cb75bdf)<br>\nTarget: aarch64-unknown-linux-gnu<br>\nThread model: posix<br>\nInstalledDir: /home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/bin<br>\nFound candidate GCC installation: /usr/lib/gcc/aarch64-linux-gnu/11<br>\nSelected GCC installation: /usr/lib/gcc/aarch64-linux-gnu/11<br>\nCandidate multilib: .;@m64<br>\nSelected multilib: .;@m64<br>\n \"/home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/bin/ld.lld\" -pie -EL -z relro --hash-style=gnu --eh-frame-hdr -m aarch64linux -dynamic-linker /lib/ld-linux-aarch64.so.1 -o ./build/bin/ginac-lean /lib/aarch64-linux-gnu/Scrt1.o /lib/aarch64-linux-gnu/crti.o /home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/lib/clang/15.0.1/lib/aarch64-unknown-linux-gnu/clang_rt.crtbegin.o -L./build/lib -L/home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/lib -L/home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/lib/glibc -L/home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/lib/lean -L/usr/lib/gcc/aarch64-linux-gnu/11 -L/lib/aarch64-linux-gnu -L/usr/lib/aarch64-linux-gnu -L/home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/bin/../lib -L/lib -L/usr/lib ./build/ir/Main.o ./build/ir/GinacFFI.o ./build/lib/libginac_ffi.a -lginac -lcln -lc++ /home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/lib/glibc/libc_nonshared.a --as-needed -Bstatic -lgmp -lunwind -Bdynamic --no-as-needed --start-group -lleancpp -lLean --end-group --start-group -lInit -lleanrt --end-group -lLake -Bstatic -lc++ -lc++abi -Bdynamic --as-needed -lgmp --no-as-needed -lm -ldl /home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/lib/clang/15.0.1/lib/aarch64-unknown-linux-gnu/libclang_rt.builtins.a -lpthread -lc /home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/lib/clang/15.0.1/lib/aarch64-unknown-linux-gnu/libclang_rt.builtins.a /home/vscode/.elan/toolchains/leanprover--lean4---4.0.0/lib/clang/15.0.1/lib/aarch64-unknown-linux-gnu/clang_rt.crtend.o /lib/aarch64-linux-gnu/crtn.o<br>\nld.lld: error: undefined symbol: std::allocator&lt;char&gt;::allocator()</p>\n<blockquote>\n<blockquote>\n<blockquote>\n<p>referenced by ginac_ffi.cpp<br>\n              ginac_ffi.o:(my_lean_fun) in archive ./build/lib/libginac_ffi.a<br>\nreferenced by ginac_ffi.cpp<br>\n              ginac_ffi.o:(my_lean_fun) in archive ./build/lib/libginac_ffi.a<br>\nreferenced by ginac_ffi.cpp<br>\n              ginac_ffi.o:(my_lean_fun) in archive ./build/lib/libginac_ffi.a</p>\n</blockquote>\n</blockquote>\n</blockquote>\n</div></div>",
+        "id": 392446969,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1695363124
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac Malone</span> In reply to <a href=\"#narrow/stream/219941-Machine-Learning-for-Theorem-Proving/topic/LeanInfer.3A.20Neural.20Network.20Inference.20in.20Lean.204/near/392238203\">your message</a>, I'm happy to file an issue if I can determine the nature of the issue, for now it seems to be less of a lake issue, but something deeper. Thank you for your time in advance.</p>",
+        "id": 392447571,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1695363470
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"296911\">@Utensil Song</span> This definitely seems worthy of an Lean 4 issue.</p>",
+        "id": 392448178,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1695363822
+    },
+    {
+        "content": "<p>Thanks, I'll file an issue following the issue template later today. <span aria-label=\"blush\" class=\"emoji emoji-1f60a\" role=\"img\" title=\"blush\">:blush:</span> </p>\n<p>I need to minimize the process to reproduce this.</p>",
+        "id": 392448555,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1695364014
+    },
+    {
+        "content": "<p>Using <code>leanc</code> for linking non-Lean code is inherently problematic. You should create a shared library out of the foreign code and feed only that to leanc.</p>",
+        "id": 392452582,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1695365952
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> One problem there is that Lake does not really currently support that.</p>",
+        "id": 392452955,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1695366102
+    },
+    {
+        "content": "<p>In what way does Lake restrict what is done to the foreign code?</p>",
+        "id": 392453118,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1695366168
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> <code>extern_lib</code> are currently required to be static and Lake will link them statically. There are very hacky workarounds but they will not play well with other packages.</p>",
+        "id": 392453309,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1695366255
+    },
+    {
+        "content": "<p>The workaround is essentially make a <code>target</code> instead of a <code>extern_lib</code>, add it to <code>extraDepTargets</code> and use a hard-coded <code>-L</code>/<code>-l</code> to the output build path (and also add it <code>--load-dynlib</code> if you are using <code>precompileModules</code>).</p>",
+        "id": 392453452,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1695366346
+    },
+    {
+        "content": "<p>Fixing this is high on the priority list. Unfortunately, a lot of things are currently high on the priority list.</p>",
+        "id": 392453675,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1695366431
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac Malone</span> <a href=\"#narrow/stream/270676-lean4/topic/FFI.20to.20C.2B.2B.3A.20GiNaC/near/392453452\">said</a>:</p>\n<blockquote>\n<p>The workaround is essentially make a <code>target</code> instead of a <code>extern_lib</code>, add it to <code>extraDepTargets</code> and use a hard-coded <code>-L</code>/<code>-l</code> to the output build path (and also add it <code>--load-dynlib</code> if you are using <code>precompileModules</code>).</p>\n</blockquote>\n<p>I'm comfortable with this workaround as long as this works. There are other work I would like to focus on, like generating the Lean binding automatically using libclang like in Rust bindgen.</p>",
+        "id": 392454132,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1695366625
+    },
+    {
+        "content": "<p>I've given this a try, but I failed to make it work. I changed <code>extern_lib</code> to a <code>target</code> by <code>buildLeanSharedLib</code> then add it to the  <code>extraDepTargets</code> of <code>lean_lib</code>, but no matter how I add <code>-lstdc++</code> or <code>-L/usr/bin/../lib/gcc/aarch64-linux-gnu/11 -L/lib/aarch64-linux-gnu -L/usr/lib/aarch64-linux-gnu -L/usr/lib/llvm-14/bin/../lib -L/lib -L/usr/lib</code> to <code>package</code> or <code>lean_lib</code>, there are linker errors to GNU C++ std lib.</p>",
+        "id": 392486815,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1695377976
+    },
+    {
+        "content": "<p>Maybe I'm wrong about using <code>buildLeanSharedLib</code>?</p>",
+        "id": 392487056,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1695378050
+    },
+    {
+        "content": "<p>Ah, I got it, I don't why, but it seems that I also have to copy LLVM std lib to <code>build/lib</code>(referenced by <code>moreLinkArgs := #[s!\"-L{__dir__}/build/lib\"</code>) to make linker happy.</p>",
+        "id": 392493962,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1695380483
+    },
+    {
+        "content": "<p><a href=\"/user_uploads/3121/BzbwfUeWHdF_Wh-7xXTWSjZD/image.png\">image.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/BzbwfUeWHdF_Wh-7xXTWSjZD/image.png\" title=\"image.png\"><img src=\"/user_uploads/3121/BzbwfUeWHdF_Wh-7xXTWSjZD/image.png\"></a></div><p>Now <a href=\"https://github.com/utensil/ginac-lean/actions/runs/6273571456\">CI</a> passes for both Mac and Ubuntu, thank you both for your tips <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> <span class=\"user-mention\" data-user-id=\"315577\">@Mac Malone</span> <span aria-label=\"heart\" class=\"emoji emoji-2764\" role=\"img\" title=\"heart\">:heart:</span></p>",
+        "id": 392499045,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1695382517
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"296911\">Utensil Song</span> has marked this topic as resolved.</p>",
+        "id": 392502036,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1695383627
+    },
+    {
+        "content": "<p>I've put together a document <a href=\"https://github.com/utensil/ginac-lean/blob/main/doc/ffi.md\">Lean FFI to C++: a case study with GiNaC</a> which is mostly about the related work on Lean FFI to C++. It might be useful for others, and I hope to learn what I might have missed.</p>",
+        "id": 392836281,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1695563969
+    },
+    {
+        "content": "<p>Thanks a lot for writing this! When writing EigenLean thread safety didn't cross my mind :) I would be curious to know how to fix that.</p>\n<p>Btw. I have also done reverse ffi, using lean as scripting language from within another application. <a href=\"https://github.com/lecopivo/HouLean/blob/f2fd297da8ebcc51432baf592c5f74c9e4541d94/cpp/HouLeanModule.h#L160\">Here</a> is the line calling the main function of a lean file from c++.</p>",
+        "id": 392839166,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1695566093
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"346070\">Tomas Skrivan</span> <a href=\"#narrow/stream/270676-lean4/topic/.E2.9C.94.20FFI.20to.20C.2B.2B.3A.20GiNaC/near/392839166\">said</a>:</p>\n<blockquote>\n<p>Thanks a lot for writing this! When writing EigenLean thread safety didn't cross my mind <span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span> I would be curious to know how to fix that.</p>\n<p>Btw. I have also done reverse ffi, using lean as scripting language from within another application. <a href=\"https://github.com/lecopivo/HouLean/blob/f2fd297da8ebcc51432baf592c5f74c9e4541d94/cpp/HouLeanModule.h#L160\">Here</a> is the line calling the main function of a lean file from c++.</p>\n</blockquote>\n<p>Really appreciate your work on EigenLean ! Very enlightening, and elegantly done. <span aria-label=\"heart\" class=\"emoji emoji-2764\" role=\"img\" title=\"heart\">:heart:</span> </p>\n<p>By thread safety, I mean a thread-safe version of the static global variable for registering external C++ classes, which is initialized when the first time such a class is used from Lean, as this usage can concurrently come from different threads, the initialization is subject to data race which could lead to memory leak or undefined behavior. At my work, we need the program and all its dependencies to guarantee thread-safety, so it's something would cross my mind first when reading that part of code. The principle and practice to fix this can be found in C++ Core Guidelines about Concurrency and parallelism starting <a href=\"https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Rconc-multi\">here</a>, and <a href=\"https://www.modernescpp.com/index.php/creational-patterns-singleton/\">this relative new and thorough post</a>.</p>",
+        "id": 392906069,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1695616500
+    },
+    {
+        "content": "<p>The reverse FFI work in HouLean is fabulous!</p>\n<p>I have quite some visualization motives, but I was only thinking about using Lean types with proven properties to generate code to be executed for visualization, maybe in a JIT fashion, and haven't yet to find a case that Lean could meet the performance requirement of such applications, as such applications are usually further accelerated via generating MLIR for the target device e.g. GPU.</p>",
+        "id": 392910882,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1695618950
+    },
+    {
+        "content": "<p>Ahh rookie mistake, shared global mutable state, I should add a lock or something. Anyway, I will be amazing if you manage the get the automatic binding generation working!</p>",
+        "id": 393015074,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1695648785
+    }
+]

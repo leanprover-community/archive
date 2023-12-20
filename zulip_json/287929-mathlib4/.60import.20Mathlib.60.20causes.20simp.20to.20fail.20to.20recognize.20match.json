@@ -1,0 +1,164 @@
+[
+    {
+        "content": "<p>Hi everyone, I'm a master's student working with <span class=\"user-mention\" data-user-id=\"110596\">@Rob Lewis</span> on course development in Lean. We recently noticed what seems to be a bug in mathlib4, where <code>simp</code> wasn't able to reduce a match expression. I reproduced the bug in a fresh package, made using the most recent nightly release (<code>leanprover/lean4:nightly-2023-04-11</code>). The MRE is shown below.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"kd\">@[reducible]</span> <span class=\"kd\">def</span> <span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span>\n  <span class=\"bp\">|</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"mi\">0</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">1</span>\n  <span class=\"bp\">|</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">2</span>\n  <span class=\"bp\">|</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">3</span>\n\n<span class=\"kd\">theorem</span> <span class=\"n\">bug_mre</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span>\n  <span class=\"mi\">1</span> <span class=\"bp\">=</span> <span class=\"n\">f</span> <span class=\"n\">n</span> <span class=\"o\">(</span><span class=\"mi\">0</span> <span class=\"bp\">-</span> <span class=\"n\">n</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">simp</span>\n  <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">f</span><span class=\"o\">]</span>\n  <span class=\"n\">done</span>  <span class=\"c1\">-- unsolved goals!</span>\n</code></pre></div>\n<p>The Infoview shows this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"mi\">1</span> <span class=\"bp\">=</span>\n  <span class=\"k\">match</span> <span class=\"n\">n</span><span class=\"o\">,</span> <span class=\"mi\">0</span> <span class=\"k\">with</span>\n  <span class=\"bp\">|</span> <span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"mi\">0</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">1</span>\n  <span class=\"bp\">|</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">2</span>\n  <span class=\"bp\">|</span> <span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">x_1</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">3</span>\n</code></pre></div>\n<p>But when I comment out the <code>import Mathlib</code> line, <code>simp</code> does its thing and the error disappears. What's happening here?</p>",
+        "id": 349248483,
+        "sender_full_name": "Luke West",
+        "timestamp": 1681439048
+    },
+    {
+        "content": "<p>Can you bisect your way down to the first import that causes this?</p>",
+        "id": 349297163,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1681459971
+    },
+    {
+        "content": "<p>e.g. you could replace <code>import Mathlib</code> with the contents of <code>Mathlib.lean</code>, start deleting chunks of imports until you find some single import that causes this, and then start walking back up the dependencies of that import.</p>",
+        "id": 349297352,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1681460030
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">OrderedSub</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">constructor</span>\n  <span class=\"n\">intro</span> <span class=\"n\">m</span> <span class=\"n\">n</span> <span class=\"n\">k</span>\n  <span class=\"n\">induction'</span> <span class=\"n\">n</span> <span class=\"k\">with</span> <span class=\"n\">n</span> <span class=\"n\">ih</span> <span class=\"n\">generalizing</span> <span class=\"n\">k</span>\n  <span class=\"bp\">·</span> <span class=\"n\">simp</span>\n  <span class=\"bp\">·</span> <span class=\"n\">simp</span> <span class=\"n\">only</span> <span class=\"o\">[</span><span class=\"n\">sub_succ</span><span class=\"o\">,</span> <span class=\"n\">pred_le_iff</span><span class=\"o\">,</span> <span class=\"n\">ih</span><span class=\"o\">,</span> <span class=\"n\">succ_add</span><span class=\"o\">,</span> <span class=\"n\">add_succ</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>is the offending declaration</p>",
+        "id": 349300662,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1681460896
+    },
+    {
+        "content": "<p><code>OrderedSub</code> isn't a <code>Prop</code>. This is incorrect, right? (it doesn't solve the problem though)</p>",
+        "id": 349301315,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1681461070
+    },
+    {
+        "content": "<p>Here's the issue minimised more; the last two instances between them cause the problem. Is it just a case of <code>simp</code> not being confluent?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Algebra.Order.Ring.Canonical</span>\n<span class=\"kn\">import</span> <span class=\"n\">Mathlib.Data.Nat.Basic</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">Nat</span>\n\n<span class=\"c\">/-</span><span class=\"cm\">! ### instances -/</span>\n\n<span class=\"kd\">instance</span> <span class=\"n\">orderBot</span> <span class=\"o\">:</span> <span class=\"n\">OrderBot</span> <span class=\"n\">ℕ</span> <span class=\"n\">where</span>\n  <span class=\"n\">bot</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span>\n  <span class=\"n\">bot_le</span> <span class=\"o\">:=</span> <span class=\"n\">Nat.zero_le</span>\n<span class=\"bp\">#</span><span class=\"n\">align</span> <span class=\"n\">nat.order_bot</span> <span class=\"n\">Nat.orderBot</span>\n\n<span class=\"kd\">instance</span> <span class=\"n\">linearOrderedCommSemiring</span> <span class=\"o\">:</span> <span class=\"n\">LinearOrderedCommSemiring</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span>\n  <span class=\"o\">{</span> <span class=\"n\">Nat.commSemiring</span><span class=\"o\">,</span> <span class=\"n\">Nat.linearOrder</span> <span class=\"k\">with</span>\n    <span class=\"n\">lt</span> <span class=\"o\">:=</span> <span class=\"n\">Nat.lt</span><span class=\"o\">,</span> <span class=\"n\">add_le_add_left</span> <span class=\"o\">:=</span> <span class=\"bp\">@</span><span class=\"n\">Nat.add_le_add_left</span><span class=\"o\">,</span>\n    <span class=\"n\">le_of_add_le_add_left</span> <span class=\"o\">:=</span> <span class=\"bp\">@</span><span class=\"n\">Nat.le_of_add_le_add_left</span><span class=\"o\">,</span>\n    <span class=\"n\">zero_le_one</span> <span class=\"o\">:=</span> <span class=\"n\">Nat.le_of_lt</span> <span class=\"o\">(</span><span class=\"n\">Nat.zero_lt_succ</span> <span class=\"mi\">0</span><span class=\"o\">),</span>\n    <span class=\"n\">mul_lt_mul_of_pos_left</span> <span class=\"o\">:=</span> <span class=\"bp\">@</span><span class=\"n\">Nat.mul_lt_mul_of_pos_left</span><span class=\"o\">,</span>\n    <span class=\"n\">mul_lt_mul_of_pos_right</span> <span class=\"o\">:=</span> <span class=\"bp\">@</span><span class=\"n\">Nat.mul_lt_mul_of_pos_right</span><span class=\"o\">,</span>\n    <span class=\"n\">exists_pair_ne</span> <span class=\"o\">:=</span> <span class=\"o\">⟨</span><span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">ne_of_lt</span> <span class=\"n\">Nat.zero_lt_one</span><span class=\"o\">⟩</span> <span class=\"o\">}</span>\n\n<span class=\"c1\">-- comment both this instance and the next to break `simp` proof below</span>\n<span class=\"kd\">instance</span> <span class=\"n\">canonicallyOrderedCommSemiring</span> <span class=\"o\">:</span> <span class=\"n\">CanonicallyOrderedCommSemiring</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span>\n  <span class=\"o\">{</span> <span class=\"n\">Nat.nontrivial</span><span class=\"o\">,</span> <span class=\"n\">Nat.orderBot</span><span class=\"o\">,</span> <span class=\"o\">(</span><span class=\"n\">inferInstance</span> <span class=\"o\">:</span> <span class=\"n\">OrderedAddCommMonoid</span> <span class=\"n\">ℕ</span><span class=\"o\">),</span>\n    <span class=\"o\">(</span><span class=\"n\">inferInstance</span> <span class=\"o\">:</span> <span class=\"n\">LinearOrderedSemiring</span> <span class=\"n\">ℕ</span><span class=\"o\">),</span> <span class=\"o\">(</span><span class=\"n\">inferInstance</span> <span class=\"o\">:</span> <span class=\"n\">CommSemiring</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"k\">with</span>\n    <span class=\"n\">exists_add_of_le</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n    <span class=\"n\">le_self_add</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n    <span class=\"n\">eq_zero_or_eq_zero_of_mul_eq_zero</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span> <span class=\"o\">}</span>\n\n<span class=\"c1\">-- comment both this instance and the previous one to break `simp` proof below</span>\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">OrderedSub</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n\n<span class=\"kd\">@[reducible]</span> <span class=\"kd\">def</span> <span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span>\n  <span class=\"bp\">|</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"mi\">0</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">1</span>\n  <span class=\"bp\">|</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">2</span>\n  <span class=\"bp\">|</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">3</span>\n\n<span class=\"kd\">theorem</span> <span class=\"n\">bug_mre</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span>\n  <span class=\"mi\">1</span> <span class=\"bp\">=</span> <span class=\"n\">f</span> <span class=\"n\">n</span> <span class=\"o\">(</span><span class=\"mi\">0</span> <span class=\"bp\">-</span> <span class=\"n\">n</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">simp</span><span class=\"bp\">?</span> <span class=\"o\">[</span><span class=\"n\">f</span><span class=\"o\">]</span>\n  <span class=\"n\">done</span>  <span class=\"c1\">-- unsolved goals!</span>\n\n<span class=\"c\">/-</span>\n<span class=\"cm\">bad:</span>\n<span class=\"cm\">Try this: simp only [f, ge_iff_le, _root_.zero_le, tsub_eq_zero_of_le, forall_true_left]</span>\n\n<span class=\"cm\">good:</span>\n<span class=\"cm\">Try this: simp only [f, Nat.zero_sub, f.match_1.eq_1]</span>\n\n<span class=\"cm\">-/</span>\n</code></pre></div>",
+        "id": 349303146,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1681461548
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=instOrderedSubNat#doc\">docs4#instOrderedSubNat</a></p>",
+        "id": 349303223,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1681461570
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110038\">Kevin Buzzard</span> <a href=\"#narrow/stream/287929-mathlib4/topic/.60import.20Mathlib.60.20causes.20simp.20to.20fail.20to.20recognize.20match/near/349301315\">said</a>:</p>\n<blockquote>\n<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=OrderedSub#doc\">docs4#OrderedSub</a> isn't a <code>Prop</code>. This is incorrect, right? (it doesn't solve the problem though)</p>\n</blockquote>\n<p>It certainly should be</p>",
+        "id": 349303736,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1681461715
+    },
+    {
+        "content": "<p>Is this <img alt=\":2074:\" class=\"emoji\" src=\"https://zulip-avatars.s3.amazonaws.com/3121/emoji/images/44725.png\" title=\"2074\">?</p>",
+        "id": 349303922,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1681461742
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">OrderedSub</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">LE</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">Add</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">Sub</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"n\">where</span>\n  <span class=\"sd\">/-- `a - b` provides a lower bound on `c` such that `a ≤ c + b`. -/</span>\n  <span class=\"n\">tsub_le_iff_right</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">,</span> <span class=\"n\">a</span> <span class=\"bp\">-</span> <span class=\"n\">b</span> <span class=\"bp\">≤</span> <span class=\"n\">c</span> <span class=\"bp\">↔</span> <span class=\"n\">a</span> <span class=\"bp\">≤</span> <span class=\"n\">c</span> <span class=\"bp\">+</span> <span class=\"n\">b</span>\n\n<span class=\"kd\">variable</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">LE</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">Add</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">Sub</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"k\">in</span>\n<span class=\"k\">#check</span> <span class=\"n\">OrderedSub</span> <span class=\"n\">α</span> <span class=\"c1\">-- OrderedSub α : Type</span>\n</code></pre></div>\n<p>is the MWE for the Type issue.</p>",
+        "id": 349304949,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1681461977
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/3436\">!4#3436</a> for a workaround; can one write a linter which checks for other issues of this form?</p>",
+        "id": 349305288,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1681462065
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib_docs/find/has_ordered_sub\">docs#has_ordered_sub</a> was wrong in mathlib3 too</p>",
+        "id": 349306614,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1681462355
+    },
+    {
+        "content": "<p>Back to the question:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">theorem</span> <span class=\"n\">bug_mre</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span>\n  <span class=\"mi\">1</span> <span class=\"bp\">=</span> <span class=\"n\">f</span> <span class=\"n\">n</span> <span class=\"o\">(</span><span class=\"mi\">0</span> <span class=\"bp\">-</span> <span class=\"n\">n</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">unfold</span> <span class=\"n\">f</span>\n  <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">Nat.zero_sub</span><span class=\"o\">]</span>\n  <span class=\"c1\">-- The zero in `match n, 0` in goal is `@OfNat.ofNat ℕ 0 (instOfNatNat 0) : ℕ`</span>\n  <span class=\"n\">simp</span>\n\n\n<span class=\"kd\">theorem</span> <span class=\"n\">bug_mre'</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span>\n  <span class=\"mi\">1</span> <span class=\"bp\">=</span> <span class=\"n\">f</span> <span class=\"n\">n</span> <span class=\"o\">(</span><span class=\"mi\">0</span> <span class=\"bp\">-</span> <span class=\"n\">n</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">unfold</span> <span class=\"n\">f</span>\n  <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">tsub_eq_zero_of_le</span><span class=\"o\">]</span>\n  <span class=\"bp\">·</span> <span class=\"gr\">sorry</span> <span class=\"c1\">-- the zero here is @OfNat.ofNat ℕ 0 Zero.toOfNat0 : ℕ</span>\n  <span class=\"bp\">·</span> <span class=\"n\">simp</span>\n</code></pre></div>",
+        "id": 349307507,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1681462577
+    },
+    {
+        "content": "<p>Sounds like <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Nat.zero_sub#doc\">docs4#Nat.zero_sub</a> has a pre-mathlib zero</p>",
+        "id": 349307880,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1681462665
+    },
+    {
+        "content": "<p>Pretty much every lemma about <code>Nat</code> that appears in Std or core is going to be about the wrong zero / one</p>",
+        "id": 349308312,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1681462797
+    },
+    {
+        "content": "<p>The top one is the one which works!</p>",
+        "id": 349308523,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1681462845
+    },
+    {
+        "content": "<p>Kevin, should I be pasting that code after your previous snippet? Or is it just missing imports?</p>",
+        "id": 349308571,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1681462861
+    },
+    {
+        "content": "<p>Sorry, I was running out of laptop batteries. Probably <code>import Mathlib</code> will work</p>",
+        "id": 349308722,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1681462905
+    },
+    {
+        "content": "<p>Oh apologies! A message of mine got lost. Importing just the file where <code>OrderedSub Nat</code> is declared should be enough</p>",
+        "id": 349308953,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1681462972
+    },
+    {
+        "content": "<p>(and the definition of <code>f</code> -- sorry to make things harder for you, lean has been removed from me since I last posted code)</p>",
+        "id": 349309214,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1681463046
+    },
+    {
+        "content": "<p>I may or may not have been in the Nat namespace</p>",
+        "id": 349309300,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1681463072
+    },
+    {
+        "content": "<p>I was hoping that <code>#check f.match_1.eq_1</code> would help show what's going on, but I can't persuade Lean to tell me what the <code>0</code> means</p>",
+        "id": 349309337,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1681463082
+    },
+    {
+        "content": "<p>Is there a <code>pp.showAllTheOfNats</code> option?</p>",
+        "id": 349309390,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1681463098
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib_docs/find/has_ordered_sub\">docs#has_ordered_sub</a> . So it was!</p>",
+        "id": 349309997,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1681463250
+    },
+    {
+        "content": "<p>So does my PR need backporting?? I can't do it right now unfortunately</p>",
+        "id": 349310115,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1681463275
+    },
+    {
+        "content": "<p>At some point yes, but it's not necessary for it to happen before the mathlib4 change</p>",
+        "id": 349310287,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1681463317
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Data.Nat.Order.Basic</span>\n</code></pre></div>\n<p>is the culprit (is the message I didn't send)</p>",
+        "id": 349347360,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1681472111
+    }
+]

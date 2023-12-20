@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>I was playing around a bit with <code>implemented_by</code>, to see if I can completely swap out the representation of a type (like with <code>Array</code> and <code>List</code>), but staying within lean (so not <code>extern</code> + C code).<br>\nBut it seems that my <code>attribute [implemented_by RArray.rec_unsafe] RArray.rec</code> which swaps out the implementation of the recursor did not affect how a pattern matching is compiled. Are pattern matches not compiled via the types recursers, or where else did my thinking go wrong?</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<p>Here is what I tried:</p>\n<div class=\"codehilite\"><pre><span></span><code>inductive RArray (α : Type _) where\n  | nil : RArray α\n  | snoc : RArray α → α → RArray α\n\nunsafe def RArray.nil_unsafe {α} : RArray α :=\n  unsafeCast (Array.empty : Array α)\n\nunsafe def RArray.snoc_unsafe {α} : RArray α → α → RArray α :=\n  unsafeCast (fun as a =&gt; as.push a : Array α → α → Array α)\n\nunsafe def RArray.rec_unsafe.{u, u_1} {α : Type u_1} {motive : RArray α → Sort u} (nil : motive RArray.nil)\n  (snoc : (a : RArray α) → (a_1 : α) → motive a → motive (RArray.snoc a a_1)) (t : RArray α) : motive t :=\n  let t&#39; := (unsafeCast t : Array α)\n  if h : t&#39;.size - 1 &lt; t&#39;.size then\n    let x := t&#39;[t&#39;.size -1]\n    let t2 := (unsafeCast t&#39;.pop : RArray α)\n    (unsafeCast (snoc t2 x (RArray.rec_unsafe nil snoc t2)) : motive t)\n  else\n    (unsafeCast nil : motive t)\n\nattribute [implemented_by RArray.nil_unsafe] RArray.nil\nattribute [implemented_by RArray.snoc_unsafe] RArray.snoc\nattribute [implemented_by RArray.rec_unsafe] RArray.rec\n\ndef RArray.sum : RArray Nat → Nat\n  | .nil =&gt; 0\n  | .snoc xs x =&gt; xs.sum + x\n\ndef RArray.map {α β} (f : α → β) : RArray α → RArray β\n  | .nil =&gt; .nil\n  | .snoc xs x =&gt; .snoc (xs.map f) (f x)\n</code></pre></div>\n<div class=\"codehilite\"><pre><span></span><code>\n</code></pre></div>\n</div></div>",
+        "id": 395951624,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1696967622
+    },
+    {
+        "content": "<p>Ah, I also have to override  <code>casesOn</code>!</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">attribute</span> <span class=\"o\">[</span><span class=\"n\">implemented_by</span> <span class=\"n\">RArray.casesOn_unsafe</span><span class=\"o\">]</span> <span class=\"n\">RArray.casesOn</span>\n</code></pre></div>",
+        "id": 395952950,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1696968191
+    },
+    {
+        "content": "<p>So here is my attempt at defining a data type that looks like an inductive Snoc list (nice for proofs, nice for functional programming with pattern matching) but its implementation is backed by <code>Array</code>, and allows fast conversion to and from <code>Array</code> (hardly tested, though):</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<div class=\"codehilite\"><pre><span></span><code>/-- A snoc list, inductive -- nice for proofs and funcitonal programming -/\ninductive RArray (α : Type _) where\n  | nil : RArray α\n  | snoc : RArray α → α → RArray α\n\n/- Some conversions -/\n\ndef RArray.toRevList {α} : RArray α → List α\n  | .nil =&gt; []\n  | .snoc xs x =&gt; x :: xs.toRevList\n\ndef RArray.toList {α} (xs : RArray α) : List α :=\n  xs.toRevList.reverse\n\ndef RArray.toArray {α} (xs : RArray α) : Array α :=\n  xs.toList.toArray\n\ndef RArray.fromRevList {α} : List α → RArray α\n  | [] =&gt; .nil\n  | .cons x xs =&gt; snoc (RArray.fromRevList xs) x\n\ndef RArray.fromList {α} (xs : List α) : RArray α :=\n  RArray.fromRevList xs.reverse\n\ndef RArray.fromArray {α} (a : Array α) : RArray α :=\n  .fromList a.toList\n\n/- Some example functions -/\n\ndef RArray.sum : RArray Nat → Nat\n  | .nil =&gt; 0\n  | .snoc xs x =&gt; xs.sum + x\n\ndef RArray.map {α β} (f : α → β) : RArray α → RArray β\n  | .nil =&gt; .nil\n  | .snoc xs x =&gt; .snoc (xs.map f) (f x)\n\n/- Replacement definitions for the fundamental constants of the type, backing the type with an\nArray -/\n\nunsafe def RArray.nil_unsafe {α} : RArray α :=\n  unsafeCast (Array.empty : Array α)\n\nunsafe def RArray.snoc_unsafe {α} : RArray α → α → RArray α :=\n  unsafeCast (fun as a =&gt; as.push a : Array α → α → Array α)\n\nunsafe def RArray.rec_unsafe.{u, u_1} {α : Type u_1} {motive : RArray α → Sort u} (nil : motive RArray.nil)\n  (snoc : (a : RArray α) → (a_1 : α) → motive a → motive (RArray.snoc a a_1)) (t : RArray α) : motive t :=\n  let t&#39; := (unsafeCast t : Array α)\n  if h : t&#39;.size - 1 &lt; t&#39;.size then\n    let x := t&#39;[t&#39;.size -1]\n    let t2 := (unsafeCast t&#39;.pop : RArray α)\n    (unsafeCast (snoc t2 x (RArray.rec_unsafe nil snoc t2)) : motive t)\n  else\n    (unsafeCast nil : motive t)\n\nunsafe def RArray.casesOn_unsafe.{u, u_1} {α : Type u_1} {motive : RArray α → Sort u} (t : RArray α)\n  (nil : motive RArray.nil) (snoc : (a : RArray α) → (a_1 : α) → motive (RArray.snoc a a_1))\n      : motive t :=\n  let t&#39; := (unsafeCast t : Array α)\n  if h : t&#39;.size - 1 &lt; t&#39;.size then\n    let x := t&#39;[t&#39;.size -1]\n    let t2 := (unsafeCast t&#39;.pop : RArray α)\n    (unsafeCast (snoc t2 x) : motive t)\n  else\n    (unsafeCast nil : motive t)\n\nattribute [implemented_by RArray.nil_unsafe] RArray.nil\nattribute [implemented_by RArray.snoc_unsafe] RArray.snoc\nattribute [implemented_by RArray.rec_unsafe] RArray.rec\nattribute [implemented_by RArray.casesOn_unsafe] RArray.casesOn\n\n/- Faster conversion functions -/\n\nunsafe def RArray.fromArray_unsafe {α} (a : Array α) : RArray α := unsafeCast a\nattribute [implemented_by RArray.fromArray_unsafe] RArray.fromArray\n\nunsafe def RArray.toArray_unsafe {α} (a : RArray α) : Array α := unsafeCast a\nattribute [implemented_by RArray.toArray_unsafe] RArray.toArray\n</code></pre></div>\n</div></div>\n<p>Of course, it’s quite scary how much <code>unsafe</code> there is in the code. I wonder if there could be a more principled approach to such data type refinements. Maybe what I am looking for is <a href=\"https://isabelle.in.tum.de/~haftmann/pdf/data_refinement_in_isabelle_hol_haftmann_krauss_kuncar_nipkow.pdf\">data type refinement like in Isabelle</a>. Is that possible, or on the horizon?</p>",
+        "id": 395955004,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1696969188
+    },
+    {
+        "content": "<p>I've been thinking for some time that it might be useful to have first-class support for alternative recursors, a la Epigram. For instance, Lean's representation of <code>Fin</code> is non-bizarre - it's a <code>Nat</code> at runtime - but programming with it is manifestly less convenient than the inductive version. It would be great to be able to prove the inductive version's induction principle, and then use it with ordinary <code>match</code> expressions, whether by some kind of <code>using</code> modifier or by having Lean select the appropriate induction principle from the set of patterns employed.</p>\n<p>This could be a nice hack for backwards compatibility too.</p>",
+        "id": 395956008,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696969663
+    },
+    {
+        "content": "<p>That also sounds nice – then we could simply have a “snoc-view on Arrays” recursor directly, no separate type needed.</p>",
+        "id": 395956140,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1696969731
+    },
+    {
+        "content": "<p>How hard would alternative recursers be? The equation compiler would have to know which “constructors” belong to which recursor, at least in the simple case where each recursor has its own set of constructors used in patterns. Are other components involved?</p>",
+        "id": 395960089,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1696971650
+    },
+    {
+        "content": "<p>Not that I know of, but I'm not the one to ask</p>",
+        "id": 396029656,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1697010392
+    },
+    {
+        "content": "<p>I found a mysterious attribute <code>recursor</code> in the <a href=\"https://github.com/leanprover/lean4/blob/a62d2fd4979671b76b8ab13ccbe4fdf410ec0d9d/src/Lean/Meta/RecursorInfo.lean#L258\">core</a>. Although nothing uses it currently, was it created for this purpose?</p>",
+        "id": 396030234,
+        "sender_full_name": "Jun Yoshida",
+        "timestamp": 1697010630
+    },
+    {
+        "content": "<p>I'd expect a nice API to be something like:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">Fin.zero</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"bp\">...</span>\n<span class=\"kd\">def</span> <span class=\"n\">Fin</span> <span class=\"bp\">.</span><span class=\"n\">succ</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"n\">n</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">Fin</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"bp\">...</span>\n<span class=\"kd\">def</span> <span class=\"n\">Fin.someOtherEliminator</span> <span class=\"o\">:</span> <span class=\"o\">{</span><span class=\"n\">p</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">Fin</span> <span class=\"n\">n</span> <span class=\"bp\">-&gt;</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">}</span> <span class=\"bp\">-&gt;</span> <span class=\"o\">((</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">p</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"n\">fzero</span><span class=\"o\">)</span> <span class=\"bp\">-&gt;</span> <span class=\"bp\">...</span>\n<span class=\"n\">register_matcher</span> <span class=\"n\">Fin.somOtherEliminator</span> <span class=\"n\">for</span> <span class=\"n\">Fin.zero</span><span class=\"o\">,</span> <span class=\"n\">Fin.succ</span>\n</code></pre></div>\n<p>where it would then create the corresponding casesOn and noConfusion stuff.</p>",
+        "id": 396030245,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1697010637
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"433695\">@Jun Yoshida</span>: I think that attribute is used to override the recursion principle for <code>induction</code> and/or <code>cases</code>, but it doesn't work for <code>match</code></p>",
+        "id": 396045009,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1697015920
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> Regarding the current lean4, Std, and Mathlib repositories, I don't think any other functions use <code>recursorAttribute</code>, so it is not even an alternative of <code>eliminator</code> attribute; i.e. neither <code>induction</code> nor <code>cases</code> care <code>recursor</code> attribute.</p>",
+        "id": 396052651,
+        "sender_full_name": "Jun Yoshida",
+        "timestamp": 1697018454
+    }
+]

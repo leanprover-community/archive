@@ -1,0 +1,98 @@
+[
+    {
+        "content": "<p>Given <code>variable {a b : ℕ}</code> and the term <code>a = b</code> if I elaborate this term with <code>elabTerm</code> and then apply <code>Lean.Expr.getAppArgs'</code> (same for unprimed and the second component of <code>Lean.Expr.getAppFnArgs</code>) it yields <code>#[ℕ, a, b]</code>, but I would expect <code>#[a, b]</code>. Is there some way to get rid of implicit arguments?</p>",
+        "id": 360643099,
+        "sender_full_name": "Moritz Doll",
+        "timestamp": 1684877790
+    },
+    {
+        "content": "<p>Are you specifically wanting to process equalities? <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Expr.eq%3F#doc\">docs4#Lean.Expr.eq?</a> lets you get the type, LHS, and RHS as a tuple</p>",
+        "id": 360643439,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1684877957
+    },
+    {
+        "content": "<p>Unfortunately not. Background is that I resumed porting <code>congrm</code> and for matching the pattern I of course only want to deal with the explicit arguments</p>",
+        "id": 360643915,
+        "sender_full_name": "Moritz Doll",
+        "timestamp": 1684878214
+    },
+    {
+        "content": "<p>I think there's a function used by other congr meta code to get detailed information about every function argument.</p>",
+        "id": 360644035,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1684878272
+    },
+    {
+        "content": "<p>here's a place it's used in mathlib code: <a href=\"https://github.com/leanprover-community/mathlib4/blob/master/Mathlib/Tactic/Congr!.lean#LL540C16-L540C31\">https://github.com/leanprover-community/mathlib4/blob/master/Mathlib/Tactic/Congr!.lean#LL540C16-L540C31</a></p>",
+        "id": 360644156,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1684878332
+    },
+    {
+        "content": "<p>You can filter the arguments by which ones have a <code>paramInfo.binderInfo == .default</code></p>",
+        "id": 360644432,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1684878467
+    },
+    {
+        "content": "<p>thanks, there is actually <code>ParamInfo.isExplicit</code></p>",
+        "id": 360646872,
+        "sender_full_name": "Moritz Doll",
+        "timestamp": 1684879595
+    },
+    {
+        "content": "<p>which does the exact equality check</p>",
+        "id": 360646949,
+        "sender_full_name": "Moritz Doll",
+        "timestamp": 1684879635
+    },
+    {
+        "content": "<p>Ok, making progress, but still not quite there. In the function below I consistently get that the length of <code>pinfo</code> is zero:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">_root_.Lean.Expr.getExplicitArgs</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">args</span> <span class=\"o\">:=</span> <span class=\"n\">f.getAppArgs</span>\n  <span class=\"k\">let</span> <span class=\"n\">pinfo</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">Lean.Meta.getFunInfoNArgs</span> <span class=\"n\">f</span> <span class=\"n\">args.toList.length</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">paramInfo</span>\n  <span class=\"n\">logInfo</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"all arguments: {← args.mapM ppExpr} and num patternInfos: {pinfo.toList.length}\"</span>\n  <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"n\">pinfo.zip</span> <span class=\"n\">args</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">filterMap</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">arg</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">if</span> <span class=\"n\">arg.1.isExplicit</span> <span class=\"k\">then</span> <span class=\"n\">some</span> <span class=\"n\">arg.2</span> <span class=\"k\">else</span> <span class=\"n\">none</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 360650148,
+        "sender_full_name": "Moritz Doll",
+        "timestamp": 1684881163
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a></p>",
+        "id": 360650444,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684881302
+    },
+    {
+        "content": "<p>There you go:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean.Meta.FunInfo</span>\n<span class=\"kn\">import</span> <span class=\"n\">Lean.Elab.Tactic</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Parser</span> <span class=\"n\">Tactic</span> <span class=\"n\">Elab</span> <span class=\"n\">Tactic</span> <span class=\"n\">Meta</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">_root_.Lean.Expr.getExplicitArgs</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">args</span> <span class=\"o\">:=</span> <span class=\"n\">f.getAppArgs</span>\n  <span class=\"k\">let</span> <span class=\"n\">pinfo</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">Lean.Meta.getFunInfoNArgs</span> <span class=\"n\">f</span> <span class=\"n\">args.toList.length</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">paramInfo</span>\n  <span class=\"n\">logInfo</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"all arguments: {← args.mapM ppExpr} and patternInfos: {pinfo.toList.length}\"</span>\n  <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"n\">pinfo.zip</span> <span class=\"n\">args</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">filterMap</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"n\">arg</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">if</span> <span class=\"n\">arg.1.isExplicit</span> <span class=\"k\">then</span> <span class=\"n\">some</span> <span class=\"n\">arg.2</span> <span class=\"k\">else</span> <span class=\"n\">none</span><span class=\"o\">)</span>\n\n<span class=\"n\">syntax</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">prettyExpr</span><span class=\"o\">)</span> <span class=\"s2\">\"prettyExpr \"</span> <span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span>\n\n<span class=\"n\">elab_rules</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">tactic</span><span class=\"bp\">|</span> <span class=\"n\">prettyExpr</span> <span class=\"bp\">$</span><span class=\"n\">expr</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">withMainContext</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">_foo</span> <span class=\"bp\">←</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">elabTerm</span> <span class=\"n\">expr</span> <span class=\"n\">none</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">getExplicitArgs</span>\n  <span class=\"n\">return</span>\n\n<span class=\"c1\">-- Testing for implicit arguments in function application</span>\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">b</span> <span class=\"bp\">=</span> <span class=\"n\">c</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">=</span> <span class=\"n\">b</span> <span class=\"bp\">↔</span> <span class=\"n\">a</span> <span class=\"bp\">=</span> <span class=\"n\">c</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">prettyExpr</span> <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"bp\">=</span> <span class=\"n\">_</span><span class=\"o\">)</span>\n  <span class=\"n\">prettyExpr</span> <span class=\"o\">((</span><span class=\"bp\">·</span> <span class=\"bp\">=</span> <span class=\"bp\">·</span> <span class=\"o\">)</span> <span class=\"n\">_</span> <span class=\"n\">_</span><span class=\"o\">)</span>\n  <span class=\"n\">prettyExpr</span> <span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">Eq</span> <span class=\"n\">_</span> <span class=\"n\">_</span><span class=\"o\">)</span>\n  <span class=\"gr\">sorry</span>\n</code></pre></div>",
+        "id": 360651354,
+        "sender_full_name": "Moritz Doll",
+        "timestamp": 1684881754
+    },
+    {
+        "content": "<p>looks like you need to pass the head of the function, that is <code>f.getAppFn</code>, to <code>getFunInfoNArgs</code> instead of <code>f</code></p>",
+        "id": 360651766,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684881969
+    },
+    {
+        "content": "<p>yes that works, thanks. What is the reason for <code>(_ = _)</code> having three arguments, but <code>((· = · ) _ _)</code> having two?</p>",
+        "id": 360652228,
+        "sender_full_name": "Moritz Doll",
+        "timestamp": 1684882196
+    },
+    {
+        "content": "<p>the first one is <code>@Eq _ _ _</code> and the second one is <code>(fun x y =&gt; @Eq _ x y) _ _</code></p>",
+        "id": 360652395,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684882269
+    },
+    {
+        "content": "<p>Rather than <code>args.toList.length</code> you can do <code>args.size</code>. And just in case you ever need it (if you don't also need the array of arguments), there's <code>Lean.Expr.getAppNumArgs</code>.</p>",
+        "id": 360656772,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1684884785
+    },
+    {
+        "content": "<p>I knew about <code>getAppNumArgs</code>, but not <code>Array.size</code>, thanks</p>",
+        "id": 360659505,
+        "sender_full_name": "Moritz Doll",
+        "timestamp": 1684886604
+    }
+]

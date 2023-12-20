@@ -1,0 +1,104 @@
+[
+    {
+        "content": "<p>I am facing issues loading shared libraries with dependencies. Here is a MWE: I have a simple <code>lakefile.lean</code> that imports the standard library:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lake</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lake</span> <span class=\"n\">DSL</span>\n\n<span class=\"n\">package</span> <span class=\"n\">lib</span>\n\n<span class=\"kd\">@[default_target]</span>\n<span class=\"n\">lean_lib</span> <span class=\"n\">Lib</span>\n\n<span class=\"n\">require</span> <span class=\"n\">std</span> <span class=\"k\">from</span> <span class=\"n\">git</span> <span class=\"s2\">\"https://github.com/leanprover/std4\"</span> <span class=\"bp\">@</span> <span class=\"s2\">\"main\"</span>\n</code></pre></div>\n<p><code>Lib.lean</code> contains a simple import and definition</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Std.Data.Rat</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">hello</span> <span class=\"o\">:</span> <span class=\"n\">Rat</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span><span class=\"bp\">/</span><span class=\"mi\">2</span>\n</code></pre></div>\n<p>I have one more file, <code>Test.lean</code>, that imports import <code>Lib.lean</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lib</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">hello</span>\n</code></pre></div>\n<p>I get the following error if I try to build a shared version of the target library <code>Lib</code> and load it before elaborating <code>Test.lean</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">$</span> <span class=\"n\">lake</span> <span class=\"n\">build</span> <span class=\"n\">Lib</span><span class=\"o\">:</span><span class=\"n\">shared</span>\n<span class=\"n\">Linking</span> <span class=\"n\">libLib.so</span>\n<span class=\"bp\">$</span> <span class=\"n\">lake</span> <span class=\"n\">env</span> <span class=\"n\">lean</span> <span class=\"c1\">--load-dynlib=libLib.so Test.lean</span>\n<span class=\"bp\">/</span><span class=\"n\">home</span><span class=\"bp\">/</span><span class=\"n\">user</span><span class=\"bp\">/.</span><span class=\"n\">elan</span><span class=\"bp\">/</span><span class=\"n\">toolchains</span><span class=\"bp\">/</span><span class=\"n\">leanprover</span><span class=\"c1\">--lean4---nightly-2023-03-07/bin/lean: symbol lookup error: ./build/lib/libLib.so: undefined symbol: initialize_Std_Data_Rat</span>\n</code></pre></div>\n<p>Interestingly, <span class=\"user-mention\" data-user-id=\"128280\">@Wojciech Nawrocki</span> noticed that if I build the shared version of  module <code>Lib</code>, it gets loaded correctly:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">$</span> <span class=\"n\">lake</span> <span class=\"n\">build</span> <span class=\"bp\">+</span><span class=\"n\">Lib</span><span class=\"o\">:</span><span class=\"n\">dynlib</span>\n<span class=\"n\">Linking</span> <span class=\"n\">Lib</span>\n<span class=\"bp\">$</span> <span class=\"n\">lake</span> <span class=\"n\">env</span> <span class=\"n\">lean</span> <span class=\"c1\">--load-dynlib=libLib.so Test.lean</span>\n<span class=\"o\">(</span><span class=\"mi\">1</span> <span class=\"o\">:</span> <span class=\"n\">Rat</span><span class=\"o\">)</span><span class=\"bp\">/</span><span class=\"mi\">2</span>\n</code></pre></div>\n<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span>, do you have an idea of what's going on? Is this expected behavior?</p>",
+        "id": 342412248,
+        "sender_full_name": "Abdalrhman M Mohamed",
+        "timestamp": 1678997174
+    },
+    {
+        "content": "<p>The module shared lib might not be declaring its dependencies correctly (what does <code>ldd</code> say?). Lake passes the entire closure of modules via <code>--load-dynlib</code>, which is necessary on Windows but ideally should not be on Unix</p>",
+        "id": 342415015,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1678998137
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> when I tried this on a non-MWE, <code>ldd libLib.so</code> was not importing any Lean module whatsoever.</p>",
+        "id": 342416646,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1678998669
+    },
+    {
+        "content": "<p>Yeah, I thought so. It's not necessary, but it would be nicer if Lake passed the dependencies to the linker</p>",
+        "id": 342417438,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1678998948
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> <code>Lib</code> in this case is the shared library for the whole Lean library of the package. It doesn't depend on any specific other libraries (e.g., it could work with either individual module libraries or shared libraries of other modules or even static libraries).</p>",
+        "id": 342417784,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1678999082
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Issue.20with.20linking.20shared.20libraries/near/342415015\">said</a>:</p>\n<blockquote>\n<p>The module shared lib might not be declaring its dependencies correctly (what does <code>ldd</code> say?). Lake passes the entire closure of modules via <code>--load-dynlib</code>, which is necessary on Windows but ideally should not be on Unix</p>\n</blockquote>\n<p>Here is what I get from <code>ldd</code> when I run <code>lake build Lib:shared</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">$</span> <span class=\"n\">lake</span> <span class=\"n\">env</span> <span class=\"n\">ldd</span> <span class=\"n\">build</span><span class=\"bp\">/</span><span class=\"n\">lib</span><span class=\"bp\">/</span><span class=\"n\">libLib.so</span>\n        <span class=\"n\">linux</span><span class=\"bp\">-</span><span class=\"n\">vdso.so.1</span> <span class=\"o\">(</span><span class=\"mi\">0x00007fff6abf4000</span><span class=\"o\">)</span>\n        <span class=\"n\">libm.so.6</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">/</span><span class=\"n\">lib</span><span class=\"bp\">/</span><span class=\"n\">x86_64</span><span class=\"bp\">-</span><span class=\"n\">linux</span><span class=\"bp\">-</span><span class=\"n\">gnu</span><span class=\"bp\">/</span><span class=\"n\">libm.so.6</span> <span class=\"o\">(</span><span class=\"mi\">0x00007fd55516d000</span><span class=\"o\">)</span>\n        <span class=\"n\">libdl.so.2</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">/</span><span class=\"n\">lib</span><span class=\"bp\">/</span><span class=\"n\">x86_64</span><span class=\"bp\">-</span><span class=\"n\">linux</span><span class=\"bp\">-</span><span class=\"n\">gnu</span><span class=\"bp\">/</span><span class=\"n\">libdl.so.2</span> <span class=\"o\">(</span><span class=\"mi\">0x00007fd555168000</span><span class=\"o\">)</span>\n        <span class=\"n\">libpthread.so.0</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">/</span><span class=\"n\">lib</span><span class=\"bp\">/</span><span class=\"n\">x86_64</span><span class=\"bp\">-</span><span class=\"n\">linux</span><span class=\"bp\">-</span><span class=\"n\">gnu</span><span class=\"bp\">/</span><span class=\"n\">libpthread.so.0</span> <span class=\"o\">(</span><span class=\"mi\">0x00007fd555163000</span><span class=\"o\">)</span>\n        <span class=\"n\">libc.so.6</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">/</span><span class=\"n\">lib</span><span class=\"bp\">/</span><span class=\"n\">x86_64</span><span class=\"bp\">-</span><span class=\"n\">linux</span><span class=\"bp\">-</span><span class=\"n\">gnu</span><span class=\"bp\">/</span><span class=\"n\">libc.so.6</span> <span class=\"o\">(</span><span class=\"mi\">0x00007fd554e00000</span><span class=\"o\">)</span>\n        <span class=\"bp\">/</span><span class=\"n\">lib64</span><span class=\"bp\">/</span><span class=\"n\">ld</span><span class=\"bp\">-</span><span class=\"n\">linux</span><span class=\"bp\">-</span><span class=\"n\">x86</span><span class=\"bp\">-</span><span class=\"mi\">64</span><span class=\"bp\">.</span><span class=\"n\">so.2</span> <span class=\"o\">(</span><span class=\"mi\">0x00007fd55526c000</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 342417833,
+        "sender_full_name": "Abdalrhman M Mohamed",
+        "timestamp": 1678999088
+    },
+    {
+        "content": "<p>Oh! I see. So this is expected behavior and we should just load <code>libStd.so</code>?</p>",
+        "id": 342418066,
+        "sender_full_name": "Abdalrhman M Mohamed",
+        "timestamp": 1678999183
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac</span> Well, there are two <code>libLib</code>s here. So what's the difference?</p>",
+        "id": 342418206,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1678999223
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> Yeah, that's a naming confusion I forgot to fix. The first one <code>Lib:shared</code> is the shared library of <code>lean_lib Lib</code> (e.g., a normal shared library for library distribution purposes). The second one  <code>+Lib:dynlib</code> is the shared library of the module <code>Lib</code> for use with precompiled modules.</p>",
+        "id": 342418458,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1678999321
+    },
+    {
+        "content": "<p>The second one should have some special prefix or suffix to differentiate it. I haven't come up with a good one yet. That is, one that would not cause confusion if a library or module happens to be named in a particular way. For instance, if it was suffixed with <code>M</code> (for module), it might clash with modules defining a monad (which also use the suffix M).</p>",
+        "id": 342419260,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1678999612
+    },
+    {
+        "content": "<p>I see, I assumed it was the other way around. But for a \"proper\" shared library in contrast to the implementation detail of precompiled dynlibs it's even more wrong not to declare its dependencies. Indeed it should probably be linked with <code>-no-undefined</code>.</p>",
+        "id": 342419979,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1678999867
+    },
+    {
+        "content": "<p>Precisely because precompiled libraries are an implementation detail, I would simply drop the <code>lib</code> prefix, then there is no confusion (edit: though the prefix might be necessary to use with <code>-l</code> on macOS...)</p>",
+        "id": 342420359,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1678999992
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Issue.20with.20linking.20shared.20libraries/near/342420359\">said</a>:</p>\n<blockquote>\n<p>(edit: though the prefix might be necessary to use with <code>-l</code> on macOS...)</p>\n</blockquote>\n<p>Yeah, MacOS requires it (learned that the hard way).</p>",
+        "id": 342433075,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1679005313
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Issue.20with.20linking.20shared.20libraries/near/342419979\">said</a>:</p>\n<blockquote>\n<p>t's even more wrong not to declare its dependencies.</p>\n</blockquote>\n<p>How so? It still works without them and doesn't cause the numerous problems dependencies cause across OSes (since they all have different lookup procedures). Furthermore, it gives more flexibility on how the dependencies symbols are stored (i.e., you can link them all into one library per package or per module or per root).</p>",
+        "id": 342433325,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1679005444
+    },
+    {
+        "content": "<blockquote>\n<p>How so? It still works without them</p>\n</blockquote>\n<p>I am confused by this point. Without knowing the dependencies' initializers we can't run the initializers for <code>Lib</code>, which is what Abdal is experiencing.</p>",
+        "id": 342433832,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1679005663
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"128280\">@Wojciech Nawrocki</span> what I meant by works is that you can get it to work by loading the dependencies as well e.g. do <code>--load-dynlib=libStd.so</code> <code>--load-dynlib=libLib.so</code> etc.</p>",
+        "id": 342447692,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1679012816
+    },
+    {
+        "content": "<p>But using them with <code>--load-dynlib</code> is not what the <em>target</em> dynlibs were made for, or how Lake itself uses them, no? I assume <code>:shared</code> is intended primarily for uses outside of Lean, in which case it should try to generate shared libraries that follow the conventions of the platform, and in particular should not contain undefined symbols on either Linux or macOS.</p>",
+        "id": 342499733,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679042841
+    }
+]

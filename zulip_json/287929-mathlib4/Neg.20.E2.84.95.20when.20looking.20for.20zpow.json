@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>I noticed the following:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Data.Rat.Basic</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">ℚ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">x</span> <span class=\"bp\">^</span> <span class=\"o\">(</span><span class=\"bp\">-</span><span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n  <span class=\"c1\">-- failed to synthesize instance Neg ℕ</span>\n</code></pre></div>\n<p>We instead have to write <code>x ^ (-1 : ℤ)</code>. I would think Lean ought to be able to infer we were using zpow. Is there a reason it can't? Could we change that somehow?</p>",
+        "id": 337911871,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1677284019
+    },
+    {
+        "content": "<p>This feels like something a unification hint might be able to deal with, assuming those still exist</p>",
+        "id": 337912258,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1677284234
+    },
+    {
+        "content": "<p>Could it be</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">ℚ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">ℝ</span><span class=\"o\">)</span> <span class=\"bp\">^</span> <span class=\"o\">(</span><span class=\"bp\">-</span><span class=\"mi\">1</span> <span class=\"o\">:</span> <span class=\"n\">ℝ</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n</code></pre></div>\n<p>instead? :)</p>",
+        "id": 337974076,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1677322400
+    },
+    {
+        "content": "<p>Okay okay, hear me out…………<code>HNeg</code></p>",
+        "id": 338082836,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1677375333
+    },
+    {
+        "content": "<p>Seems like we can at least make the literal case a little nicer by adding e.g.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">macro_rules</span> <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">-</span> <span class=\"bp\">$</span><span class=\"n\">x</span><span class=\"o\">:</span><span class=\"n\">num</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">unop</span><span class=\"bp\">%</span> <span class=\"n\">Neg.neg</span> <span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Int</span><span class=\"o\">))</span>\n</code></pre></div>\n<p>somewhere! (Don't actually know what that <code>unop%</code> is doing, it's just copypasta) Maybe a unification hint would be a better solution, but I don't know how those work yet.</p>\n<p>It would be nice to be able to write <code>-y</code> and get an <code>Int</code> when <code>y</code> is a <code>Nat</code> in general, though—I don't know if that's something unification hints are capable of, and I'm worried it might be a bad idea performance-wise to infer the type of <code>y</code> and match it against <code>Nat</code> within a macro.</p>\n<p>(I also think I remember it being said somewhere that often unification hints are almost never the best/most robust solution to a problem? But I'm not sure what is, here.)</p>",
+        "id": 338211327,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1677450655
+    },
+    {
+        "content": "<p>Won't your code do the wrong thing for <code>(-1 : Rat)</code>?</p>",
+        "id": 338212109,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1677451323
+    },
+    {
+        "content": "<p>I tried it, and <del>apparently not? I’m guessing it turns it into <code>(-(1 : Int) : Rat)</code>. But that’s still not great.</del> Oops, had a <code>simp</code>. Yeah, that's not good. I suppose it should be simply something like</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">macro_rules</span> <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">b</span> <span class=\"bp\">^</span> <span class=\"o\">(</span><span class=\"bp\">-</span> <span class=\"bp\">$</span><span class=\"n\">x</span><span class=\"o\">:</span><span class=\"n\">num</span><span class=\"o\">))</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">b</span> <span class=\"bp\">^</span> <span class=\"o\">(</span><span class=\"bp\">-</span> <span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)))</span>\n</code></pre></div>\n<p><em>if</em> this is the way we'd want to go. Seems a bit fragile and restricted to me, though. I'd rather a more general/robust solution...</p>",
+        "id": 338212345,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1677451523
+    },
+    {
+        "content": "<p>Does that do the wrong thing for <code>x ^ (-1 : Real)</code> where <code>x : Real</code>?</p>",
+        "id": 338213485,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1677452572
+    },
+    {
+        "content": "<p>We probably don't have the <code>rpow</code> instance yet in mathlib4....</p>",
+        "id": 338213498,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1677452585
+    },
+    {
+        "content": "<p>I'd hope not, given that <code>x ^ (-1 : Real)</code> doesn't match the pattern...but if there are macros that eliminate the type ascription syntactically, then it would match</p>",
+        "id": 338213800,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1677452831
+    }
+]

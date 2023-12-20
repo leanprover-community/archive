@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>is there an easy way to find all uses of a simp lemma in mathlib? should I just crawl the fully elaborated body of every declaration in the environment looking for that lemma?</p>\n<p>hoping for something that's faster than removing the <code>simp</code> attr and recompiling</p>",
+        "id": 385228694,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1692113245
+    },
+    {
+        "content": "<p>Wrote a simple metaprogram to traverse everything and find uses of the lemma. Putting my code here for my own future reference!</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">defsToFind</span> <span class=\"o\">:=</span> <span class=\"o\">[</span>\n  <span class=\"bp\">`</span><span class=\"n\">List.countp_eq_zero</span><span class=\"o\">,</span>\n  <span class=\"bp\">`</span><span class=\"n\">List.countp_eq_length</span><span class=\"o\">,</span>\n  <span class=\"bp\">`</span><span class=\"n\">List.countp_filter</span><span class=\"o\">,</span>\n  <span class=\"bp\">`</span><span class=\"n\">List.one_le_count_iff_mem</span><span class=\"o\">,</span>\n  <span class=\"bp\">`</span><span class=\"n\">List.count_pos</span><span class=\"o\">,</span>\n  <span class=\"bp\">`</span><span class=\"n\">List.count_eq_zero</span><span class=\"o\">,</span>\n  <span class=\"bp\">`</span><span class=\"n\">List.count_eq_length</span>\n<span class=\"o\">]</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">prog</span> <span class=\"o\">:=</span> <span class=\"k\">show</span> <span class=\"n\">MetaM</span> <span class=\"n\">Unit</span> <span class=\"k\">from</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">e</span> <span class=\"bp\">←</span> <span class=\"n\">getEnv</span>\n  <span class=\"n\">e.constants.forM</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">name</span> <span class=\"n\">c</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">match</span> <span class=\"n\">c.value</span><span class=\"bp\">?</span> <span class=\"k\">with</span>\n    <span class=\"bp\">|</span> <span class=\"n\">none</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">pure</span> <span class=\"o\">()</span>\n    <span class=\"bp\">|</span> <span class=\"n\">some</span> <span class=\"n\">v</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n      <span class=\"n\">for</span> <span class=\"n\">d</span> <span class=\"k\">in</span> <span class=\"n\">defsToFind</span> <span class=\"k\">do</span>\n        <span class=\"k\">if</span> <span class=\"n\">v.find</span><span class=\"bp\">?</span> <span class=\"o\">(</span><span class=\"bp\">·.</span><span class=\"n\">constName</span><span class=\"bp\">?</span> <span class=\"bp\">=</span> <span class=\"n\">some</span> <span class=\"n\">d</span><span class=\"o\">)</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">isSome</span> <span class=\"k\">then</span>\n          <span class=\"n\">dbg_trace</span> <span class=\"o\">(</span><span class=\"n\">d</span><span class=\"o\">,</span> <span class=\"n\">name</span><span class=\"o\">)</span>\n  <span class=\"o\">)</span>\n  <span class=\"n\">return</span> <span class=\"o\">()</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">prog</span>\n</code></pre></div>",
+        "id": 385288632,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1692135178
+    },
+    {
+        "content": "<p>There is already a function <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Expr.containsConst#doc\">docs#Lean.Expr.containsConst</a></p>",
+        "id": 385291230,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1692136632
+    },
+    {
+        "content": "<p>I worry that this won't find when <code>dsimp</code> used a particular lemma if it is a <code>rfl</code> lemma, but that should be fairly uncommon</p>",
+        "id": 385291286,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1692136675
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"407274\">@James Gallicchio</span>, no promises about correctness, usability, etc, as it's new and just an experiment, but <a href=\"https://github.com/semorrison/lean-extract\">https://github.com/semorrison/lean-extract</a> might also give you what you want with no metaprogramming, just <code>grep</code>.</p>",
+        "id": 385303957,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1692144550
+    },
+    {
+        "content": "<p>how do you extract this information? in particular, how do you identify whether lemmas were used by <code>simp</code> or not?</p>",
+        "id": 385316672,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1692149199
+    },
+    {
+        "content": "<p>This code only reads the proof terms, so it is a bit of a hack to identify the lemmas used by <code>simp</code>, and very much implementation dependent (and possibly wrong in corner cases!). We look for the auxiliary definitions that are created by the simplifier, and unfold those to discover the lemmas actually used.</p>\n<p><a href=\"https://github.com/semorrison/lean-extract/blob/master/Dependencies.lean#L46\"><code>allUsedConstants</code></a> takes a predicate describing constants which should be unfolded, and separately returns constants that appear directly in the proof term, and constants that appear behind (one step of) unfolding. If we specify that predicate to match the constants used when the simplifier generates auxiliary declarations, this gives us the lemmas used by <code>simp</code>! As I said, a hack. :-) Bug reports about the outputs welcome.</p>\n<p>I have some separate code that instead reads the <code>InfoTree</code>s from a compiled module, and extracts all the tactic invocations from that, which will give us an independent way of identifying lemmas used by simp (although will miss lemmas used by <code>simp</code> when <code>simp</code> is called internally from another tactic). Hopefully I'll put this up soon.</p>",
+        "id": 385324191,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1692152618
+    },
+    {
+        "content": "<p>If it would be useful I can add some CI that generates a downloadable <code>.gz</code> of the output of these two scripts.</p>",
+        "id": 385324217,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1692152636
+    },
+    {
+        "content": "<p><code>simp</code> can log which lemmas it used (this is used to implement <code>simp?</code>). You could modify Lean to log this information, then use this modified Lean to compile the libraries of interest. This would probably give you more accurate data, at the cost of some more work.</p>",
+        "id": 385443891,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1692186219
+    },
+    {
+        "content": "<p>It would be nice if core simp had a debug flag that causes every simp call to insert metadata nodes around every proof term it generates, so the information is clear from the expressions.</p>\n<p>Does that sound like a good idea? I could put together a quick RFC but I have no notion of how complicated this would be to implement.</p>",
+        "id": 386531494,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1692682394
+    },
+    {
+        "content": "<p>No, I don't think this would be good as an RFC. Core doesn't want things like this at the moment.</p>\n<p>Between the proof terms and the <code>InfoTree</code>s all this information is there.</p>",
+        "id": 386533516,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1692683163
+    }
+]

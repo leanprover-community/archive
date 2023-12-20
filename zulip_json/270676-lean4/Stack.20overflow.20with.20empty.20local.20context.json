@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>The following code appears to cause a stack overflow:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Term</span> <span class=\"n\">Meta</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"wat\"</span> <span class=\"n\">stx</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"n\">withLCtx</span> <span class=\"o\">{}</span> <span class=\"o\">{}</span> <span class=\"k\">do</span>\n    <span class=\"n\">elabTerm</span> <span class=\"n\">stx</span> <span class=\"n\">none</span>\n\n<span class=\"k\">#check</span> <span class=\"n\">wat</span> <span class=\"n\">AAA</span> <span class=\"c1\">-- unknown identifier 'AAA'</span>\n<span class=\"c\">/-</span>\n<span class=\"cm\">libc++abi: terminating due to uncaught exception of type lean::throwable: deep recursion was detected at 'interpreter' (potential solution: increase stack space in your system)</span>\n<span class=\"cm\">interpreter stacktrace:</span>\n<span class=\"cm\">#1 _aux_Lingo_ToMathlib_Franken___elabRules_termWat__1._closed_1</span>\n<span class=\"cm\">#2 _aux_Lingo_ToMathlib_Franken___elabRules_termWat__1._closed_2</span>\n<span class=\"cm\">#3 _aux_Lingo_ToMathlib_Franken___elabRules_termWat__1._closed_3</span>\n<span class=\"cm\">#4 _aux_Lingo_ToMathlib_Franken___elabRules_termWat__1._closed_7</span>\n<span class=\"cm\">#5 _aux_Lingo_ToMathlib_Franken___elabRules_termWat__1</span>\n<span class=\"cm\">#6 _aux_Lingo_ToMathlib_Franken___elabRules_termWat__1._boxed</span>\n<span class=\"cm\">-/</span>\n<span class=\"kd\">variable</span> <span class=\"o\">(</span><span class=\"n\">z</span> <span class=\"o\">:</span> <span class=\"n\">wat</span> <span class=\"n\">AAA</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>Is this a bug in Lean or ought one not use an empty local context?</p>",
+        "id": 372722375,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1688594754
+    },
+    {
+        "content": "<p>It might be a nasty interaction with the <code>autoImplicit</code> feature. Did not explore yet.</p>",
+        "id": 372723214,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1688595166
+    },
+    {
+        "content": "<p>Loop goes away when using <code>set_option autoImplicit false</code></p>",
+        "id": 372723289,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1688595208
+    },
+    {
+        "content": "<p>Yes, what happens is that <code>elabTerm (←`(AAA))</code> throws an exception when the variable name cannot be resolved.  Normally, the definition elaborator would then add <code>AAA</code> to the local context and try again, and the next time the name can be resolved successfully.  However resetting the local context means that the exception is thrown again every time.</p>",
+        "id": 372729087,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1688598464
+    },
+    {
+        "content": "<p>Ah, I guess that explains <a href=\"https://github.com/gebner/quote4/blob/e6ca4e7e6b13ceee845e40a904c1a71ed9866574/Qq/Macro.lean#L390-L391\">that</a> then!</p>",
+        "id": 372749190,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1688609743
+    },
+    {
+        "content": "<p>Isn't there a flag to locally block autoImplicit generation (e.g. when not in the signature of a declaration)? I guess the main issue here is that it is not enabled in the above code, and/or that the default setting doesn't use it. I think the default behavior should be to block autoImplicits</p>",
+        "id": 372749824,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1688610056
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> Yeah, there's a flag (<a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.Term.withoutAutoBoundImplicit#doc\">docs#Lean.Elab.Term.withoutAutoBoundImplicit</a>), and it's set in the <code>#check wat AAA</code> example due to <code>#check</code> using <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.Command.runTermElabM#doc\">docs#Lean.Elab.Command.runTermElabM</a>, but <code>variable</code> can't set this flag, so <code>variable (z : wat AAA)</code> fails</p>",
+        "id": 372933458,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688656192
+    },
+    {
+        "content": "<p>I wonder if when <code>resolveName</code> wants to throw the <code>autoBoundImplicitException</code> it should check that all the names in the <code>TermElabM</code>'s <code>autoBoundImplicits</code> array are actually in the current local context (and if not, then don't throw the exception and instead report an unknown identifier). This at least seems like the invariant the <code>autoImplicit</code> feature is meant to keep for it to work.</p>\n<p>If the local context has some extra piece of data, like an id that's unique to the given set of auto implicits (generated by <code>withAutoBoundImplicit</code>?), then this check could be done quickly.</p>",
+        "id": 372939266,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688657183
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Stack.20overflow.20with.20empty.20local.20context/near/372933458\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> Yeah, there's a flag (<a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.Term.withoutAutoBoundImplicit#doc\">docs#Lean.Elab.Term.withoutAutoBoundImplicit</a>), and it's set in the <code>#check wat AAA</code> example due to <code>#check</code> using <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.Command.runTermElabM#doc\">docs#Lean.Elab.Command.runTermElabM</a>, but <code>variable</code> can't set this flag, so <code>variable (z : wat AAA)</code> fails</p>\n</blockquote>\n<p>Why can <code>variable</code> not set the flag? Is it just that we do want auto-bound implicits in <code>variable</code> declarations?</p>",
+        "id": 372974576,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1688664612
+    },
+    {
+        "content": "<p>Yes, exactly, binders in <code>variable</code> declarations are one of the places auto-bound implicits are meant to be used.</p>",
+        "id": 372977746,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688665476
+    }
+]

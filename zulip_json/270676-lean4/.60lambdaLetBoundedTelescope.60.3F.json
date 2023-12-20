@@ -1,0 +1,44 @@
+[
+    {
+        "content": "<p>Would there be any opposition to me adding a <code>lambdaLetBoundedTelescope</code> with a <code>maxFVars</code> argument (analogous to <code>forallBoundedTelescope</code>), or perhaps just adding a <code>maxFVars? : Option Nat</code> argument to <code>lambdaLetTelescope</code>?</p>\n<p>My use case is that the translation from Lean -&gt; Dedukti requires <code>let</code> variables to be handled differently from lambda variables, and it seems that the distinction is lost in the arguments of the <code>k</code> callback. So, in a case where I know I have a <code>.letE</code>, I would like to be able to limit the telescope to one level, descending into just the let expression.</p>",
+        "id": 388141535,
+        "sender_full_name": "Rish Vaishnav",
+        "timestamp": 1693409754
+    },
+    {
+        "content": "<p>the distinction is still there, it returns a list of fvars and you can see which are lambdas and which are lets in the context</p>",
+        "id": 388143621,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693410265
+    },
+    {
+        "content": "<p>Oh, great. But, even if I can get at that I would still have to handle the lambda variables and let variables under the same let case (in addition to the code for figuring out which is which). That would make for ugly code, I think, so if no one is against the idea I would be happy to make a PR <span aria-label=\"+1\" class=\"emoji emoji-1f44d\" role=\"img\" title=\"+1\">:+1:</span></p>",
+        "id": 388152376,
+        "sender_full_name": "Rish Vaishnav",
+        "timestamp": 1693412851
+    },
+    {
+        "content": "<p>If you know you have a <code>.letE</code>, and you want to limit the telescope to just a single level, you can also use <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Meta.withLetDecl#doc\">docs#Lean.Meta.withLetDecl</a> directly.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">match</span> <span class=\"n\">e</span> <span class=\"k\">with</span>\n<span class=\"bp\">...</span>\n<span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">letE</span> <span class=\"n\">n</span> <span class=\"n\">t</span> <span class=\"n\">v</span> <span class=\"n\">b</span> <span class=\"bp\">..</span>  <span class=\"bp\">=&gt;</span>\n  <span class=\"n\">withLetDecl</span> <span class=\"n\">n</span> <span class=\"n\">t</span> <span class=\"n\">v</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">b</span> <span class=\"o\">:=</span> <span class=\"n\">b.instantiate1</span> <span class=\"n\">x</span>\n    <span class=\"c1\">-- use `x` and `b`</span>\n    <span class=\"bp\">...</span>\n</code></pre></div>\n<p>There's also</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">if</span> <span class=\"n\">e.isLet</span> <span class=\"k\">then</span>\n  <span class=\"n\">withLetDecl</span> <span class=\"n\">e.letName</span><span class=\"bp\">!</span> <span class=\"n\">e.letType</span><span class=\"bp\">!</span> <span class=\"n\">e.letValue</span><span class=\"bp\">!</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">b</span> <span class=\"o\">:=</span> <span class=\"n\">e.letBody</span><span class=\"bp\">!.</span><span class=\"n\">instantiate1</span> <span class=\"n\">x</span>\n    <span class=\"c1\">-- use `x` and `b`</span>\n</code></pre></div>",
+        "id": 388154118,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693413404
+    },
+    {
+        "content": "<p>In any case, <code>lambdaLetBoundedTelescope</code> seems reasonable on its own, though there's a complication that <code>forallBoundedTelescope</code> is actually the reducing version and <code>lambdaLetTelescope</code> doesn't reduce, so it's not a perfect parallel. I'm not sure what Lean 4 devs would want.</p>",
+        "id": 388154655,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693413549
+    },
+    {
+        "content": "<p>Nice, thanks! That would be a quick way around it, though at the same time I'm not sure if it would be the intention of the devs for the user to have to instantiate the free variables themselves. But as you have pointed out, there seems to be a larger question here of naming/intent of these telescope functions -- if we already know exactly what we want to do, I'll be happy to make a PR along those lines, otherwise I'm happy with <code>withLetDecl</code> for now.</p>",
+        "id": 388161221,
+        "sender_full_name": "Rish Vaishnav",
+        "timestamp": 1693415842
+    },
+    {
+        "content": "<p>In the Lean 4 codebase, you'll find <code>withLetDecl</code> is used significantly more often than <code>lambdaLetTelescope</code>, so they seem to be ok with it.</p>\n<p>By the way, you can also find an example of what Mario was talking about in <code>Lean/Meta/Check.lean</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">lambdaLetTelescope</span> <span class=\"n\">e</span> <span class=\"k\">fun</span> <span class=\"n\">xs</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"n\">xs.forM</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">xDecl</span> <span class=\"bp\">←</span> <span class=\"n\">getFVarLocalDecl</span> <span class=\"n\">x</span>\n    <span class=\"k\">match</span> <span class=\"n\">xDecl</span> <span class=\"k\">with</span>\n    <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">cdecl</span> <span class=\"o\">(</span><span class=\"n\">type</span> <span class=\"o\">:=</span> <span class=\"n\">t</span><span class=\"o\">)</span> <span class=\"bp\">..</span> <span class=\"bp\">=&gt;</span>\n      <span class=\"c1\">-- It's from a lambda</span>\n      <span class=\"bp\">...</span>\n    <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">ldecl</span> <span class=\"o\">(</span><span class=\"n\">type</span> <span class=\"o\">:=</span> <span class=\"n\">t</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">value</span> <span class=\"o\">:=</span> <span class=\"n\">v</span><span class=\"o\">)</span> <span class=\"bp\">..</span> <span class=\"bp\">=&gt;</span>\n      <span class=\"c1\">-- It's from a let</span>\n      <span class=\"bp\">...</span>\n</code></pre></div>",
+        "id": 388162425,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693416305
+    }
+]

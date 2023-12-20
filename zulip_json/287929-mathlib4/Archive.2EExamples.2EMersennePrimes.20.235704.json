@@ -1,0 +1,356 @@
+[
+    {
+        "content": "<p>The remaining todo in this PR is a port of the tactic <code>LucasLehmer.run_test</code>. So if you have some meta skills, and love prime numbers, feel free to attack.</p>",
+        "id": 372215157,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1688457850
+    },
+    {
+        "content": "<p>Quick port of the tactic with a porting note! I added <code>elab \"lucas_lehmer_test\" : tactic =&gt; LucasLehmer.run_test</code> to get rid of ugly <code>by run_tac</code>s, since now <code>lucas_lehmer_test</code> is freed up ( I think).</p>\n<p>Unfortunately, like a couple other mathlib tactics, the direct port of this means using <code>set_option hygiene false</code> in one place. I'm going to see if it's easy to make it hygienic or not for a second...</p>",
+        "id": 372281679,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1688471859
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> re: lucas lehmer test—I would like to avoid making it unhygienic, but this means either inlining some <code>replace</code> code or (possibly better?) doing the stepwise computation without using the goal state, the latter of which is a bit tricky, since using a tactic call fills in the types for us nicely.</p>\n<p>I also wonder if it's worth calling <code>norm_num1 at h</code> each time (or something equivalent), since the terms get rather large. (I'm not sure if this matters.) However, there's no extension for <code>Int.mod</code> yet, so this would really only serve to reduce the first argument of <code>sMod</code>, which becomes <code>0 + 1 + 1 + ...</code>.</p>",
+        "id": 372290374,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1688473579
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"548935\">@Thomas Murrills</span> I'm looking into converting this into a <code>norm_num</code> extension right now</p>",
+        "id": 372293931,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688474274
+    },
+    {
+        "content": "<p>This should help avoid hygiene issues, and I hope it makes it'll make it more robust too (while also reducing the terms you're mentioning)</p>",
+        "id": 372294666,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688474423
+    },
+    {
+        "content": "<p>Oh, nice! :D</p>",
+        "id": 372296983,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1688474906
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112680\">@Johan Commelin</span> <span class=\"user-mention\" data-user-id=\"548935\">@Thomas Murrills</span> I changed the implementation to have the proof rely on kernel reductions. The Lean 4 kernel is good at normalizing natural number expressions, and with it we can have some tiny proof terms, while being able to reach past the start of the computer age (<code>mersenne 521</code>). It can prove that <code>mersenne 4423</code> is prime in just a second.</p>",
+        "id": 372335465,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688481963
+    },
+    {
+        "content": "<p>I've set it back to awaiting review because it was a relatively large change to the PR</p>",
+        "id": 372335574,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688481978
+    },
+    {
+        "content": "<p>The only reason it can't go farther is because of deep recursion</p>",
+        "id": 372336037,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688482077
+    },
+    {
+        "content": "<p>This is amazing. Welcome, everyone, to the computer age. :-)</p>\n<p>(I guess to be fair when making a comparison to Lean 3, this speed up depends on the fact we now include GMP in the trusted code base, right?)</p>",
+        "id": 372434128,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688516574
+    },
+    {
+        "content": "<p>Yeah, the speedup definitely depends on having a fast bigint library. It's also a more direct implementation without repeatedly using <code>simp</code>, <code>norm_num</code>, and the tactic evaluation system, which is significant as well.</p>\n<p>In the Lean 3 implementation there also seems to be accidental unary <a href=\"https://github.com/leanprover-community/mathlib/blob/5dc6092d09e5e489106865241986f7f2ad28d4c8/src/number_theory/lucas_lehmer.lean#L467\">here</a> in the second argument to <code>s_mod</code>, like Thomas pointed out, though it doesn't seem like it'd add too much to the running time for small numbers like <code>p = 521</code>.</p>",
+        "id": 372437021,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688517724
+    },
+    {
+        "content": "<p>I think I've dealt with the deep recursion issue, by proving a tail recursive version of sMod'. Just threading through the proofs now.</p>",
+        "id": 372440911,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688519370
+    },
+    {
+        "content": "<p>Oh, I am completely wrong. I had thought that it was <code>sMod'</code> that was deeply recursing (I thought I even checked <code>#eval sMod' (2^9689 - 1) (9689 - 2)</code> errored...) but apparently it is not.</p>",
+        "id": 372442243,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688519984
+    },
+    {
+        "content": "<p>I don't understand what is going on, I guess:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">sMod'</span> <span class=\"o\">(</span><span class=\"n\">q</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span> <span class=\"bp\">→</span> <span class=\"n\">ℕ</span>\n  <span class=\"bp\">|</span> <span class=\"mi\">0</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">4</span> <span class=\"bp\">%</span> <span class=\"n\">q</span>\n  <span class=\"bp\">|</span> <span class=\"n\">i</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">(</span><span class=\"n\">sMod'</span> <span class=\"n\">q</span> <span class=\"n\">i</span> <span class=\"bp\">^</span> <span class=\"mi\">2</span> <span class=\"bp\">+</span> <span class=\"o\">(</span><span class=\"n\">q</span> <span class=\"bp\">-</span> <span class=\"mi\">2</span><span class=\"o\">))</span> <span class=\"bp\">%</span> <span class=\"n\">q</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">sMod''_aux</span> <span class=\"o\">(</span><span class=\"n\">q</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span> <span class=\"bp\">→</span> <span class=\"n\">ℕ</span> <span class=\"bp\">→</span> <span class=\"n\">ℕ</span>\n  <span class=\"bp\">|</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"n\">acc</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">acc</span>\n  <span class=\"bp\">|</span> <span class=\"n\">i</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">acc</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">sMod''_aux</span> <span class=\"n\">q</span> <span class=\"n\">i</span> <span class=\"o\">(((</span><span class=\"n\">acc</span> <span class=\"bp\">^</span> <span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"bp\">+</span> <span class=\"o\">(</span><span class=\"n\">q</span> <span class=\"bp\">-</span> <span class=\"mi\">2</span><span class=\"o\">))</span> <span class=\"bp\">%</span> <span class=\"n\">q</span><span class=\"o\">)</span>\n\n<span class=\"sd\">/-- tail recursive version of `sMod'` -/</span>\n<span class=\"kd\">def</span> <span class=\"n\">sMod''</span> <span class=\"o\">(</span><span class=\"n\">q</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span> <span class=\"n\">sMod''_aux</span> <span class=\"n\">q</span> <span class=\"n\">a</span> <span class=\"o\">(</span><span class=\"mi\">4</span> <span class=\"bp\">%</span> <span class=\"n\">q</span><span class=\"o\">)</span>\n\n<span class=\"k\">#reduce</span> <span class=\"n\">sMod'</span> <span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"bp\">^</span><span class=\"mi\">61</span> <span class=\"bp\">-</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"mi\">61</span> <span class=\"bp\">-</span> <span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"c1\">-- deep recursion!</span>\n<span class=\"k\">#reduce</span> <span class=\"n\">sMod''</span> <span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"bp\">^</span><span class=\"mi\">61</span> <span class=\"bp\">-</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"mi\">61</span> <span class=\"bp\">-</span> <span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"c1\">-- deep recursion!</span>\n<span class=\"k\">#eval</span> <span class=\"n\">sMod'</span> <span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"bp\">^</span><span class=\"mi\">9689</span> <span class=\"bp\">-</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"mi\">9689</span> <span class=\"bp\">-</span> <span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"c1\">-- no problem</span>\n<span class=\"k\">#eval</span> <span class=\"n\">sMod''</span> <span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"bp\">^</span><span class=\"mi\">9689</span> <span class=\"bp\">-</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"mi\">9689</span> <span class=\"bp\">-</span> <span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"c1\">-- no problem</span>\n</code></pre></div>",
+        "id": 372443988,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688520952
+    },
+    {
+        "content": "<p>Why then are we getting:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- no problem</span>\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">mersenne</span> <span class=\"mi\">4423</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">Prime</span> <span class=\"o\">:=</span>\n  <span class=\"n\">lucas_lehmer_sufficiency</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"kd\">by</span> <span class=\"n\">norm_num</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"kd\">by</span> <span class=\"n\">norm_num</span><span class=\"o\">)</span>\n\n<span class=\"c1\">-- First failure (\"deep recursion detected\")</span>\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">mersenne</span> <span class=\"mi\">9689</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">Prime</span> <span class=\"o\">:=</span>\n  <span class=\"n\">lucas_lehmer_sufficiency</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"kd\">by</span> <span class=\"n\">norm_num</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"kd\">by</span> <span class=\"n\">norm_num</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 372444172,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688521045
+    },
+    {
+        "content": "<p>(same behaviour whether we use <code>sMod'</code> or <code>sMod''</code>.)</p>",
+        "id": 372444222,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688521073
+    },
+    {
+        "content": "<p>If anyone wants to play with it, <a href=\"https://github.com/leanprover-community/mathlib4/tree/lucas_lehmer_tailrec\">branch#lucas_lehmer_tailrec</a> has the proof that <code>sMod'</code> and <code>sMod''</code> agree, and uses (to no avail) <code>sMod''</code> in the norm_num tactic.</p>",
+        "id": 372444390,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688521168
+    },
+    {
+        "content": "<p>I guess my fundamental mistake is thinking that kernel reduction cares about tail recursiveness?</p>",
+        "id": 372445175,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688521632
+    },
+    {
+        "content": "<p>I still don't understand why the limit is 9689 rather than 61. :-(</p>",
+        "id": 372445191,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688521652
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/Archive.2EExamples.2EMersennePrimes.20.235704/near/372445191\">said</a>:</p>\n<blockquote>\n<p>I still don't understand why the limit is 9689 rather than 61. :-(</p>\n</blockquote>\n<p>Maybe it's that <code>#reduce</code> is using the frontend's reducer (<a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Meta.Reduce#doc\">docs#Lean.Meta.Reduce</a>) rather than the kernel's?</p>\n<p>From what I've understood reading the kernel code, it doesn't care about tail recursiveness, though it does cache reductions (so even the naive exponential implementation of the fibonacci sequence ends up being very fast since it's auto-memoized!)</p>",
+        "id": 372610040,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688566849
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> I found a trick to get the kernel to reduce further, and now we've gotten to the year 1979 with <code>mersenne 23209</code>, which takes 1.51 seconds for <code>norm_num</code> to pre-evaluate the <code>sMod''</code> function to make sure it's actually a mersenne prime, and then another 7.9 seconds for the kernel to verify the proof. The next one to have deep recursion is <code>mersenne 44497</code>.</p>\n<p>The first part of the trick is this function:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"sd\">/-- Ensure the `Nat` is reduced before evaluating `f` -/</span>\n<span class=\"kd\">def</span> <span class=\"n\">nat_seq</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">α</span>\n  <span class=\"bp\">|</span> <span class=\"mi\">0</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">f</span> <span class=\"mi\">0</span>\n  <span class=\"bp\">|</span> <span class=\"n\">n</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">f</span> <span class=\"n\">n</span>\n</code></pre></div>\n<p>The pattern match causes the kernel to reduce the natural number first before unfolding <code>f</code> while calculating whnf. The next part is using this to break up the iteration into blocks:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">iterBlockSize</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"mi\">800</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">sMod_iter</span> <span class=\"o\">(</span><span class=\"n\">q</span> <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span> <span class=\"bp\">→</span> <span class=\"n\">ℕ</span>\n  <span class=\"bp\">|</span> <span class=\"mi\">0</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">x</span>\n  <span class=\"bp\">|</span> <span class=\"n\">steps</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">(</span><span class=\"n\">sMod_iter</span> <span class=\"n\">q</span> <span class=\"n\">x</span> <span class=\"n\">steps</span> <span class=\"bp\">^</span> <span class=\"mi\">2</span> <span class=\"bp\">+</span> <span class=\"o\">(</span><span class=\"n\">q</span> <span class=\"bp\">-</span> <span class=\"mi\">2</span><span class=\"o\">))</span> <span class=\"bp\">%</span> <span class=\"n\">q</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">sMod_iter'</span> <span class=\"o\">(</span><span class=\"n\">q</span> <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span> <span class=\"bp\">→</span> <span class=\"n\">ℕ</span>\n  <span class=\"bp\">|</span> <span class=\"mi\">0</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">x</span>\n  <span class=\"bp\">|</span> <span class=\"n\">i</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">nat_seq</span> <span class=\"o\">(</span><span class=\"n\">sMod_iter'</span> <span class=\"n\">q</span> <span class=\"bp\">·</span> <span class=\"n\">i</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">sMod_iter</span> <span class=\"n\">q</span> <span class=\"n\">x</span> <span class=\"n\">iterBlockSize</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>It might not be using tail recursion, but at least it's being more considerate of the stack depth.</p>",
+        "id": 372673771,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688579553
+    },
+    {
+        "content": "<p>Are these tricks universal or is there reason to make them be user choice?</p>",
+        "id": 372690669,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1688583927
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span>, nice!</p>",
+        "id": 372748087,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688609090
+    },
+    {
+        "content": "<p>Does anyone know how to hook up further functions to GMP?</p>\n<p>I'd like the left-hand-sides of both of these equalities to use native GMP implementations.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">k</span> <span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">k</span> <span class=\"bp\">&gt;&gt;&gt;</span> <span class=\"n\">n</span> <span class=\"bp\">=</span> <span class=\"n\">k</span> <span class=\"bp\">/</span> <span class=\"mi\">2</span> <span class=\"bp\">^</span> <span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">k</span> <span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">k</span> <span class=\"bp\">&amp;&amp;&amp;</span> <span class=\"o\">(</span><span class=\"mi\">2</span> <span class=\"bp\">^</span> <span class=\"n\">n</span> <span class=\"bp\">-</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">k</span> <span class=\"bp\">%</span> <span class=\"mi\">2</span> <span class=\"bp\">^</span> <span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n</code></pre></div>",
+        "id": 372748238,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688609183
+    },
+    {
+        "content": "<p>(I wrote the glue that replaces the modulus operation in <code>sMod_iter</code> with the \"trick version\"</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">k</span> <span class=\"bp\">≡</span> <span class=\"n\">k</span> <span class=\"bp\">/</span> <span class=\"mi\">2</span> <span class=\"bp\">^</span> <span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"n\">k</span> <span class=\"bp\">%</span> <span class=\"mi\">2</span> <span class=\"bp\">^</span> <span class=\"n\">n</span> <span class=\"o\">[</span><span class=\"n\">MOD</span> <span class=\"mi\">2</span> <span class=\"bp\">^</span> <span class=\"n\">n</span> <span class=\"bp\">-</span> <span class=\"mi\">1</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>where you then know you only have to do a single subtraction to do the <code>%</code>. It still breaks at <code>44497</code> however.)</p>",
+        "id": 372748343,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688609266
+    },
+    {
+        "content": "<p>Oh, the problem at <code>44497</code> comes down to this difference:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"mi\">2</span><span class=\"bp\">^</span><span class=\"mi\">25744</span> <span class=\"bp\">-</span> <span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"bp\">^</span><span class=\"mi\">25744</span> <span class=\"bp\">-</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">norm_num</span> <span class=\"c1\">-- succeeds</span>\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"mi\">2</span><span class=\"bp\">^</span><span class=\"mi\">25745</span> <span class=\"bp\">-</span> <span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"bp\">^</span><span class=\"mi\">25745</span> <span class=\"bp\">-</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">norm_num</span> <span class=\"c1\">-- fails because of deep recursion</span>\n</code></pre></div>",
+        "id": 372760627,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688615469
+    },
+    {
+        "content": "<p>With a 6 line tweak to core, <code>(mersenne 44497).Prime</code>.</p>",
+        "id": 372771887,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688621277
+    },
+    {
+        "content": "<p>No further changes required, and it is plowing through them. Done with <code>132049</code>. If there are no further obstacles, the current implementation could finish the pre-GIMP era today.</p>",
+        "id": 372781937,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688624839
+    },
+    {
+        "content": "<p>How long did <code>44497</code> and <code>132049</code> take?</p>",
+        "id": 372782131,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1688624897
+    },
+    {
+        "content": "<ul>\n<li>44497: 21s</li>\n<li>86243: 82s</li>\n<li>110503: 143s</li>\n<li>132049: 222s</li>\n<li>216091: 650s</li>\n</ul>",
+        "id": 372785755,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688625990
+    },
+    {
+        "content": "<p>it's nicely quadratic.</p>",
+        "id": 372785777,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688625997
+    },
+    {
+        "content": "<p>There's now a big gap until the last 3 pre-GIMP primes, that will probably take overnight to run (barring surprises).</p>",
+        "id": 372786111,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688626095
+    },
+    {
+        "content": "<p>The lean4 patch is at <a href=\"https://github.com/leanprover/lean4/pull/2310\">lean4#2310</a>.</p>",
+        "id": 372787031,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688626393
+    },
+    {
+        "content": "<p>Oh, this is a norm_num bug</p>",
+        "id": 372788630,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1688626837
+    },
+    {
+        "content": "<p>Lean crashes after an hour or so of working on <code>(mersenne 756839).Prime</code>, and thus is unable to handle the 90s.</p>",
+        "id": 372812280,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688632793
+    },
+    {
+        "content": "<p>What does this look like on your patch? This is on mine:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Tactic.NormNum.Basic</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">profiler</span> <span class=\"n\">true</span>\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"mi\">10</span><span class=\"bp\">^</span><span class=\"mi\">40000000</span> <span class=\"bp\">=</span> <span class=\"mi\">10</span><span class=\"bp\">^</span><span class=\"mi\">40000000</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">norm_num</span>\n<span class=\"c1\">-- norm_num took 582ms</span>\n<span class=\"c1\">-- norm_num took 563ms</span>\n<span class=\"c1\">-- type checking took 587ms</span>\n</code></pre></div>",
+        "id": 372846167,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1688639890
+    },
+    {
+        "content": "<p>PR'd in <a href=\"https://github.com/leanprover-community/mathlib4/pull/5740\">#5740</a></p>",
+        "id": 372853161,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1688641323
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">norm_num</span> <span class=\"n\">took</span> <span class=\"mi\">421</span><span class=\"n\">ms</span>\n<span class=\"n\">norm_num</span> <span class=\"n\">took</span> <span class=\"mi\">412</span><span class=\"n\">ms</span>\n<span class=\"n\">type</span> <span class=\"n\">checking</span> <span class=\"n\">took</span> <span class=\"mi\">415</span><span class=\"n\">ms</span>\n</code></pre></div>",
+        "id": 372858531,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688642344
+    },
+    {
+        "content": "<p>and your PR on the same hardware:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">norm_num</span> <span class=\"n\">took</span> <span class=\"mi\">824</span><span class=\"n\">ms</span>\n<span class=\"n\">norm_num</span> <span class=\"n\">took</span> <span class=\"mi\">816</span><span class=\"n\">ms</span>\n<span class=\"n\">type</span> <span class=\"n\">checking</span> <span class=\"n\">took</span> <span class=\"mi\">829</span><span class=\"n\">ms</span>\n</code></pre></div>",
+        "id": 372859661,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688642568
+    },
+    {
+        "content": "<p>In that case, I suggest not growing the TCB for this</p>",
+        "id": 372859831,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1688642604
+    },
+    {
+        "content": "<p>I guess I had not appreciated that we are/could be drawing some line through GMP, and saying \"this bit is trusted, this bit isn't necessarily\". But I agree it makes sense.</p>\n<p>Maybe we should try to record somewhere (perhaps even just in Mersenne example file) that some further speed-up is available if someone actually needs it, by trusting GMP's power function in the kernel, but that this is not the case for now?</p>",
+        "id": 372860432,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688642736
+    },
+    {
+        "content": "<p>Do you have the newest version pushed to the branch, or at least to another branch?</p>",
+        "id": 372860658,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688642772
+    },
+    {
+        "content": "<p>I mean, if we want to support everything GMP has there are a few other operations I would want to put on the list, like <code>Nat.gcd</code> and <code>Nat.prime</code></p>",
+        "id": 372860668,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1688642777
+    },
+    {
+        "content": "<p>Is the difference between the two just caching?</p>",
+        "id": 372860681,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688642780
+    },
+    {
+        "content": "<p>The fact that your PR takes exactly twice as long is suggestive.</p>",
+        "id": 372860751,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688642794
+    },
+    {
+        "content": "<p>(In which case maybe it is even less of a big deal? Most people don't want to know 10^40000000 twice.)</p>",
+        "id": 372860925,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688642833
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span>, I just pushed on the <code>lucas_lehmer_tailrec</code> branch.</p>",
+        "id": 372861188,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688642890
+    },
+    {
+        "content": "<p>It won't be able to do the later examples without either merging Mario's <a href=\"https://github.com/leanprover-community/mathlib4/pull/5740\">#5740</a>, or switching the toolchain to semorrison:release-20230706-nat-pow.</p>",
+        "id": 372861383,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688642932
+    },
+    {
+        "content": "<p>err... <code>semorrison/lean4:release-20230706-nat-pow</code></p>",
+        "id": 372861632,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688642983
+    },
+    {
+        "content": "<p>I wrote most of the proofs for using the <code>k ≡ k / 2 ^ n + k % 2 ^ n [MOD 2 ^ n - 1]</code> trick (and taking advantage of the fact that you know you can compute the MOD by subtracting <code>2^n-1</code> at most once). Sadly it made things slower rather than faster!</p>",
+        "id": 372862256,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688643106
+    },
+    {
+        "content": "<p>I suspect that the <code>/ 2 ^ n</code> and <code>% 2 ^ n</code> are killing it, because I was just using the default implementations of those rather than working out how to have them be done bitwise on GMP numbers.</p>",
+        "id": 372862541,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688643157
+    },
+    {
+        "content": "<p>is this in the kernel or in the compiler?</p>",
+        "id": 372862681,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1688643186
+    },
+    {
+        "content": "<p>It'd probably help to pre-compute <code>2 ^ n</code> and such and pass the value in. That's what I was going to experiment with with Mario's <a href=\"https://github.com/leanprover-community/mathlib4/pull/5740\">#5740</a></p>",
+        "id": 372862830,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688643221
+    },
+    {
+        "content": "<p>Right now it's relying on kernel reduction for everything, no <code>norm_num</code> at all except for the argument to <code>LucasLehmerTest</code></p>",
+        "id": 372863282,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688643318
+    },
+    {
+        "content": "<p>I did attempt to make it pre-compute <code>2 ^ n</code>, but probably did it wrong. If you want to look I have the branch <code>lucas_lehmer_trickMod</code>. (It is still very messy!!)</p>",
+        "id": 372863671,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688643398
+    },
+    {
+        "content": "<p>It's easy to get this wrong too, since the kernel is very very happy to reduce anything that looks like a natural number expression (hence the opaque wrapper trick in Mario's PR), so you think you've precomputed something but the kernel will recompute it just to be sure...</p>",
+        "id": 372864347,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688643544
+    },
+    {
+        "content": "<p>(also, my branch is missing a few proofs about monus that I couldn't bear to finish. :-)</p>",
+        "id": 372864661,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688643605
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> With <a href=\"https://github.com/leanprover-community/mathlib4/pull/5740\">#5740</a> and using <code>norm_num</code> to precompute <code>2 ^ p</code> in the non-<code>trickMod</code> version, it'd able to go further without needing to change the kernel. For <code>mersenne 86243</code>,</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">norm_num</span> <span class=\"n\">took</span> <span class=\"mi\">38</span><span class=\"n\">s</span>\n<span class=\"n\">type</span> <span class=\"n\">checking</span> <span class=\"n\">took</span> <span class=\"mi\">62</span><span class=\"bp\">.</span><span class=\"mi\">5</span><span class=\"n\">s</span>\n</code></pre></div>\n<p>It's a bit of a shame that <code>norm_num</code> has to pre-compute the <code>sMod</code> function to make sure it has the right value before handing it off to the kernel, just for it to do the calculation again from scratch.</p>",
+        "id": 372923552,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688654475
+    },
+    {
+        "content": "<p>This version uses the purely tail-recursive calculation inside the <code>norm_num</code> extension (which is evaluated, so it's fine), and then uses <code>sMod''</code> for the kernel reduction. It doesn't actually seem to save any time versus using <code>sMod''</code> directly though.</p>",
+        "id": 372924569,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1688654656
+    }
+]

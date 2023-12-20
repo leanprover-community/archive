@@ -1,0 +1,80 @@
+[
+    {
+        "content": "<p>Hi, I'm trying to extract the information of where a term was first defined (or maybe better called 'declared'). Specifically, given a term, I would like to know in which file and in what position (row/column) of that file was this term defined. I know that Lean 3 has code directly supporting this purpose: get_decl_olean (source: <a href=\"https://github.com/leanprover/lean/blob/72a965986fa5aeae54062e98efb3140b2c4e79fd/src/library/module.cpp#L128\">https://github.com/leanprover/lean/blob/72a965986fa5aeae54062e98efb3140b2c4e79fd/src/library/module.cpp#L128</a>) and get_decl_pos_info (source: <a href=\"https://github.com/leanprover/lean/blob/72a965986fa5aeae54062e98efb3140b2c4e79fd/src/library/module.cpp#L189\">https://github.com/leanprover/lean/blob/72a965986fa5aeae54062e98efb3140b2c4e79fd/src/library/module.cpp#L189</a>). I was wondering if there are equivalences in Lean 4 that support the same functionality? Thank you!</p>",
+        "id": 369515664,
+        "sender_full_name": "Peiyang Song",
+        "timestamp": 1687734512
+    },
+    {
+        "content": "<p>The main entry point you're looking for is <code>Environment.const2ModIdx</code>. That gets you the information about what file it is in. Getting the row/column information is slightly more involved, and I don't remember immediately where this information is...</p>",
+        "id": 369564380,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1687758091
+    },
+    {
+        "content": "<p>The position information can be found using <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.findDeclarationRanges%3F#doc\">docs#Lean.findDeclarationRanges?</a> <br>\n<a href=\"#narrow/stream/287929-mathlib4/topic/how.20to.20configure.20jump.20to.20definition\">This thread</a> contains some information about the difference between <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.DeclarationRanges.range#doc\">docs#Lean.DeclarationRanges.range</a> and <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.DeclarationRanges.selectionRange#doc\">docs#Lean.DeclarationRanges.selectionRange</a> (they are very similar).</p>",
+        "id": 369658160,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1687777842
+    },
+    {
+        "content": "<p>Thank you Scott and Floris! These are really helpful!</p>",
+        "id": 369760171,
+        "sender_full_name": "Peiyang Song",
+        "timestamp": 1687795755
+    },
+    {
+        "content": "<p>When using <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.findDeclarationRanges%3F#doc\">docs#Lean.findDeclarationRanges?</a>, and more specifically writing <code>let decRanges ← findDeclarationRanges? name</code> (where <code>name</code> has the type <code>Name</code>, and <code>decRanges</code> is expected to have the type <code>Option DeclarationRanges</code>), I got the complaint from Lean4 that it \"failed to synthesize instance MonadEnv TraceM\". The context is that I've just extracted the term name by visiting the terminfo in infotrees, and I'm trying to get the position information of its initial declaration. Do you by any chance have some clues of possibly solving this issue? Thank you!</p>",
+        "id": 369914987,
+        "sender_full_name": "Peiyang Song",
+        "timestamp": 1687844850
+    },
+    {
+        "content": "<p>It sounds like you are in the <code>TraceM</code> monad, and that doesn't have access to the environment? Without seeing more code, I couldn't know whether you shouldn't be in the <code>TraceM</code> monad to begin with, or if you need to enter a better monad temporarily from <code>TraceM</code>.</p>",
+        "id": 369949745,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1687852671
+    },
+    {
+        "content": "<p>Probably the former: you're going to need access to an environment.</p>",
+        "id": 369949881,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1687852688
+    },
+    {
+        "content": "<p>Oh yes, indeed! My <code>TraceM</code> monad is <code>abbrev TraceM := StateT Trace IO</code>, which seems to have this environment access problem. I tried writing equivalent code within <code>MetaM</code> monad, and it works well so far. Thank you! However I eventually need to update the trace (and it's at least not easy to discard TraceM as for now, because I am using it to trace not only term information but also tactics, etc.). Thus I was trying to look for ways that can let me enter MetaM temporarily from TraceM (thanks for this suggestion!), but so far I haven't seen any convenient ways to approach this. Do you by any chance have some suggestions/pointers? Thank you very much!</p>",
+        "id": 370192394,
+        "sender_full_name": "Peiyang Song",
+        "timestamp": 1687896318
+    },
+    {
+        "content": "<p>I did try one possible way -- Monad transformers. Specifically, I wrote a helper function <code>def getTermSrc (ti : TermInfo) : StateT Trace MetaM Unit</code>, in which I am updating my trace by</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">modifyGet</span> <span class=\"k\">fun</span> <span class=\"n\">trace</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">((),</span>\n    <span class=\"o\">{</span> <span class=\"n\">trace</span> <span class=\"k\">with</span> <span class=\"n\">premises</span> <span class=\"o\">:=</span> <span class=\"n\">trace.premises.push</span> <span class=\"o\">{</span> <span class=\"n\">fullName</span> <span class=\"o\">:=</span> <span class=\"n\">fullName</span><span class=\"o\">,</span> <span class=\"n\">termPos</span> <span class=\"o\">:=</span> <span class=\"n\">posBefore</span><span class=\"o\">,</span> <span class=\"n\">termEndPos</span> <span class=\"o\">:=</span> <span class=\"n\">posAfter</span><span class=\"o\">,</span> <span class=\"n\">modName</span> <span class=\"o\">:=</span> <span class=\"n\">srcModule</span><span class=\"o\">,</span> <span class=\"n\">pos</span> <span class=\"o\">:=</span> <span class=\"n\">pos</span><span class=\"o\">,</span> <span class=\"n\">endPos</span> <span class=\"o\">:=</span> <span class=\"n\">endPos</span> <span class=\"o\">}</span> <span class=\"o\">}</span>\n  <span class=\"o\">)</span>\n</code></pre></div>\n<p>where all the elements (fullName, posBefore, etc.) were just extracted.</p>\n<p>Then in the main term-extraction function <code>def visitTerm (ti : TermInfo) : TraceM Unit</code>, I simply run the helper function by</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">let</span> <span class=\"n\">currStates</span> <span class=\"bp\">←</span> <span class=\"n\">get</span>\n<span class=\"k\">let</span> <span class=\"n\">holder</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">getTermSrc</span> <span class=\"n\">ti</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">run</span> <span class=\"n\">currStates</span>\n</code></pre></div>\n<p>However, this does not seem to update the global trace (specifically, the premise entry in the trace).</p>",
+        "id": 370194349,
+        "sender_full_name": "Peiyang Song",
+        "timestamp": 1687896733
+    },
+    {
+        "content": "<p>Hmm, working down in <code>IO</code>, you're going to have trouble. In particular, you need a plan to get hold of an <code>Environment</code>. I suspect you just want to bump up <code>IO</code> to something higher in the monad stack.</p>",
+        "id": 370218420,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1687904138
+    },
+    {
+        "content": "<p>Got it, yeah this makes sense! I'll change the monad and hopefully it'll solve the problems :) Thank you so much!</p>",
+        "id": 370220094,
+        "sender_full_name": "Peiyang Song",
+        "timestamp": 1687904814
+    },
+    {
+        "content": "<p>I solved the problem by working in MetaM with StateT transformer, as you suggested. Thank you Scott!</p>",
+        "id": 370537911,
+        "sender_full_name": "Peiyang Song",
+        "timestamp": 1687977370
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"601076\">Peiyang Song</span> has marked this topic as resolved.</p>",
+        "id": 370537941,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1687977378
+    }
+]

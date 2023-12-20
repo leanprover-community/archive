@@ -1,0 +1,200 @@
+[
+    {
+        "content": "<p>I was having an issue where <code>Subsingleton.elim</code> is more powerful than you expect in a <code>def</code>/<code>instance</code> than a theorem:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">β</span> <span class=\"o\">:</span> <span class=\"kt\">Sort</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">x</span> <span class=\"bp\">=</span> <span class=\"n\">y</span> <span class=\"o\">:=</span>\n  <span class=\"n\">Subsingleton.elim</span> <span class=\"n\">_</span> <span class=\"n\">_</span>\n</code></pre></div>",
+        "id": 339122362,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1677768865
+    },
+    {
+        "content": "<p>What rule is allowing this to go through?</p>",
+        "id": 339122392,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1677768874
+    },
+    {
+        "content": "<p>Can you <code>#print</code> the resulting declaration? I suspect it found <code>Subsingleton Prop</code> and unified the universe variable with <code>0</code>. All that because the body of defs is inspected for unification.</p>",
+        "id": 339122741,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1677768963
+    },
+    {
+        "content": "<p>(I was thinking of leaving it as a puzzle why this isn't totally broken, but the spoiler for that is that <code>Sort _</code> unifies with <code>Prop</code>. If you change it to <code>Type _</code> it doesn't use the <code>Subsingleton Prop</code> instance.)</p>",
+        "id": 339122819,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1677768975
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=instSubsingleton#doc\">docs4#instSubsingleton</a></p>",
+        "id": 339122906,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1677769000
+    },
+    {
+        "content": "<p>Yes, I know it's <code>instSubsingleton</code> that it's finding. The question is why it's ok with using this instance even though beta is a <code>Sort ?u</code></p>",
+        "id": 339123134,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1677769062
+    },
+    {
+        "content": "<p>This is bad for <code>finite</code> instances, since it can make <code>Sort</code> variables collapse to <code>Prop</code> without you realizing it.</p>",
+        "id": 339123469,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1677769143
+    },
+    {
+        "content": "<p>I think it's also not very good how you can't protect against it when there's automation inside proofs inside definitions. Like, imagine that <code>apply Subsingleton.elim</code> is done using a mathlib3-style <code>congr'</code> tactic:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">β</span> <span class=\"o\">:</span> <span class=\"kt\">Sort</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">{</span><span class=\"n\">z</span> <span class=\"bp\">//</span> <span class=\"n\">x</span> <span class=\"bp\">=</span> <span class=\"n\">z</span><span class=\"o\">}</span> <span class=\"o\">:=</span>\n  <span class=\"o\">⟨</span><span class=\"n\">y</span><span class=\"o\">,</span> <span class=\"kd\">by</span> <span class=\"n\">apply</span> <span class=\"n\">Subsingleton.elim</span><span class=\"o\">⟩</span>\n</code></pre></div>",
+        "id": 339124789,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1677769446
+    },
+    {
+        "content": "<p>I think in general a lot of places where we'd write <code>Sort _</code> in lean3 need to become <code>Sort u</code> in Lean 4</p>",
+        "id": 339124995,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1677769501
+    },
+    {
+        "content": "<p>In Lean 4, the universe metavariables in <code>variables</code> lines are now bound per lemma, rather than globally to a free universe variable</p>",
+        "id": 339125173,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1677769548
+    },
+    {
+        "content": "<p>Which means you can write <code>variables {I : Sort _}</code>, and still end up with all the lemmas in the file begin about <code>I : Type u</code> without realizing it</p>",
+        "id": 339125334,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1677769578
+    },
+    {
+        "content": "<p>Ok, that's a good hint for how to resolve some subtle bugs I ran into when I was modifying <code>convert</code> to use <code>Subsingleton.elim</code>.</p>\n<p>There were some instances that weren't being picked up anymore despite nothing seeming to involve <code>convert</code> (spooky action at a distance). Eventually I traced through to find the instance that didn't work, and it took too long to realize that <code>β</code> here specialized to <code>Prop</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">instance</span> <span class=\"n\">Equiv.finite_right</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"n\">β</span> <span class=\"o\">:</span> <span class=\"kt\">Sort</span> <span class=\"n\">_</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">Finite</span> <span class=\"n\">β</span><span class=\"o\">]</span> <span class=\"o\">:</span> <span class=\"n\">Finite</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"bp\">≃</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"n\">Finite.of_injective</span> <span class=\"n\">Equiv.toEmbedding</span> <span class=\"k\">fun</span> <span class=\"n\">e₁</span> <span class=\"n\">e₂</span> <span class=\"n\">h</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Equiv.ext</span> <span class=\"bp\">&lt;|</span> <span class=\"kd\">by</span> <span class=\"n\">convert</span> <span class=\"n\">FunLike.congr_fun</span> <span class=\"n\">h</span>\n</code></pre></div>",
+        "id": 339126407,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1677769827
+    },
+    {
+        "content": "<p>Is there any case where you would want a <code>Sort _</code> variable to specialize to <code>Prop</code>?</p>",
+        "id": 339126534,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1677769858
+    },
+    {
+        "content": "<p>I think in general we almost never want universe variable unification of any kind before the colon</p>",
+        "id": 339126866,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1677769919
+    },
+    {
+        "content": "<p>It seems like having <code>Sort _</code> or <code>Type _</code> specialize to <code>Sort n</code> or <code>Type n</code> with a constant <code>n</code> is never what you want. But I haven't really thought about it.</p>",
+        "id": 339126967,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1677769933
+    },
+    {
+        "content": "<p>And in mathlib we just use it as lazy declaration of free universe variables</p>",
+        "id": 339126987,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1677769937
+    },
+    {
+        "content": "<p>Having <code>Type _</code> unify to <code>Type (max u v)</code> is a problem we ran into a bunch in mathlib3, and we have a linter against it (more specifically, against things which use only <code>(max u v)</code> and not either universe variable separately)</p>",
+        "id": 339127139,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1677769976
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/270676-lean4/topic/Subsingleton.2Eelim.20in.20a.20def/near/339126987\">said</a>:</p>\n<blockquote>\n<p>And in mathlib we just use it as lazy declaration of free universe variables</p>\n</blockquote>\n<p>Yes, IMO this was always a bad practice.</p>",
+        "id": 339162882,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1677778206
+    },
+    {
+        "content": "<p>Does Lean 4 have implicit declaration of universe variables?</p>",
+        "id": 339164118,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1677778540
+    },
+    {
+        "content": "<p>Yes, autoimplicits applies to universe variables too.</p>",
+        "id": 339164347,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1677778591
+    },
+    {
+        "content": "<p>I made use of it <a href=\"https://github.com/leanprover-community/mathlib4/pull/2566/files#diff-f74de3338b0ad74d10414ea2f5ea2151b7e4125e2b498b851256766b1f6a7b24R151\">in the fix</a> for the issue I was having that led to this thread.</p>",
+        "id": 339164612,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1677778673
+    },
+    {
+        "content": "<p>though it doesn't create fresh universe variables for types introduces via autoimplicits. Using the tactic from the linked PR, this unfortunately works:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">x</span> <span class=\"bp\">=</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">congr</span><span class=\"bp\">!</span>\n</code></pre></div>\n<p>(but thankfully changing <code>def</code> -&gt; <code>theorem</code> keeps it from working)</p>",
+        "id": 339165500,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1677778897
+    },
+    {
+        "content": "<p>I think the problem is that people much prefer writing <code>{R M N P Q : Type _}</code> to <code>{R : Type u} {M : Type v} {N : Type w} {P : Type x} {Q : Type y}</code></p>",
+        "id": 339166230,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1677779097
+    },
+    {
+        "content": "<p>It's not <code>{a : Type _}</code> vs <code>{a : Type u}</code> that is the problem</p>",
+        "id": 339166404,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1677779138
+    },
+    {
+        "content": "<p>Well it's (potentially) a problem if you write <code>Type _</code> when you mean <code>Type u</code>, but I agree it's not a problem if you know not to do that</p>",
+        "id": 339166659,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1677779182
+    },
+    {
+        "content": "<p>Maybe Lean 4 could repurpose <code>Type*</code> as syntax for \"generate new universe variables (not metavariables) for everything in this group\"?</p>",
+        "id": 339166723,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1677779197
+    },
+    {
+        "content": "<p>Is that easy to write as a syntax extension?</p>",
+        "id": 339166874,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1677779234
+    },
+    {
+        "content": "<p>Just going back to this last <code>foo</code> example, note that <code>α</code> was introduced using autoimplicits, and apparently this is indistinguishable from doing <code>(α : Sort _)</code>.</p>",
+        "id": 339166982,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1677779255
+    },
+    {
+        "content": "<p>(Unfortunately?) I think this is actually correct/desirable behavior, since it would be pretty annoying if you couldn't use autoimplicit types in combination with e.g. <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=IO#doc\">docs4#IO</a></p>",
+        "id": 339167841,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1677779473
+    },
+    {
+        "content": "<p>Yeah, it also lets you introduce propositions:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">p</span> <span class=\"bp\">→</span> <span class=\"n\">q</span> <span class=\"bp\">→</span> <span class=\"n\">p</span> <span class=\"o\">:=</span> <span class=\"n\">Function.const</span> <span class=\"n\">_</span>\n</code></pre></div>\n<p>The unfortunate part is just that something like <code>Type*</code> doesn't help with autoimplicit arguments, which have been seeming like a way to get around certain issues with <code>variable</code>s. I'm not sure I've seen an example yet of these issues impacting types introduced via <code>variable</code> though, since you can't do induction/cases on them so tactics shouldn't touch them.</p>",
+        "id": 339169150,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1677779808
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/270676-lean4/topic/Subsingleton.2Eelim.20in.20a.20def/near/339166723\">said</a>:</p>\n<blockquote>\n<p>Maybe Lean 4 could repurpose <code>Type*</code> as syntax for \"generate new universe variables (not metavariables) for everything in this group\"?</p>\n</blockquote>\n<p>It's a bit limiting. I think we have plenty of cases in mathlib where we write <code>Type _</code> for a bunch of types, and some of the universe variables are equal to each other. One example: you're using a category theory <code>hom</code> between types (potentially with extra structure).</p>",
+        "id": 339184204,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1677783959
+    },
+    {
+        "content": "<p>Here's another funny example of this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Logic.Basic</span>\n<span class=\"kd\">theorem</span> <span class=\"n\">hmm</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">decide</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"bp\">=</span> <span class=\"n\">b</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">simp</span>\n</code></pre></div>",
+        "id": 345272358,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1680052081
+    },
+    {
+        "content": "<p>Floris, I think the plenty of cases you mention are still not many. Often you only have one type, and almost everywhere away from category theory everything is fully universe-polymorphic.</p>",
+        "id": 345275192,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1680053776
+    }
+]

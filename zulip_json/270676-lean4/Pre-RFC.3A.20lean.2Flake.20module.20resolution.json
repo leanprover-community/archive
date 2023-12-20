@@ -1,0 +1,584 @@
+[
+    {
+        "content": "<p>I want to restart this conversation now that we have some more data on how projects are laid out and what kind of things people are doing with lakefiles. Currently, lean resolves files in a \"search path\", meaning that if <code>/home/me</code> is in the <code>LEAN_SRC_PATH</code> and you write <code>import A.B</code>, it will look in <code>/home/me/A/B.lean</code> for the file. Lake populates this path using information from the lakefile.</p>\n<ul>\n<li>However, most projects maintain the pattern that the first component of the import path is the project name (including <code>Mathlib</code>, contrary to the lean 3 behavior)</li>\n<li>This is soft-enforced by lake through its default package setup</li>\n</ul>\n<p>I would like to propose the following pattern:</p>\n<ul>\n<li>The <code>LEAN_SRC_PATH</code> maps paths to module prefixes, for example <code>/home/me/A/ -&gt; A</code> or <code>mathlib4/src/ -&gt; Mathlib</code>, such that <code>Mathlib.*</code> maps to <code>mathlib4/src/*.lean</code></li>\n<li>Lake populates this path using information in the lakefile</li>\n<li>The module prefix can be empty (recovering the current behavior), but this is discouraged</li>\n<li>The file with exactly the module prefix (e.g. <code>Mathlib</code>) is also looked up in the folder with a TBD special name like <code>mathlib4/src/lib.lean</code></li>\n</ul>\n<p>Advantages:</p>\n<ul>\n<li>Because this enforces a top level hierarchical structure for modules, we can do fewer file lookups for a given module. If we see <code>Mathlib.Foo</code> we don't have to look in <code>std/</code> because it declares a disjoint module prefix.</li>\n<li>It moves the folder roots one level down, meaning that they collide less, solving the problem from <a href=\"https://github.com/leanprover/lean4/pull/2456\">lean4#2456</a> that there can be multiple libraries with the same root, for example <code>Mathlib</code> and <code>MathlibExtras</code> both use <code>mathlib4/</code> as the root for the source path which means that when doing a reverse lookup (we have a file on disk and want to know what lib it is in) we cannot easily do this without a full recursive traversal of all libraries with <code>mathlib4/</code> or a parent as the root.</li>\n<li>It means we can move <code>Mathlib.lean</code> out of the root and rename <code>Mathlib/</code> to <code>src/</code> for a more standard project structure</li>\n<li>This kind of structure is more similar to rust (but compare haskell/java, which would put the sources in <code>src/Mathlib/</code>). <a href=\"https://github.com/dotnet-architecture/eShopOnWeb/blob/main/src/ApplicationCore/Entities/CatalogBrand.cs\">Random C# example</a> suggests they also have the ability to map file paths to module prefixes</li>\n</ul>",
+        "id": 390889113,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694683377
+    },
+    {
+        "content": "<p>Is it currently legal for two different git repos to provide non-overlapping files in a <code>Mathlib</code> folder?</p>",
+        "id": 390889605,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1694683556
+    },
+    {
+        "content": "<p>yes...</p>",
+        "id": 390890084,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694683695
+    },
+    {
+        "content": "<p>I was thinking of mentioning a \"level 2\" stricter version of this, which would require that all module prefixes in the <code>LEAN_SRC_PATH</code> are nonoverlapping, which would exclude both empty module prefixes and also multiple packages with the same \"name for resolution purposes\"</p>",
+        "id": 390890371,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694683789
+    },
+    {
+        "content": "<p>Current usage is conformant with that stricter approach, although the lean 3 resolution very much was not</p>",
+        "id": 390890531,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694683827
+    },
+    {
+        "content": "<p>It's been a while since I've looked at it, but as far as I'm aware the current design is consistent with how <code>PYTHON_PATH</code> works</p>",
+        "id": 390890556,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1694683836
+    },
+    {
+        "content": "<p>yes, from looking around it appears that python projects are structured like current lean 4 projects, except that the root file for a submodule is <code>A/__init__.py</code> instead of <code>A.py</code></p>",
+        "id": 390891614,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694684189
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Pre-RFC.3A.20lean.2Flake.20module.20resolution/near/390889113\">said</a>:</p>\n<blockquote>\n<ul>\n<li>It means we can move <code>Mathlib.lean</code> out of the root and rename <code>Mathlib/</code> to <code>src/</code> for a more standard project structure</li>\n</ul>\n</blockquote>\n<p>I don't understand this claim; where does <code>Mathlib.lean</code> live in this picture?</p>",
+        "id": 390892133,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1694684367
+    },
+    {
+        "content": "<p>Or to be clearer: let's imagine I create a new <code>Mathlib/Mathlib.lean</code> (<code>import Mathlib.Mathlib</code>) with the current project structure (that's a blank file). This doesn't clash with <code>Mathlib.lean</code> (<code>import Mathlib</code>) in the current implementation, but I don't see how you avoid the clash with your proposal</p>",
+        "id": 390892379,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1694684450
+    },
+    {
+        "content": "<p><code>Mathlib.lean</code> would live at <code>src/lib.lean</code></p>",
+        "id": 390893017,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694684658
+    },
+    {
+        "content": "<p>we could also call it <code>default.lean</code> like in the old days</p>",
+        "id": 390893353,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694684778
+    },
+    {
+        "content": "<p>Just to clarify for this stream: renaming <code>mathlib4/Mathlib/</code> to <code>mathlib4/src/</code> is technically a separate decision, right? Are all the other specific advantages still available for Mathlib if it isn’t renamed (i.e. we just map <code>mathlib4/Mathlib</code> to <code>Mathlib</code>)?</p>",
+        "id": 390893443,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1694684814
+    },
+    {
+        "content": "<p>yes</p>",
+        "id": 390893483,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694684825
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Pre-RFC.3A.20lean.2Flake.20module.20resolution/near/390893353\">said</a>:</p>\n<blockquote>\n<p>we could also call it <code>default.lean</code> like in the old days</p>\n</blockquote>\n<p>This seems like it would be confusing unless we turned back on <code>default.lean</code> elsewhere too (which is certainly a separate discussion)</p>",
+        "id": 390894846,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1694685265
+    },
+    {
+        "content": "<p>yeah, <code>lib.lean</code> was meant to only apply at the top level</p>",
+        "id": 390895002,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694685319
+    },
+    {
+        "content": "<p>Sorry for somehow missing that you already explained <code>lib.lean</code> in the original post</p>",
+        "id": 390895062,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1694685339
+    },
+    {
+        "content": "<p>Should we split the part of this thread that is about re-introducing <code>default</code>? (edit: done)</p>",
+        "id": 390895444,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1694685469
+    },
+    {
+        "content": "<p>14 messages were moved from this topic to <a class=\"stream-topic\" data-stream-id=\"270676\" href=\"/#narrow/stream/270676-lean4/topic/Reintroducing.20default.2Elean\">#lean4 &gt; Reintroducing default.lean</a> by <span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span>.</p>",
+        "id": 390895735,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1694685590
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/270676-lean4/topic/Pre-RFC.3A.20lean.2Flake.20module.20resolution/near/390890556\">said</a>:</p>\n<blockquote>\n<p>It's been a while since I've looked at it, but as far as I'm aware the current design is consistent with how <code>PYTHON_PATH</code> works</p>\n</blockquote>\n<p>Perhaps it's worth noting that the <code>PYTHON_PATH</code> approach is usually to just have a single <code>site-packages</code> entry that contains all the user packages, which negatives any real benefit you'd get from \"fewer file lookups\"</p>",
+        "id": 390896375,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1694685838
+    },
+    {
+        "content": "<p>but python doesn't have project specific options, I think</p>",
+        "id": 390896487,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694685877
+    },
+    {
+        "content": "<p>or does it? I saw something about <code>setup.py</code> recursion issues</p>",
+        "id": 390896612,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694685914
+    },
+    {
+        "content": "<p>Project specific option in python are just installation instructions</p>",
+        "id": 390896653,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1694685930
+    },
+    {
+        "content": "<p>Once it's in site-packages they're forgotten</p>",
+        "id": 390896666,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1694685939
+    },
+    {
+        "content": "<p>So indeed, that approach doesn't attempt to deal with things like <code>set_option pp.unicode.fun true</code> being set for a whole package</p>",
+        "id": 390896821,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1694685974
+    },
+    {
+        "content": "<blockquote>\n<p>I was thinking of mentioning a \"level 2\" stricter version of this</p>\n</blockquote>\n<p>The ecosystem is still young, so whatever useful discipline we can impose and enforce now we should, before people relying on its absence. So if we gain something from not having overlapping module prefixes, and we want developers to rely on it, maybe just make it so? Or are there relevant use-cases that this would forbid?</p>",
+        "id": 390897060,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694686069
+    },
+    {
+        "content": "<p>Even if you wanted a lean 3 style mathlib which used the top level namespace for its stuff, you could still do that by having a bunch of mappings like <code>mathlib/src/Algebra -&gt; Algebra, mathlib/src/Tactic -&gt; Tactic, etc</code></p>",
+        "id": 390897298,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694686138
+    },
+    {
+        "content": "<p>One case that might be hard to handle if we required nonoverlapping paths would be if mathlib wanted to keep <code>Mathlib.Extras</code> in a <code>mathlib4/extras/</code> folder while having the rest of <code>Mathlib.*</code> in <code>mathlib4/src</code></p>",
+        "id": 390897778,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694686319
+    },
+    {
+        "content": "<p>currently we're calling it <code>MathlibExtras</code> so this isn't a problem</p>",
+        "id": 390897866,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694686341
+    },
+    {
+        "content": "<p>we could have a rule that if one root name is a prefix of another one then the longer one takes precedence for lookup</p>",
+        "id": 390898038,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694686404
+    },
+    {
+        "content": "<p>A middle ground may be to allow overlapping … jinx :-)</p>",
+        "id": 390898065,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694686413
+    },
+    {
+        "content": "<p>that would also work for the lean 3 mathlib, it could just claim <code>.</code>, the \"default supplier of packages\"</p>",
+        "id": 390898202,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694686460
+    },
+    {
+        "content": "<p>you wouldn't be allowed to have two mathlibs though</p>",
+        "id": 390898347,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694686522
+    },
+    {
+        "content": "<p>This may have some nice applications, but overall I wonder if mixing the “package prefix” namespace and the actual module namespace is advisable.<br>\nWhat would happen if you require the module prefix to be a simple name (no <code>.</code>?)<br>\nA benefit would be that if I see an <code>import Foo.Bar.Baz</code>, I know immediately that somewhere must be a file <code>Bar/Baz.lean</code>, and that <code>Foo</code> is the library name.</p>",
+        "id": 390898398,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694686545
+    },
+    {
+        "content": "<p>That's what rust does, more or less</p>",
+        "id": 390898514,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694686586
+    },
+    {
+        "content": "<p>although the package names used for external references in rust are actually set per-package, i.e. mathlib says it wants <code>Std.*</code> to mean stuff from the <code>std</code> package, although it defaults to the name of the package itself</p>",
+        "id": 390898757,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694686686
+    },
+    {
+        "content": "<p>this is useful if two of your deps decided to have the same name</p>",
+        "id": 390898871,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694686729
+    },
+    {
+        "content": "<p>I believe that's a problem anyway as e.g. hygiene depends on globally unique module names</p>",
+        "id": 390900152,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694687277
+    },
+    {
+        "content": "<p>So you are saying I can import two libraries that both think of themselves as <code>Foo</code> as <code>Foo1</code> and <code>Foo2</code>? How would the <code>imports</code> within these libraries look like?</p>",
+        "id": 390900286,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694687332
+    },
+    {
+        "content": "<p>Inside <code>Foo1</code> you would have imports to <code>Self.A</code> or <code>Foo.A</code> or however <code>Foo1</code> is referring to itself, and similarly in <code>Foo2</code>, and in <code>Bar</code> that imports both it would refer to <code>Foo1.A</code> and <code>Foo2.A</code></p>",
+        "id": 390901039,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694687643
+    },
+    {
+        "content": "<p>So if I jump to the definition and open a file in <code>Foo1</code>, then that file will be processed with a different search path – got it.</p>",
+        "id": 390901280,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1694687753
+    },
+    {
+        "content": "<p>but sebastian has a reasonable point that this would mess with global names which involve mixing in the \"absolute path\" of the module</p>",
+        "id": 390901457,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694687828
+    },
+    {
+        "content": "<p>you would still have to get pretty unlucky to hit a conflict, unless the two packages are actually copies of each other</p>",
+        "id": 390901550,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694687871
+    },
+    {
+        "content": "<p>although in that case you will also have regular names clashing</p>",
+        "id": 390901578,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694687882
+    },
+    {
+        "content": "<p>Quick general notes before I board a flight: as mentioned the current scheme was inspired by Python, so \"more standard\" is arguable. And \"fewer file lookups\" would first have to be proven relevant in practice. So that mostly seems to leave <a href=\"https://github.com/leanprover/lean4/pull/2456\">lean4#2456</a> as motivation</p>",
+        "id": 390901727,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694687940
+    },
+    {
+        "content": "<p>Having said that, I'm not fundamentally opposed to the change (yet)</p>",
+        "id": 390901797,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694687974
+    },
+    {
+        "content": "<p>I did see some people using <code>src/</code> even in the python world</p>",
+        "id": 390902012,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694688056
+    },
+    {
+        "content": "<p>they would just use what I called the java/haskell convention with <code>src/Mathlib/actual/stuff.lean</code></p>",
+        "id": 390902056,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694688084
+    },
+    {
+        "content": "<p>vscode at least makes folders that only contain other folders rather lightweight, so I'm not that opposed to this structure either and it also solves the <a href=\"https://github.com/leanprover/lean4/pull/2456\">lean4#2456</a> problem</p>",
+        "id": 390902257,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694688147
+    },
+    {
+        "content": "<p>the java convention usually has project names with 2 to 4 components so it's actually more like <code>src/com/mypkg/actual/stuff.java</code> which is a bit annoyingly deep for my taste</p>",
+        "id": 390902751,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694688311
+    },
+    {
+        "content": "<p>the source mapping convention described here lets you still have long package names if you want without forcing a deep file structure too</p>",
+        "id": 390903080,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694688446
+    },
+    {
+        "content": "<p>but I kind of agree with <span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> that we don't really need multi-component package names, I would be happy if they were just strings</p>",
+        "id": 390903235,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694688500
+    },
+    {
+        "content": "<p>this came up as an issue in <code>lake new foo.bar</code> parsing</p>",
+        "id": 390903325,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694688533
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Pre-RFC.3A.20lean.2Flake.20module.20resolution/near/390901727\">said</a>:</p>\n<blockquote>\n<p>And \"fewer file lookups\" would first have to be proven relevant in practice.</p>\n</blockquote>\n<p>Note that it's not just about the performance impact of fewer file lookups for the computer: it's also a file lookup <em>for the human</em> if files can come from anywhere like this</p>",
+        "id": 390903689,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694688673
+    },
+    {
+        "content": "<p>If mathlib added a file <code>mathlib4/Std/Data/AssocList.lean</code> it would work, and it would be very confusing and undesirable</p>",
+        "id": 390903908,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694688745
+    },
+    {
+        "content": "<p>The worst part is that it's almost a reasonable thing to do, people might decide to write their <code>for_mathlib</code> folders by literally putting things in mathlib</p>",
+        "id": 390904022,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694688800
+    },
+    {
+        "content": "<p>in fact, now that I come to think about it this might even break lake, since it allows you to change the file that an upstream file depends on</p>",
+        "id": 390904224,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694688874
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Pre-RFC.3A.20lean.2Flake.20module.20resolution/near/390898202\">said</a>:</p>\n<blockquote>\n<p>that would also work for the lean 3 mathlib, it could just claim <code>.</code>, the \"default supplier of packages\"</p>\n</blockquote>\n<p>So <code>import X</code> would import the file and <code>import X.</code> would import all files in the folder? I like that.</p>",
+        "id": 390904378,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1694688943
+    },
+    {
+        "content": "<p>I... wasn't suggesting that, but it's not terrible</p>",
+        "id": 390904890,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694689170
+    },
+    {
+        "content": "<p>probably <code>import X.*</code> is a clearer way to write that</p>",
+        "id": 390904914,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694689182
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Pre-RFC.3A.20lean.2Flake.20module.20resolution/near/390903908\">said</a>:</p>\n<blockquote>\n<p>If mathlib added a file <code>mathlib4/Std/Data/AssocList.lean</code> it would work, and it would be very confusing and undesirable</p>\n</blockquote>\n<p>It wouldn't, the lookup (<code>findWithExt</code>) is still based on <em>packages</em>. So the first <code>Std/</code> in the search path wins. I think there may have been an intention to eventually check for unique package roots in the build system but I suppose we never got to that.</p>",
+        "id": 390905111,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1694689247
+    },
+    {
+        "content": "<p>Ah okay <span aria-label=\"sweat smile\" class=\"emoji emoji-1f605\" role=\"img\" title=\"sweat smile\">:sweat_smile:</span> Regardless, I think <code>import X.</code> or <code>import X.*</code> is a good syntax idea to support.</p>",
+        "id": 390905143,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1694689263
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Pre-RFC.3A.20lean.2Flake.20module.20resolution/near/390905111\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Pre-RFC.3A.20lean.2Flake.20module.20resolution/near/390903908\">said</a>:</p>\n<blockquote>\n<p>If mathlib added a file <code>mathlib4/Std/Data/AssocList.lean</code> it would work, and it would be very confusing and undesirable</p>\n</blockquote>\n<p>It wouldn't, the lookup (<code>findWithExt</code>) is still based on <em>packages</em>. So the first <code>Std/</code> in the search path wins. I think there may have been an intention to eventually check for unique package roots in the build system but I suppose we never got to that.</p>\n</blockquote>\n<p>Oh, I guess I should add that as an extra bullet point under:</p>\n<blockquote>\n<p>This is soft-enforced by lake through its default package setup</p>\n</blockquote>\n<p>lean itself has a notion of packages which are one component, no more no less</p>",
+        "id": 390907368,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694690197
+    },
+    {
+        "content": "<p>in which case it seems like the argument for this method is even stronger, we should just look in the corresponding package for the remainder of the module name after the package</p>",
+        "id": 390907597,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694690289
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Pre-RFC.3A.20lean.2Flake.20module.20resolution/near/390890371\">said</a>:</p>\n<blockquote>\n<p>I was thinking of mentioning a \"level 2\" stricter version of this, which would require that all module prefixes in the <code>LEAN_SRC_PATH</code> are nonoverlapping, which would exclude both empty module prefixes and also multiple packages with the same \"name for resolution purposes\"</p>\n</blockquote>\n<p>This would be a problem. Lean/Lake need overlapping paths in order to develop them. Since Lean and Lake are already hard-coded at the bottom of the list, building a new version of Lake requires its source a higher level and overlapping/overriding (in order for interactive features to work properly).</p>",
+        "id": 391113529,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694767438
+    },
+    {
+        "content": "<p>I don't follow</p>",
+        "id": 391113986,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694767592
+    },
+    {
+        "content": "<p>lean and lake are not in overlapping paths</p>",
+        "id": 391114015,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694767603
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Pre-RFC.3A.20lean.2Flake.20module.20resolution/near/390889113\">said</a>:</p>\n<blockquote>\n<ul>\n<li>Because this enforces a top level hierarchical structure for modules, we can do fewer file lookups for a given module. If we see <code>Mathlib.Foo</code> we don't have to look in <code>std/</code> because it declares a disjoint module prefix.</li>\n</ul>\n</blockquote>\n<p><del>It is worth noting this is already enforced. Once Lean has found a module root in a path, it will already only look in that directory.</del> (Edit: Sebastian already covered this.) I was actually hoping to remove this so module naming conventions like <code>Data.Foo</code> or <code>Data.Bar</code> would be legal in separate <code>Foo</code> and <code>Bar</code> packages (like Haskell).</p>",
+        "id": 391114074,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694767624
+    },
+    {
+        "content": "<ul>\n<li><code>src/Init -&gt; Init</code></li>\n<li><code>src/Lean -&gt; Lean</code></li>\n<li><code>src/lake/Lake -&gt; Lake</code></li>\n</ul>",
+        "id": 391114180,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694767665
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> Maybe I was confused on what you meant by overlapping. I meant that when building Lake, in <code>LEAN_SRC_PATH</code> there is a <code>.elan/toolchains/src/lake/Lake</code>  that points to the toolchain source and then there is a <code>my-lean4/src/lake/Lake</code> that points to to the source in the current development workspace (and similar for <code>LEAN_PATH</code>). That later one is important in order not go-to def or import outside of your development build.</p>",
+        "id": 391115531,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694768061
+    },
+    {
+        "content": "<p>why is overlapping resolution needed there?</p>",
+        "id": 391115709,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694768117
+    },
+    {
+        "content": "<p>I don't see why you wouldn't always want it to go to one or the other (I guess you always want the dev source to win)</p>",
+        "id": 391115855,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694768162
+    },
+    {
+        "content": "<p>Yes, I thought by overlapping you meant that you could not have two paths the contain the same modules.</p>",
+        "id": 391115990,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694768196
+    },
+    {
+        "content": "<p>well I did not say that but I assumed it to be the case</p>",
+        "id": 391116049,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694768219
+    },
+    {
+        "content": "<p>more specifically, it wouldn't be an error but one would be completely shadowed by the other</p>",
+        "id": 391116084,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694768234
+    },
+    {
+        "content": "<p>there wouldn't be any point putting two in the path</p>",
+        "id": 391116140,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694768251
+    },
+    {
+        "content": "<p>Ah, well then, that is already how it works.</p>",
+        "id": 391116150,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694768254
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Pre-RFC.3A.20lean.2Flake.20module.20resolution/near/390889113\">said</a>:</p>\n<blockquote>\n<ul>\n<li>The file with exactly the module prefix (e.g. <code>Mathlib</code>) is also looked up in the folder with a TBD special name like <code>mathlib4/src/lib.lean</code></li>\n</ul>\n</blockquote>\n<p>On a matter of preference, I vote against this. I much prefer the the root file matching the folder name. Ruby does this and I love it. Rust also explicitly added support for the current pattern over the previous special name approach, indicating broad community support for the current pattern.</p>",
+        "id": 391116831,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694768461
+    },
+    {
+        "content": "<p>no, rust still has <code>lib.rs</code></p>",
+        "id": 391116925,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694768485
+    },
+    {
+        "content": "<p>I really do not like Python's <code>__init__.py</code> modules. I also confuses me to remember that that does something special.</p>",
+        "id": 391116948,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694768493
+    },
+    {
+        "content": "<p>I think you are mixing this up with the other thread</p>",
+        "id": 391116975,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694768504
+    },
+    {
+        "content": "<p>this is just about the root module</p>",
+        "id": 391116993,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694768511
+    },
+    {
+        "content": "<p>Oh, in that case, it would be even more confusing (because of the inconsistency).</p>",
+        "id": 391117099,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694768531
+    },
+    {
+        "content": "<p>I think it would solve some of the problems discussed earlier about <code>Foo.lean</code> and <code>FooExe.lean</code></p>",
+        "id": 391117229,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694768577
+    },
+    {
+        "content": "<p>And, as far as I now understand it, Rust only does that because a package can only have one library, which is not true for Lean/Lake.</p>",
+        "id": 391117295,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694768601
+    },
+    {
+        "content": "<p>no, it does it for exes too</p>",
+        "id": 391117327,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694768611
+    },
+    {
+        "content": "<p>this would be an extra config arg, <code>lib.lean</code> is just the default</p>",
+        "id": 391117369,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694768627
+    },
+    {
+        "content": "<p>Yeah, I would not prefer that default. So, my vote would be against it. I would support the option for such a package structure, though.</p>",
+        "id": 391117591,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694768697
+    },
+    {
+        "content": "<p>Again, I like the current naming convention. It mirrors Ruby's exactly, and I have always loved Ruby's aesthetics.</p>",
+        "id": 391118031,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694768833
+    },
+    {
+        "content": "<p>most of the examples I can find put sources in a <code>app/</code> or <code>lib/</code> directory in ruby</p>",
+        "id": 391118592,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694769010
+    },
+    {
+        "content": "<p>Yes, but the module hierarchy under that follows exactly Lean's.</p>",
+        "id": 391118690,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694769043
+    },
+    {
+        "content": "<p>Essentially, Ruby defaults to <code>srcDir := \"lib\"</code> (for libraries)</p>",
+        "id": 391118753,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694769060
+    },
+    {
+        "content": "<p>I would be happy with a source directory default, but my understanding Sebastian and/or Leo decided against that.</p>",
+        "id": 391118920,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694769120
+    },
+    {
+        "content": "<p>hence the discussion</p>",
+        "id": 391119147,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694769189
+    },
+    {
+        "content": "<p>Yep! I was just dropping in my vote.</p>",
+        "id": 391119551,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694769302
+    },
+    {
+        "content": "<p>I can't tell whether it is typical for ruby projects to have multiple folders in <code>lib/</code></p>",
+        "id": 391119867,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1694769399
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> Generally,  not. That would be essentially a multi-library package (which exists, but are not common).</p>",
+        "id": 391121378,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694769821
+    },
+    {
+        "content": "<p>It would be as common as having multiple folders in <code>lib</code> would be if <code>srcDir := \"lib\"</code> was the default in Lean/Lake (i.e., generally only for multi-library packages).</p>",
+        "id": 391121612,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1694769877
+    }
+]

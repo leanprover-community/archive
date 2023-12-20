@@ -1,0 +1,74 @@
+[
+    {
+        "content": "<p>I have a list of field names and elaborated <code>Expr</code>s for the field types. How do I turn that into a structure declaration to compile? I can't seem to find any relevant functions... :(</p>\n<p>To slightly un-XY: I want a syntax for defining structures as</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">object</span> <span class=\"n\">Name</span> <span class=\"o\">{</span>\n  <span class=\"s2\">\"key1\"</span> <span class=\"o\">:</span> <span class=\"n\">something</span>\n<span class=\"o\">}</span>\n</code></pre></div>\n<p>where <code>something : SchemaM ?type</code> (<code>SchemaM</code> is a monad). Idea is I want to generate a structure with field <code>key1 : &lt;type&gt;</code>. Then I can define other stuff that makes use of the actual <code>something</code> value.</p>\n<p>So in order to find what <code>&lt;type&gt;</code> is, I'm elaborating <code>something</code> to an expression with expected type <code>SchemaM ?type</code> and then instantiating the <code>?type</code> expression.</p>\n<p>But now I've no idea how to get this into a structure (.. an inductive I know how to do. but not a structure).</p>\n<p>Is there a different way I should be going about it?</p>",
+        "id": 394924021,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1696457642
+    },
+    {
+        "content": "<p>One thing I've tried is to just build the syntax for a structure and then <code>elabCommand</code> it. But I think I am encountering issues where <code>liftTermElabM</code> throws out (?) the metavariable assignments:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">import</span> <span class=\"n\">Std</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">SchemaM</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"o\">:=</span> <span class=\"n\">Id</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Macro</span> <span class=\"n\">Elab</span> <span class=\"n\">Meta</span> <span class=\"n\">Term</span> <span class=\"n\">Command</span> <span class=\"k\">in</span>\n<span class=\"n\">elab</span> <span class=\"s2\">\"object \"</span> <span class=\"n\">name</span><span class=\"o\">:</span><span class=\"n\">ident</span> <span class=\"s2\">\"{\"</span> <span class=\"n\">keyStx</span><span class=\"o\">:(</span> <span class=\"n\">str</span> <span class=\"s2\">\":\"</span> <span class=\"s2\">\"required \"</span><span class=\"bp\">?</span> <span class=\"n\">term</span> <span class=\"o\">),</span><span class=\"bp\">*</span> <span class=\"s2\">\"}\"</span> <span class=\"o\">:</span> <span class=\"n\">command</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"c1\">-- name, required, (Lean) type, schema</span>\n  <span class=\"k\">let</span> <span class=\"n\">keys</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"o\">(</span><span class=\"n\">String</span> <span class=\"bp\">×</span> <span class=\"n\">Bool</span> <span class=\"bp\">×</span> <span class=\"n\">TSyntax</span> <span class=\"bp\">`</span><span class=\"n\">term</span> <span class=\"bp\">×</span> <span class=\"n\">TSyntax</span> <span class=\"bp\">`</span><span class=\"n\">term</span><span class=\"o\">)</span> <span class=\"bp\">←</span>\n    <span class=\"n\">liftTermElabM</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">keyStx.getElems.mapM</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span>\n      <span class=\"c1\">-- unsure if this is actually necessary</span>\n      <span class=\"c1\">-- but we use the mvar identifier `type` so /shrug</span>\n      <span class=\"n\">withFreshMacroScope</span> <span class=\"k\">do</span>\n      <span class=\"k\">let</span> <span class=\"n\">key</span> <span class=\"o\">:=</span> <span class=\"n\">s.raw</span><span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"o\">]</span><span class=\"bp\">.</span><span class=\"n\">isStrLit</span><span class=\"bp\">?.</span><span class=\"n\">get</span><span class=\"bp\">!</span>\n      <span class=\"k\">let</span> <span class=\"n\">isReq</span> <span class=\"o\">:=</span> <span class=\"n\">s.raw</span><span class=\"o\">[</span><span class=\"mi\">2</span><span class=\"o\">]</span><span class=\"bp\">.</span><span class=\"n\">hasArgs</span>\n      <span class=\"k\">let</span> <span class=\"n\">val</span> <span class=\"o\">:</span> <span class=\"n\">Term</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">mk</span> <span class=\"n\">s.raw</span><span class=\"o\">[</span><span class=\"mi\">3</span><span class=\"o\">]</span>\n      <span class=\"c1\">-- make a new metavariable for the type</span>\n      <span class=\"k\">let</span> <span class=\"n\">type</span> <span class=\"o\">:</span> <span class=\"n\">Term</span> <span class=\"bp\">←</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">?</span><span class=\"n\">type</span><span class=\"o\">)</span>\n      <span class=\"k\">let</span> <span class=\"n\">typeExpr</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span> <span class=\"bp\">←</span> <span class=\"n\">elabTermEnsuringType</span> <span class=\"n\">type</span> <span class=\"o\">(</span><span class=\"n\">some</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">sort</span> <span class=\"o\">(</span><span class=\"n\">Level.ofNat</span> <span class=\"mi\">1</span><span class=\"o\">)))</span>\n      <span class=\"k\">let</span> <span class=\"n\">elabVal</span> <span class=\"bp\">←</span> <span class=\"n\">elabTermEnsuringType</span> <span class=\"n\">val</span> <span class=\"o\">(</span><span class=\"n\">some</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">app</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">const</span> <span class=\"bp\">``</span><span class=\"n\">SchemaM</span> <span class=\"o\">[])</span> <span class=\"n\">typeExpr</span><span class=\"o\">))</span>\n      <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"n\">key</span><span class=\"o\">,</span> <span class=\"n\">isReq</span><span class=\"o\">,</span> <span class=\"n\">type</span><span class=\"o\">,</span> <span class=\"bp\">←</span> <span class=\"n\">elabVal.toSyntax</span><span class=\"o\">)</span>\n    <span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">typeId</span> <span class=\"o\">:=</span> <span class=\"n\">mkIdent</span> <span class=\"o\">(</span><span class=\"n\">name.getId</span> <span class=\"bp\">++</span> <span class=\"s2\">\"type\"</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">fields</span> <span class=\"o\">:</span> <span class=\"n\">TSyntaxArray</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">keys.mapM</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"o\">(</span><span class=\"n\">name</span><span class=\"o\">,</span> <span class=\"n\">_req</span><span class=\"o\">,</span> <span class=\"n\">type</span><span class=\"o\">,</span> <span class=\"n\">_schema</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">Lean.Parser.Command.structExplicitBinder</span><span class=\"bp\">|</span> <span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">mkIdent</span> <span class=\"n\">name</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"bp\">$</span><span class=\"n\">type</span><span class=\"o\">))</span>\n  <span class=\"o\">)</span>\n  <span class=\"n\">elabCommand</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">←</span> <span class=\"bp\">`</span><span class=\"o\">(</span>\n    <span class=\"kd\">structure</span> <span class=\"bp\">$</span><span class=\"n\">typeId</span> <span class=\"n\">where</span>\n      <span class=\"bp\">$</span><span class=\"n\">fields</span><span class=\"o\">:</span><span class=\"n\">structExplicitBinder</span><span class=\"bp\">*</span>\n  <span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">string</span> <span class=\"o\">:</span> <span class=\"n\">SchemaM</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">pp.rawOnError</span> <span class=\"n\">true</span>\n<span class=\"n\">object</span> <span class=\"n\">Hi</span> <span class=\"o\">{</span> <span class=\"c1\">-- don't know how to synthesize placeholder</span>\n            <span class=\"c1\">-- context:</span>\n            <span class=\"c1\">-- case type</span>\n            <span class=\"c1\">-- ⊢ Sort ?u.12896-/</span>\n  <span class=\"s2\">\"hi\"</span> <span class=\"o\">:</span> <span class=\"n\">string</span>\n<span class=\"o\">}</span>\n</code></pre></div>",
+        "id": 394924495,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1696457877
+    },
+    {
+        "content": "<p>(sidenote: it lists that <code>?type : Sort ?u.12896</code> there, but I quite clearly call <code>ensureHasType</code> with <code>Sort 1</code>. Why is that information not reflected in the error?)</p>",
+        "id": 394924889,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1696458083
+    },
+    {
+        "content": "<p>Another option would be to use the delaborator instead of metavariables. But it feels like a bad idea to rely on the delaborator...</p>",
+        "id": 394926454,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1696459073
+    },
+    {
+        "content": "<p>I'm not sitting in front of a computer so I can't check but isn't structure just an inductive with some flag? Now I'm guessing, maybe create an inductive and then call some function that generates all the projection functions?</p>",
+        "id": 394928718,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1696460593
+    },
+    {
+        "content": "<p>That is what I am hoping. But I can't seem to find a function to generate the right stuff. The <code>Declaration</code> itself has a few flags that are related to being a structure, but nothing labelled as <em>being</em> a structure.</p>",
+        "id": 394929149,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1696460886
+    },
+    {
+        "content": "<p>I think you have to register structure with <code>registerStructure</code> <a href=\"https://github.com/leanprover/lean4/blob/dceed634a05e1d62588f89b9f1d7b7b4cf79f676/src/Lean/Structure.lean#L57\">https://github.com/leanprover/lean4/blob/dceed634a05e1d62588f89b9f1d7b7b4cf79f676/src/Lean/Structure.lean#L57</a> but there has to be a streamlined function that generates <code>StructureDescr</code> from struct like inductive</p>",
+        "id": 394929382,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1696461075
+    },
+    {
+        "content": "<p>Maybe this one <a href=\"https://github.com/leanprover/lean4/blob/dceed634a05e1d62588f89b9f1d7b7b4cf79f676/src/Lean/Elab/Structure.lean#L699\">https://github.com/leanprover/lean4/blob/dceed634a05e1d62588f89b9f1d7b7b4cf79f676/src/Lean/Elab/Structure.lean#L699</a></p>",
+        "id": 394929503,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1696461175
+    },
+    {
+        "content": "<p>I think this is the crucial line, just above it you create projections <br>\n<a href=\"https://github.com/leanprover/lean4/blob/dceed634a05e1d62588f89b9f1d7b7b4cf79f676/src/Lean/Elab/Structure.lean#L835\">https://github.com/leanprover/lean4/blob/dceed634a05e1d62588f89b9f1d7b7b4cf79f676/src/Lean/Elab/Structure.lean#L835</a></p>",
+        "id": 394929729,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1696461364
+    },
+    {
+        "content": "<p>But I'm very confused why is it sooo complicated. Maybe the <code>extends</code> business is really complicated. It would be definitely nice to have a nice streamlined API that creates a simple structure given a set of field names, types and structure parameters. </p>\n<p>I'm thinking about implementing \"struct of arrays\" support and such API would be useful for that.</p>",
+        "id": 394930736,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1696462168
+    },
+    {
+        "content": "<p>Wow, the function <code>mkProjections</code> is opaque, what is going on? Is it because the kernel needs to know about projections such that it can deal with <code>Expr.proj</code>?</p>",
+        "id": 394931479,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1696462689
+    },
+    {
+        "content": "<p>oof</p>",
+        "id": 394932273,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1696463372
+    }
+]

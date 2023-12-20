@@ -1,0 +1,260 @@
+[
+    {
+        "content": "<p>Let's say I <em>morally</em> want to create a lambda of the form</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">fun</span> <span class=\"o\">{</span><span class=\"n\">u</span><span class=\"o\">}</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">}</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">&lt;</span><span class=\"n\">body</span><span class=\"bp\">&gt;</span>\n</code></pre></div>\n<p>at the meta level. This is of course impossible as written—but what's the best way to emulate this in metaprogramming?</p>\n<p>If I use a universe mvar, then applying this lambda expr as an argument to functions like <code>mkAppM'</code> yields an application type mismatch error—I'm not sure how to tell lean to unify the mvar appropriately. The unification doesn't happen automatically.</p>\n<p>Or, maybe I could use some kind of intermediate, behind-the-scenes <code>addDecl</code> to get a universe polymorphic constant with actual params, then use that in lieu of a lambda.</p>\n<p>I'm still kind of hazy on the difference between level params and level mvars, except that params are...sort of like binding names for universes? And a constant having certain level params <code>u</code>, <code>v</code>, ... in its <code>ConstantInfo</code> effectively binds these  names in its type? Maybe? I really don't know. (Pointers to reading material/module docs are welcome! I couldn't find one in the file <code>Level</code> was defined.)</p>\n<p>Which of these approaches is viable (if either)—or is there a better approach?</p>",
+        "id": 358905724,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684306406
+    },
+    {
+        "content": "<p>level params are like <code>fvar</code>, level mvars are like <code>mvar</code></p>",
+        "id": 358905863,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684306462
+    },
+    {
+        "content": "<p>you want a level <code>bvar</code> and those don't exist</p>",
+        "id": 358905898,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684306475
+    },
+    {
+        "content": "<p>you could just keep a level fvar and remember the fvar name along with it</p>",
+        "id": 358905975,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684306512
+    },
+    {
+        "content": "<p>This is also basically what <code>ConstantInfo</code> does: it uses fvars for the universe variables, but it holds a list of fvar names so that they can be substituted later</p>",
+        "id": 358906135,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684306573
+    },
+    {
+        "content": "<p>a <code>ConstantInfo</code> is morally a <code>fun {u1 ... un} =&gt; &lt;actual value&gt;</code> after all</p>",
+        "id": 358906252,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684306622
+    },
+    {
+        "content": "<p>Hmmm, okay...! So I could make a fresh level param and turn it into a level, say <code>u</code>, construct the lambda e.g. <code>fun {α : Type u} (a : α) =&gt; &lt;body&gt;</code>—but then to apply this to some argument <code>a'</code> at the meta level...I guess I'd have to 1) look at the type of the type of the actual argument <code>a'</code> and get its level, then 2) replace <code>u</code> in the lambda with that level (then <code>mkAppM'</code> would hopefully work). Is that the cleanest way of doing this?</p>",
+        "id": 358907312,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684307007
+    },
+    {
+        "content": "<p>It kind of feels like universe mvars would be useful here, but I'm not sure how to make unification happen. (Or if universe mvars really behave like expr mvars...)</p>",
+        "id": 358907523,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684307088
+    },
+    {
+        "content": "<p>mvars would also work, although you can only assign them once, if you want to instantiate this thing multiple times you will need different mvars for each case</p>",
+        "id": 358909537,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684307946
+    },
+    {
+        "content": "<p>and they need to be in the mvar context, so they aren't suitable for long term storage like <code>ConstantInfo</code></p>",
+        "id": 358909614,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684307984
+    },
+    {
+        "content": "<p>oh, that's great to know! (I do indeed need to apply it to things more than once)</p>",
+        "id": 358909787,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684308039
+    },
+    {
+        "content": "<p>but that does make the function that returns this lambda a bit awkward, since I suppose it's also got to return these new level params.</p>",
+        "id": 358909951,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684308110
+    },
+    {
+        "content": "<p>and maybe...add them to some state to prevent the same one from being generated again later on and clashing?</p>",
+        "id": 358910059,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684308141
+    },
+    {
+        "content": "<p>do I need to worry about that?</p>",
+        "id": 358910083,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684308150
+    },
+    {
+        "content": "<p>no, the name generator has the context to ensure the name is not reused</p>",
+        "id": 358910170,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684308185
+    },
+    {
+        "content": "<p>which you will get as long as you are in a monad extending <code>CoreM</code></p>",
+        "id": 358910209,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684308201
+    },
+    {
+        "content": "<p>ok, great. this is in <code>forallBoundedTelescope</code> I maybe should mention. Not sure if that resets the whole state or just the cache</p>",
+        "id": 358910271,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684308225
+    },
+    {
+        "content": "<p>the name generator is never reset</p>",
+        "id": 358910330,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684308244
+    },
+    {
+        "content": "<p>that's a relief!</p>",
+        "id": 358910378,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684308257
+    },
+    {
+        "content": "<p>is that because it's special-cased, or is it one of a bunch of things that's never reset?</p>",
+        "id": 358910445,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684308296
+    },
+    {
+        "content": "<p>the latter</p>",
+        "id": 358910465,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684308303
+    },
+    {
+        "content": "<p>the default situation is for things not to be reset, unless they are in the \"backtrackable state\" from <code>MonadBacktrack</code></p>",
+        "id": 358910537,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684308334
+    },
+    {
+        "content": "<p>oh I lied, the entire <code>Core.State</code> is in the backtrackable state</p>",
+        "id": 358910778,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684308421
+    },
+    {
+        "content": "<p>including <code>ngen</code></p>",
+        "id": 358910800,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684308429
+    },
+    {
+        "content": "<p>aah, okay, gotcha, good to know! (I knew about the backtrackable state but did assume that almost everything was in it)</p>",
+        "id": 358911188,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684308591
+    },
+    {
+        "content": "<p>though I looked at <code>forallBoundedTelescope</code> and it looks like the <code>*Telescope</code>s don't actually backtrack the state anyway, maybe?</p>",
+        "id": 358911332,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684308632
+    },
+    {
+        "content": "<p>no, unless you use <code>&lt;|&gt;</code> or <code>saveState</code> and <code>s.restore</code> or similar it won't backtrack</p>",
+        "id": 358911488,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684308698
+    },
+    {
+        "content": "<p>cool, yeah, I'm pretty sure it just modifies the things it says it modifies via <code>withReader</code> (and that's it)</p>",
+        "id": 358911528,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684308720
+    },
+    {
+        "content": "<p>why would it?</p>",
+        "id": 358911538,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684308721
+    },
+    {
+        "content": "<p>I don't think it even ever fails</p>",
+        "id": 358911632,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684308741
+    },
+    {
+        "content": "<p>It at <em>least</em> restores \"the cache\" after executing its argument, and I wasn't sure how far that went</p>",
+        "id": 358911871,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684308829
+    },
+    {
+        "content": "<p>I don't think it restores anything</p>",
+        "id": 358911953,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684308855
+    },
+    {
+        "content": "<p>it runs the continuation in an extended context, that's it</p>",
+        "id": 358911993,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684308872
+    },
+    {
+        "content": "<p>it's in the reader context so there is nothing to restore</p>",
+        "id": 358912010,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684308884
+    },
+    {
+        "content": "<blockquote>\n<p>Given <code>type</code> of the form <code>forall xs, A</code>, execute <code>k xs A</code>.This combinator will declare local declarations, create free variables for them, execute <code>k</code> with updated local context, and make sure the cache is restored after executing <code>k</code>.</p>\n</blockquote>",
+        "id": 358912012,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684308884
+    },
+    {
+        "content": "<p>Right, I know that now that I've looked at the code :)</p>",
+        "id": 358912074,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684308909
+    },
+    {
+        "content": "<p>But I wasn't sure just from the docstring.</p>",
+        "id": 358912100,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684308924
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/universe.20polymorphic.20lambdas.20in.20metaprogramming/near/358910778\">said</a>:</p>\n<blockquote>\n<p>oh I lied, the entire <code>Core.State</code> is in the backtrackable state</p>\n</blockquote>\n<p>Oh I lied again, although the backtrackable state stores the whole <code>Core.State</code>, <code>s.restore</code> only pulls some fields out and leaves the rest, and the ngen is not restored</p>",
+        "id": 358912560,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684309091
+    },
+    {
+        "content": "<p>aha! interesting. I wonder why everything that's not backtracked is in the backtrackable state, then...</p>",
+        "id": 358913087,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684309301
+    },
+    {
+        "content": "<p>probably to avoid copying lots of things if <code>saveState</code> is called more often than <code>restore</code></p>",
+        "id": 358913666,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684309537
+    },
+    {
+        "content": "<p>Huh, ok—same kind of deal as how referring to just part of an array (and also the whole thing) causes it to get copied?</p>",
+        "id": 358914738,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684309924
+    },
+    {
+        "content": "<p>Anyway! Cool. Manual management of level params! I've got to turn in but ty for the info, this was very illuminating. :)</p>",
+        "id": 358914990,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1684310033
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> <a href=\"#narrow/stream/270676-lean4/topic/universe.20polymorphic.20lambdas.20in.20metaprogramming/near/358914738\">said</a>:</p>\n<blockquote>\n<p>Huh, ok—same kind of deal as how referring to just part of an array (and also the whole thing) causes it to get copied?</p>\n</blockquote>\n<p>No, these data structures are shared either way. It's more that you have to copy less pointers around</p>",
+        "id": 358926638,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1684313809
+    }
+]

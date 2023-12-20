@@ -1,0 +1,86 @@
+[
+    {
+        "content": "<p>I have a script which periodically updates a lean project using <code>lake update -R &amp;&amp; lake build</code>.</p>\n<p>Now I just had a failure where <code>lake update -R</code> just went into an infinite loop without recovery. Deleting <code>.lake/</code> solved the issue, but I'd prefer not to call <code>rm -rf .lake/</code> just preemptively on every update.</p>\n<ul>\n<li>Is there a recommendation for a more stable updating procedure? Would <code>lake clean -R &amp;&amp; lake update &amp;&amp; lake build</code> make a difference?</li>\n<li>Are there any recommendation on how to debug this next time to provide a useful bug report? My hunch is that some download got corrupted (no space left or bad connection) and then lake could not recover next time it tried.</li>\n</ul>",
+        "id": 406592430,
+        "sender_full_name": "Jon Eugster",
+        "timestamp": 1701971263
+    },
+    {
+        "content": "<p>A stacktrace would be very helpful for that</p>",
+        "id": 406593881,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1701971883
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"385895\">Jon Eugster</span> <a href=\"#narrow/stream/270676-lean4/topic/automatically.20updating.20project/near/406592430\">said</a>:</p>\n<blockquote>\n<p>Now I just had a failure where <code>lake update -R</code> just went into an infinite loop without recovery.</p>\n</blockquote>\n<p>That seems like a serious bug that should never happen! I think the goal should just be to fix it. More information would be very helpful!</p>",
+        "id": 406600621,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1701974451
+    },
+    {
+        "content": "<p>It's probably not that useful, but <span class=\"user-mention\" data-user-id=\"315577\">@Mac Malone</span> here are the things I could read from the system logs:</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n<p>Logs and stuff</p>\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<p>The first error message started on Dec 2, which is exactly after mathlibs <a href=\"https://github.com/leanprover-community/mathlib4/commits/master?before=d148891c7a477981efd52428cc471c3041f70a44+35&amp;branch=master&amp;qualified_name=refs%2Fheads%2Fmaster\">bump to v4.4.1-rc1</a>:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>Dec  2 12:00:01 adam lean4web: Starting build.\nDec  2 12:00:04 adam lean4web: error: ./.lake/packages/mathlib/lakefile.lean:6:2: error: 'leanOptions' is not a field of structure 'Lake.PackageConfig'\nDec  2 12:00:04 adam lean4web: error: ./.lake/packages/mathlib/lakefile.lean: package configuration has errors\nDec  2 12:00:04 adam lean4web: Finished in 0:3 min.\n</code></pre></div>\n<p>I guess this is a bit surprising, but I think I can explain that: <code>lake update -R</code> ran on <code>v4.3.0</code>, mathlib's post-update hook would change the toolchain to <code>v4.4.0-rc1</code>, but to do so, mathlib's <code>v4.4.0-rc1</code>-lakefile would first need to be parsed in <code>v4.3.0</code>, which it couldn't. Am I reading this right? Guess I just need to add this well-known workaround back to the script:</p>\n<div class=\"codehilite\" data-code-language=\"Bash\"><pre><span></span><code>curl<span class=\"w\"> </span>-L<span class=\"w\"> </span>https://raw.githubusercontent.com/leanprover-community/mathlib4/master/lean-toolchain<span class=\"w\"> </span>-o<span class=\"w\"> </span>lean-toolchain\n</code></pre></div>\n<p>Then these error message continued until Dec 5, where it started to just produce processes that kept running infinitely.</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>Dec  5 18:00:01 adam lean4web: Starting build.\nDec  6 00:00:01 adam lean4web: Starting build.\nDec  6 06:00:01 adam lean4web: Starting build.\n...\n</code></pre></div>\n<p>The corresponding <a href=\"https://github.com/leanprover-community/mathlib4/commits/master?before=55a024a3ed287d1da6b8991ccfb4eda89cbe4f01+35&amp;branch=master&amp;qualified_name=refs%2Fheads%2Fmaster\">mathlib PR</a> and the 4 PRs before that seem to be just ordinary PR's. </p>\n<p>Unfortunately, I already restarted the server, so there are no stacktraces I could access anymore. But before restarting I saw this, indicating that they indeed didn't stop:</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n<p>stuck cronjobs from the last few days</p>\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>adam@adam:~/lean4web$ pstree -aplcT -C age `pidof cron`\ncron,975 -f -P\n  ├─cron,2468858 -f -P\n  │       ├─logger,2468861 -t lean4web\n  │       └─npm run build_s,2468860\n  │           └─sh,2468876 -c server/build.sh\n  │               └─bash,2468877 server/build.sh\n  │                   └─bash,2468881 server/build.sh\n  │                       └─lake,2468883 update -R\n  ├─cron,2570418 -f -P\n  │       ├─logger,2570421 -t lean4web\n  │       └─npm run build_s,2570420\n  │           └─sh,2570437 -c server/build.sh\n  │               └─bash,2570438 server/build.sh\n  │                   └─bash,2570442 server/build.sh\n  │                       └─lake,2570444 update -R\n  ├─cron,2658795 -f -P\n  │       ├─logger,2658798 -t lean4web\n  │       └─npm run build_s,2658797\n  │           └─sh,2658813 -c server/build.sh\n  │               └─bash,2658814 server/build.sh\n  │                   └─bash,2658818 server/build.sh\n  │                       └─lake,2658820 update -R\n  ├─cron,2735206 -f -P\n  │       ├─logger,2735209 -t lean4web\n  │       └─npm run build_s,2735208\n  │           └─sh,2735224 -c server/build.sh\n  │               └─bash,2735225 server/build.sh\n  │                   └─bash,2735229 server/build.sh\n  │                       └─lake,2735231 update -R\n  ├─cron,2852274 -f -P\n  │       ├─logger,2852277 -t lean4web\n  │       └─npm run build_s,2852276\n  │           └─sh,2852299 -c server/build.sh\n  │               └─bash,2852300 server/build.sh\n  │                   └─bash,2852304 server/build.sh\n  │                       └─lake,2852306 update -R\n  ├─cron,2963787 -f -P\n  │       ├─logger,2963790 -t lean4web\n  │       └─npm run build_s,2963789\n  │           └─sh,2963805 -c server/build.sh\n  │               └─bash,2963806 server/build.sh\n  │                   └─bash,2963810 server/build.sh\n  │                       └─lake,2963812 update -R\n  ├─cron,3039969 -f -P\n  │       ├─logger,3039972 -t lean4web\n  │       └─npm run build_s,3039971\n  │           └─sh,3039988 -c server/build.sh\n  │               └─bash,3039989 server/build.sh\n  │                   └─bash,3039993 server/build.sh\n  │                       └─lake,3039995 update -R\n  └─cron,3139496 -f -P\n          ├─logger,3139499 -t lean4web\n          └─npm run build_s,3139498\n              └─sh,3139515 -c server/build.sh\n                  └─bash,3139516 server/build.sh\n                      └─bash,3139520 server/build.sh\n                          └─lake,3139522 update -R\n</code></pre></div>\n</div></div>\n</div></div>",
+        "id": 406608716,
+        "sender_full_name": "Jon Eugster",
+        "timestamp": 1701977764
+    },
+    {
+        "content": "<p>This is caused by <a href=\"https://github.com/leanprover/lean4/pull/2858\">lean4#2858</a>, which has detailed explanations in the PR. The workaround is suggested <a href=\"#narrow/stream/270676-lean4/topic/Invalid.20lake.20configuration/near/405630149\">here</a>.</p>",
+        "id": 406685474,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1702014824
+    },
+    {
+        "content": "<p>Thanks for digging that out. The fix you linked to is essentially the same I mention with <code>curl</code>, both just copy the relevant toolchain in manually.</p>\n<p>I guess the take-away here  is that mathlib's update-hook doesn't quiet work if you need it to be reliable.</p>\n<p>The more interesting part about this log was the second half, but I'm sad I don't have enough information on that one to get anywhere</p>",
+        "id": 406721374,
+        "sender_full_name": "Jon Eugster",
+        "timestamp": 1702028230
+    },
+    {
+        "content": "<p>The technical reason for why the <code>post_update</code> hook didn't work, is:</p>\n<ol>\n<li>the old lake runs <code>lake update</code></li>\n<li>it got a new Mathlib, containing its new lakefile, using a new lake feature, like <code>leanOption</code> in your case</li>\n<li>the old lake can't process the new lakefile, so it failed with the error you see, before ever getting to process and execute the <code>post_update</code> defined in Mathlib's new lakefile</li>\n</ol>\n<p>This is explained <a href=\"#narrow/stream/270676-lean4/topic/Invalid.20lake.20configuration/near/405628534\">here</a>.</p>",
+        "id": 406747240,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1702038024
+    },
+    {
+        "content": "<p>The second bug is that when lake update fails in (3) during elaboration, it leaves a <code>olean.trace</code> file which is empty, which is not valid json and so if you run <code>lake update</code> with new lake it will still complain unless you pass <code>-R</code></p>",
+        "id": 406747529,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1702038157
+    },
+    {
+        "content": "<p>Very subtle indeed</p>",
+        "id": 406747632,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1702038204
+    },
+    {
+        "content": "<p>And do you also know how this lead then to the process <code>lake update -R</code> just hanging up and not terminating for days, and also not complaining? That was the original question. All the things you describe are just part of how did we get lake in a bad state to start from.</p>",
+        "id": 406748089,
+        "sender_full_name": "Jon Eugster",
+        "timestamp": 1702038372
+    },
+    {
+        "content": "<p>nope</p>",
+        "id": 406748595,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1702038580
+    },
+    {
+        "content": "<p>Do you have other <code>lake</code> processes on the same server? Possibly triggered by other users. Could it be <code>lake</code> waiting on another <code>lake</code> process on the same directory? I observed this before, but I'm not sure if such behavior is still there.</p>",
+        "id": 406749914,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1702039027
+    },
+    {
+        "content": "<p>maybe it could be that one process crashed (maybe for outside reasons) without removing the lockfile and then in future all processes just waited, that's not a bad idea at all!</p>",
+        "id": 406750621,
+        "sender_full_name": "Jon Eugster",
+        "timestamp": 1702039271
+    },
+    {
+        "content": "<p>The first bug is known to complain and exit. The second bug also exits immediately too (I've made <code>.lake/lakefile.olean.trace</code> empty):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">%</span> <span class=\"n\">lake</span> <span class=\"n\">update</span>\n<span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">compiled</span> <span class=\"n\">configuration</span> <span class=\"n\">is</span> <span class=\"n\">invalid</span><span class=\"bp\">;</span> <span class=\"n\">run</span> <span class=\"k\">with</span> <span class=\"bp\">`-</span><span class=\"n\">R</span><span class=\"bp\">`</span> <span class=\"n\">to</span> <span class=\"n\">reconfigure</span>\n</code></pre></div>\n<p><code>lake -R</code> will recreate the <code>.lake/lakefile.olean.trace</code> whether it's empty or incomplete.</p>\n<p>Also, I can't observe lake blocking on each other now.</p>",
+        "id": 406753040,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1702040026
+    }
+]

@@ -1,0 +1,704 @@
+[
+    {
+        "content": "<p>We have quite a few CI runs in which either nothing, or only a handful of files, needs to be compiled. Typical timings for such runs are:</p>\n<ul>\n<li>30s of <code>get cache</code></li>\n<li>10s of <code>build</code></li>\n<li>20s of <code>upload cache</code></li>\n<li>150s of <code>archive</code></li>\n<li>30s of <code>counterexamples</code></li>\n<li>60s of <code>test</code></li>\n<li>900s of <code>lint</code></li>\n</ul>\n<p>I think there is some low hanging fruit here!</p>\n<ul>\n<li>When would it be safe to skip the <code>lint</code> step? Presumably if there is nothing to compile at all, it is safe to skip the linting step? (Unless we are tweaking the linter script itself?)</li>\n<li>Can we just cache the <code>archive</code>, thereby saving much of the <code>150s</code> for most runs? I recall when we ported the archive there was some objection to doing so, but I forget the reasoning.</li>\n</ul>",
+        "id": 388662513,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693640270
+    },
+    {
+        "content": "<p>I think the argument might have been \"nobody depends on anything from the archive\", but it could also be something else</p>",
+        "id": 388663632,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1693641111
+    },
+    {
+        "content": "<p>I wonder if it's easy to profile where all the lint time goes</p>",
+        "id": 388663709,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1693641155
+    },
+    {
+        "content": "<p>Most likely the simpNF linter</p>",
+        "id": 388664037,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1693641415
+    },
+    {
+        "content": "<p>I assume the hesitation in caching the archive is just that it's a waste of storage space in some sense?</p>",
+        "id": 388665108,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1693642230
+    },
+    {
+        "content": "<p>Do we have any way currently to ask our cache server \"how much disk space are you using for each Lean package?\"?</p>",
+        "id": 388665258,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1693642327
+    },
+    {
+        "content": "<p>Do the \"lean\" linters run on <code>Archive/Counterexamples</code>?  If they do not, then running them on PRs that only change files in these folders would not be needed, since these files are not imported back by Mathlib, right?</p>",
+        "id": 388675988,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693649607
+    },
+    {
+        "content": "<p>Also, most of the times, I want to see that mathlib builds.  It would be nice if there were at least the option of skipping the builds of <code>Archive/Counterexamples/test</code>/final linting.  Something like a flag \"just build mathlib\".</p>",
+        "id": 388676421,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693649909
+    },
+    {
+        "content": "<p>Moreover, I know that I have been surprised several times by the global effects of changes in mathlib files, but, if I modify a leaf file, can the <code>simpNF</code> linter fail on a declaration not in the leaf file?  Does it need to run on the unmodified files to know its effect on the new leaf?  Maybe there is something that the linting can cache that would allow it to run just on a fragment of mathlib?  (I know that I am talking about things that I do not understand, so this may be nonsense.)</p>",
+        "id": 388676918,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693650256
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"321459\">@Damiano Testa</span>, I don't really follow why you need flags because you \"want to see that mathlib builds.\"; you can just click the build job and see a green tick next to the mathlib step</p>",
+        "id": 388676972,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1693650300
+    },
+    {
+        "content": "<p>Eric, I do that.  My suggestion was in order to avoid running extra checks that I normally do not care about until later in the PR process.  I normally wait until there is a mathlib cache and after that I am happy!</p>",
+        "id": 388677129,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693650390
+    },
+    {
+        "content": "<p>Although maybe the thread was \"speeding up CI <em>but not giving up on doing all the checks</em>\".</p>",
+        "id": 388677186,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693650456
+    },
+    {
+        "content": "<p>The simpNF really is global, and without careful thinking/extra work needs to see the whole library, and can't assume that local changes have local effects.</p>",
+        "id": 388678046,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693651029
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"321459\">@Damiano Testa</span>, the extra checks already only run later in the PR process?</p>",
+        "id": 388678085,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693651059
+    },
+    {
+        "content": "<p>I guess we should be able to refactor to parallelize <code>archive</code> / <code>counterexamples</code> / <code>test</code> / <code>lint</code>.</p>",
+        "id": 388678166,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693651094
+    },
+    {
+        "content": "<p>I don't think there are actual dependencies between those.</p>",
+        "id": 388678198,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693651135
+    },
+    {
+        "content": "<p>Ok, my suggestions were \"I would be happy to give up on some checks most of the times and would be happy to have the option of not running them sometimes\".  I realize now that this was not the idea of this thread.</p>",
+        "id": 388678242,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693651167
+    },
+    {
+        "content": "<p>I think one reason we haven't previously been caching <code>archive</code> is because this would postpone <code>upload cache</code>, but of course this could be solved simply by doing an upload step separately after <code>build</code> / <code>archive</code> / <code>counterexample</code>.</p>",
+        "id": 388678268,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693651198
+    },
+    {
+        "content": "<p>One thing that I think can be done is not building <code>Archive/Counterexamples</code> unless they import a file that is changed by the current PR, right?</p>",
+        "id": 388678316,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693651206
+    },
+    {
+        "content": "<p>That already happens, we build incrementally.</p>",
+        "id": 388678357,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1693651248
+    },
+    {
+        "content": "<p>That's true. But if we could decide that it's okay to cache the oleans in <code>archive</code> and <code>counterexamples</code>, then there is a simple way to do this without any new logic.</p>",
+        "id": 388678362,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693651252
+    },
+    {
+        "content": "<p>So, if I add a leaf file, then <code>Archive/Counterexample</code> and maybe also <code>test</code> should not be affected.</p>",
+        "id": 388678390,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693651268
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"197836\">@Jireh Loreaux</span> I think the problem is that we <em>always</em> rebuild <code>archive</code> and <code>countexamples</code> from scratch, because they are not cached.</p>",
+        "id": 388678399,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693651280
+    },
+    {
+        "content": "<p>Oh I see</p>",
+        "id": 388678419,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1693651295
+    },
+    {
+        "content": "<p>Working out how to do incremental building for <code>test</code> might be a good idea. Can we just make <code>test</code> a proper subproject like <code>archive</code> and <code>counterexample</code>, rather than just a \"please run everything\" makefile?</p>",
+        "id": 388678526,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693651364
+    },
+    {
+        "content": "<p>I find that in a lot of my PRs, building mathlib takes way less time than either one of <code>Archive/Counterexamples/test</code>.  Of course, this depends on how \"deep\" the PR is, but all those checks are usually unnecessary.</p>",
+        "id": 388678589,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693651415
+    },
+    {
+        "content": "<p>Here's an idea that could speed up the linter, I think, despite the non-locality. We could synthesize a new file that imports all changed files <strong>and</strong> everything downstream of the changed files, and only run the linter on that.</p>\n<p>Sometimes of course this would end up being very close to <code>import Mathlib</code>. But often it would not, for \"side branches\" of Mathlib.</p>",
+        "id": 388678864,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693651590
+    },
+    {
+        "content": "<p>Does anyone have an example of a change in a later file that can make linting fail on an earlier file?  I know that you can add a module doc in a later file to appease the docs-linter, for instance, but I am wondering about the opposite: if the linter was happy without the later file, can it become unhappy <em>on the earlier file</em> by adding the new one?</p>",
+        "id": 388679217,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693651817
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388678166\">said</a>:</p>\n<blockquote>\n<p>I guess we should be able to refactor to parallelize <code>archive</code> / <code>counterexamples</code> / <code>test</code> / <code>lint</code>.</p>\n</blockquote>\n<p>Can’t everything after <code>build</code> be done in parallel?</p>",
+        "id": 388679324,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1693651919
+    },
+    {
+        "content": "<p>Yes, Damiano. Simply duplicate an earlier simp lemma in a later file and tag it simp as well. <code>simp_nf</code> will complain. In fact, you can do that with any two files, so Scott's \"side branches of mathlib\" idea doesn't for <code>simp_nf</code>.</p>",
+        "id": 388683044,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1693654447
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306577\">Matthew Ballard</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388679324\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388678166\">said</a>:</p>\n<blockquote>\n<p>I guess we should be able to refactor to parallelize <code>archive</code> / <code>counterexamples</code> / <code>test</code> / <code>lint</code>.</p>\n</blockquote>\n<p>Can’t everything after <code>build</code> be done in parallel?</p>\n</blockquote>\n<p>No, the linter in principle needs to run on all of archive/counterexamples/mathlib simultaneously</p>",
+        "id": 388687191,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1693657099
+    },
+    {
+        "content": "<p>Maybe we only lint mathlib for now though</p>",
+        "id": 388687198,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1693657111
+    },
+    {
+        "content": "<p>Damiano, it's even possibly non-trivially - I somehow did it with the little wedderburn PR (that is, cause simpnf changes whilst changing a leaf file) - I didn't even need simp lemmas, just some instance!</p>",
+        "id": 388688192,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1693657866
+    },
+    {
+        "content": "<p>I think the obvious solution to the <code>Archive</code> build situation is to just make it a separate project, with its own update schedule with a lower frequency than mathlib master</p>",
+        "id": 388691969,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693660663
+    },
+    {
+        "content": "<p>I'm not sure that's a good idea; a big part of reviewing new archive submissions is \"this lemma looks useful, can you move it to mathlib proper?\". This is a lot harder if new contributors now have to learn how to bump mathlib in the archive repo</p>",
+        "id": 388693142,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1693661453
+    },
+    {
+        "content": "<p>mathlib maintainers (or CI) would be responsible for bumping the archive</p>",
+        "id": 388694413,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693662350
+    },
+    {
+        "content": "<p>the situation is fairly analogous to mathlib bumps of std</p>",
+        "id": 388694490,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693662387
+    },
+    {
+        "content": "<p>generally, an archive PR would not involve bumping mathlib</p>",
+        "id": 388694555,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693662427
+    },
+    {
+        "content": "<p>Archive submissions represent an extremely small proportion of PRs to mathlib and if they're causing a disproportionate amount of slowdown then perhaps the disadvantages outweigh the advantages.</p>",
+        "id": 388694890,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1693662658
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"387244\">@Yaël Dillies</span> I think that this is different from the example that I wanted.  I was looking for a failure <em>on the old file</em>.  I understand that errors in the new file may depend on what the file imports.  I was just wondering if it was possible that something would be flagged as failing on the earlier file, because of something in the later file.</p>",
+        "id": 388695670,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693663305
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"284160\">@Eric Rodriguez</span> that sounds like it might be an example: can you be more specific about what broke earlier?</p>",
+        "id": 388695771,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693663360
+    },
+    {
+        "content": "<p>Basically, my question is \"can you cache something smallish from a previous run of the linter so that adding a leaf, means you only have to process the leaf, <em>using the cached information</em>, instead of having to recompute everything from scratch.</p>\n<p>I suspect that the answer is \"you cannot do this\", but I do not have a clear example of what can go wrong.</p>",
+        "id": 388695934,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693663497
+    },
+    {
+        "content": "<p>I do think having linting as a separate step that must be triggered manually could be helpful, even though bors would still require it before merging. That is by far the biggest time suck.</p>",
+        "id": 388697741,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1693664773
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"321459\">Damiano Testa</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388695771\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"284160\">Eric Rodriguez</span> that sounds like it might be an example: can you be more specific about what broke earlier?</p>\n</blockquote>\n<p>I think the instance of field from finite division ring broke stuff in instance search and made it slower, therefore causing the linter to go past timeout. But I wasn't able to investigate easily, because I think the notations for the brackets in algebra.adjoin collide with the notation manifolds people use for C(infty) and such like, so importing one file into the other broke a lot</p>",
+        "id": 388697939,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1693664934
+    },
+    {
+        "content": "<p>So I'm not fully sure what's happened</p>",
+        "id": 388697947,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1693664943
+    },
+    {
+        "content": "<p>Eric, thanks for the details!  Anyway, I was just trying to find out whether keeping a tally of a bunch of data from a previous run might make it quicker for a later run.  However, whether this is reasonable and achievable is something that requires a very deep knowledge of the linters and, to be honest, I do not even know what it is that they check...  <span aria-label=\"shrug\" class=\"emoji emoji-1f937\" role=\"img\" title=\"shrug\">:shrug:</span></p>",
+        "id": 388698203,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693665112
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110038\">Kevin Buzzard</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388694890\">said</a>:</p>\n<blockquote>\n<p>Archive submissions represent an extremely small proportion of PRs to mathlib and if they're causing a disproportionate amount of slowdown then perhaps the disadvantages outweigh the advantages.</p>\n</blockquote>\n<p>Note that the slowdown is only disproportionate for</p>\n<blockquote>\n<p>CI runs in which either nothing, or only a handful of files, needs to be compiled.</p>\n</blockquote>\n<p>which also represent a reasonable small proportion of PRs to mathlib</p>",
+        "id": 388698691,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1693665459
+    },
+    {
+        "content": "<p>As I see it, we have a choice between:</p>\n<ol>\n<li>Pay the 150s build time cost by doing nothing</li>\n<li>Pay the unknown storage space cost by turning on caching for <code>Archive</code></li>\n<li>Pay the maintenance and contribution burden of having separate repos</li>\n</ol>\n<p>It would be good to have an estimate available for option 2 to decide whether the cost is negligable, before deciding on option 3.<br>\nCertainly for the CI runs in question, the storage cost is zero (since the archive wouldn't be rebuilt at all). A more reasonable metric would be the total (compressed) olean size of Archive vs the rest of mathlib as a whole</p>",
+        "id": 388698986,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1693665647
+    },
+    {
+        "content": "<p>re archiving archive: I have never been bothered by build time costs because I am never in a hurry, I just reacted because I've never really felt that the archive was part of mathlib, but somehow that's probably another debate (and one which we've had before).</p>",
+        "id": 388699662,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1693666071
+    },
+    {
+        "content": "<p>Note that option 2 won't actually save us the build time cost, because it still has to be rebuilt on most commits to mathlib</p>",
+        "id": 388710643,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693673131
+    },
+    {
+        "content": "<p>Also option 3 is not the only way to achieve the build savings of option 3 - we can just not build the archive on most builds. The drawback is that it's awkward to have an archive that builds on a version of mathlib which doesn't match the one in the adjacent folder</p>",
+        "id": 388710791,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693673268
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388710643\">said</a>:</p>\n<blockquote>\n<p>Note that option 2 won't actually save us the build time cost, because it still has to be rebuilt on most commits to mathlib</p>\n</blockquote>\n<p>I'm not sure how true that is. At the extreme end of the spectrum, we seem to bump Std almost every day, which means we end up with an hour of rebuild anyway. 2.5min/hour isn't much overhead</p>",
+        "id": 388711138,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1693673543
+    },
+    {
+        "content": "<p>Perhaps we should temporarily turn the cache on and see whether people notice?</p>",
+        "id": 388711178,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1693673589
+    },
+    {
+        "content": "<p>Re Mario's suggestion for 3: Could we have it where CI doesn't build the archive but bors does? (Could we have a command issued in a PR comment to build the archive? That way a reviewer can get an assurance that it builds before merging.)</p>\n<p>Without really understanding all the issues, I like Scott's suggestion from earlier, where we build mathlib, archive, and counterexample, and upload the cache after each. Maybe they could each do their own <code>get cache</code>? I wouldn't mind if by default <code>lake exe get cache</code> only gets the main mathlib cache and if you had to do something special to download the archive and counterexample ones.</p>",
+        "id": 388713516,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693675286
+    },
+    {
+        "content": "<p>Besides, when I open a file in VSCode, I get the impression that it gets processed whether or not there is an available cache: the cache seems to prevent dependencies of that file from being processed, but not the file itself, right?  Since the files in <code>Archive/Counterexamples</code> are shallow, in the sense that they (only?) import files from <code>Mathlib</code>, their cache seems to be never used locally anyway...  is this correct?</p>",
+        "id": 388714479,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693676133
+    },
+    {
+        "content": "<p>Ah, except probably <code>lake build</code> would notice if there is or not a cache for such files.</p>",
+        "id": 388714576,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1693676213
+    },
+    {
+        "content": "<p>There isn't much point in loading that cache though:</p>\n<ul>\n<li>If the archive file has changed, it needs to be rebuilt and the cache is useless</li>\n<li>If the dependencies have changed and the archive has not, it needs to be rebuilt and the cache is useless (only the mathlib cache is used)</li>\n<li>If the dependencies have not changed and the archive file has not, it does not need to be rebuilt and if we aren't making an archive cache then we don't need to do anything, and the cache is useless</li>\n</ul>",
+        "id": 388714975,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693676625
+    },
+    {
+        "content": "<blockquote>\n<p>If the archive file has changed, it needs to be rebuilt and the cache is useless</p>\n</blockquote>\n<p>If one file is changed in the archive, why wouldn't a cache prevent the rest of the files from being rebuilt?</p>\n<blockquote>\n<p>only the mathlib cache is used</p>\n</blockquote>\n<p>Is it the case that if any of mathlib is changed, then that would invalidate the entire archive cache? (I guess because it depends on <code>Mathlib.lean</code>?)</p>",
+        "id": 388715240,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693676855
+    },
+    {
+        "content": "<p>More precisely, what lake actually needs is the trace for the file dependency job, which only includes the hash of the file contents and the combined hash of the includes. If you upload that trace file (just a file with a number in it), then lake will not rebuild it</p>",
+        "id": 388715265,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693676879
+    },
+    {
+        "content": "<p>but also, we could just hack lake if necessary if it doesn't have the right behavior</p>",
+        "id": 388715391,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693676989
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388714975\">said</a>:</p>\n<blockquote>\n<ul>\n<li>If the dependencies have not changed and the archive file has not, it does not need to be rebuilt and if we aren't making an archive cache then we don't need to do anything, and the cache is useless</li>\n</ul>\n</blockquote>\n<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>, I don't understand this point. If neither Mathlib nor <code>archive</code> have changed, currently we build <em>all</em> of <code>archive</code>.</p>",
+        "id": 388873339,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693784679
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> I'm not describing the current setup, I'm describing the minimum build requirements assuming we have everything working as intended</p>",
+        "id": 388902487,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693800354
+    },
+    {
+        "content": "<p>If neither mathlib nor archive has changed, of course we need to build nothing and we don't need the cache either since we aren't building anything</p>",
+        "id": 388902583,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693800392
+    },
+    {
+        "content": "<p>But just thinking about Mathlib: if nothing has changed, the way we avoid building anything is by having the cache available!</p>",
+        "id": 388902655,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693800457
+    },
+    {
+        "content": "<p>determining that neither mathlib nor the archive has changed requires the mathlib cache (to see that the imports are still good), plus hashing the archive <em>files</em> (the <code>.lean</code> files)</p>",
+        "id": 388902755,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693800492
+    },
+    {
+        "content": "<p>Okay. My instinct is that you're suggesting we build extra tooling which is fairly specific to the archive, and I just care less about the archive and would like an easy path to getting it out of every CI run.</p>",
+        "id": 388902899,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693800603
+    },
+    {
+        "content": "<p>that is, a hypothetical \"archive cache\" would want to store a list of hashes of (mathlib imports to file Archive.X + text of Archive.X) which have successfully been compiled</p>",
+        "id": 388902931,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693800615
+    },
+    {
+        "content": "<p>and no oleans</p>",
+        "id": 388902939,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693800627
+    },
+    {
+        "content": "<p>I think the \"easy path\" is moving it from mathlib to a separate project <span aria-label=\"shrug\" class=\"emoji emoji-1f937\" role=\"img\" title=\"shrug\">:shrug:</span></p>",
+        "id": 388903090,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693800735
+    },
+    {
+        "content": "<p>So it seems the alternatives are:</p>\n<ul>\n<li>with very little effort, we turn on olean caching for the archive, and the problem goes away, at the expense of some wasted disk and network resources</li>\n<li>a hypothetical person implements this hypothetical archive cache. :-)</li>\n</ul>",
+        "id": 388903092,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693800736
+    },
+    {
+        "content": "<p>That (moving it to a separate project) I can agree with. :-)</p>",
+        "id": 388903108,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693800752
+    },
+    {
+        "content": "<p>The steps there are:</p>\n<ul>\n<li>get agreement to move to a separate project (mathlib maintainers?)</li>\n<li>rip everything out into a separate repo</li>\n<li>let it sit there until someone asks to be the designated maintainer of the <code>archive</code></li>\n<li>mathlib maintainers say \"yes please\" and hand it off?</li>\n</ul>",
+        "id": 388903276,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693800881
+    },
+    {
+        "content": "<p>I have already implemented many features in <code>lean-cache</code> to support more flexibility of caching, but it's near the limit of what can be done without actually doing some deployment and testing</p>",
+        "id": 388903279,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693800885
+    },
+    {
+        "content": "<p>(reminder, it already ticks the \"fast no-op\" box, it's about 190ms on mathlib)</p>",
+        "id": 388903384,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693800960
+    },
+    {
+        "content": "<p>How about we do everything?</p>\n<ul>\n<li>I make a PR (today?) that just turns on the current caching infrastructure for <code>archive</code>, with a big nerd-sniping comment on it saying \"This is dumb, we shouldn't be caching these oleans just to avoid building.\"</li>\n<li>We plan that if <code>/Archive/</code> still exists by the time <code>lean-cache</code> is deployed, it will replace that hack.</li>\n<li>Simultaneously we begin seeing if there is consensus for splitting out the archive / finding a maintainer?</li>\n</ul>",
+        "id": 388903601,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693801086
+    },
+    {
+        "content": "<p>it's very easy to modify <code>lake exe cache</code> so that it doesn't upload the olean files for the archive, only the olean.trace files. I haven't tested that lake will do the desired thing in that case though</p>",
+        "id": 388903876,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693801319
+    },
+    {
+        "content": "<p>Isn't the whole point of the archive that it's maintained along with mathlib?</p>\n<p>As a simple solution, would it help to move the archive under Mathlib/?</p>",
+        "id": 388909172,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1693804793
+    },
+    {
+        "content": "<p>mathport is also maintained along with mathlib but that doesn't mean it has to track every single commit</p>",
+        "id": 388910167,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693805350
+    },
+    {
+        "content": "<p>I would be happy to spin up the CI that tries to bump the <code>lean-toolchain</code> and Mathlib dependency of an <code>Archive</code> repository daily, and emails/zulips the relevant maintainers if there is a failure.</p>",
+        "id": 388911095,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693805784
+    },
+    {
+        "content": "<p>I like the friendliness of a monorepo. If we split off <code>Archive</code>, I expect we'll see the following:</p>\n<ul>\n<li>there will be fewer contributions because people will be less aware of it</li>\n<li>its PR queue will get significantly less attention by maintainers</li>\n<li>reviews will be much less likely to suggest moving useful bits into mathlib because of how much more of a pain it is dealing with multiple projects (and my impression is that many people who contribute to mathlib are exposed to git for the first time via mathlib)</li>\n<li>refactors will rarely take into consideration how they break the Archive (I've redesigned refactors because of this before)</li>\n</ul>\n<p>I've found the Archive to also be useful as an extra test suite of more realistic Lean code than what's in the test folder.</p>\n<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> Wouldn't moving it into a separate project be sort of going in a direction opposite of your previous comments that ideally big Lean projects should be contributed to mathlib?</p>\n<p>Maybe instead of splitting it off it'd be better if we scavenged the archive for more library code, if even after turning on caching it's taking a large amount of CI time.</p>",
+        "id": 388913519,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693807000
+    },
+    {
+        "content": "<p>My goal in this thread is to get rid of the 150s in every CI run spent on Archive. I am mostly very happy to keep Archive, and I think we've now demonstrated that we're not getting rid of it. Thus I think there are two good plans, which can be executed simultaneously:</p>\n<ul>\n<li>I make a PR (today?) that just turns on the current caching infrastructure for <code>archive</code>, with a big nerd-sniping comment on it saying \"This is dumb, we shouldn't be caching these oleans just to avoid building.\"</li>\n<li>We plan that by the time <code>lean-cache</code> is deployed, it will replace that hack.</li>\n</ul>",
+        "id": 388914517,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693807506
+    },
+    {
+        "content": "<p>Sounds good to me</p>",
+        "id": 388916652,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1693808539
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388687191\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>Can’t everything after <code>build</code> be done in parallel?</p>\n</blockquote>\n<p>No, the linter in principle needs to run on all of archive/counterexamples/mathlib simultaneously</p>\n</blockquote>\n<p><span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span>, I think this is false, and the mathlib linter actually ignores archive and counterexamples.</p>",
+        "id": 388931939,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693815209
+    },
+    {
+        "content": "<p>the \"in principle\" was load bearing :)</p>",
+        "id": 388932086,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1693815261
+    },
+    {
+        "content": "<p><code>Archive.Imo.Imo1960Q1</code> takes much longer than the rest of the Archive to build, if anyone would like to investigate that.</p>",
+        "id": 388933785,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693815869
+    },
+    {
+        "content": "<p>Ugh, it is a brute force search that probably shouldn't have been merged in the first place.</p>",
+        "id": 388934016,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693815950
+    },
+    {
+        "content": "<p>It was much faster in mathlib3.</p>",
+        "id": 388935271,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693816334
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"246273\">@Bhavik Mehta</span> has been discussing this on Xena. We haven't yet managed to pinpoint what exactly makes those proofs so slow. Very weird...</p>",
+        "id": 388936065,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1693816626
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">theorem</span> <span class=\"n\">left_direction</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">spn</span> <span class=\"o\">:</span> <span class=\"n\">SolutionPredicate</span> <span class=\"n\">n</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ProblemPredicate</span> <span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"c1\">-- Porting note: This is very slow</span>\n  <span class=\"c1\">-- rcases spn with (rfl | rfl) &lt;;&gt; refine' ⟨_, _, _⟩ &lt;;&gt; norm_num</span>\n  <span class=\"n\">rcases</span> <span class=\"n\">spn</span> <span class=\"k\">with</span> <span class=\"o\">(</span><span class=\"n\">rfl</span> <span class=\"bp\">|</span> <span class=\"n\">rfl</span><span class=\"o\">)</span> <span class=\"bp\">&lt;;&gt;</span> <span class=\"n\">refine'</span> <span class=\"o\">⟨</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"kd\">by</span> <span class=\"n\">decide</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">⟩</span> <span class=\"bp\">&lt;;&gt;</span> <span class=\"n\">rfl</span>\n</code></pre></div>\n<p>Using <code>norm_num</code> reduces this from ~20s to ~8s on my laptop.</p>",
+        "id": 388936161,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1693816668
+    },
+    {
+        "content": "<p>But that still seems ridiculously slow.</p>",
+        "id": 388936178,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1693816675
+    },
+    {
+        "content": "<p>Of course this is the \"easy\" direction.</p>",
+        "id": 388936247,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1693816687
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388935271\">said</a>:</p>\n<blockquote>\n<p>It was much faster in mathlib3.</p>\n</blockquote>\n<p>Yes, there are a ton of searches involving Lists/Finsets that are significantly slower in mathlib4 than in mathlib3 - <span class=\"user-mention\" data-user-id=\"110044\">@Chris Hughes</span> condensed one of my examples to</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">theorem</span> <span class=\"n\">parts_property</span> <span class=\"o\">:</span>\n    <span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"mi\">4</span> <span class=\"bp\">→</span> <span class=\"n\">Fin</span> <span class=\"mi\">2</span><span class=\"o\">)</span>\n      <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"o\">:</span> <span class=\"n\">y</span> <span class=\"bp\">∈</span> <span class=\"o\">({</span><span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">],</span> <span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">],</span> <span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">],</span> <span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">],</span> <span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">]}</span> <span class=\"o\">:</span>\n        <span class=\"n\">List</span> <span class=\"o\">(</span><span class=\"n\">Fin</span> <span class=\"mi\">4</span> <span class=\"bp\">→</span> <span class=\"n\">Fin</span> <span class=\"mi\">2</span><span class=\"o\">))),</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">decide</span>\n</code></pre></div>\n<p>which times out in Lean 4 but is very fast in Lean 3. (My actual case was a brute force search for a problem where the proof on paper is \"brute force search\", to help prove values of small ramsey numbers, it's fast in Lean 3 after doing appropriate reductions but massively slow in Lean 4). </p>\n<p>One difference is that Lean 4 doesn't infer the Decidable instance as <code>List.decidableBall</code>, but rather something else (which imo is a sign we should increase the priority of this instance and similar ones); but even increasing the priority of this instance locally it's still way slower in Lean 4. This is one of the main blockers to porting one of my projects to Lean 4...</p>",
+        "id": 388940878,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1693818135
+    },
+    {
+        "content": "<p>It would be great to have a mathlib-free minimisation!</p>",
+        "id": 388942849,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693818790
+    },
+    {
+        "content": "<p>I agree! I've been trying but I haven't quite figured one out yet... but I'll stop talking about this slowdown in this particular thread to avoid derailing</p>",
+        "id": 388943619,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1693819049
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> Do you agree that a brute force computation is a morally correct formal solution to this IMO problem? Or should we go for a more theoretical solution anyways?</p>",
+        "id": 388944510,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1693819326
+    },
+    {
+        "content": "<p>81 cases seems legit to me. We should support such solutions, I think.</p>",
+        "id": 388944567,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1693819350
+    },
+    {
+        "content": "<p>I think for an IMO problem a brute force search should at least be fast for the computer.</p>",
+        "id": 388944664,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693819390
+    },
+    {
+        "content": "<p>Right. But this particular solution ought to check in &lt; 1s. And probably even &lt; 0.1s. So I'm inclined to keep it as is, as a benchmark.</p>",
+        "id": 388945202,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1693819560
+    },
+    {
+        "content": "<p>I agree. When I complained above it this being merged in the first place I incorrectly assumed it was always slow.</p>\n<p>Porting a benchmark by adding a huge maxHeartbeats maybe wasn't ideal. :-)</p>",
+        "id": 388945905,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693819799
+    },
+    {
+        "content": "<p>Well, we wanted to get the port done. But we should certainly track this issue. Maybe even with a GH issue.</p>",
+        "id": 388946094,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1693819850
+    },
+    {
+        "content": "<p>Here's a surprising result. Guess which is the slowest linter (by worst case)?</p>",
+        "id": 388947427,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693820278
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"mi\">430</span><span class=\"bp\">.</span><span class=\"mi\">063014</span> <span class=\"n\">unusedArguments</span> <span class=\"n\">RingHom.RespectsIso.ofRestrict_morphismRestrict_iff</span>\n<span class=\"mi\">201</span><span class=\"bp\">.</span><span class=\"mi\">888680</span> <span class=\"n\">simpNF</span> <span class=\"n\">AlgebraicGeometry.StructureSheaf.isLocallyFraction_pred</span>\n<span class=\"mi\">182</span><span class=\"bp\">.</span><span class=\"mi\">304759</span> <span class=\"n\">simpNF</span> <span class=\"n\">Rep.MonoidalClosed.linearHomEquivComm_hom</span>\n<span class=\"mi\">179</span><span class=\"bp\">.</span><span class=\"mi\">932156</span> <span class=\"n\">simpNF</span> <span class=\"n\">Rep.MonoidalClosed.linearHomEquiv_hom</span>\n<span class=\"mi\">145</span><span class=\"bp\">.</span><span class=\"mi\">505241</span> <span class=\"n\">simpNF</span> <span class=\"n\">Matrix.linfty_op_nnnorm_row</span>\n<span class=\"mi\">119</span><span class=\"bp\">.</span><span class=\"mi\">100756</span> <span class=\"n\">simpNF</span> <span class=\"n\">lp.infty_coeFn_nat_cast</span>\n<span class=\"mi\">118</span><span class=\"bp\">.</span><span class=\"mi\">556040</span> <span class=\"n\">simpNF</span> <span class=\"n\">CategoryTheory.OplaxNatTrans.whiskerRight_naturality_comp_assoc</span>\n<span class=\"mi\">118</span><span class=\"bp\">.</span><span class=\"mi\">393575</span> <span class=\"n\">simpNF</span> <span class=\"n\">lp.infty_coeFn_int_cast</span>\n<span class=\"mi\">116</span><span class=\"bp\">.</span><span class=\"mi\">262702</span> <span class=\"n\">simpNF</span> <span class=\"n\">Matrix.linfty_op_norm_col</span>\n<span class=\"mi\">95</span><span class=\"bp\">.</span><span class=\"mi\">031026</span> <span class=\"n\">simpNF</span> <span class=\"n\">CategoryTheory.OplaxFunctor.bicategory_comp_naturality</span>\n<span class=\"mi\">94</span><span class=\"bp\">.</span><span class=\"mi\">551145</span> <span class=\"n\">simpNF</span> <span class=\"n\">AlgebraicGeometry.Scheme.GlueData.ι_isoCarrier_inv</span>\n</code></pre></div>",
+        "id": 388947535,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693820308
+    },
+    {
+        "content": "<p>I'll post the full results somewhere shortly when <code>sort</code> finishes. :-)</p>",
+        "id": 388947608,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693820335
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388944664\">said</a>:</p>\n<blockquote>\n<p>I think for an IMO problem a brute force search should at least be fast for the computer.</p>\n</blockquote>\n<p>I'm not sure it's fair to classify this direction as a brute force search by the way (unless I'm missing something), it's only checking 2 numbers and doing numeric calculations on them...</p>",
+        "id": 388948093,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1693820500
+    },
+    {
+        "content": "<p>I'm... not surprised <span aria-label=\"grinning face with smiling eyes\" class=\"emoji emoji-1f601\" role=\"img\" title=\"grinning face with smiling eyes\">:grinning_face_with_smiling_eyes:</span></p>",
+        "id": 388948099,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1693820503
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"246273\">@Bhavik Mehta</span> It's running through 82 cases. That's not what a pen-and-paper proof would look like (hopefully).</p>",
+        "id": 388948845,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1693820720
+    },
+    {
+        "content": "<p>So I think it's an example of brute force search. Even if it is only a very mild example.</p>",
+        "id": 388948893,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1693820742
+    },
+    {
+        "content": "<p><a href=\"https://gist.github.com/semorrison/77099dc8a5743b2b53715ddf8fdcd615\">https://gist.github.com/semorrison/77099dc8a5743b2b53715ddf8fdcd615</a> is the top 1000 slowest lints. If anyone wants the complete output I can send them a 62mb gzip. :-)</p>",
+        "id": 388949455,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693820919
+    },
+    {
+        "content": "<p>That top entry is certainly surprising! But otherwise, lots of simpNF, as expected.</p>",
+        "id": 388949887,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1693821067
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"246273\">Bhavik Mehta</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388940878\">said</a>:</p>\n<blockquote>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">theorem</span> <span class=\"n\">parts_property</span> <span class=\"o\">:</span>\n    <span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"mi\">4</span> <span class=\"bp\">→</span> <span class=\"n\">Fin</span> <span class=\"mi\">2</span><span class=\"o\">)</span>\n      <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"o\">:</span> <span class=\"n\">y</span> <span class=\"bp\">∈</span> <span class=\"o\">({</span><span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">],</span> <span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">],</span> <span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">],</span> <span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">],</span> <span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">]}</span> <span class=\"o\">:</span>\n        <span class=\"n\">List</span> <span class=\"o\">(</span><span class=\"n\">Fin</span> <span class=\"mi\">4</span> <span class=\"bp\">→</span> <span class=\"n\">Fin</span> <span class=\"mi\">2</span><span class=\"o\">))),</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">decide</span>\n</code></pre></div>\n</blockquote>\n<p><span class=\"user-mention\" data-user-id=\"246273\">@Bhavik Mehta</span>, do you have the imports for this?</p>",
+        "id": 388949970,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693821101
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"112680\">Johan Commelin</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388948845\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"246273\">Bhavik Mehta</span> It's running through 82 cases. That's not what a pen-and-paper proof would look like (hopefully).</p>\n</blockquote>\n<p><code>left_direction</code> is only running through two cases - which is the one with the porting note that you profiled above</p>",
+        "id": 388950239,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1693821176
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388949970\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"246273\">Bhavik Mehta</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388940878\">said</a>:</p>\n<blockquote>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">theorem</span> <span class=\"n\">parts_property</span> <span class=\"o\">:</span>\n    <span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"mi\">4</span> <span class=\"bp\">→</span> <span class=\"n\">Fin</span> <span class=\"mi\">2</span><span class=\"o\">)</span>\n      <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"o\">:</span> <span class=\"n\">y</span> <span class=\"bp\">∈</span> <span class=\"o\">({</span><span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">],</span> <span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">],</span> <span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">],</span> <span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">],</span> <span class=\"bp\">!</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">,</span> <span class=\"mi\">0</span><span class=\"o\">]}</span> <span class=\"o\">:</span>\n        <span class=\"n\">List</span> <span class=\"o\">(</span><span class=\"n\">Fin</span> <span class=\"mi\">4</span> <span class=\"bp\">→</span> <span class=\"n\">Fin</span> <span class=\"mi\">2</span><span class=\"o\">))),</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">decide</span>\n</code></pre></div>\n</blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"246273\">Bhavik Mehta</span>, do you have the imports for this?</p>\n</blockquote>\n<p><code>import Mathlib.Data.Matrix.Notation</code></p>",
+        "id": 388950278,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1693821189
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"246273\">@Bhavik Mehta</span> I see. I thought the discussion had shifted to the decl with the maxHeartbeats option.</p>",
+        "id": 388950553,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1693821274
+    },
+    {
+        "content": "<p>More importantly, however, I'm pretty sure the slowdowns in this file are caused by something different to the one I mentioned and have been discussing with Yaël, so <code>parts_property</code> was a genuine derail. Apologies!</p>",
+        "id": 388950571,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1693821281
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"112680\">Johan Commelin</span> <a href=\"#narrow/stream/287929-mathlib4/topic/ideas.20for.20speeding.20up.20CI/near/388950553\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"246273\">Bhavik Mehta</span> I see. I thought the discussion had shifted to the decl with the maxHeartbeats option.</p>\n</blockquote>\n<p>Perhaps it had and I misunderstood!</p>",
+        "id": 388950652,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1693821303
+    },
+    {
+        "content": "<p>Okay, doing the naive thing caching <code>Archive</code> and <code>Counterexamples</code> <a href=\"https://github.com/leanprover-community/mathlib4/actions/runs/6071884662/job/16470812172?pr=6945\">speeds up</a> 180s to about 45s. <a href=\"https://github.com/leanprover-community/mathlib4/pull/6945\">#6945</a></p>",
+        "id": 388961101,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693824424
+    },
+    {
+        "content": "<p>11 messages were moved from this topic to <a class=\"stream-topic\" data-stream-id=\"287929\" href=\"/#narrow/stream/287929-mathlib4/topic/diagnosing.20timeouts.20in.20RingHom.2ERespectsIso.2EofRestrict_mor.2E.2E.2E\">#mathlib4 &gt; diagnosing timeouts in RingHom.RespectsIso.ofRestrict_mor...</a> by <span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span>.</p>",
+        "id": 389066498,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1693870657
+    }
+]

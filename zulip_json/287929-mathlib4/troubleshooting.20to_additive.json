@@ -1,0 +1,188 @@
+[
+    {
+        "content": "<p>I got the following error from <code>to_additive</code> on a declaration:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">application</span> <span class=\"n\">type</span> <span class=\"n\">mismatch</span>\n  <span class=\"n\">Group.toDivisionMonoid</span>\n<span class=\"n\">argument</span> <span class=\"n\">has</span> <span class=\"n\">type</span>\n  <span class=\"n\">AddGroup</span> <span class=\"n\">E</span>\n<span class=\"n\">but</span> <span class=\"n\">function</span> <span class=\"n\">has</span> <span class=\"n\">type</span>\n  <span class=\"o\">[</span><span class=\"n\">inst</span> <span class=\"o\">:</span> <span class=\"n\">Group</span> <span class=\"n\">E</span><span class=\"o\">]</span> <span class=\"bp\">→</span> <span class=\"n\">DivisionMonoid</span> <span class=\"n\">E</span>\n</code></pre></div>\n<p>This makes me think that there is some declaration missing a <code>to_additive</code> tag or else an improper translation. However, the translation <code>Group.toDivisionMonoid</code> → <code>AddGroup.toSubtractionMonoid</code> already exists, so it seems like a translation error on a different declaration. How do I get <code>to_additive</code> to give me more information so I can see exactly where things went wrong? I tried <code>to_additive?</code>, and it told me what it generated, but I didn't see <code>Group.toDivisionMonoid</code> anywhere in the output with <code>set_option pp.explicit true</code></p>",
+        "id": 329098610,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1676950101
+    },
+    {
+        "content": "<p>Also, <span class=\"user-mention\" data-user-id=\"111080\">@Floris van Doorn</span> I noticed that you can write <code>attribute [to_additive non_existent_add_decl] existent_decl</code> and Lean is happy, which seems undesirable and prone to typos making <code>to_additive</code> unexpectedly fail. Is there a way to get it to at least complain if the additive declaration isn't in the environment? If not, we should probably have a linter for this.</p>",
+        "id": 329099080,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1676950539
+    },
+    {
+        "content": "<p>Can you link to a mwe or something? What you said, using ? and pp all is normally how you would debug such things</p>",
+        "id": 329194797,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1676987147
+    },
+    {
+        "content": "<p>Have a look at what is currently the first error in <a href=\"https://github.com/leanprover-community/mathlib4/pull/2400\">!4#2400</a> (line 265). The <code>inv'</code> field can be fixed by switching <code>rw</code> to <code>simp_rw</code>, but the issue is really with <code>to_additive</code>.</p>",
+        "id": 329213246,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1676991792
+    },
+    {
+        "content": "<p>Ah, with <code>pp.all</code> I found something. I think before I just did <code>pp.explicit</code></p>",
+        "id": 329214009,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1676991972
+    },
+    {
+        "content": "<p>I <em>think</em> it's the <code>1</code> in the <code>map_one'</code> field not getting converted into a <code>0</code>.</p>",
+        "id": 329215565,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1676992344
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"197836\">Jireh Loreaux</span> <a href=\"#narrow/stream/287929-mathlib4/topic/troubleshooting.20to_additive/near/329099080\">said</a>:</p>\n<blockquote>\n<p>Also, <span class=\"user-mention silent\" data-user-id=\"111080\">Floris van Doorn</span> I noticed that you can write <code>attribute [to_additive non_existent_add_decl] existent_decl</code> and Lean is happy, which seems undesirable and prone to typos making <code>to_additive</code> unexpectedly fail. Is there a way to get it to at least complain if the additive declaration isn't in the environment? If not, we should probably have a linter for this.</p>\n</blockquote>\n<p>The command <code>attribute [to_additive non_existent_add_decl] existent_decl</code> is very much allowed and widely used, and <code>to_additive</code> will generate the the declaration <code>non_existent_add_decl</code> automatically for you. You can use <code>[to_additive? non_existent_add_decl]</code> to see what declaration <code>to_additive</code> generated. Note however that <a href=\"https://github.com/leanprover-community/mathlib4/pull/1881\">!4#1881</a> will make the syntax different, forcing you to write <code>[to_additive existing foo]</code> if <code>foo</code> is a declaration that already exists (which is the less common case).</p>",
+        "id": 329247003,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1677000154
+    },
+    {
+        "content": "<p>Aha, I didn't realize it would still translate the declaration if it was added later. I thought that could only be applied to existing declarations. Thanks.</p>",
+        "id": 329261207,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1677003999
+    },
+    {
+        "content": "<p>Ok, I investigated the error, and the issue is quite subtle.<br>\nThe proof contains a few occurrences of <code>(0 : ℝ)</code>, which are encoded as <code>OfNat.ofNat _ 0 ..</code>. <code>to_additive</code> notices that this is a numeral in the real numbers, so it doesn't change it (note: it would only change the numeral if it was 1 anyway, but it looks at this before looking at what the actual numeral is), and leaves this term unchanged.<br>\nThis is a problem, since <code>simp_rw</code> produces a term <code>OfNat.ofNat ..</code> where the first argument is not syntactically <code>ℝ</code>. Instead, it is <code>(fun x : E =&gt; ℝ) (1 : E)</code>. And if we don't translate this, Lean will now complain that<br>\n<code>(1 : E)</code> is not a valid term anymore in the additive version.</p>",
+        "id": 329261831,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1677004195
+    },
+    {
+        "content": "<p>Fixed in <a href=\"https://github.com/leanprover-community/mathlib4/pull/2419\">!4#2419</a></p>",
+        "id": 329267332,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1677005752
+    },
+    {
+        "content": "<p>For <code>to_additive</code> (and most/all other attributes), there is no difference in behavior between</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[some_attr]</span> <span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"bp\">...</span>\n</code></pre></div>\n<p>and</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"bp\">...</span>\n<span class=\"kn\">attribute</span> <span class=\"o\">[</span><span class=\"n\">some_attr</span><span class=\"o\">]</span> <span class=\"n\">foo</span>\n</code></pre></div>",
+        "id": 329267687,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1677005848
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"111080\">@Floris van Doorn</span> bad news: that didn't seem to fix the issue. I stole your fix from <a href=\"https://github.com/leanprover-community/mathlib4/pull/2419\">!4#2419</a> but I'm getting the same error.</p>",
+        "id": 329307417,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1677019658
+    },
+    {
+        "content": "<p>I pushed again. Hopefully the new behavior really fixes it.</p>",
+        "id": 329325620,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1677029208
+    },
+    {
+        "content": "<p>Success! Thanks!</p>",
+        "id": 329337632,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1677038601
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"111080\">@Floris van Doorn</span> I ran into a few other issues in that PR (<a href=\"https://github.com/leanprover-community/mathlib4/pull/2400\">!4#2400</a>), but I just added the instances by hand for now. If you want to see where I had issues have a look at the porting notes.</p>",
+        "id": 329347274,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1677046226
+    },
+    {
+        "content": "<p>There was another one that was an issue with numerals and then also a place where it tried to convert <code>SMul</code> into <code>VAdd</code></p>",
+        "id": 329347358,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1677046292
+    },
+    {
+        "content": "<p>The issue with numerals is because <code>norm_num</code> is inserting raw numerals inside the proof term. I can fix that.<br>\nThe other issue with converting <code>SMul</code> to <code>VAdd</code> was something <code>to_additive</code> also couldn't do in Lean 3 (the additive version of that instance was already in the file before porting). It will require a major rewrite of <code>to_additive</code> to support this. You have arguments <code>[SMul R R'] [IsScalarTower R R' ℝ]</code>, and when looking at the argument <code>[SMul R R']</code> it seems reasonable to additivize it: everything in sight is a variable that can be additivized. Only when looking at <code>[IsScalarTower R R' ℝ]</code> we realize we cannot actually additivize anything (since <code>ℝ</code> is a fixed type).</p>",
+        "id": 329421546,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1677070861
+    },
+    {
+        "content": "<p>Another issue with <code>GroupSeminormClass</code> is that the additivized version <code>AddGroupSeminormClass</code> is not really an \"additive\" type. What I mean by this is that we want to additivize <code>One</code> and <code>SMul</code> instances on <code>GroupSeminormClass</code> to <code>One</code> and <code>SMul</code> instances on <code>AddGroupSeminormClass</code>, and <strong>not</strong> to <code>Zero</code> or <code>VAdd</code> instances.<br>\nI'm collecting some ideas of improving <code>to_additive</code> on <a href=\"https://github.com/leanprover-community/mathlib4/compare/toadditiverewrite\">this branch</a>, that can deal with these kinds of operations.</p>",
+        "id": 329581173,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1677098117
+    },
+    {
+        "content": "<p>I think I have a very similar problem in <a href=\"https://github.com/leanprover-community/mathlib4/pull/2499\">!4#2499</a>. The definition <code>smul_def</code> in</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[to_additive]</span>\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">SMul</span> <span class=\"n\">M</span> <span class=\"o\">(</span><span class=\"n\">Completion</span> <span class=\"n\">X</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"o\">⟨</span><span class=\"k\">fun</span> <span class=\"n\">c</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Completion.map</span> <span class=\"o\">((</span><span class=\"bp\">·</span> <span class=\"bp\">•</span> <span class=\"bp\">·</span><span class=\"o\">)</span> <span class=\"n\">c</span><span class=\"o\">)⟩</span>\n\n<span class=\"kd\">@[to_additive]</span>\n<span class=\"kd\">theorem</span> <span class=\"n\">smul_def</span> <span class=\"o\">(</span><span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">M</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Completion</span> <span class=\"n\">X</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">c</span> <span class=\"bp\">•</span> <span class=\"n\">x</span> <span class=\"bp\">=</span> <span class=\"n\">Completion.map</span> <span class=\"o\">((</span><span class=\"bp\">·</span> <span class=\"bp\">•</span> <span class=\"bp\">·</span><span class=\"o\">)</span> <span class=\"n\">c</span><span class=\"o\">)</span> <span class=\"n\">x</span> <span class=\"o\">:=</span>\n  <span class=\"n\">rfl</span>\n</code></pre></div>\n<p>fails with the error</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">application</span> <span class=\"n\">type</span> <span class=\"n\">mismatch</span>\n  <span class=\"n\">instSMulCompletion</span> <span class=\"n\">M</span> <span class=\"n\">X</span>\n<span class=\"n\">argument</span> <span class=\"n\">has</span> <span class=\"n\">type</span>\n  <span class=\"n\">VAdd</span> <span class=\"n\">M</span> <span class=\"n\">X</span>\n<span class=\"n\">but</span> <span class=\"n\">function</span> <span class=\"n\">has</span> <span class=\"n\">type</span>\n  <span class=\"o\">[</span><span class=\"n\">inst</span> <span class=\"o\">:</span> <span class=\"n\">SMul</span> <span class=\"n\">M</span> <span class=\"n\">X</span><span class=\"o\">]</span> <span class=\"bp\">→</span> <span class=\"n\">SMul</span> <span class=\"n\">M</span> <span class=\"o\">(</span><span class=\"n\">Completion</span> <span class=\"n\">X</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 338481991,
+        "sender_full_name": "Moritz Doll",
+        "timestamp": 1677546244
+    },
+    {
+        "content": "<p>it seems that the translation of the instance already fails</p>",
+        "id": 338482726,
+        "sender_full_name": "Moritz Doll",
+        "timestamp": 1677546609
+    },
+    {
+        "content": "<p>This is <a href=\"https://github.com/leanprover/lean4/pull/2077\">lean4#2077</a>. Use the following instead:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[to_additive]</span>\n<span class=\"kd\">noncomputable</span> <span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">SMul</span> <span class=\"n\">M</span> <span class=\"o\">(</span><span class=\"n\">Completion</span> <span class=\"n\">X</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"o\">⟨</span><span class=\"k\">fun</span> <span class=\"n\">c</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Completion.map</span> <span class=\"o\">((</span><span class=\"bp\">·</span> <span class=\"bp\">•</span> <span class=\"bp\">·</span><span class=\"o\">)</span> <span class=\"n\">c</span><span class=\"o\">)⟩</span>\n</code></pre></div>",
+        "id": 338564712,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1677584714
+    },
+    {
+        "content": "<p>If you define a noncomputable declaration, but don't mark it as noncomputable (because you're in a noncomputable section), then attributes that are executed after compilation (like <code>simp</code> and <code>to_additive</code> are ignored).</p>",
+        "id": 338565147,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1677584827
+    },
+    {
+        "content": "<p>If <code>@[to_additive?]</code> gives no output at all, it is safe to assume this is the issue. <code>@[to_additive?]</code> is always supposed to show some output.</p>",
+        "id": 338565193,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1677584853
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"111080\">@Floris van Doorn</span> I have yet another <code>to_additive</code> numeral issue for you. In <a href=\"https://github.com/leanprover-community/mathlib4/pull/2736\">!4#2736</a>, on line 532 there is the declaration:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[to_additive zero_lt_one_add_norm_sq]</span>\n<span class=\"kd\">theorem</span> <span class=\"n\">zero_lt_one_add_norm_sq'</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">E</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"mi\">0</span> <span class=\"bp\">&lt;</span> <span class=\"mi\">1</span> <span class=\"bp\">+</span> <span class=\"bp\">‖</span><span class=\"n\">x</span><span class=\"bp\">‖</span> <span class=\"bp\">^</span> <span class=\"mi\">2</span> <span class=\"o\">:=</span>\n  <span class=\"kd\">by</span> <span class=\"n\">positivity</span>\n</code></pre></div>\n<p>(actually, when you look at the file I have provided a workaround proof for the time being), which fails to <code>to_additive</code>-ize the declaration with the error:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">application</span> <span class=\"n\">type</span> <span class=\"n\">mismatch</span>\n  <span class=\"n\">Mathlib.Meta.Positivity.pos_of_isNat</span> <span class=\"o\">(</span><span class=\"n\">Mathlib.Meta.NormNum.isNat_ofNat</span> <span class=\"n\">ℝ</span> <span class=\"n\">Nat.cast_one</span><span class=\"o\">)</span>\n<span class=\"n\">argument</span> <span class=\"n\">has</span> <span class=\"n\">type</span>\n  <span class=\"n\">Mathlib.Meta.NormNum.IsNat</span> <span class=\"mi\">1</span> <span class=\"mi\">1</span>\n<span class=\"n\">but</span> <span class=\"n\">function</span> <span class=\"n\">has</span> <span class=\"n\">type</span>\n  <span class=\"n\">Mathlib.Meta.NormNum.IsNat</span> <span class=\"mi\">1</span> <span class=\"mi\">0</span> <span class=\"bp\">→</span> <span class=\"n\">Nat.ble</span> <span class=\"mi\">1</span> <span class=\"mi\">0</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"bp\">→</span> <span class=\"mi\">0</span> <span class=\"bp\">&lt;</span> <span class=\"mi\">1</span>\n</code></pre></div>\n<p>This came up several times in this file, and I just worked around each of them by providing an explicit proof instead of using <code>positivity</code>, but it would be good to have an actual fix.</p>",
+        "id": 340523038,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1678343759
+    },
+    {
+        "content": "<p>what the heck is the additivised version of <code>0 &lt; 1 + ‖x‖ ^ 2</code> supposed to be?</p>",
+        "id": 340553820,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1678354588
+    },
+    {
+        "content": "<p><code>0 &lt; 1 + ‖x‖ ^ 2</code> but where <code>x</code> is valued in an additive normed group rather than a multiplicative one.</p>",
+        "id": 340554174,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1678354697
+    },
+    {
+        "content": "<p>Kevin you will have no doubt guessed already that the norm on E satisfies <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi mathvariant=\"normal\">∣</mi><mi mathvariant=\"normal\">∣</mi><mi>x</mi><mo>∗</mo><mi>y</mi><mi mathvariant=\"normal\">∣</mi><mi mathvariant=\"normal\">∣</mi><mo>≤</mo><mi mathvariant=\"normal\">∣</mi><mi mathvariant=\"normal\">∣</mi><mi>x</mi><mi mathvariant=\"normal\">∣</mi><mi mathvariant=\"normal\">∣</mi><mo>+</mo><mi mathvariant=\"normal\">∣</mi><mi mathvariant=\"normal\">∣</mi><mi>y</mi><mi mathvariant=\"normal\">∣</mi><mi mathvariant=\"normal\">∣</mi></mrow><annotation encoding=\"application/x-tex\">||x * y|| \\le ||x|| + ||y||</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mord\">∣∣</span><span class=\"mord mathnormal\">x</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span><span class=\"mbin\">∗</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.03588em;\">y</span><span class=\"mord\">∣∣</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">≤</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mord\">∣∣</span><span class=\"mord mathnormal\">x</span><span class=\"mord\">∣∣</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span><span class=\"mbin\">+</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mord\">∣∣</span><span class=\"mord mathnormal\" style=\"margin-right:0.03588em;\">y</span><span class=\"mord\">∣∣</span></span></span></span></p>",
+        "id": 340554680,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1678354844
+    },
+    {
+        "content": "<p>(btw what even is the purpose of this lemma, considering the norm is real-valued?)</p>",
+        "id": 340555189,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1678354970
+    },
+    {
+        "content": "<p>There are times when I feel we go a bit too far :-)</p>",
+        "id": 340556999,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1678355442
+    },
+    {
+        "content": "<p><code>to_additive</code> is indeed known incompatible with <code>positivity</code>, because of the way numerals are represented. <a href=\"https://github.com/leanprover-community/mathlib4/pull/2726\">!4#2726</a> should solve this in a systematic way, by handling numerals differently.</p>",
+        "id": 340561654,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1678356715
+    },
+    {
+        "content": "<p>It now works: <a href=\"https://github.com/leanprover-community/mathlib4/pull/2758\">!4#2758</a></p>",
+        "id": 340680007,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1678385704
+    }
+]

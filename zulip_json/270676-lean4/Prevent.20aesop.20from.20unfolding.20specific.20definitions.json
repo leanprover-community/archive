@@ -1,0 +1,92 @@
+[
+    {
+        "content": "<p>I've been playing around with a custom aesop ruleset for dispensing with simple (Nat) divisibility goals. I basically just want it to compute the transitive closure of <code>∣</code>, and to deal properly with <code>a ∈ b.divisors</code>, which involves occasionally proving <code>b≠0</code> by substituting until it finds a contradiction. </p>\n<p>I've disabled the <code>simp</code> step as it has a tendency to do unwanted rewrites, but I'm still running into the issue with slightly longer proofs that aesop has a tendency to unfold <code>a ∣ b</code> into <code>b=a*w</code> and start rewriting, making it blind to the fact that it's already proved the goal.</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n<p>MWE</p>\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<p>First you need a separate file <code>Init.lean</code> to declare the ruleset </p>\n<div class=\"codehilite\"><pre><span></span><code>import aesop\n\ndeclare_aesop_rule_sets [Divisibility]\n</code></pre></div>\n<p>Then</p>\n<div class=\"codehilite\"><pre><span></span><code>import Aesop\nimport &lt;FolderName&gt;.Init\nimport Mathlib.NumberTheory.ArithmeticFunction\n\n\nopen Finset\n\nmacro (name := aesop_div?) &quot;aesop_div?&quot; c:Aesop.tactic_clause* : tactic =&gt;\n`(tactic|\n  aesop? $c* (options := { introsTransparency? := some .default, terminal := false})\n  (simp_options := { enabled := false})\n  (rule_sets [$(Lean.mkIdent `Divisibility):ident]))\n\n\nattribute [aesop unsafe forward 60% (rule_sets [Divisibility])] Nat.dvd_trans\nattribute [aesop safe forward (rule_sets [Divisibility])] Nat.dvd_of_mem_divisors\n\n@[aesop safe (rule_sets [Divisibility])]\ntheorem mem_divisors_mpr {n m : ℕ}: n ∣ m ∧ m ≠ 0 → n ∈ m.divisors := Nat.mem_divisors.mpr\n\n@[aesop forward safe (rule_sets [Divisibility])]\ntheorem nat_eq_zero_of_zero_dvd (a : ℕ) : 0 ∣ a → a = 0 := by\n  apply zero_dvd_iff.mp\n\n@[aesop forward safe (rule_sets [Divisibility])]\ntheorem zero_mem_divisors (a : ℕ) (h : 0 ∈ a.divisors) : False := by simp at h\n\nattribute [aesop safe (rule_sets [Divisibility])] Nat.pos_of_ne_zero\n\nexample (a b c d :ℕ) (h: d ≠ 0) : (b ∈ c.divisors) → a ∣ b → c ∣ d → a ∈ d.divisors := by\n  aesop_div?\n\n/- Works -/\nexample {P : ℕ} (n : ℕ) (hP : P ≠ 0) (hn : n ∣ P) :\n    (P.divisors.filter (· ∣ n)) = n.divisors :=\n  by\n  ext k; rw [mem_filter];\n  constructor\n  · intro ⟨_,_⟩\n    aesop_div?\n  · aesop_div?\n\n/- Fails -/\nexample {P : ℕ} (n : ℕ) (hP : P ≠ 0) (hn : n ∣ P) :\n    (P.divisors.filter (· ∣ n)) = n.divisors :=\n  by\n  ext k; rw [mem_filter];\n  /- ⊢ k ∈ Nat.divisors P ∧ k ∣ n ↔ k ∈ Nat.divisors n -/\n  aesop_div?\n  /-\n  case a.mp.a.left\n  k w w_1 : ℕ\n  hP : k * w_1 * w ≠ 0\n  left : k ∈ Nat.divisors (k * w_1 * w)\n  fwd : k ∣ k * w_1 * w\n  ⊢ k ∣ k * w_1\n  ... (three more similar cases)\n  -/\n  repeat sorry\n</code></pre></div>\n</div></div>\n<p>As you can see in the first subcase of the failed proof aesop decided to substitute <code>P=n*w</code> to eliminate <code>P</code>,  not realising it could have just proved the goal by transitivity. Is there a good way to just prevent aesop from unfolding <code>a ∣ b</code> into <code>∃w, b=a*w</code>?</p>",
+        "id": 370750590,
+        "sender_full_name": "Arend Mellendijk",
+        "timestamp": 1688039632
+    },
+    {
+        "content": "<p>You can erase lemmas for a specific Aesop call, so presumably you should erase the rule that does that unfold</p>",
+        "id": 370753906,
+        "sender_full_name": "Alex Keizer",
+        "timestamp": 1688040209
+    },
+    {
+        "content": "<p>What happens here is that divisibilty on <code>Nat</code> is defined as <code>∃ c, b = a * c</code>. The builtin <code>destructProducts</code> rule therefore matches hypotheses of the form <code>. | .</code> and splits them into <code>c</code> and <code>b = a * c</code>. (I found this out by inspecting the trace output from <code>set_option trace.aesop true</code>.) As a workaround, you can try to disable the <code>destructProducts</code> rule as Alex suggests. </p>\n<p>A more radical approach would be to change the definition of divisibility so that <code>. | .</code> is no longer reducibly defeq to an existential. I imagine this would create a lot of breakage.</p>",
+        "id": 370758750,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1688040994
+    },
+    {
+        "content": "<p>I could probably also implement an option that lets <code>destructProducts</code> match only syntactically, not up to defeq.</p>",
+        "id": 370759952,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1688041208
+    },
+    {
+        "content": "<p>Thanks for the help!<br>\nI've tried disabling <code>destructProducts</code> altogether, but it has the unintended (yet expected) side effect that it won't unfold <code>∧</code> in the hypotheses, which means it still fails on the same examples. In particular it can't prove <code>a ∣ b ∧ b ∣ c → a ∣ c</code>, whereas it can prove <code>a ∣ b → b ∣ c → a ∣ c</code>. In effect this doesn't seem to change the strength of the ruleset at all since <code>destructProducts</code> only gets called when there is an <code>∧</code> in a hypothesis that it needs to prove the goal.</p>",
+        "id": 370768078,
+        "sender_full_name": "Arend Mellendijk",
+        "timestamp": 1688042749
+    },
+    {
+        "content": "<p>I guess if there is a way to disable only <code>∃</code> terms that would work</p>",
+        "id": 370769320,
+        "sender_full_name": "Arend Mellendijk",
+        "timestamp": 1688042959
+    },
+    {
+        "content": "<p>Makes sense.  There's currently no way to disable <code>∃</code> specifically, and anyway it would be a big hack.</p>\n<p>Another possibly way to address the root problem (that <code>. | .</code> reducibly reduces to an existential):</p>\n<ul>\n<li>Define <code>def MyDvd a b := a | b</code>.</li>\n<li>Add a preprocessing step or Aesop rule which rewrites <code>a | b</code> to <code>MyDvd a b</code>.</li>\n<li>Formulate the Aesop rules in terms of <code>MyDvd</code>.</li>\n</ul>",
+        "id": 370771596,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1688043386
+    },
+    {
+        "content": "<p>In the longer term changing the reducibility of <code>|</code> seems like a great idea.</p>",
+        "id": 370941796,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1688078765
+    },
+    {
+        "content": "<p>I don't expect this to break much (or anything).  <a href=\"https://github.com/leanprover-community/mathlib4/pull/5603\">#5603</a></p>",
+        "id": 370945061,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1688080238
+    },
+    {
+        "content": "<blockquote>\n<p>I think this requires a larger refactoring, since we have a Dvd α instance for every semigroup, and that instance should be (reducibly!) defeq to the Nat/Int instances.</p>\n</blockquote>",
+        "id": 370954611,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1688084669
+    },
+    {
+        "content": "<p>That is, a <code>Nat.dvd</code> definition doesn't cut it.  We need some generic (semireducible) <code>divides [Mul α]</code> predicate (in std!), and then use that to define all three instances.</p>",
+        "id": 370954718,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1688084722
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/5604\">#5604</a></p>",
+        "id": 370958303,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1688086000
+    },
+    {
+        "content": "<p>I've made a MyDvd definition, and now the tactic works when I make it irreducible,  but when it's semireducible it still gets unfolded by <code>destructProducts</code>, even with an explicit <code>destructProductsTransparency := .reducible</code>. <br>\nI'm frankly not sure if this is me misunderstanding transparency settings or if this is a bug in aesop.</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n<p>MWE</p>\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<div class=\"codehilite\"><pre><span></span><code>import Aesop\nimport &lt;FolderName&gt;.Init\nimport Mathlib.NumberTheory.ArithmeticFunction\n\nopen Finset\n\nnamespace MWE\n@[semireducible]\nprotected def MyDvd (a b :ℕ) : Prop := a ∣ b\n\n@[simp]\ntheorem myDvd_iff (a b : ℕ) : MWE.MyDvd a b ↔ a ∣ b := by\n  unfold MWE.MyDvd\n  exact Iff.rfl\n\nmacro (name := aesop_div) &quot;aesop_div&quot; c:Aesop.tactic_clause* : tactic =&gt;\n`(tactic|\n  {try simp_rw [←myDvd_iff] at *; aesop $c* (options :=\n  { destructProductsTransparency := .reducible, introsTransparency? := some .reducible, terminal := false } )\n  (simp_options := { enabled := false})\n  (rule_sets [$(Lean.mkIdent `Divisibility):ident])})\n\n@[aesop unsafe forward 60% (rule_sets [Divisibility])]\ntheorem myDvd_trans {a b c : ℕ} : MWE.MyDvd a b → MWE.MyDvd b c → MWE.MyDvd a c := by\n  simp; exact Nat.dvd_trans\n--set_option trace.aesop true\n\nexample {a b c : ℕ} : a ∣ b ∧ b ∣ c → a ∣ c := by\n  simp_rw [←myDvd_iff] at *\n  /-\n  ⊢ MyDvd a b ∧ MyDvd b c → MyDvd a c\n  -/\n  aesop_div\n  /-\n  unsolved goals\n\n  aww_1: ℕ\n  ⊢ MWE.MyDvd a (a * w * w_1)\n  -/\nend MWE\n</code></pre></div>\n</div></div>",
+        "id": 371075791,
+        "sender_full_name": "Arend Mellendijk",
+        "timestamp": 1688118708
+    },
+    {
+        "content": "<p>Could well be a bug. I'll look at it later.</p>",
+        "id": 371076963,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1688118903
+    },
+    {
+        "content": "<p>This was indeed an Aesop bug: <code>destructProducts</code> would use <code>destructProductsTransparency</code> when first matching a hyp, but would then use <code>default</code> for recursive matching. Now fixed in Aesop. No breakage in mathlib, but the PR must wait for <a href=\"https://github.com/leanprover-community/mathlib4/pull/5409\">#5409</a>.</p>",
+        "id": 373147057,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1688723637
+    }
+]

@@ -1,0 +1,98 @@
+[
+    {
+        "content": "<p>What is the best way to deal with <code>mdata</code> when writing meta code? My code is slowly turning from <code>e.isLet</code>, <code>e.getAppFn</code>, <code>e.getArg!</code> to <code>e.consumeMData.isLet</code>, <code>e.consumeMData.getAppFn</code>, <code>e.consumeMData.getAppFn</code>. This is really ugly :(</p>",
+        "id": 383953709,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1691758990
+    },
+    {
+        "content": "<p>Std has <a href=\"https://github.com/leanprover/std4/blob/main/Std/Lean/Expr.lean\">a few</a> variants of core functions that ignore <code>mdata</code>. There is also <a href=\"https://github.com/leanprover/lean4/pull/2026\">lean4#2026</a>, which suggests a wider refactoring of the API to make most functions ignore <code>mdata</code> by default, but the core devs have not yet commented on this.</p>",
+        "id": 383960551,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1691760181
+    },
+    {
+        "content": "<p>Now I'm super skeptical that I'm getting any of my pattern matching on <code>Expr</code> correct. For example the case <code>|  .lam _ _ (.letE ..) _</code> suddenly has to be </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">lam</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">letE</span> <span class=\"bp\">..</span><span class=\"o\">)</span> <span class=\"n\">_</span>\n<span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">mdata</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">lam</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">letE</span> <span class=\"bp\">..</span><span class=\"o\">)</span> <span class=\"n\">_</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">lam</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">mdata</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">letE</span> <span class=\"bp\">..</span><span class=\"o\">))</span> <span class=\"n\">_</span>\n<span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">mdata</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">lam</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">mdata</span> <span class=\"n\">_</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">letE</span> <span class=\"bp\">..</span><span class=\"o\">))</span> <span class=\"n\">_</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>Is it a good or bad idea to just recursively purge all mdata from an expression before I start working with it?</p>",
+        "id": 384022873,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1691769983
+    },
+    {
+        "content": "<p>sounds like a bad idea to me</p>",
+        "id": 384024255,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691770262
+    },
+    {
+        "content": "<p>rather, I think that pattern matching on exprs is the code smell here. Sometimes it is required, but if you can do something like <code>Qq</code>-match instead that will be more robust to things like mdata and reducible definitions in the way of the match</p>",
+        "id": 384024640,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691770336
+    },
+    {
+        "content": "<p>if the expr is automatically generated / you know how it was constructed then you can probably use stricter notions of syntactic equality, but for arbitrary user exprs there could be lots of random things in there, and erasing mdata could cause problems if you weren't the one to put the mdata there</p>",
+        "id": 384025073,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691770426
+    },
+    {
+        "content": "<p>I'm implementing something similar to simp, but I need a special handling of <code>fun x y =&gt; ..</code>, <code>fun x =&gt; let y := ..; ..</code> and a few other variants. This match decides what rewrite rule to apply.</p>",
+        "id": 384026640,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1691770762
+    },
+    {
+        "content": "<p>I will look into the Qq match but is it sensitive to let bindings or not?</p>",
+        "id": 384028223,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1691771086
+    },
+    {
+        "content": "<p>I think you should write a recursive expr matcher for this, rather than trying to match all combinations in one go</p>",
+        "id": 384030981,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691771664
+    },
+    {
+        "content": "<p>I don't think Qq will respect let bindings</p>",
+        "id": 384031117,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691771699
+    },
+    {
+        "content": "<p>What do you exactly mean by recursive matcher?</p>",
+        "id": 384031299,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1691771735
+    },
+    {
+        "content": "<p>something like this perhaps?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">matchLambdas</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span> <span class=\"bp\">→</span> <span class=\"n\">Array</span> <span class=\"n\">Expr</span> <span class=\"bp\">→</span> <span class=\"n\">Array</span> <span class=\"n\">Expr</span> <span class=\"bp\">×</span> <span class=\"n\">Expr</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">mdata</span> <span class=\"n\">_</span> <span class=\"n\">e</span><span class=\"o\">,</span> <span class=\"n\">lams</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">matchLambdas</span> <span class=\"n\">e</span> <span class=\"n\">lams</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">lam</span> <span class=\"n\">_x</span> <span class=\"n\">ty</span> <span class=\"n\">d</span> <span class=\"n\">_bi</span><span class=\"o\">,</span> <span class=\"n\">lams</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">matchLambdas</span> <span class=\"n\">d</span> <span class=\"o\">(</span><span class=\"n\">lams.push</span> <span class=\"n\">ty</span><span class=\"o\">)</span>\n  <span class=\"bp\">|</span> <span class=\"n\">e</span><span class=\"o\">,</span> <span class=\"n\">lams</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">(</span><span class=\"n\">lams</span><span class=\"o\">,</span> <span class=\"n\">e</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">matchLets</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span> <span class=\"bp\">→</span> <span class=\"n\">Array</span> <span class=\"o\">(</span><span class=\"n\">Expr</span> <span class=\"bp\">×</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">Array</span> <span class=\"o\">(</span><span class=\"n\">Expr</span> <span class=\"bp\">×</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"bp\">×</span> <span class=\"n\">Expr</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">mdata</span> <span class=\"n\">_</span> <span class=\"n\">e</span><span class=\"o\">,</span> <span class=\"n\">lets</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">matchLets</span> <span class=\"n\">e</span> <span class=\"n\">lets</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">letE</span> <span class=\"n\">_x</span> <span class=\"n\">ty</span> <span class=\"n\">val</span> <span class=\"n\">body</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">lets</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">matchLets</span> <span class=\"n\">body</span> <span class=\"o\">(</span><span class=\"n\">lets.push</span> <span class=\"o\">(</span><span class=\"n\">ty</span><span class=\"o\">,</span> <span class=\"n\">val</span><span class=\"o\">))</span>\n  <span class=\"bp\">|</span> <span class=\"n\">e</span><span class=\"o\">,</span> <span class=\"n\">lets</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">(</span><span class=\"n\">lets</span><span class=\"o\">,</span> <span class=\"n\">e</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">matchLambdaThenLet</span> <span class=\"o\">(</span><span class=\"n\">e</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Expr</span> <span class=\"bp\">×</span> <span class=\"n\">Array</span> <span class=\"o\">(</span><span class=\"n\">Expr</span> <span class=\"bp\">×</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"bp\">×</span> <span class=\"n\">Expr</span> <span class=\"o\">:=</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">lams</span><span class=\"o\">,</span> <span class=\"n\">e</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">matchLambdas</span> <span class=\"n\">e</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">lets</span><span class=\"o\">,</span> <span class=\"n\">e</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">matchLets</span> <span class=\"n\">e</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n  <span class=\"o\">(</span><span class=\"n\">lams</span><span class=\"o\">,</span> <span class=\"n\">lets</span><span class=\"o\">,</span> <span class=\"n\">e</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 384033168,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691772148
+    },
+    {
+        "content": "<p>The program is not that recursive. It really matters if the expression is lambda followed by a lambda or let. What is happening deeper is not important.</p>",
+        "id": 384035597,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1691772535
+    },
+    {
+        "content": "<p>If removing all the mdata is such a bad idea I will just try to carefully handle it. Let's see what kind of impact it will have on the code.</p>",
+        "id": 384042183,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1691773796
+    },
+    {
+        "content": "<p>the code I just posted only matches a sequence of lambdas followed by a sequence of lets</p>",
+        "id": 384042868,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691773934
+    },
+    {
+        "content": "<p>but by writing it as individual recursive functions it is easier to make sure that mdata is skipped whenever needed</p>",
+        "id": 384043003,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1691773974
+    }
+]

@@ -1,0 +1,158 @@
+[
+    {
+        "content": "<p>This is in reference to the \"PSA about trusting Lean proofs\" thread. I'm throwing this in the new members steam since I have a few basic questions and I don't want to pollute the original thread. I'm also aware that the thread went in circles but I haven't spotted a direct answer to my questions.</p>\n<p>I originally thought a proof assistant consisted of:<br>\n1) a small and easy to verify program used to check all statements (the kernel)<br>\n2) a more complex system used to convert human level proofs to a simpler representation that the kernel could verify (lean)</p>\n<p>In this model, the complex system does not need to be bug free because any bug in the complex system would be detected in the kernel. (It would still be possible for the complex system to mistranslate the goal, but this would be the only type of bug that the kernel couldn't detect, and in-particular this bug is relatively easy for humans to check).</p>\n<p>However, in the \"PSA about trusting Lean proofs\" thread, the consensus seems to be that a proof assistant is not intended to verify the statements created by the complex system; instead it should be the responsibility of an external checker.</p>\n<p>So my main question is: why?</p>\n<p>What is wrong with the original model?</p>\n<p>Why did Lean 4 introduce a way to bypass checks by the kernel? Why is the solution \"use an external checker\" instead of \"don't allow Lean to bypass the kernel\"? Is it due to performance, or a pivot in what the Lean community wants Lean to be, or something else?</p>\n<p>As a separate question: why does Lean allow compiling with sorrys? In particular, if I compile and run:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">test</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n</code></pre></div>\n<p>Then lean returns <code>INTERNAL PANIC: sorry executed</code>. So why allow programs with <code>sorry</code> to even compile?</p>",
+        "id": 393860851,
+        "sender_full_name": "Petur Vetle",
+        "timestamp": 1695967498
+    },
+    {
+        "content": "<p>Re question 1: The issue is that Lean's <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Environment#doc\">docs#Lean.Environment</a>, the thing that holds all the proofs and declarations etc etc. is a data structure that can be mutated by a meta programmer. So it is not possible to prevent people from injecting wrong things into there. You can also not flag things as \"kernel checked\" or w/e since the attacker can set that flag on their own as well obviously. Now the issue with this is that we basically trust the Environment to only contain correct things. You could of course re-check whenever you use something from the Environment but that would be crazy performance wise.</p>\n<p>So instead the idea is to use an external checker (this external checker <em>can</em> be the kernel that we have right now if you want) after you have finished the file and exported the proof to \"replay\" what is supposed to happen. So you go through all of the inductive declarations, theorems etc and you present all of those to the checker. The checker will then notice things that were wrongly injected into the environment without checking (if they are in fact invalid of course) and throw errors.</p>\n<p>The reason for multiple external checkers is that maybe you dont even trust the lean kernel itself so you want to use multiple distinct implementations to verify that nobody is messing up. And if they do all in fact agree on the fact that things are correct it is highly unlikely that there are mistakes left right?</p>\n<p>With respect to the compiling with <code>sorry</code>'s. Not every <code>sorry</code> in your program has to be on a branch that can get (or happens to get) hit while running. So you can already compile and run your code if:<br>\na) You are still missing a proof that your branch cant be hit<br>\nb) haven't developed the branch yet but want to check if things work, you can think of this roughly equivalent to an <code>unimplemented</code> I guess.</p>\n<p>So it can very much make sense to compile with sorry although it is of course not a particularly interesting case above.</p>",
+        "id": 393872004,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1695971825
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"621865\">Petur Vetle</span> <a href=\"#narrow/stream/113489-new-members/topic/More.20on.20trusting.20Lean.20proofs/near/393860851\">said</a>:</p>\n<blockquote>\n<p>What is wrong with the original model?</p>\n</blockquote>\n<p>The model is still true-ish I think, so long as the module you load into Lean only uses a list of trusted commands and tactics (so no defining new commands that manipulate the environment or create bogus terms, or using tactics that run arbitrary monadic actions inside proofs). There are probably still things Lean could do to increase trust, like making environment manipulation be behind a private interface (note: nothing is totally private in Lean, std has the <code>open private</code> command), or having a special \"math-only mode\" that turns off metaprogramming for a module. Maybe when Lean saves an olean it could even be configured to check that every definition/theorem is well-formed and type correct (while also checking that the imported environment from the start of the module hasn't been manipulated!).</p>\n<p>One of the issues that make total trust impossible is that the Lean kernel is in the same address space as the elaborator, and they share data structures. The kernel receives the environment and expression data structures from the elaborator, and it trusts that they are well-formed memory-wise. I wouldn't be surprised at all if it's possible to trick the kernel in other ways, by setting up invalid pointers into memory that looks like a valid proof.</p>",
+        "id": 393879072,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1695973849
+    },
+    {
+        "content": "<p>I didn't follow all the conversation, but one important point I think I have understood is that we talking about a malicious actor. It's like I create another executable called <code>lake</code> such that the output of <code>lake build</code> is always errors-free and I show you this as a proof that my code is correct (OK, this is a little bit extreme).</p>",
+        "id": 393879396,
+        "sender_full_name": "Riccardo Brasca",
+        "timestamp": 1695974017
+    },
+    {
+        "content": "<p>I worry about non-malicious actors slightly, since there are plenty of tactics that call <code>modifyEnv</code> (but I checked that none of the ones in mathlib use it to add definitions)</p>",
+        "id": 393879525,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1695974070
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"621865\">Petur Vetle</span> <a href=\"#narrow/stream/113489-new-members/topic/More.20on.20trusting.20Lean.20proofs/near/393860851\">said</a>:</p>\n<blockquote>\n<p>Why did Lean 4 introduce a way to bypass checks by the kernel? Why is the solution \"use an external checker\" instead of \"don't allow Lean to bypass the kernel\"?</p>\n</blockquote>\n<p>Fwiw your example in the other thread directly invoked metaprogramming features. The kernel checks declarations relative to the underlying type theory.  It doesn't really make sense to say that the rules of the type theory should be strictly enforced against metaprograms before they're exported/compiled to vanilla programs, because they're... You know, meta.</p>",
+        "id": 393879599,
+        "sender_full_name": "Chris Bailey",
+        "timestamp": 1695974121
+    },
+    {
+        "content": "<p>I feel like the kernel could do more to try to make sure the environment is checked. For example, the kernel could maintain its own environment for the current module (for efficiency, it could trust the environment from all the loaded oleans, which would be shared with the elaborator). Then, only through kernel type checking would you be able to add declarations into the kernel's own module environment.</p>",
+        "id": 393879795,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1695974218
+    },
+    {
+        "content": "<p>One of the versions of Automath was concerned about correctness of the environment, and its checker had a special mode that could output a single term that completely eliminated any dependence on an environment. This term could then be type checked again. (Maybe this could be regarded as using itself as an external checker?) This has nothing to do with making sure the environment is well-formed during checking, but I'm just bringing it up because environment issues were thought about back in the 60s and 70s too.</p>",
+        "id": 393880197,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1695974398
+    },
+    {
+        "content": "<p>Now we're back to the real-life complexities of a modern proof assistant: there is not one environment like in the 60s but environments are constantly forked, processed, and discarded in parallel by the language server, which will only increase going forward and apply to the cmdline as well. Strip away these complexities and you have a separate checker.</p>",
+        "id": 393881892,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1695975157
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> I'm not going to say its trivial to implement, but kernel states (which would encapsulate the private kernel environment) could also be forked, processed, and discarded, right?</p>\n<p>Something I don't fully understand about separate checkers being the answer is then what's the point of having the elaborator run the kernel checker at all? (I know one important answer -- it helps catch elaboration bugs -- but a separate checker would catch those too.)</p>",
+        "id": 393883919,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1695976000
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"228466\">Chris Bailey</span> <a href=\"#narrow/stream/113489-new-members/topic/More.20on.20trusting.20Lean.20proofs/near/393879599\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"621865\">Petur Vetle</span> <a href=\"#narrow/stream/113489-new-members/topic/More.20on.20trusting.20Lean.20proofs/near/393860851\">said</a>:</p>\n<blockquote>\n<p>Why did Lean 4 introduce a way to bypass checks by the kernel? Why is the solution \"use an external checker\" instead of \"don't allow Lean to bypass the kernel\"?</p>\n</blockquote>\n<p>Fwiw your example in the other thread directly invoked metaprogramming features. The kernel checks declarations relative to the underlying type theory.  It doesn't really make sense to say that the rules of the type theory should be strictly enforced against metaprograms before they're exported/compiled to vanilla programs, because they're... You know, meta.</p>\n</blockquote>\n<p>AFAIK, meta code in lean is still typed code and it is typechecked.</p>",
+        "id": 393890130,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1695978093
+    },
+    {
+        "content": "<p>It seems that the environment is a red herring here. The ”classical” design for a LCF style proof assistant that Petur seems to refer to is one based on an abstract data type <code>Thm</code> for checked theorems and definitions, abstract in the sense that only the trusted code base (the kernel) can create them. It then doesn't matter much where the untrusted meta program stores them between calls to the kernel.</p>\n<p>But that model is not easy to pull off in practice:</p>\n<ul>\n<li>you need to store and load theorems from disk, if you want separate compilation. So either the whole persistence becomes part of the kernel, or here you have your first flaw.</li>\n<li>the model is only as water tight as your host language has a module system that enforces abstraction boundaries. Any <code>unsafeCoerce</code> or C FFI etc. breaks that.</li>\n</ul>\n<p>So while the model is nice, it seems dubious if it can scale to a pragmatic interactive assistant. Especially the last item is at odds with also providing a general purpose programming language! You need a bigger separation between arbitrary code and trusted code, so at least a process boundary - and you quickly evolve the model to something that looks like “serialization to external checkere” again…</p>",
+        "id": 393890156,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1695978102
+    },
+    {
+        "content": "<p>Thank you all for the replies. It has been very helpful and I'm grateful for the discussion. I'm still looking for a clear answer to:</p>\n<blockquote>\n<p>Why did Lean 4 introduce a way to bypass checks by the kernel? Why is the solution \"use an external checker\" instead of \"don't allow Lean to bypass the kernel\"?</p>\n</blockquote>\n<p>I do have a few responses below, as it seems the discussion has slightly drifted outside of what I had in mind:</p>",
+        "id": 393985875,
+        "sender_full_name": "Petur Vetle",
+        "timestamp": 1696012879
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"130384\">Riccardo Brasca</span> <a href=\"#narrow/stream/113489-new-members/topic/More.20on.20trusting.20Lean.20proofs/near/393879396\">said</a>:</p>\n<blockquote>\n<p>I didn't follow all the conversation, but one important point I think I have understood is that we talking about a malicious actor. It's like I create another executable called <code>lake</code> such that the output of <code>lake build</code> is always errors-free and I show you this as a proof that my code is correct (OK, this is a little bit extreme).</p>\n</blockquote>\n<p>This is beyond the scope of the questions that I had.</p>\n<p>The essence of my confusion and the reason for asking these questions is that even if we assume:<br>\n1) there is no malicious actor<br>\n2) the kernel does not contain any bugs<br>\n3) Lean does not contain any bugs<br>\nthen, its still possible for Lean to compile an invalid proof (i.e. there is a bug in a tactic which uses <code>modifyEnv</code>). </p>\n<p>So my question is: why allow that to be the case? Shouldn't it be reasonable to assume that if there are no bugs in the kernel and no bugs Lean,  then Lean shouldn't be able to produce a proof of False.</p>",
+        "id": 393985911,
+        "sender_full_name": "Petur Vetle",
+        "timestamp": 1696012895
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/113489-new-members/topic/More.20on.20trusting.20Lean.20proofs/near/393890156\">said</a>:</p>\n<blockquote>\n<p>It seems that the environment is a red herring here. The ”classical” design for a LCF style proof assistant that Petur seems to refer to is one based on an abstract data type <code>Thm</code> for checked theorems and definitions, abstract in the sense that only the trusted code base (the kernel) can create them. It then doesn't matter much where the untrusted meta program stores them between calls to the kernel.</p>\n<p>But that model is not easy to pull off in practice:</p>\n<ul>\n<li>you need to store and load theorems from disk, if you want separate compilation. So either the whole persistence becomes part of the kernel, or here you have your first flaw.</li>\n<li>the model is only as water tight as your host language has a module system that enforces abstraction boundaries. Any <code>unsafeCoerce</code> or C FFI etc. breaks that.</li>\n</ul>\n<p>So while the model is nice, it seems dubious if it can scale to a pragmatic interactive assistant. Especially the last item is at odds with also providing a general purpose programming language! You need a bigger separation between arbitrary code and trusted code, so at least a process boundary - and you quickly evolve the model to something that looks like “serialization to external checkere” again…</p>\n</blockquote>\n<p>I'm confused why using an \"external checker\" solves any of the problems you listed.</p>\n<p>1) No matter whether an external checker is used v.s. solely employing the kernel, the definitions and theorems still need to be serialized and stored somewhere and then eventually ran through the checker. In any case, the serialization and storage shouldn't need to be in the kernel. You could just say that the serialization and storage is part of the \"complex system\". If there is a bug in the serialization or storage mechanism, then the kernel will detect it and reject the input as invalid.</p>\n<p>2) This is true for external checkers as well. By definition <code>unsafe</code> refers to not checked by the language (and hence the kernel and any external checker).</p>",
+        "id": 393985937,
+        "sender_full_name": "Petur Vetle",
+        "timestamp": 1696012917
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/113489-new-members/topic/More.20on.20trusting.20Lean.20proofs/near/393883919\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> I'm not going to say its trivial to implement, but kernel states (which would encapsulate the private kernel environment) could also be forked, processed, and discarded, right?</p>\n<p>Something I don't fully understand about separate checkers being the answer is then what's the point of having the elaborator run the kernel checker at all? (I know one important answer -- it helps catch elaboration bugs -- but a separate checker would catch those too.)</p>\n</blockquote>\n<p>This is getting to the gist of my confusion. It seems that by allowing one to bypass the kernel then one is forced to use an external checker simply to check that the kernel was not bypassed.</p>",
+        "id": 393986487,
+        "sender_full_name": "Petur Vetle",
+        "timestamp": 1696013183
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"228466\">Chris Bailey</span> <a href=\"#narrow/stream/113489-new-members/topic/More.20on.20trusting.20Lean.20proofs/near/393879599\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"621865\">Petur Vetle</span> <a href=\"#narrow/stream/113489-new-members/topic/More.20on.20trusting.20Lean.20proofs/near/393860851\">said</a>:</p>\n<blockquote>\n<p>Why did Lean 4 introduce a way to bypass checks by the kernel? Why is the solution \"use an external checker\" instead of \"don't allow Lean to bypass the kernel\"?</p>\n</blockquote>\n<p>Fwiw your example in the other thread directly invoked metaprogramming features. The kernel checks declarations relative to the underlying type theory.  It doesn't really make sense to say that the rules of the type theory should be strictly enforced against metaprograms before they're exported/compiled to vanilla programs, because they're... You know, meta.</p>\n</blockquote>\n<p>But it does make sense to say that the programs that the metaprograms output must follow the rules of type theory. Otherwise, you can get metaprograms which output programs that prove False (since it wouldn't be enforced that these programs follow the rules of type theory). </p>\n<p>So this goes back to my question: why allow metaprograms to produce programs that aren't checked by the kernel? Is there a particular benefit that I am not seeing: e.g. for performance?</p>",
+        "id": 393987772,
+        "sender_full_name": "Petur Vetle",
+        "timestamp": 1696013801
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"621865\">@Petur Vetle</span> I'm not sure you'll find a definitive answer to this question right now. It seems that we are witnessing a shift in how the design is implemented. Right now the kernel is embedded inside the Lean frontend and is called directly by the elaborator after it processes each declaration. The kernel is being spun out as a separate program (this is what Scott Morrison's external checker is). There will probably still be a copy of the kernel in the Lean frontend to catch bugs in tactics and the elaborator, but it seems reasonable just treating this as being a check that the kernel <em>should</em> accept the declarations.</p>\n<p>This means that your original thought about a proof assistant remains correct. This separate process for the kernel is the small-and-easy-to-verify program, and the elaborator (with its own kernel embedded) is the more complex system that converts human-level proofs to a simpler representation.</p>\n<p>It's a lot simpler to implement the kernel correctly if the kernel is a separate program. I believe the particular benefit is correctness, rather than performance.</p>\n<p>Also, it's not that metaprograms are being allowed to modify the environment bypassing the kernel, it's that they're not being explicitly disallowed from doing so. The environment is just an ordinary Lean object.</p>",
+        "id": 393991757,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1696015383
+    },
+    {
+        "content": "<p>The TLDR: while \"external checker\" seems like a new thing, it's a kernel run in an inherently safer way. Maybe it'd make sense to say \"kernel\" instead of \"external checker\".</p>",
+        "id": 393992458,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1696015715
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"621865\">Petur Vetle</span> <a href=\"#narrow/stream/113489-new-members/topic/More.20on.20trusting.20Lean.20proofs/near/393985911\">said</a>:</p>\n<blockquote>\n<p>The essence of my confusion and the reason for asking these questions is that even if we assume:<br>\n1) there is no malicious actor<br>\n2) the kernel does not contain any bugs<br>\n3) Lean does not contain any bugs<br>\nthen, its still possible for Lean to compile an invalid proof (i.e. there is a bug in a tactic which uses <code>modifyEnv</code>). </p>\n</blockquote>\n<p>While this is by no means an airtight guarantee, under the \"attacker model\" given here, that tactic writers are fallible even if not malicious and might accidentally modify the environment in invalid ways, the main defense against that is that any direct use of the <code>Environment</code> as a lean data structure (e.g. using <code>Environment.mk</code> directly or notations for it) is very suspicious and is discouraged. I think if you survey actual uses of environment modification you will find that no one ever modifies the <code>constants</code> field directly without going through <code>addDecl</code>. I don't think that <code>modifyEnv</code> is the right place to look (i.e. that this is the analogue of an <code>unsafe</code> block and should be reviewed carefully); rather, the unsafe block is the <code>Environment</code> constructor. A cheap way to achieve this is to make the constructor <code>private</code>, then you will have to use much more suspicious operations to access it, which will make it stand out during review that much more.</p>",
+        "id": 394015433,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696028221
+    },
+    {
+        "content": "<p>In fact, I will try making a PR that does that and see how bad the fallout is...</p>",
+        "id": 394015478,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696028257
+    },
+    {
+        "content": "<p>I am gob-smacked; I added <code>private mk ::</code> to <code>Environment</code> and all of lean + lake built without error. So this just goes to show that environment modification without going through the APIs is basically nonexistent. Let's see whether mathlib compiles too...</p>",
+        "id": 394019211,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696030623
+    },
+    {
+        "content": "<p>I found one failure in the test <code>prvCtor.lean</code>, which seems to be about testing private constructors:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"k\">in</span>\n<span class=\"k\">#eval</span> <span class=\"n\">id</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:=</span> <span class=\"n\">CoreM</span> <span class=\"n\">Unit</span><span class=\"o\">)</span> <span class=\"k\">do</span> <span class=\"n\">modifyEnv</span> <span class=\"k\">fun</span> <span class=\"n\">env</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">env</span> <span class=\"k\">with</span> <span class=\"n\">header.mainModule</span> <span class=\"o\">:=</span> <span class=\"bp\">`</span><span class=\"n\">foo</span> <span class=\"o\">}</span> <span class=\"c1\">-- change module name to test `private`</span>\n</code></pre></div>\n<p>This test reads as though it is testing a private constructor, which it now is, but AFAICT there was no private constructor being used here before... <span aria-label=\"thinking\" class=\"emoji emoji-1f914\" role=\"img\" title=\"thinking\">:thinking:</span> Maybe <code>Environment.mk</code> was once private and this was removed?</p>",
+        "id": 394019613,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696030942
+    },
+    {
+        "content": "<p>...and mathlib also builds without modification. A good day. <a href=\"https://github.com/leanprover/lean4/pull/2604\">lean4#2604</a></p>",
+        "id": 394036929,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696042483
+    },
+    {
+        "content": "<p>Thank you for the replies. I have a better understanding of what is going on. I'm still a little bit confused on why <code>Environment</code> should even be user modifiable in the first place, but that'll be my excuse to dig into the internals of Lean and learn more. And that's great news that mathlib compiled with a private constructor! Thanks again everyone.</p>",
+        "id": 394119137,
+        "sender_full_name": "Petur Vetle",
+        "timestamp": 1696114028
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"621865\">Petur Vetle</span> has marked this topic as resolved.</p>",
+        "id": 394119148,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1696114053
+    }
+]

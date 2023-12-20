@@ -1,0 +1,104 @@
+[
+    {
+        "content": "<p>Dear All,</p>\n<p>I would like to have a <code>Try this</code> that suggests replacing itself with a command.</p>\n<p>I am able to get almost all the way there, except that there are some annoying quotations (<code>\"</code>) on the way!  Here is a <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a> showing my problems.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Std.Tactic.TryThis</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Command</span> <span class=\"n\">Term</span>\n\n<span class=\"n\">syntax</span> <span class=\"s2\">\"writeMe\"</span> <span class=\"o\">(</span><span class=\"n\">ppSpace</span> <span class=\"n\">colGt</span> <span class=\"n\">str</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">command</span>\n\n<span class=\"n\">elab_rules</span> <span class=\"o\">:</span> <span class=\"n\">command</span>\n<span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">command</span><span class=\"bp\">|</span> <span class=\"n\">writeMe</span> <span class=\"bp\">$</span><span class=\"n\">text</span><span class=\"o\">:</span><span class=\"n\">str</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">liftTermElabM</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">stx</span> <span class=\"bp\">←</span> <span class=\"n\">getRef</span>\n  <span class=\"k\">let</span> <span class=\"n\">str</span> <span class=\"bp\">←</span> <span class=\"n\">elabTerm</span> <span class=\"n\">text</span> <span class=\"n\">none</span>\n  <span class=\"n\">Std.Tactic.TryThis.addTermSuggestion</span> <span class=\"n\">stx</span> <span class=\"n\">str</span> <span class=\"o\">(</span><span class=\"n\">origSpan</span><span class=\"bp\">?</span> <span class=\"o\">:=</span> <span class=\"n\">stx</span><span class=\"o\">)</span>\n\n<span class=\"n\">writeMe</span> <span class=\"s2\">\"hello\"</span>  <span class=\"c1\">-- Try this: \"hello\"</span>\n</code></pre></div>\n<p>These are the two issues that I am trying to solve.</p>\n<ol>\n<li>\n<p>Can the <code>Try this:</code> suggestion <em>not</em> print the quotations?  I would like<br>\n<code>Try this: hello</code> instead of <code>Try this: \"hello\"</code></p>\n</li>\n<li>\n<p>Can the <em>input</em> not have the quotations?  I would like to type<br>\n<code>writeMe hello</code> and get <code>Try this: hello</code> as a suggestion.</p>\n</li>\n</ol>\n<p>The strings that I am going to input will not contain any spaces, if that is relevant in any way.</p>\n<p>A <a href=\"#narrow/stream/270676-lean4/topic/.E2.9C.94.20Notation.20for.20.60String.60.20without.20quotation\">related thread</a> but I would really like to have no syntax at all to introduce the strings.</p>\n<p>Thanks!</p>",
+        "id": 390015563,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1694252412
+    },
+    {
+        "content": "<p>To un <a href=\"https://en.wikipedia.org/wiki/XY_problem\">#xy</a>, I would like to achieve the following.  When I want to add an import, I copy the relative path and I paste it.  A code action suggests <code>import [pasted code with `/` replaced by `.` and `.lean` removed]</code>.</p>\n<p>Currently, I can make this work:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Mathlib</span><span class=\"bp\">/</span><span class=\"s2\">\"Data/Nat/Basic.lean\"</span>  <span class=\"c1\">-- Try this: \"import Mathlib.Data.Nat.Basic\"</span>\n</code></pre></div>\n<p>but I would like to not have to put in the double quotes in the input and then remove them from the output.</p>",
+        "id": 390017084,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1694253565
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/std4/pull/215\">std4#215</a> might be helpful. It adds support for plain string suggestions (i.e. which not-already-parsed Syntax).</p>",
+        "id": 390017571,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1694253879
+    },
+    {
+        "content": "<p>Scott, thanks!  I'll take a look!  From a very superficial glance at the description and the examples, this seems like it might address the <code>Try this</code> quotes.  Of the two issues, I view this as the main one!</p>",
+        "id": 390018212,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1694254355
+    },
+    {
+        "content": "<p>If you want the input to not have the quotations you'll need to declare syntax for it, there's no way around that.<br>\nIn your specific case you could define an <code>importPath</code> parser that takes slash-separated paths.</p>\n<p>Regarding the output, one way to trick the <code>TryThis</code> tactic is declaring your own output syntax category with the syntax you want, though it's kind of a hack:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Std.Tactic.TryThis</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Command</span> <span class=\"n\">Term</span> <span class=\"n\">PrettyPrinter</span> <span class=\"n\">Delaborator</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">WriteMe</span>\n<span class=\"c1\">-- Unfortunately, the `.lean` part is not useful, since the `ident` parser is greedy</span>\n<span class=\"n\">syntax</span> <span class=\"n\">importPath</span> <span class=\"o\">:=</span> <span class=\"n\">sepBy1</span><span class=\"o\">(</span><span class=\"n\">ident</span><span class=\"o\">,</span> <span class=\"s2\">\"/\"</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">noWs</span> <span class=\"s2\">\".lean\"</span><span class=\"o\">)</span><span class=\"bp\">?</span>\n<span class=\"n\">syntax</span> <span class=\"s2\">\"writeMe\"</span> <span class=\"o\">(</span><span class=\"n\">ppSpace</span> <span class=\"n\">colGt</span> <span class=\"n\">importPath</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">command</span>\n\n<span class=\"n\">declare_syntax_cat</span> <span class=\"n\">write_me_output_stx</span>\n<span class=\"n\">syntax</span> <span class=\"s2\">\"import \"</span> <span class=\"n\">ident</span> <span class=\"o\">:</span> <span class=\"n\">write_me_output_stx</span>\n\n<span class=\"n\">elab_rules</span> <span class=\"o\">:</span> <span class=\"n\">command</span>\n<span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">command</span><span class=\"bp\">|</span> <span class=\"n\">writeMe</span> <span class=\"bp\">$</span><span class=\"o\">[</span><span class=\"bp\">$</span><span class=\"n\">parts</span><span class=\"o\">]</span><span class=\"bp\">/*$</span><span class=\"o\">[</span><span class=\"bp\">.</span><span class=\"n\">lean</span><span class=\"o\">]</span><span class=\"bp\">?</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">liftTermElabM</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">strParts</span> <span class=\"o\">:=</span> <span class=\"n\">parts.map</span> <span class=\"bp\">λ</span><span class=\"n\">s</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"k\">let</span> <span class=\"n\">s</span> <span class=\"o\">:=</span> <span class=\"n\">s.getId.toString</span> <span class=\"o\">(</span><span class=\"n\">escape</span> <span class=\"o\">:=</span> <span class=\"n\">false</span><span class=\"o\">)</span>\n    <span class=\"c1\">-- Remove the `.lean` suffix if any</span>\n    <span class=\"k\">if</span> <span class=\"n\">s.endsWith</span> <span class=\"s2\">\".lean\"</span> <span class=\"k\">then</span> <span class=\"n\">s.dropRight</span> <span class=\"mi\">5</span> <span class=\"k\">else</span> <span class=\"n\">s</span>\n  <span class=\"c1\">-- Concat the path parts with dots into a `Name`</span>\n  <span class=\"k\">let</span> <span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">strParts.foldl</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"n\">part</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">name.str</span> <span class=\"n\">part</span><span class=\"o\">)</span> <span class=\"bp\">`</span><span class=\"n\">Mathlib</span>\n  <span class=\"k\">let</span> <span class=\"n\">stx</span> <span class=\"bp\">←</span> <span class=\"n\">getRef</span>\n  <span class=\"k\">let</span> <span class=\"n\">replacement</span> <span class=\"bp\">←</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">write_me_output_stx</span><span class=\"bp\">|</span> <span class=\"kn\">import</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">mkIdent</span> <span class=\"n\">name</span><span class=\"o\">))</span>\n  <span class=\"n\">Std.Tactic.TryThis.addSuggestion</span> <span class=\"n\">stx</span> <span class=\"n\">replacement</span> <span class=\"o\">(</span><span class=\"n\">origSpan</span><span class=\"bp\">?</span> <span class=\"o\">:=</span> <span class=\"n\">stx</span><span class=\"o\">)</span>\n<span class=\"kd\">end</span> <span class=\"n\">WriteMe</span>\n\n<span class=\"n\">writeMe</span> <span class=\"n\">Data</span><span class=\"bp\">/</span><span class=\"n\">Nat</span><span class=\"bp\">/</span><span class=\"n\">Basic.lean</span>  <span class=\"c1\">-- Try this: import Mathlib.Data.Nat.Basic</span>\n</code></pre></div>\n<p>Note that in the example I'm folding the parts into a <code>Name</code> directly, with <code>Mathlib</code> as the root, not into a string, since what you want to produce is actually a name in this case.</p>",
+        "id": 390021858,
+        "sender_full_name": "Endor H",
+        "timestamp": 1694257081
+    },
+    {
+        "content": "<p>Still, I agree this would be easier if the <code>TryThis</code> widget supported plain string suggestions.</p>",
+        "id": 390021926,
+        "sender_full_name": "Endor H",
+        "timestamp": 1694257114
+    },
+    {
+        "content": "<p>A more general workaround would be having a <code>raw</code> syntax category that accepted anything, but you'd probably need to declare a parser, a pretty printer, and maybe an elaborator/delaborator for it</p>",
+        "id": 390022099,
+        "sender_full_name": "Endor H",
+        "timestamp": 1694257228
+    },
+    {
+        "content": "<p>I'm not sure if anything like that already exists</p>",
+        "id": 390022131,
+        "sender_full_name": "Endor H",
+        "timestamp": 1694257256
+    },
+    {
+        "content": "<p>I'm on mobile now, but thanks for the suggestions!</p>\n<p>I had thought that maybe I could use <code>Mathlib/</code> and <code>.lean</code> as markers for quoting the string.  As for the conversion, I am using <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.moduleOfFileName#doc\">docs#Lean.moduleOfFileName</a> to also make sure that the path exists.  But these are details!  I'll try out your suggestions!</p>",
+        "id": 390023598,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1694257590
+    },
+    {
+        "content": "<p>To have custom delimiters for a string you'd probably need a custom parser, similar to the idea of having a custom <code>raw</code> syntax category.</p>",
+        "id": 390025061,
+        "sender_full_name": "Endor H",
+        "timestamp": 1694258278
+    },
+    {
+        "content": "<p>Honestly, I'm way beyond what I understand of parsing, but the thread linked to earlier already has a trick for that, I think.</p>",
+        "id": 390025167,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1694258356
+    },
+    {
+        "content": "<p>Hmm, I'm afraid the trick from that thread only works because what's between the delimiters is always an identifier, so it can use the identifier parser.<br>\nHonestly, I've only ever made a custom parser once, and it was quite an ordeal.</p>",
+        "id": 390025499,
+        "sender_full_name": "Endor H",
+        "timestamp": 1694258579
+    },
+    {
+        "content": "<p>I basically copied what's done in <code>Lean.Parser.Basic.lean</code> and <code>Lean.Parser.Extra.lean</code> where the built-in parsers are declared.<br>\nMaybe there's an easier way, but I wouldn't recommend unless necessary <span aria-label=\"laughing\" class=\"emoji emoji-1f606\" role=\"img\" title=\"laughing\">:laughing:</span></p>",
+        "id": 390025504,
+        "sender_full_name": "Endor H",
+        "timestamp": 1694258584
+    },
+    {
+        "content": "<p>When I have something working, I'll post it here.</p>",
+        "id": 390029707,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1694261578
+    },
+    {
+        "content": "<p>Thank you very much for your help!  From what I can see on my phone, your approach basically should work for me!  I might simply change a couple of details.</p>",
+        "id": 390029708,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1694261578
+    },
+    {
+        "content": "<p>I have now what I wanted: a very tiny modification of <span class=\"user-mention\" data-user-id=\"646492\">@Endor H</span>'s suggestion: thank you very much!</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Std.Tactic.TryThis</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Command</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">importMe</span>\n\n<span class=\"n\">syntax</span> <span class=\"n\">importPath</span> <span class=\"o\">:=</span> <span class=\"n\">sepBy1</span><span class=\"o\">(</span><span class=\"n\">ident</span><span class=\"o\">,</span> <span class=\"s2\">\"/\"</span><span class=\"o\">)</span>\n<span class=\"n\">syntax</span> <span class=\"s2\">\"Mathlib\"</span> <span class=\"s2\">\"/\"</span> <span class=\"o\">(</span><span class=\"n\">ppSpace</span> <span class=\"n\">colGt</span> <span class=\"n\">importPath</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">command</span>\n<span class=\"n\">declare_syntax_cat</span> <span class=\"n\">write_me_output_stx</span>\n\n<span class=\"n\">syntax</span> <span class=\"s2\">\"import \"</span> <span class=\"n\">ident</span> <span class=\"o\">:</span> <span class=\"n\">write_me_output_stx</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">toSuggestion</span> <span class=\"o\">(</span><span class=\"n\">root</span> <span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">parts</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"o\">(</span><span class=\"n\">TSyntax</span> <span class=\"bp\">`</span><span class=\"n\">ident</span><span class=\"o\">))</span> <span class=\"o\">:</span>\n    <span class=\"n\">TermElabM</span> <span class=\"o\">(</span><span class=\"n\">TSyntax</span> <span class=\"bp\">`</span><span class=\"n\">write_me_output_stx</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">strParts</span> <span class=\"o\">:=</span> <span class=\"n\">parts.map</span> <span class=\"k\">fun</span> <span class=\"n\">s</span> <span class=\"bp\">↦</span> <span class=\"n\">s.getId.toString</span> <span class=\"o\">(</span><span class=\"n\">escape</span> <span class=\"o\">:=</span> <span class=\"n\">false</span><span class=\"o\">)</span>\n  <span class=\"c1\">-- Rebuild the path and interpret it as a `System.FilePath`.</span>\n  <span class=\"k\">let</span> <span class=\"n\">path</span> <span class=\"o\">:</span> <span class=\"n\">System.FilePath</span> <span class=\"o\">:=</span> <span class=\"n\">root</span> <span class=\"bp\">++</span> <span class=\"s2\">\"/\"</span> <span class=\"bp\">++</span> <span class=\"n\">String.intercalate</span> <span class=\"s2\">\"/\"</span> <span class=\"n\">strParts.toList</span>\n  <span class=\"k\">let</span> <span class=\"n\">impS</span> <span class=\"bp\">←</span> <span class=\"n\">Lean.moduleNameOfFileName</span> <span class=\"n\">path</span> <span class=\"n\">none</span>\n  <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">write_me_output_stx</span><span class=\"bp\">|</span> <span class=\"kn\">import</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">mkIdent</span> <span class=\"n\">impS</span><span class=\"o\">))</span>\n\n<span class=\"n\">elab_rules</span> <span class=\"o\">:</span> <span class=\"n\">command</span>\n<span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">command</span><span class=\"bp\">|</span> <span class=\"n\">Mathlib</span><span class=\"bp\">/</span> <span class=\"bp\">$</span><span class=\"o\">[</span><span class=\"bp\">$</span><span class=\"n\">parts</span><span class=\"o\">]</span><span class=\"bp\">/*</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">liftTermElabM</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">stx</span> <span class=\"bp\">←</span> <span class=\"n\">getRef</span>\n  <span class=\"k\">let</span> <span class=\"n\">replacement</span> <span class=\"bp\">←</span> <span class=\"n\">toSuggestion</span> <span class=\"s2\">\"Mathlib\"</span> <span class=\"n\">parts</span>\n  <span class=\"n\">Std.Tactic.TryThis.addSuggestion</span> <span class=\"n\">stx</span> <span class=\"n\">replacement</span> <span class=\"o\">(</span><span class=\"n\">origSpan</span><span class=\"bp\">?</span> <span class=\"o\">:=</span> <span class=\"n\">stx</span><span class=\"o\">)</span>\n\n<span class=\"kd\">end</span> <span class=\"n\">importMe</span>\n\n<span class=\"n\">Mathlib</span><span class=\"bp\">/</span><span class=\"n\">Data</span><span class=\"bp\">/</span><span class=\"n\">Nat</span><span class=\"bp\">/</span><span class=\"n\">Basic.lean</span>  <span class=\"c1\">-- Try this: import Mathlib.Data.Nat.Basic</span>\n\n<span class=\"n\">Mathlib</span><span class=\"bp\">/</span><span class=\"n\">Not</span><span class=\"bp\">/</span><span class=\"n\">A</span><span class=\"bp\">/</span><span class=\"n\">Path.lean</span>\n<span class=\"c\">/-</span>\n<span class=\"cm\">no such file or directory (error code: 2)</span>\n<span class=\"cm\">  file: Mathlib/Not/A/Path.lean</span>\n<span class=\"cm\">-/</span>\n</code></pre></div>",
+        "id": 390043792,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1694273255
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/270676-lean4/topic/Strings.20without.20.22/near/390017571\">said</a>:</p>\n<blockquote>\n<p><a href=\"https://github.com/leanprover/std4/pull/215\">std4#215</a> might be helpful. It adds support for plain string suggestions (i.e. which not-already-parsed Syntax).</p>\n</blockquote>\n<p>This is great! However it now has a merge conflict.</p>",
+        "id": 390045948,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1694275124
+    }
+]

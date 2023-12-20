@@ -1,0 +1,86 @@
+[
+    {
+        "content": "<p>Is there a version of <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Expr.getAppArgs#doc\">docs4#Lean.Expr.getAppArgs</a> that returns only explicit arguments? I understand the def of getAppargs but I don't know how to access this info. Working in MetaM is ok.</p>",
+        "id": 325855067,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1675528718
+    },
+    {
+        "content": "<p>Hm, do you mean to get explicit arguments from a telescoped lambda? Applications don't have the implicit/explicit dichotomy</p>",
+        "id": 325856694,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1675529364
+    },
+    {
+        "content": "<p>I was indeed looking around the telescope stuff. I have a proof term that applies a lemma and I want to get the exprs corresponding to explicit arguments of the lemma.</p>",
+        "id": 325856988,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1675529493
+    },
+    {
+        "content": "<p>I'm not on my PC right now and I don't remember if the lambda telescope retrieves the binder info's. But that's something you can accumulate while traversing an expression</p>",
+        "id": 325857508,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1675529701
+    },
+    {
+        "content": "<p>I guess I could get the type of the head app, try to get binder info there and then select the app arguments based on that but it feels very clunky.</p>",
+        "id": 325857540,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1675529716
+    },
+    {
+        "content": "<p>The telescope gives you <code>FVarId</code>s and the <code>LocalDecl</code>s corresponding to these <code>FVarId</code>s have a <code>BinderInfo</code> field. This should tell you whether the argument was explicit or implicit.</p>",
+        "id": 326126130,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1675691060
+    },
+    {
+        "content": "<p>I think Patrick doesn't need a monadic telescope. Is there a pure one? (pretty amazing how I've already forgotten the <code>MetaM</code> API)</p>",
+        "id": 326127726,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1675691513
+    },
+    {
+        "content": "<p>The telescope functions are all monadic. I guess one could define a pure one for local variables which returns an explicit <code>LocalContext</code>. But almost every higher-level function on <code>Expr</code>s needs <code>MetaM</code> anyway to interpret potential metavariables, so I don't think there's much of a point.</p>",
+        "id": 326128847,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1675691780
+    },
+    {
+        "content": "<p>Thanks Jannis. My question wasn't limited to FVarId. What I ended up using was: first some non-monadic function collecting indices of explicit arguments in a forall telescope</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">private</span> <span class=\"kd\">def</span> <span class=\"n\">explicitIndicesAux</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">all</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"o\">(</span><span class=\"n\">exArgs</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Array</span> <span class=\"n\">Nat</span>\n<span class=\"bp\">|</span> <span class=\"n\">forallE</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"n\">body</span> <span class=\"n\">BinderInfo.default</span><span class=\"o\">,</span> <span class=\"n\">as</span><span class=\"o\">,</span> <span class=\"n\">n</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">explicitIndicesAux</span> <span class=\"n\">body</span> <span class=\"o\">(</span><span class=\"n\">as.push</span> <span class=\"n\">n</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">n</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"n\">forallE</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"n\">body</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">as</span><span class=\"o\">,</span> <span class=\"n\">n</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">explicitIndicesAux</span> <span class=\"n\">body</span> <span class=\"n\">as</span> <span class=\"o\">(</span><span class=\"n\">n</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">as</span><span class=\"o\">,</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">as</span>\n\n<span class=\"sd\">/-- Get the indices of explicit arguments of a forall telescope. -/</span>\n<span class=\"kd\">def</span> <span class=\"n\">explicitIndices</span> <span class=\"o\">(</span><span class=\"n\">all</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">explicitIndicesAux</span> <span class=\"n\">all</span> <span class=\"bp\">#</span><span class=\"o\">[]</span> <span class=\"mi\">0</span>\n</code></pre></div>\n<p>and then when I see a <code>app</code> telescope I infer its type using <code>inferType</code> and <code>instantiateMVars</code> (this is one of those pairs of functions that should always be called together if you want to use the result in any way...), use the above function and pick the arguments from <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Expr.getAppArgs#doc\">docs4#Lean.Expr.getAppArgs</a>  that live at those indices. I feels super weird but I don't see another way to work around the fact that <code>Expr.app</code> has no binder info.</p>",
+        "id": 326166453,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1675699585
+    },
+    {
+        "content": "<p><code>Expr.app</code> encodes stuff like <code>f x (g y)</code>. How would it keep binder information when there's no binders?</p>",
+        "id": 326186540,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1675701472
+    },
+    {
+        "content": "<p>This general approach sounds fine to me; I would have done it similarly. I would, however, implement <code>explicitIndices</code> in terms of <code>forallBoundedTelescope</code> where the bound is the number of arguments <code>n</code> in your application <code>f x1 ... xn</code>. This ensures that <code>explicitIndices</code> catches explicit arguments even when the type of <code>f</code> is, for example, a definition <code>T := forall X1 ... Xn, U</code>, which your <code>explicitIndices</code> would treat as having zero explicit arguments.</p>",
+        "id": 326193849,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1675703442
+    },
+    {
+        "content": "<p>Jannis, if this is really quick for your, I'd be interested in seeing an implementation using <code>forallBoundedTelescope</code>.</p>",
+        "id": 326208969,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1675707787
+    },
+    {
+        "content": "<p>Sure!</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Lean.Meta</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">Given a type `e = ∀ (x₁ : X₁) ... (xₙ : Xₙ), U`, extract those `i` such that</span>\n<span class=\"sd\">`xᵢ` is an explicit argument.</span>\n<span class=\"sd\">-/</span>\n<span class=\"kd\">def</span> <span class=\"n\">explicitIndices</span> <span class=\"o\">(</span><span class=\"n\">e</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"n\">forallBoundedTelescope</span> <span class=\"n\">e</span> <span class=\"n\">n</span> <span class=\"bp\">λ</span> <span class=\"n\">args</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">indices</span> <span class=\"o\">:=</span> <span class=\"n\">Array.mkEmpty</span> <span class=\"n\">n</span>\n    <span class=\"n\">for</span> <span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">i</span> <span class=\"k\">in</span> <span class=\"o\">[:</span><span class=\"n\">args.size</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n      <span class=\"k\">if</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"o\">(</span><span class=\"n\">args</span><span class=\"o\">[</span><span class=\"n\">i</span><span class=\"o\">]</span><span class=\"bp\">'</span><span class=\"n\">h.2</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">fvarId</span><span class=\"bp\">!.</span><span class=\"n\">getDecl</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">binderInfo</span> <span class=\"bp\">==</span> <span class=\"bp\">.</span><span class=\"n\">default</span> <span class=\"k\">then</span>\n        <span class=\"n\">indices</span> <span class=\"o\">:=</span> <span class=\"n\">indices.push</span> <span class=\"n\">i</span>\n    <span class=\"n\">return</span> <span class=\"n\">indices</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">T</span> <span class=\"o\">:=</span> <span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">x₁</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">{</span><span class=\"n\">x₂</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">x₃</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">x₄</span> <span class=\"o\">:</span> <span class=\"n\">DecidableEq</span> <span class=\"n\">Nat</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">x₅</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">),</span> <span class=\"n\">Nat</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">explicitIndices</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">const</span> <span class=\"bp\">``</span><span class=\"n\">T</span> <span class=\"o\">[])</span> <span class=\"mi\">4</span>\n</code></pre></div>",
+        "id": 326211947,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1675708670
+    },
+    {
+        "content": "<p>Thanks!</p>",
+        "id": 326213622,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1675709164
+    }
+]

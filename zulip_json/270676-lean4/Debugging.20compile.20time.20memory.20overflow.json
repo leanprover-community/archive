@@ -1,0 +1,224 @@
+[
+    {
+        "content": "<p>I'm working on a Lean project where we want to write a custom tactic, and I found it frustrating to debug compile-time memory overflow errors. Lean's trace mechanism stops working when there is memory overflow, and it's difficult to find out where things might go wrong in a large codebase. I've tried <code>gdb --args lean -threads=1 Main.lean</code>, but then lean produces unknown package error for the import commands, which is not surprising.</p>\n<p>Generally, I want to know more about how to debug lean when there is compile-time memory overflow. It would be of great help if I can get more information about how the memory overflow occurred, e.g, getting the backtrace.</p>",
+        "id": 344166213,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679637380
+    },
+    {
+        "content": "<p>You can try <code>lake env gdb --args lean [...]</code></p>",
+        "id": 344167696,
+        "sender_full_name": "Reid Barton",
+        "timestamp": 1679637942
+    },
+    {
+        "content": "<p>Ah, it works now! Thanks!</p>",
+        "id": 344167850,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679637999
+    },
+    {
+        "content": "<p>Now compile-time calls to <code>IO.println</code> are printed (even without gdb) which is already very helpful.</p>\n<p>I also get backtrace when there is internal panic (where I can <code>b lean_internal_panic</code>) or when the program receives SIGINT (where I can <code>handle SIGINT stop</code>). However, the backtrace does not provide much information because it seems that Lean does not directly call the user-defined functions. Instead it calls <code>lean::ir::interpreter::call</code> and <code>lean::ir::interpreter::eval_body</code>. I don't know which arguments are supplied to these two functions, so I still can't directly determine in which function did the stack overflow actually occur.</p>",
+        "id": 344177768,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679642464
+    },
+    {
+        "content": "<p>With a debug build of Lean you can use <code>-Dtrace.interpreter.call=true</code></p>",
+        "id": 344179137,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679642967
+    },
+    {
+        "content": "<p>I find</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">git</span> <span class=\"n\">clone</span> <span class=\"n\">https</span><span class=\"o\">:</span><span class=\"bp\">//</span><span class=\"n\">github.com</span><span class=\"bp\">/</span><span class=\"n\">leanprover</span><span class=\"bp\">/</span><span class=\"n\">lean4</span> <span class=\"c1\">--recurse-submodules</span>\n<span class=\"n\">cd</span> <span class=\"n\">lean4</span>\n<span class=\"n\">mkdir</span> <span class=\"bp\">-</span><span class=\"n\">p</span> <span class=\"n\">build</span><span class=\"bp\">/</span><span class=\"n\">release</span>\n<span class=\"n\">cd</span> <span class=\"n\">build</span><span class=\"bp\">/</span><span class=\"n\">release</span>\n<span class=\"n\">cmake</span> <span class=\"bp\">../..</span>\n<span class=\"n\">make</span>\n</code></pre></div>\n<p>on Lean's manual <a href=\"https://leanprover.github.io/lean4/doc/make/index.html\">https://leanprover.github.io/lean4/doc/make/index.html</a>. How can I modify this to get a debug build of Lean? Also currently our project uses <code>lean-toolchain</code> to determine lean's version. Is it also possible to modify <code>lean-toolchain</code> so that we directly get a debug build?</p>",
+        "id": 344180763,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679643570
+    },
+    {
+        "content": "<p>Also is it possible to use elan?</p>",
+        "id": 344181116,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679643698
+    },
+    {
+        "content": "<p>Use <code>-D CMAKE_BUILD_TYPE=DEBUG</code> as documented below that code block. You may want to adjust the name of the build directory, but it doesn't really matter. After building, you can use <code>elan toolchain link</code> as described in <a href=\"https://leanprover.github.io/lean4/doc/dev/index.html#dev-setup-using-elan\">https://leanprover.github.io/lean4/doc/dev/index.html#dev-setup-using-elan</a>, <code>lean-toolchain</code> will understand the new name.</p>",
+        "id": 344183048,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679644419
+    },
+    {
+        "content": "<p>Ah, I missed that part. I should have read the manual more carefully :-)</p>",
+        "id": 344223327,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679654602
+    },
+    {
+        "content": "<p>I also figured out that we can <code>bt</code> and examine the <code>lean::ir::interpreter::call(this, fn, args)</code> frame using <code>print_args</code>. This only works in the debug build. This way we get the pointer to <code>fn</code>, and then get the name of the function using</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">print</span> <span class=\"o\">((</span><span class=\"n\">lean</span><span class=\"o\">::</span><span class=\"n\">name</span> <span class=\"bp\">*</span><span class=\"o\">)(</span><span class=\"bp\">&lt;</span><span class=\"n\">ptr_to_fn</span><span class=\"bp\">&gt;</span><span class=\"o\">))</span><span class=\"bp\">-&gt;</span><span class=\"n\">to_string</span><span class=\"o\">(</span><span class=\"s2\">\".\"</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>in gdb.</p>",
+        "id": 344224411,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679654878
+    },
+    {
+        "content": "<p>The only annoying part is that compiling and building seems to be a lot slower in the debug build.</p>",
+        "id": 344224782,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679654977
+    },
+    {
+        "content": "<p>Oh, there is also a <code>lean_gdb.py</code> which might be helpful.</p>",
+        "id": 344233357,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679657134
+    },
+    {
+        "content": "<p>Ah yes, instead of changing <code>lean-toolchain</code> I should have recommended compiling only the file in question with the debug Lean as in <code>lake env lean +your-toolchain your-file.lean -Dtrace.interpreter.call=true</code></p>",
+        "id": 344244740,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679659942
+    },
+    {
+        "content": "<p><code>lean_gdb</code> helps only with inspecting Lean objects from gdb, which hopefully you won't need to do</p>",
+        "id": 344244892,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679659989
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Debugging.20compile.20time.20stack.20overflow/near/344244740\">said</a>:</p>\n<blockquote>\n<p>Ah yes, instead of changing <code>lean-toolchain</code> I should have recommended compiling only the file in question with the debug Lean as in <code>lake env lean +your-toolchain your-file.lean -Dtrace.interpreter.call=true</code></p>\n</blockquote>\n<p>This works perfectly!</p>",
+        "id": 344317173,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679675813
+    },
+    {
+        "content": "<p>There is still a problem with <code>-Dtrace.interpreter.call=true</code>. When I used it to debug a real program, printing all interpreter calls makes the program extremely slow (possibly several hundreds of times slower, even though I've redirected the output to a file). Since the time of the execution for our tactic is often around 0.1~10 seconds (sometimes even minutes), we'll wait for too long before the program actually reaches the function that causes stack overflow.</p>\n<p>Currently, it seems to me that <code>gdb</code> the program using lean debug build, setting breakpoint at <code>panic</code> (and stop on <code>SIGINT</code>), invoke <code>bt</code> when overflow occurs, go up the stack and inspect arguments of <code>lean::ir::interpreter::call</code> works best. The execution time of the program is about 10 times slower (than release build) using debug build. It's still kind of acceptable.</p>\n<p>It would be nice if we can use the above approach in release build though. The <code>gdb</code> command <code>info args</code> doesn't work in release builds, but I think it won't take too long to find out where the arguments are located if we look at the assembly code. I'll try to figure this out later (if there aren't any better approaches).</p>",
+        "id": 344323072,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679677271
+    },
+    {
+        "content": "<p>In the end you will want these tactics to be compiled anyway, which will also solve the stacktrace problem. Have you given <code>precompileModules</code> a try yet?</p>",
+        "id": 344324592,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679677628
+    },
+    {
+        "content": "<p>The option is already set to <code>true</code>.</p>",
+        "id": 344326043,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679678022
+    },
+    {
+        "content": "<p>Ah, I think I haven't described the \"compile-time error\" clearly enough.</p>",
+        "id": 344326405,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679678120
+    },
+    {
+        "content": "<p>The scenario is as follows:</p>\n<ol>\n<li>The tactic files are already successfully compiled.</li>\n<li>\n<p>We create a new file, for example <code>foo.lean</code>, and add these lines<br>\n<code>\n   theorem foo : True := by custom_tactic\n   </code></p>\n</li>\n<li>\n<p>We open <code>foo.lean</code> in vscode and let Lean check it, or compile <code>foo.lean</code>.</p>\n</li>\n<li>When we do (3), lean will elaborate <code>by custom_tactic</code> (note that 3 is at compile time, so we elaborate this at compile time). If the <code>custom_tactic</code> is buggy, for example containing infinite recursion, then it will cause stack overflow error.</li>\n<li>If there is stack overflow error, then <code>foo.lean</code> fails to compile.</li>\n</ol>",
+        "id": 344327912,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679678507
+    },
+    {
+        "content": "<p>Unless <code>precompileModules</code> is misbehaving, you should get native backtraces for your tactic in that case</p>",
+        "id": 344328423,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679678644
+    },
+    {
+        "content": "<p>On what platform are you? Do you have an example output from <code>lake build</code>?</p>",
+        "id": 344328793,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679678740
+    },
+    {
+        "content": "<p>I'm running lean on WSL.</p>",
+        "id": 344328908,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679678764
+    },
+    {
+        "content": "<p>Here is an example output:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">lake</span> <span class=\"n\">build</span>\n\n<span class=\"n\">Building</span> <span class=\"n\">Main</span>\n<span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"bp\">&gt;</span> <span class=\"n\">LEAN_PATH</span><span class=\"bp\">=./</span><span class=\"n\">build</span><span class=\"bp\">/</span><span class=\"n\">lib</span><span class=\"o\">:</span><span class=\"bp\">./</span><span class=\"n\">lake</span><span class=\"bp\">-</span><span class=\"n\">packages</span><span class=\"bp\">/</span><span class=\"n\">std</span><span class=\"bp\">/</span><span class=\"n\">build</span><span class=\"bp\">/</span><span class=\"n\">lib</span> <span class=\"n\">LD_LIBRARY_PATH</span><span class=\"bp\">=/</span><span class=\"n\">home</span><span class=\"bp\">/</span><span class=\"n\">indprinciple</span><span class=\"bp\">/.</span><span class=\"n\">elan</span><span class=\"bp\">/</span><span class=\"n\">toolchains</span><span class=\"bp\">/</span><span class=\"n\">leanprover</span><span class=\"c1\">--lean4---nightly-2023-02-03/lib:./lake-packages/std/build/lib:./build/lib /home/indprinciple/.elan/toolchains/leanprover--lean4---nightly-2023-02-03/bin/lean ./././Main.lean -R ././. -o ./build/lib/Main.olean -i ./build/lib/Main.ilean -c ./build/ir/Main.c --load-dynlib=.........(too long)........ --load-dynlib=./build/lib/libDuper-TPTP.so</span>\n<span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">stderr</span><span class=\"o\">:</span>\n<span class=\"n\">INTERNAL</span> <span class=\"n\">PANIC</span><span class=\"o\">:</span> <span class=\"n\">out</span> <span class=\"n\">of</span> <span class=\"n\">memory</span>\n<span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">external</span> <span class=\"n\">command</span> <span class=\"bp\">`/</span><span class=\"n\">home</span><span class=\"bp\">/</span><span class=\"n\">indprinciple</span><span class=\"bp\">/.</span><span class=\"n\">elan</span><span class=\"bp\">/</span><span class=\"n\">toolchains</span><span class=\"bp\">/</span><span class=\"n\">leanprover</span><span class=\"c1\">--lean4---nightly-2023-02-03/bin/lean` exited with code 1</span>\n</code></pre></div>",
+        "id": 344330394,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679679138
+    },
+    {
+        "content": "<p>Oh I see, we do not automatically print the backtrace on internal panics aside from stack overflows</p>",
+        "id": 344330719,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679679226
+    },
+    {
+        "content": "<p>When you use <code>gdb lean</code>, make sure to copy the whole line Lake printed to make precompilation work</p>",
+        "id": 344331033,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679679299
+    },
+    {
+        "content": "<p>Specifically, <code>LD_LIBRARY_PATH</code> and <code>--load-dynlib</code></p>",
+        "id": 344331137,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679679320
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Debugging.20compile.20time.20stack.20overflow/near/344330719\">said</a>:</p>\n<blockquote>\n<p>Oh I see, we do not automatically print the backtrace on internal panics aside from stack overflows</p>\n</blockquote>\n<p>Yes. Maybe \"stack overflow\" is completely wrong because it's actually heap overflow :-). Another scenario that happened during my tests is that the OS just signals SIGKILL to the program and we get nothing on the command line.</p>",
+        "id": 344332332,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679679597
+    },
+    {
+        "content": "<p>Oh, I haven't seen that before</p>",
+        "id": 344332893,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679679727
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">partial</span> <span class=\"kd\">def</span> <span class=\"n\">list_SIGKILL</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span>\n  <span class=\"n\">list_SIGINT</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">++</span> <span class=\"n\">n</span><span class=\"o\">)</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">list_SIGKILL</span> <span class=\"o\">[</span><span class=\"mi\">2</span><span class=\"o\">]</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"n\">IO.println</span> <span class=\"s2\">\"Hello world\"</span>\n</code></pre></div>",
+        "id": 344333434,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679679880
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">partial</span> <span class=\"kd\">def</span> <span class=\"n\">array_PANIC</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span>\n  <span class=\"n\">array_PANIC</span> <span class=\"o\">(</span><span class=\"n\">n.append</span> <span class=\"n\">n</span><span class=\"o\">)</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">array_PANIC</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">2</span><span class=\"o\">]</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"n\">IO.println</span> <span class=\"s2\">\"Hello world\"</span>\n</code></pre></div>",
+        "id": 344333624,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679679940
+    },
+    {
+        "content": "<p>Probably because the array checks memory overflow when allocating space for new elements, while it's not acceptable to check memory overflow for each constructor operation because that's too expensive?</p>",
+        "id": 344333915,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679680033
+    },
+    {
+        "content": "<p>Oh sorry for the confusion. We still get some messages printed on command line (although they're not helpful).</p>",
+        "id": 344334560,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679680239
+    },
+    {
+        "content": "<p>Right, when the OOM killer kicks in, there is no sensible output except for in the syslog</p>",
+        "id": 344335028,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679680394
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/stream/270676-lean4/topic/Debugging.20compile.20time.20stack.20overflow/near/344331033\">said</a>:</p>\n<blockquote>\n<p>When you use <code>gdb lean</code>, make sure to copy the whole line Lake printed to make precompilation work</p>\n</blockquote>\n<p>I'll check this out tomorrow.</p>",
+        "id": 344336608,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679680829
+    },
+    {
+        "content": "<p>Great! After adding <code>--load-dynlib</code>, the name of the functions are directly visible in the stack backtrace, even when using release build.</p>",
+        "id": 344406955,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679714968
+    },
+    {
+        "content": "<p>Also I can now set breakpoints in the functions of our custom tactic, but that's probably not very useful.</p>",
+        "id": 344407210,
+        "sender_full_name": "Yicheng Qian",
+        "timestamp": 1679715174
+    }
+]

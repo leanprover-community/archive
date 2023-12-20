@@ -1,0 +1,80 @@
+[
+    {
+        "content": "<p>I'm looking at how to build a <code>differentiability</code> tactic (<a href=\"https://github.com/leanprover-community/mathlib4/pull/7892\">PR, WIP</a>) and comparing <code>aesop</code> and <code>solve_by_elim</code>. I don't understand how either of them works in detail and using the working assumption that \"<code>solve_by_elim</code> tries <code>apply</code> with a set of lemmas until it succeeds or reaches <code>maxDepth</code>, while <code>aesop</code> does some more stuff in addition\".</p>\n<p>The documentation of <code>solve_by_elim</code>(see <a href=\"https://github.com/leanprover-community/mathlib4/blob/3fbcf0e064d06994e24f42a8b5c0245ddc9115d0/Mathlib/Tactic/SolveByElim.lean#L390\">SolveByElim.lean#L390</a>) seems to be incorrect in how it deals with the <code>using</code> syntax, which supposedly allows to use an attribute created by  <code>register_label_attr</code> to abbreviate a set of lemmas. Unless I'm missing something the syntax is <code>solve_by_elim (config := {...}) using attribute_name</code>, as opposed to <code>solve_by_elim (config := {...}) using [attribute_name]</code>, which the docstring suggests. There seem to be no uses (outside of \"dummy tests\" of either <code>register_label_attr</code> or <code>solve_by_elim.*using.*</code>.  Another issue is that <code>solve_by_elim</code> seems to give no useful error messages but simply says \"failed\".</p>\n<p>I did get <code>solve_by_elim</code> to work in one toy example so far (see last commit in PR) by just doing <code>register_label_attr some_new_token_I_made_up</code>, then tagging some lemmas with <code>attribute [some_new_token_I_made_up] original_lemma_I_want</code>. However, it <strong>stops working given too many lemmas</strong> and slows down a lot (seemingly non-linearly) when adding more lemmas. Picking the 3 correct ones from around 50 differentiability lemmas takes more than 17 seconds. These go against my mental model. </p>\n<p>I found <code>aesop</code> also pretty slow at similar things, though, and had some other weird behavior with it. When given a good and small list of lemmas, <code>solve_by_elim</code> is much faster than <code>aesop</code> but I'm not sure if that counts for much.</p>",
+        "id": 402292090,
+        "sender_full_name": "Adomas Baliuka",
+        "timestamp": 1700068562
+    },
+    {
+        "content": "<p>Thanks, it does sounds like the documentation for <code>using</code> is wrong. Would you mind changing that? I can review quickly if you ping me.</p>",
+        "id": 402337063,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700086371
+    },
+    {
+        "content": "<p>I would suggest looking at the mathlib3 implementation of <code>continuity</code> to see how we used to do it there for comparison.</p>",
+        "id": 402337105,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700086392
+    },
+    {
+        "content": "<p>I am concerned by the slow down you report in <code>solve_by_elim</code>, and would like to understand.</p>\n<p>Would you be able to <code>set_option trace.Meta.Tactic.solveByElim true</code>, and see if you can decipher what is changing as you add more lemmas? I will try to find time to look at this as well.</p>",
+        "id": 402337433,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700086558
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/.60aesop.60.20vs.20.60solve_by_elim.60.20for.20continuity.20tactic/near/402337063\">said</a>:</p>\n<blockquote>\n<p>Thanks, it does sounds like the documentation for <code>using</code> is wrong. Would you mind changing that? I can review quickly if you ping me.</p>\n</blockquote>\n<p>Maybe it's better to keep the documentation and change behavior, which allows to specify multiple attributes? I also really wonder why this functionality isn't used anywhere... Any ideas?</p>",
+        "id": 402701677,
+        "sender_full_name": "Adomas Baliuka",
+        "timestamp": 1700228608
+    },
+    {
+        "content": "<p>Another thing I'm worried about: The current approach in Mathlib for marking lemmas as input for tactics (both in <code>aseop</code> and for <code>solve_by_elim</code> as I'm doing here) is to tag the lemmas at the location where they are defined. However, I'm tagging them locally for testing purposes and it seems that in this case the <em>order</em> in which the lemmas are tagged plays a big role for performance. Is this a known issue?</p>",
+        "id": 402702228,
+        "sender_full_name": "Adomas Baliuka",
+        "timestamp": 1700228776
+    },
+    {
+        "content": "<p>It's possible the performance issues are in part due to the following probem: currently <code>DiscrTree</code>s don't index lambdas, so all lemmas tagged <code>@[continuity]</code> just look like <code>Continuous _</code> to <code>aesop</code>. The same is probably true of <code>@[differentiability]</code>. This essentially nullifies the benefits of <code>DiscrTree</code>, and so then it's forced to try all the lemmas. Consequently, if the lemmas are tried in an order which is not ideal (e.g., least commonly used first), then Lean may spend more time, especially if it runs into hard unification problems early on.</p>",
+        "id": 402706529,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1700230124
+    },
+    {
+        "content": "<p>I suspect that is not the full story though.</p>",
+        "id": 402706644,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1700230164
+    },
+    {
+        "content": "<p>Is there currently a readable summary of the discussion about <code>DiscrTree</code> and lambdas that could be turned into a RFC for the Lean4 repo? I've seen many discussions but I don't think Leo is aware of any of that (and telling him to read 100 Zulip messages scattered in 3 threads wouldn't help).</p>",
+        "id": 402709407,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1700231078
+    },
+    {
+        "content": "<p>In the newest commit (<a href=\"https://github.com/leanprover-community/mathlib4/pull/7892/commits/349935451001f0e6680ce8b9d9c0cfd1629688d4\">34993545</a>) I had issues with <code>solve_by_elim</code>:</p>\n<ul>\n<li>Sometimes it fails to apply a lemma although typing <code>apply @the_lemma</code> manually just works</li>\n<li>Sometimes it applies a lemma, gets subgoals, and does not try to reuse lemmas that were already tried/applied in the first subgoal</li>\n<li>The order in which lemmas are tagged seems to play a big role for performance and for being able to solve goals, which I don't see how it would work with the way such attributes are currently used in Mathlib (tagged at lemma definition)</li>\n</ul>",
+        "id": 402709661,
+        "sender_full_name": "Adomas Baliuka",
+        "timestamp": 1700231154
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110031\">Patrick Massot</span> <a href=\"#narrow/stream/287929-mathlib4/topic/.60aesop.60.20vs.20.60solve_by_elim.60.20for.20continuity.20tactic/near/402709407\">said</a>:</p>\n<blockquote>\n<p>Is there currently a readable summary of the discussion about <code>DiscrTree</code> and lambdas that could be turned into a RFC for the Lean4 repo? I've seen many discussions but I don't think Leo is aware of any of that (and telling him to read 100 Zulip messages scattered in 3 threads wouldn't help).</p>\n</blockquote>\n<p><a class=\"stream-topic\" data-stream-id=\"341532\" href=\"/#narrow/stream/341532-lean4-dev/topic/Indexing.20lambdas.20with.20.02klzzwxh.3A0002.03\">#lean4 dev &gt; Indexing lambdas with <code>DiscrTree</code></a> has the best summary. It would indeed be good to coordinate with Leo on this (or at least find out whether he'd be interested in extending Lean's <code>DiscrTree</code> implementation).</p>",
+        "id": 402729275,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1700236999
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"638715\">Adomas Baliuka</span> <a href=\"#narrow/stream/287929-mathlib4/topic/.60aesop.60.20vs.20.60solve_by_elim.60.20for.20continuity.20tactic/near/402709661\">said</a>:</p>\n<blockquote>\n<p>In the newest commit (<a href=\"https://github.com/leanprover-community/mathlib4/pull/7892/commits/349935451001f0e6680ce8b9d9c0cfd1629688d4\">34993545</a>) I had issues with <code>solve_by_elim</code>:</p>\n<ul>\n<li>Sometimes it fails to apply a lemma although typing <code>apply @the_lemma</code> manually just works</li>\n<li>Sometimes it applies a lemma, gets subgoals, and does not try to reuse lemmas that were already tried/applied in the first subgoal</li>\n<li>The order in which lemmas are tagged seems to play a big role for performance and for being able to solve goals, which I don't see how it would work with the way such attributes are currently used in Mathlib (tagged at lemma definition)</li>\n</ul>\n</blockquote>\n<p><span class=\"user-mention\" data-user-id=\"638715\">@Adomas Baliuka</span>, could you give me a <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a> for each of these? I would very much like to fix whatever problems you are encountering.</p>",
+        "id": 402808165,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700269192
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/.60aesop.60.20vs.20.60solve_by_elim.60.20for.20continuity.20tactic/near/402808165\">said</a>:</p>\n<blockquote>\n<p>could you give me a <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a> for each of these?</p>\n</blockquote>\n<p>Minimal is not so easy because the attribute needs to be defined in another file (and the errors only happen with the attribute). The file <code>test/Differentiability_solve_by_elim.lean</code> in my PR has some commented examples of those issues</p>",
+        "id": 402880761,
+        "sender_full_name": "Adomas Baliuka",
+        "timestamp": 1700317286
+    }
+]

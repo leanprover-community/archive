@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">panic</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"n\">panic</span><span class=\"bp\">!</span> <span class=\"s2\">\"!!\"</span>\n  <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"Fine\"</span>\n</code></pre></div>\n<p>This doesn't panic. I assume this is because <code>panic</code> is being optimized away? What should the correct mental model of Lean's evaluation be? My current theory is since <code>panic!</code> produces a value, the compiler assumes it is pure and does whatever inlining it wants. And if we want the evaluation order to be correct we need to use exceptions, so that the monad structure anchors it.</p>",
+        "id": 339688192,
+        "sender_full_name": "Trebor Huang",
+        "timestamp": 1678019577
+    },
+    {
+        "content": "<p>I think you just need to guarantee that the value is used. For example, if you make the <code>panic!</code> produce an IO value and have the <code>do</code> notation evaluate it (more accurately, make sure the monad's bind operation is being applied to it) then it'll throw the error:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">panic</span><span class=\"bp\">!</span> <span class=\"s2\">\"!!\"</span>\n  <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"Fine\"</span>\n</code></pre></div>",
+        "id": 339689044,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1678019923
+    },
+    {
+        "content": "<p>This panics too, but I'm not sure how reliable it is meant to be. I assume it is because the <code>Option</code> bind operation depends specifically on whether the previous result is <code>some</code> or <code>none</code>.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">test</span> <span class=\"o\">:</span> <span class=\"n\">Option</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">panic</span><span class=\"bp\">!</span> <span class=\"s2\">\"!\"</span>\n  <span class=\"n\">return</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">some</span> <span class=\"n\">_</span> <span class=\"o\">:=</span> <span class=\"n\">test</span> <span class=\"bp\">|</span> <span class=\"n\">return</span>\n  <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"Fine\"</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">main</span>\n</code></pre></div>",
+        "id": 339689545,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1678020143
+    },
+    {
+        "content": "<p>Here's failure to panic, likely because the <code>Id</code> monad doesn't depend on the previous result so it treats it as a pure value and optimizes it away:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">test</span> <span class=\"o\">:</span> <span class=\"n\">Id</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">panic</span><span class=\"bp\">!</span> <span class=\"s2\">\"!\"</span>\n  <span class=\"n\">return</span> <span class=\"mi\">2</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">v</span> <span class=\"o\">:=</span> <span class=\"n\">test</span>\n  <span class=\"n\">println</span><span class=\"bp\">!</span> <span class=\"s2\">\"Fine {v}\"</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">main</span>\n</code></pre></div>",
+        "id": 339690150,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1678020434
+    },
+    {
+        "content": "<p>So Lean is finding a proof that you were panicking unnecessarily :-)</p>",
+        "id": 339690227,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1678020475
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110038\">@Kevin Buzzard</span>  Hmm, you're right!</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">safeSub</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"n\">Id.run</span> <span class=\"k\">do</span>\n  <span class=\"k\">if</span> <span class=\"n\">a</span> <span class=\"bp\">&lt;</span> <span class=\"n\">b</span> <span class=\"k\">then</span>\n    <span class=\"n\">panic</span><span class=\"bp\">!</span> <span class=\"s2\">\"safeSub requires that a ≥ b\"</span>\n  <span class=\"n\">return</span> <span class=\"n\">a</span> <span class=\"bp\">-</span> <span class=\"n\">b</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">reallySafeSub</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"n\">Id.run</span> <span class=\"k\">do</span>\n  <span class=\"n\">panic</span><span class=\"bp\">!</span> <span class=\"s2\">\"It's probably better not to use subtraction on nats at all.\"</span>\n  <span class=\"n\">return</span> <span class=\"n\">a</span> <span class=\"bp\">-</span> <span class=\"n\">b</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">safeSub</span> <span class=\"mi\">1</span> <span class=\"mi\">2</span> <span class=\"c1\">-- panic!</span>\n<span class=\"k\">#eval</span> <span class=\"n\">reallySafeSub</span> <span class=\"mi\">1</span> <span class=\"mi\">2</span> <span class=\"c1\">-- no panic; you were wrong to worry.</span>\n</code></pre></div>",
+        "id": 339690971,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1678020804
+    },
+    {
+        "content": "<p>(I'm not entirely sure what causes the first one to panic... I was expecting it <em>not</em> to for an example of a gotcha.)</p>",
+        "id": 339691152,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1678020896
+    },
+    {
+        "content": "<p>It appears the old compiler isn't very good at this kind of code, or possibly the noinline-style annotations on <code>panic</code> are causing it to pessimize the code (even <code>Id.instMonadId</code> shows up in <code>trace.compiler.ir.result</code>). The new compiler (<code>trace.Compiler.result</code>) \"successfully\" optimizes the panic away.</p>",
+        "id": 339734491,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1678042783
+    },
+    {
+        "content": "<p>The way to think about evaluation of pure code is that it will be optimized away unless the result has a data dependency on the value. This is why <code>dbgTrace</code> uses a callback style, you need to wrap your result with a <code>dbgTrace</code> call to \"sequence\" it before all the stuff in the closure. <code>panic</code> doesn't have a callback because it would have the type <code>Empty -&gt; A</code>, seeing as it is never called; there is no sense in sequencing something after a panic. (Except that's not true because <code>panic</code> doesn't actually abort computation.) It still doesn't make much logical sense to sequence code after a panic though.</p>",
+        "id": 339735218,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1678043250
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"404479\">Trebor Huang</span> has marked this topic as resolved.</p>",
+        "id": 340839984,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1678449451
+    }
+]

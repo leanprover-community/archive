@@ -1,0 +1,410 @@
+[
+    {
+        "content": "<p><strong>indexing lambdas:</strong> <code>DiscrTree</code> does not index lambdas properly, every lambda is just represented by a wildcard. This is problematic for tactics like <code>continuity</code> etc. Continuity of <code>foo</code> is usually stated as <code>∀ f, Continuous fun x =&gt; foo (f x)</code> and <code>DiscrTree</code> stores this under the key <code>Continuous _</code> i.e. there is no information about <code>foo</code>. The effect is that if we want to prove for example <code>Continuous fun x =&gt; x + exp x</code>, <code>DiscrTree</code> returns candidate theorems:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span><span class=\"o\">),</span> <span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">exp</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">x</span><span class=\"o\">)</span>\n<span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span><span class=\"o\">),</span> <span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">sin</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">x</span><span class=\"o\">)</span>\n<span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">g</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span><span class=\"o\">),</span> <span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">f</span> <span class=\"n\">x</span> <span class=\"bp\">+</span> <span class=\"n\">g</span> <span class=\"n\">x</span>\n<span class=\"bp\">...</span>\n</code></pre></div>\n<p>Ideally only the third theorem would match. Returning all these theorems will be an issue once the number of continuity theorems become large.</p>\n<hr>\n<p><strong>eta reduction:</strong> Somewhat related problem is with eta reduction. Theorems like <code>∀ (f : Nat → Nat), Continuous fun x =&gt; exp (f x)</code> do not match <code>Continuous fun x =&gt; exp x</code>. This is because <code>Continuous fun x =&gt; exp x</code> is eta reduced and and stored under the key <code>Continuous exp</code> which does not match <code>Continuous _</code>.</p>\n<p>This becomes confusing with with functions with multiple arguments. Continuity of addition</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">g</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span><span class=\"o\">),</span> <span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">f</span> <span class=\"n\">x</span> <span class=\"bp\">+</span> <span class=\"n\">g</span> <span class=\"n\">x</span>\n</code></pre></div>\n<p>matches <code>Continuous fun x =&gt; x + c</code> but does not match <code>Continuous fun x =&gt; c + x</code>. Thus and additional theorem</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">),</span> <span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">c</span> <span class=\"bp\">+</span> <span class=\"n\">x</span>\n</code></pre></div>\n<p>is necessary. This might not be a problem as it is solvable with tooling that just generates these theorems automatically.</p>\n<hr>\n<p>I would be interested in fixing <code>DiscrTree</code> to properly index lambdas. It would be very useful to me as I'm working on a general tactic for proving continuity, linearity, differentiability, ... and tactic for computing derivatives, adjoints, .... This is a also and issue for existing <code>continuity</code> tactic implemented with aesop. Would this be a desirable change? Should <code>DiscrTree</code> support this or should there be a variant of <code>DiscrTree</code> that supports this? I would be happy to implement this. Has anyone thought about it and know how to do it?</p>\n<hr>\n<p>mwe demonstrating described behaviors:</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n<p>code</p>\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">import</span> <span class=\"n\">Qq</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Qq</span> <span class=\"n\">Meta</span>\n\n<span class=\"n\">opaque</span> <span class=\"n\">Continuous</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span>\n<span class=\"n\">opaque</span> <span class=\"n\">exp</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n<span class=\"n\">opaque</span> <span class=\"n\">sin</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n\n\n<span class=\"kd\">def</span> <span class=\"n\">addTheorem</span> <span class=\"o\">(</span><span class=\"n\">tree</span> <span class=\"o\">:</span> <span class=\"n\">DiscrTree</span> <span class=\"n\">Expr</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">e</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"o\">(</span><span class=\"n\">DiscrTree</span> <span class=\"n\">Expr</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">type</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">withReducible</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">forallMetaTelescopeReducing</span> <span class=\"n\">e</span>\n  <span class=\"n\">tree.insert</span> <span class=\"n\">type</span> <span class=\"n\">e</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">printMatches</span> <span class=\"o\">(</span><span class=\"n\">tree</span> <span class=\"o\">:</span> <span class=\"n\">DiscrTree</span> <span class=\"n\">Expr</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">e</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">,</span> <span class=\"n\">type</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">withReducible</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">forallMetaTelescopeReducing</span> <span class=\"n\">e</span>\n  <span class=\"k\">let</span> <span class=\"n\">ms</span> <span class=\"bp\">←</span> <span class=\"n\">tree.getMatch</span> <span class=\"n\">type</span>\n  <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"Matches for: `{← ppExpr e}`\"</span>\n  <span class=\"n\">for</span> <span class=\"n\">m</span> <span class=\"k\">in</span> <span class=\"n\">ms</span> <span class=\"k\">do</span>\n    <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"  {← ppExpr m}\"</span>\n  <span class=\"n\">IO.println</span> <span class=\"s2\">\"\"</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">show</span> <span class=\"n\">MetaM</span> <span class=\"n\">Unit</span> <span class=\"k\">from</span> <span class=\"k\">do</span>\n\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">t</span> <span class=\"o\">:</span> <span class=\"n\">DiscrTree</span> <span class=\"n\">Expr</span> <span class=\"n\">false</span> <span class=\"o\">:=</span> <span class=\"o\">{}</span>\n\n  <span class=\"c1\">-- 1</span>\n  <span class=\"n\">t</span> <span class=\"bp\">←</span> <span class=\"n\">addTheorem</span> <span class=\"n\">t</span> <span class=\"n\">q</span><span class=\"o\">(</span><span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span><span class=\"o\">),</span> <span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">exp</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">x</span><span class=\"o\">))</span>\n  <span class=\"c1\">-- 2</span>\n  <span class=\"n\">t</span> <span class=\"bp\">←</span> <span class=\"n\">addTheorem</span> <span class=\"n\">t</span> <span class=\"n\">q</span><span class=\"o\">(</span><span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">exp</span> <span class=\"n\">x</span><span class=\"o\">)</span>\n  <span class=\"c1\">-- 3</span>\n  <span class=\"n\">t</span> <span class=\"bp\">←</span> <span class=\"n\">addTheorem</span> <span class=\"n\">t</span> <span class=\"n\">q</span><span class=\"o\">(</span><span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span><span class=\"o\">),</span> <span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">sin</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">x</span><span class=\"o\">))</span>\n  <span class=\"c1\">-- 4</span>\n  <span class=\"n\">t</span> <span class=\"bp\">←</span> <span class=\"n\">addTheorem</span> <span class=\"n\">t</span> <span class=\"n\">q</span><span class=\"o\">(</span><span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">sin</span> <span class=\"n\">x</span><span class=\"o\">)</span>\n  <span class=\"c1\">-- 5</span>\n  <span class=\"n\">t</span> <span class=\"bp\">←</span> <span class=\"n\">addTheorem</span> <span class=\"n\">t</span> <span class=\"n\">q</span><span class=\"o\">(</span><span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">g</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span><span class=\"o\">),</span> <span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">f</span> <span class=\"n\">x</span> <span class=\"bp\">+</span> <span class=\"n\">g</span> <span class=\"n\">x</span><span class=\"o\">)</span>\n  <span class=\"c1\">-- 6</span>\n  <span class=\"n\">t</span> <span class=\"bp\">←</span> <span class=\"n\">addTheorem</span> <span class=\"n\">t</span> <span class=\"n\">q</span><span class=\"o\">(</span><span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">),</span> <span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">c</span> <span class=\"bp\">+</span> <span class=\"n\">x</span><span class=\"o\">)</span>\n\n\n  <span class=\"c1\">-- matches 2</span>\n  <span class=\"n\">printMatches</span> <span class=\"n\">t</span> <span class=\"n\">q</span><span class=\"o\">(</span><span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">exp</span> <span class=\"n\">x</span><span class=\"o\">)</span>\n  <span class=\"c1\">-- matchs 1,3,5</span>\n  <span class=\"n\">printMatches</span> <span class=\"n\">t</span> <span class=\"n\">q</span><span class=\"o\">(</span><span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">exp</span> <span class=\"o\">(</span><span class=\"n\">id</span> <span class=\"n\">x</span><span class=\"o\">))</span>\n  <span class=\"c1\">-- matchs 1,3,5</span>\n  <span class=\"n\">printMatches</span> <span class=\"n\">t</span> <span class=\"n\">q</span><span class=\"o\">(</span><span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">x</span> <span class=\"bp\">+</span> <span class=\"n\">x</span><span class=\"o\">)</span>\n  <span class=\"c1\">-- matches 1,3,5</span>\n  <span class=\"n\">printMatches</span> <span class=\"n\">t</span> <span class=\"n\">q</span><span class=\"o\">(</span><span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">),</span> <span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">x</span> <span class=\"bp\">+</span> <span class=\"n\">c</span><span class=\"o\">)</span>\n  <span class=\"c1\">-- matches 6</span>\n  <span class=\"n\">printMatches</span> <span class=\"n\">t</span> <span class=\"n\">q</span><span class=\"o\">(</span><span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">),</span> <span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">c</span> <span class=\"bp\">+</span> <span class=\"n\">x</span><span class=\"o\">)</span>\n  <span class=\"c1\">-- matches 1,3,5</span>\n  <span class=\"n\">printMatches</span> <span class=\"n\">t</span> <span class=\"n\">q</span><span class=\"o\">(</span><span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">x</span> <span class=\"bp\">+</span> <span class=\"n\">exp</span> <span class=\"n\">x</span><span class=\"o\">)</span>\n\n  <span class=\"n\">IO.println</span> <span class=\"n\">t.format</span>\n</code></pre></div>\n</div></div>",
+        "id": 401219893,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1699557026
+    },
+    {
+        "content": "<p>Possibly relevant research: The “Triemaps that match” paper by SPJ and <span class=\"user-mention\" data-user-id=\"130195\">@Sebastian Graf</span></p>",
+        "id": 401220259,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1699557180
+    },
+    {
+        "content": "<p>Although maybe you can do something much simpler where you go under lambdas, but without tracking the arguments; i.e. don’t distinguish <code>fun x =. f x</code> from <code>fun x =&gt; f *</code>. This will match more lemmas, but it’s an index only.<br>\n(all just vague thoughts so far)</p>",
+        "id": 401220560,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1699557310
+    },
+    {
+        "content": "<p>What I'm doing right now is to index these theorems by two things 1. the property, <code>Continuous</code>, <code>Differentiable</code>, ... and 2. the function it talks about/head of the lambda body, <code>sin</code>, <code>exp</code>, <code>HAdd.hAdd</code>, .... This works fine but becomes problematic with bundled morphisms where the head of the lambda body becomes <code>FunLike.coe</code>.</p>",
+        "id": 401221147,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1699557584
+    },
+    {
+        "content": "<p>I'd be very keen on this, for obvious reasons. <span aria-label=\"sweat smile\" class=\"emoji emoji-1f605\" role=\"img\" title=\"sweat smile\">:sweat_smile:</span></p>",
+        "id": 401221355,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1699557689
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Indexing.20lambdas.20with.20.60DiscrTree.60/near/401220560\">said</a>:</p>\n<blockquote>\n<p>Although maybe you can do something much simpler where you go under lambdas, but without tracking the arguments; i.e. don’t distinguish <code>fun x =. f x</code> from <code>fun x =&gt; f *</code>. This will match more lemmas, but it’s an index only.<br>\n(all just vague thoughts so far)</p>\n</blockquote>\n<p>Based on your idea I added </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>    <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">lam</span> <span class=\"n\">_</span> <span class=\"n\">t</span> <span class=\"n\">b</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n      <span class=\"k\">let</span> <span class=\"n\">mx</span> <span class=\"bp\">←</span> <span class=\"n\">mkFreshExprMVar</span> <span class=\"n\">t</span>\n      <span class=\"k\">let</span> <span class=\"n\">b'</span> <span class=\"o\">:=</span> <span class=\"n\">b.instantiate1</span> <span class=\"n\">mx</span>\n      <span class=\"n\">pushArgs</span> <span class=\"n\">root</span> <span class=\"n\">todo</span> <span class=\"n\">b'</span>\n</code></pre></div>\n<p>to this <a href=\"https://github.com/leanprover/lean4/blob/dcb40f67c1ef635caf87423d5a4b1c4786f9d9ac/src/Lean/Meta/DiscrTree.lean#L377\">line</a> and </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">lam</span> <span class=\"n\">_</span> <span class=\"n\">t</span> <span class=\"n\">b</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"k\">let</span> <span class=\"n\">mx</span> <span class=\"bp\">←</span> <span class=\"n\">mkFreshExprMVar</span> <span class=\"n\">t</span>\n    <span class=\"k\">let</span> <span class=\"n\">b'</span> <span class=\"o\">:=</span> <span class=\"n\">b.instantiate1</span> <span class=\"n\">mx</span>\n    <span class=\"n\">getKeyArgs</span> <span class=\"n\">b'</span> <span class=\"n\">isMatch</span> <span class=\"n\">root</span>\n</code></pre></div>\n<p>to this <a href=\"https://github.com/leanprover/lean4/blob/dcb40f67c1ef635caf87423d5a4b1c4786f9d9ac/src/Lean/Meta/DiscrTree.lean#L530\">line</a></p>\n<p>and it works as expected</p>",
+        "id": 401233507,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1699562752
+    },
+    {
+        "content": "<p>It effectively ignores lambdas and replaces bound variables with wildcards.</p>",
+        "id": 401233913,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1699562948
+    },
+    {
+        "content": "<p>... and lean builds with this modification in core ... onto mathlib then :)</p>",
+        "id": 401234907,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1699563408
+    },
+    {
+        "content": "<p>mathlib immediately fails to build because type class error  in proofwidgets lakefile</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">typeclass</span> <span class=\"kd\">instance</span> <span class=\"n\">problem</span> <span class=\"n\">is</span> <span class=\"n\">stuck</span><span class=\"o\">,</span> <span class=\"n\">it</span> <span class=\"n\">is</span> <span class=\"n\">often</span> <span class=\"n\">due</span> <span class=\"n\">to</span> <span class=\"n\">metavariables</span>\n   <span class=\"n\">FamilyOut</span> <span class=\"n\">BuildData</span> <span class=\"o\">(</span><span class=\"n\">BuildInfo.key</span> <span class=\"o\">(</span><span class=\"n\">Package.target</span> <span class=\"bp\">`</span><span class=\"n\">widgetPackageLock</span> <span class=\"n\">pkg.toPackage</span><span class=\"o\">))</span> <span class=\"o\">(</span><span class=\"n\">BuildJob</span> <span class=\"n\">FilePath</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 401236446,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1699563787
+    },
+    {
+        "content": "<p>Hmm, not sure it works that simply; I'd expect you need some new <code>Key</code> for that as well. And then maybe eta-expand when matching something that isn't a lambda against a lambda pattern.</p>\n<p>Does anyone know what other systems use here?</p>",
+        "id": 401244783,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1699567610
+    },
+    {
+        "content": "<p>I added a new key, <a href=\"https://github.com/lecopivo/lean4/commit/cba93f6a6c304f3bfa9fb1bce0e7ba776485560b\">commit</a>, but there are still issues.</p>\n<p>For example, the theorem <code>id_map'</code> itself is not provable by simp anymore.</p>",
+        "id": 401246840,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1699568633
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 401387516,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1699625541
+    },
+    {
+        "content": "<p>I've made my own version of DiscrTree which is able to index lambdas. The new definition of <code>Key</code> is</p>\n<div class=\"codehilite\" data-code-language=\"inductive\"><pre><span></span><code>  | const  : Name → Nat → Key\n  | fvar   : Nat → Nat → Key\n  | bvar   : Nat → Nat → Key\n  | star   : Nat → Key\n  | lit    : Literal → Key\n  | other  : Key\n  | lam    : Key\n  | forall : Key\n  | proj   : Name → Nat → Nat → Key\n</code></pre></div>\n<p>I added the lambda key just like you, and I replaced the <code>arrow</code> key by the <code>forall</code> key to allow matching with dependent arrows as well. I also added the <code>bvar</code> key for indexing bound variables (using  De Bruijn indexing). It is for example able to match the left side of <code>Finset.sum_range_id</code>, and it's able to match the left side of <code>Classical.skolem</code>.</p>",
+        "id": 401388390,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1699625863
+    },
+    {
+        "content": "<p>I use this version of DiscrTree for point &amp; click library search, which means that you can click on a subexpression, and then choose a library result from a shortlist to apply it or rewrite with it.</p>",
+        "id": 401388951,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1699626069
+    },
+    {
+        "content": "<p>Cool, would you mind sharing your code? Did you try to modify lean to use your version off DiscrTree, does it work?</p>",
+        "id": 401389269,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1699626188
+    },
+    {
+        "content": "<p>I was a bit scared of trying to get this into Lean, because I though many other things could break due to the changes. Also, the code isn't the cleanest it could be.</p>\n<p>Here's the code:<br>\n<a href=\"https://github.com/Human-Oriented-ATP/lean-tactics/tree/main/MotivatedMoves/LibrarySearch\">https://github.com/Human-Oriented-ATP/lean-tactics/tree/main/MotivatedMoves/LibrarySearch</a></p>",
+        "id": 401389336,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1699626223
+    },
+    {
+        "content": "<p>I made my own version of DiscrTreeTypes.lean and DiscrTree.lean. The code works well. Another thing I've added to the unification is a score that indicates how good the match is. So for example <code>Nat.add_comm</code> gets a higher score than <code>add_comm</code> when matching with a sum of two natural numbers. This is very useful for giving an order to the list of search results, and then you can limit yourself to a fixed length initial segment of this list.</p>",
+        "id": 401389861,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1699626421
+    },
+    {
+        "content": "<p>I also noticed the eta reduction problem, and I thought it could be solved by putting all functions into eta unreduced form. But it didn't seem like a big problem to me so I hadn't thought about it more.</p>",
+        "id": 401390590,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1699626729
+    },
+    {
+        "content": "<p>I also made it so that star patterns are now indexed by an integer, so that a metavariable that appears multiple times can be given the same star. In particular this means that the right side of <code>two_mul</code> will only match with a sum of two equal terms, and if it does, then it gets a higher matching score than <code>add_comm</code>.</p>",
+        "id": 401391313,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1699627015
+    },
+    {
+        "content": "<p>Very nice! I will be playing with your version of <code>DiscrTree</code> for some time :)</p>",
+        "id": 401392919,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1699627639
+    },
+    {
+        "content": "<p>I think it would be great to either figure out if core <code>DiscrTree</code> can be modified this way or if it is fundamentally incompatible then put it in std or mathlib as it would be really useful to other people.</p>",
+        "id": 401396174,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1699628806
+    },
+    {
+        "content": "<p>There's multiple things that I changed, so we could also try adding them to <code>DiscrTree</code> one by one to see which ones work and which ones don't.</p>",
+        "id": 401397360,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1699629261
+    },
+    {
+        "content": "<p>I also changed the <code>fvar</code> key to take a <code>Nat</code> index (just like <code>star</code>) instead of an <code>FVarId</code>, which I would use for existentially bound variables in lemmas like <code>Dense.exists_between</code>. The <code>FVarId</code> indexing is only useful when you add local hypotheses to a (temporary) DiscrTree, since the <code>FVarId</code> is generated just for this local context. I don't do this, but I guess this might be used somewhere in Lean.</p>",
+        "id": 401398624,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1699629741
+    },
+    {
+        "content": "<p>Just tested your version of <code>DiscrTree</code> and it indexes lambdas as expected in the examples I posted!</p>",
+        "id": 401403986,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1699631783
+    },
+    {
+        "content": "<p>What would be the best way to go forward with this? Should I try PRing changes in DiscrTree to gradually build in all of the new features that I have in my version?</p>",
+        "id": 402744030,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1700241989
+    },
+    {
+        "content": "<p>We should check with <span class=\"user-mention\" data-user-id=\"112857\">@Leonardo de Moura</span> if indexing of lambdas is even a desirable change to <code>DiscrTree</code> in core. It might be desirable but would require a lot of care/work and it is probably low priority. </p>\n<p>If it is not desirable then probably add an alternative <code>DiscrTree</code> to the standard library. It has its own version of <code>HashMap</code> so why not <code>DisrcTree</code>.</p>",
+        "id": 402747927,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1700243569
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"346070\">@Tomas Skrivan</span> Thanks so much for thinking of me for this discussion! You’re absolutely right that higher-order matching is a complex challenge. Currently, the <code>DiscrTree</code> is not designed to handle this complexity. However, I do appreciate the potential benefits such changes could bring to certain projects. While I believe that these types of workarounds described above might not be the best fit for core or the standard library, it's great to explore these ideas, and include them in other packages. Thanks again for including me in this conversation!</p>",
+        "id": 402753445,
+        "sender_full_name": "Leonardo de Moura",
+        "timestamp": 1700245469
+    },
+    {
+        "content": "<p>Ok, so in that case I feel like the easiest way forward might be to make a PR for my version of DiscrTree in Mathlib. In particular, I want to have my library search tactic in Mathlib which uses my DiscrTree, but that will come later.</p>",
+        "id": 402761603,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1700248878
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"479299\">@Jovan Gerbscheid</span>, note that the existing <code>exact?</code> is moving to Std. You might want to target Std if you are planning on having an alternative <code>DiscrTree</code> which can be dropped in as a replacement.</p>",
+        "id": 402807222,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700268834
+    },
+    {
+        "content": "<p>For the eta-reduction problem I had two solutions in mind, and I was wondering which is considered better.</p>\n<p>The problem is that a function <code>fun x =&gt; f x</code> sometimes can and sometimes cannot be eta-reduced. e.g. <code>fun x =&gt; 1 + x</code> is just <code>1 +</code>, but <code>fun x =&gt; x + 1</code> cannot be reduced. Ideally both would match with the pattern <code>fun x =&gt; f x + g x</code> from the library, but that doesn't happen.</p>\n<p>This example suggests it might be a good idea to always introduce lambda's whenever possible, but for example if <code>f g : Nat → Nat</code>, then we want <code>f + g</code> to still match library results about addition, which wouldn't work if this was automatically turned into <code>fun x =&gt; (f + g) x</code>.</p>\n<p>So a way we can solve it instead, is at every point during the <code>DiscrTree</code> search, when our expression is a function that isn't in a lambda form, in addition to the usual search, we turn the expression into a lambda function (the opposite of eta-reduction), and then try finding this in the <code>DiscrTree</code>.</p>\n<p>However, instead of doing more work during the <code>DiscrTree</code> search, we could do more work while building the <code>DiscrTree</code>. For a lemma involving <code>fun x =&gt; f x + g x</code>, we should realize that certain expressions that should match with this will get eta-reduced, so we can create two different <code>DiscrTree</code> paths, one corresponding to <code>fun x =&gt; f x + g x</code> and one to <code>f +</code>. Doing this ensures that even if our search query is \"accidentally\" eta-reduced, we still find this lemma.</p>\n<p>What do you think?</p>",
+        "id": 403427364,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1700586636
+    },
+    {
+        "content": "<p>Do I understand it correctly that if you add an entry with a path:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"bp\">λ</span><span class=\"o\">,</span><span class=\"n\">x₁</span><span class=\"o\">,</span><span class=\"bp\">...</span><span class=\"o\">,</span><span class=\"n\">xₙ</span><span class=\"o\">,</span><span class=\"bp\">*</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>then you add an additional entry with the path</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">x₁</span><span class=\"o\">,</span><span class=\"bp\">...</span><span class=\"o\">,</span><span class=\"n\">xₙ</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>Does this capture the eta reduction? I think this might be creating extra false positives?</p>",
+        "id": 403429738,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1700587425
+    },
+    {
+        "content": "<p>Yes that's the idea, but only if the * at the end is an argument of <code>x₁</code>, and not if e.g. * is the last argument of the last argument of <code>x₁</code>.</p>",
+        "id": 403438073,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1700590521
+    },
+    {
+        "content": "<p>I don't directly see how a false positive would appear.</p>",
+        "id": 403438381,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1700590642
+    },
+    {
+        "content": "<p>Sounds good and should fix the issues I had with eta reduction. Let me know if you implement it in your DiscrTree I would like to try it out.</p>",
+        "id": 403451974,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1700595975
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"479299\">@Jovan Gerbscheid</span>, I would love to see this integrated with <code>exact?</code>!</p>",
+        "id": 403520979,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700630213
+    },
+    {
+        "content": "<p>Wouldn't the statement <code>Continuous fun x =&gt; f x + f x</code> create false positives? I think the path is <code>#[Continuous, λ, HAdd.hAdd, *, *]</code> and it can be 'eta reduced' to <code>#[Continuous, HAdd.hAdd, *]</code> but the statement does not unify with <code>Continuous (HAdd.hAdd c)</code></p>",
+        "id": 403593224,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1700660011
+    },
+    {
+        "content": "<p>That eta reduction sounds like nonsense to me</p>",
+        "id": 403601723,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1700662776
+    },
+    {
+        "content": "<p>Do things become messy if we introduce a key for the i-th-most-recent bound variable?</p>",
+        "id": 403601954,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1700662831
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Indexing.20lambdas.20with.20.60DiscrTree.60/near/403601723\">said</a>:</p>\n<blockquote>\n<p>That eta reduction sounds like nonsense to me</p>\n</blockquote>\n<p>Can you be more specific? Is the problem or the solution of eta reduction nonsense?</p>",
+        "id": 403605443,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1700663776
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Indexing.20lambdas.20with.20.60DiscrTree.60/near/403601954\">said</a>:</p>\n<blockquote>\n<p>Do things become messy if we introduce a key for the i-th-most-recent bound variable?</p>\n</blockquote>\n<p>This would not work for the continuity lemma because when you are constructing the key/path <code>f</code> and <code>g</code> are metavariables and are replaced with a wildcard. Thus you can't see those bound variables through it.</p>",
+        "id": 403606276,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1700664057
+    },
+    {
+        "content": "<p>This might be somewhat relevant: <a href=\"https://dl.acm.org/doi/10.1145/1614431.1614437\">https://dl.acm.org/doi/10.1145/1614431.1614437</a></p>",
+        "id": 403607589,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1700664471
+    },
+    {
+        "content": "<p>I've implemented the feature that the <code>DiscrTree</code> encoding of expressions now gives all possible eta equivalent forms. For small imports it seems to work fine. Looking at heartbeats, building the <code>DiscrTree</code> runs about 1.5x longer. When I tried building the DiscrTree for all of Mathlib, my VScode kept crashing. It also reaches the 1 000 000 heartbeats which is the default maximum for building it (the previous version got up to around 820 000)</p>\n<p>I put the code in a new branch:<br>\n<a href=\"https://github.com/Human-Oriented-ATP/lean-tactics/tree/DiscrTree/MotivatedMoves/LibrarySearch\">https://github.com/Human-Oriented-ATP/lean-tactics/tree/DiscrTree/MotivatedMoves/LibrarySearch</a></p>",
+        "id": 403641664,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1700676203
+    },
+    {
+        "content": "<p>You could try this <code>Trie</code> implementation, which adds path compression, and may help with some of the performance issues: <a href=\"https://github.com/leanprover/lean4/pull/2577\">https://github.com/leanprover/lean4/pull/2577</a></p>",
+        "id": 403641879,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1700676282
+    },
+    {
+        "content": "<p>I've implemented a path structure in my version of <code>DiscrTree</code> as well, thanks to your earlier suggestion. I'm afraid though that this doesn't help much with the time required for building the <code>DiscrTree</code>, more with using it.</p>",
+        "id": 403647489,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1700678722
+    },
+    {
+        "content": "<p>I notice that your version still has an empty constructor and can have values anywhere along the tree, but this is unnecessary since all values are at the leaves of the tree</p>",
+        "id": 403647720,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1700678841
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Indexing.20lambdas.20with.20.60DiscrTree.60/near/403641664\">said</a>:</p>\n<blockquote>\n<p>I've implemented the feature that the <code>DiscrTree</code> encoding of expressions now gives all possible eta equivalent forms. For small imports it seems to work fine. Looking at heartbeats, building the <code>DiscrTree</code> runs about 1.5x longer. When I tried building the DiscrTree for all of Mathlib, my VScode kept crashing. It also reaches the 1 000 000 heartbeats which is the default maximum for building it (the previous version got up to around 820 000)</p>\n<p>I put the code in a new branch:<br>\n<a href=\"https://github.com/Human-Oriented-ATP/lean-tactics/tree/DiscrTree/MotivatedMoves/LibrarySearch\">https://github.com/Human-Oriented-ATP/lean-tactics/tree/DiscrTree/MotivatedMoves/LibrarySearch</a></p>\n</blockquote>\n<p>1.5x doesn't sound too bad. Remember for <code>exact?</code> this <code>DiscrTree</code> is built in CI, not by the user.</p>\n<p>You can just bump the 1000000 heartbeat limit for building the tree!</p>",
+        "id": 403683498,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700698073
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 403867582,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1700784256
+    },
+    {
+        "content": "<p>It turned out that the implementation I had was a lot slower than I said, and had some bugs, but I after trying lots of things, I now have a version that is able to build on my device and manages to barely stay below that 1000000 heartbeat limit with 970000 heartbeats. Note that this heartbeat count is actually for 5 different <code>DiscrTree</code>s that I build at the same time. the biggest two are for rewriting and for applying. There is also one for applying in negative position (e.g. matching with <code>p</code> in <code>p ⇨ q</code>) and the final two are for ordered rewriting, one for positive and one for negative position. I tried my apply library search on <code>Continuous Real.exp</code>, and got the following results:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[(</span><span class=\"mi\">4</span><span class=\"o\">,</span> <span class=\"o\">[</span><span class=\"n\">Real.continuous_exp</span> <span class=\"o\">:</span> <span class=\"n\">Continuous</span> <span class=\"n\">Real.exp</span><span class=\"o\">]),</span>\n <span class=\"o\">(</span><span class=\"mi\">3</span><span class=\"o\">,</span>\n  <span class=\"o\">[</span><span class=\"n\">Continuous.exp</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u_1</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">inst</span> <span class=\"o\">:</span> <span class=\"n\">TopologicalSpace</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">{</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">ℝ</span><span class=\"o\">},</span>\n     <span class=\"n\">Continuous</span> <span class=\"n\">f</span> <span class=\"bp\">→</span> <span class=\"n\">Continuous</span> <span class=\"k\">fun</span> <span class=\"n\">y</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Real.exp</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">y</span><span class=\"o\">)]),</span>\n <span class=\"o\">(</span><span class=\"mi\">1</span><span class=\"o\">,</span>\n  <span class=\"o\">[</span><span class=\"n\">Continuous.congr</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u_1</span><span class=\"o\">}</span> <span class=\"o\">{</span><span class=\"n\">β</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u_2</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">inst</span> <span class=\"o\">:</span> <span class=\"n\">TopologicalSpace</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">inst_1</span> <span class=\"o\">:</span> <span class=\"n\">TopologicalSpace</span> <span class=\"n\">β</span><span class=\"o\">]</span>\n     <span class=\"o\">{</span><span class=\"n\">f</span> <span class=\"n\">g</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">β</span><span class=\"o\">},</span> <span class=\"n\">Continuous</span> <span class=\"n\">f</span> <span class=\"bp\">→</span> <span class=\"o\">(</span><span class=\"bp\">∀</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">),</span> <span class=\"n\">f</span> <span class=\"n\">x</span> <span class=\"bp\">=</span> <span class=\"n\">g</span> <span class=\"n\">x</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">Continuous</span> <span class=\"n\">g</span><span class=\"o\">,</span>\n<span class=\"bp\">....</span>\n</code></pre></div>\n<p>As you can see it matches the obvious <code>Real.continuous_exp</code> with a score of 4. Importantly it also finds <code>Continuous.exp</code>, which gets a score of 3, and this is 1 lower because the domain of the Continuity statement isn't necessarily <code>Real</code>. So it successfully matched an eta reduced expression.</p>\n<p>In finding the keys for <code>DiscrTree</code>, an <code>Expr</code> is now first turned into a discrimination tree expression which I defined as</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">inductive</span> <span class=\"n\">DTExpr</span> <span class=\"n\">where</span>\n  <span class=\"bp\">|</span> <span class=\"n\">const</span>  <span class=\"o\">:</span> <span class=\"n\">Name</span> <span class=\"bp\">→</span> <span class=\"n\">Array</span> <span class=\"n\">DTExpr</span> <span class=\"bp\">→</span> <span class=\"n\">DTExpr</span>\n  <span class=\"bp\">|</span> <span class=\"n\">fvar</span>   <span class=\"o\">:</span> <span class=\"n\">FVarId</span> <span class=\"bp\">→</span> <span class=\"n\">Array</span> <span class=\"n\">DTExpr</span> <span class=\"bp\">→</span> <span class=\"n\">DTExpr</span>\n  <span class=\"bp\">|</span> <span class=\"n\">bvar</span>   <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Array</span> <span class=\"n\">DTExpr</span> <span class=\"bp\">→</span> <span class=\"n\">DTExpr</span>\n  <span class=\"bp\">|</span> <span class=\"n\">star</span>   <span class=\"o\">:</span> <span class=\"n\">MVarId</span> <span class=\"bp\">→</span> <span class=\"n\">DTExpr</span>\n  <span class=\"bp\">|</span> <span class=\"n\">lit</span>    <span class=\"o\">:</span> <span class=\"n\">Literal</span> <span class=\"bp\">→</span> <span class=\"n\">DTExpr</span>\n  <span class=\"bp\">|</span> <span class=\"n\">sort</span>   <span class=\"o\">:</span> <span class=\"n\">DTExpr</span>\n  <span class=\"bp\">|</span> <span class=\"n\">lam</span>    <span class=\"o\">:</span> <span class=\"n\">DTExpr</span> <span class=\"bp\">→</span> <span class=\"n\">DTExpr</span>\n  <span class=\"bp\">|</span> <span class=\"k\">forall</span> <span class=\"o\">:</span> <span class=\"n\">DTExpr</span> <span class=\"bp\">→</span> <span class=\"n\">DTExpr</span> <span class=\"bp\">→</span> <span class=\"n\">DTExpr</span>\n  <span class=\"bp\">|</span> <span class=\"n\">proj</span>   <span class=\"o\">:</span> <span class=\"n\">Name</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">DTExpr</span> <span class=\"bp\">→</span> <span class=\"n\">Array</span> <span class=\"n\">DTExpr</span> <span class=\"bp\">→</span> <span class=\"n\">DTExpr</span>\n</code></pre></div>\n<p>And I made the function <code>flatten : DTExpr →  Array Key</code> for turning this into a sequence of Keys.</p>\n<p>For obtaining the <code>DTExpr</code>, because the eta reduction gives multiple results, we have <code>mkDTExprs : Expr → MetaM (List DTExpr)</code>. To do some of the computations that have multiple outcomes, I locally defined the Monad transformer</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">abbrev</span> <span class=\"n\">ListT</span> <span class=\"o\">(</span><span class=\"n\">m</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">v</span><span class=\"o\">)</span>  <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"n\">m</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">a</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>With instances for <code>Monad</code>, <code>MonadLiftT</code> and <code>MonadControl</code>. It would be handy if something like this already existed in Lean, but I've heard that <code>List</code> is intentionally not a monad (maybe because of performance, but in this use case the lists are very short, so the performance is fine).</p>\n<p>There is one lemma that I found that stood out because it has 256 possible translations to <code>DTExpr</code>, which is<code>MeasureTheory.withDensitySMulLI_apply</code>. I decided to specifically exclude it from the <code>DiscrTree</code>.</p>\n<p>The code is now on the main branch again:<br>\n<a href=\"https://github.com/Human-Oriented-ATP/lean-tactics/tree/main/MotivatedMoves/LibrarySearch\">https://github.com/Human-Oriented-ATP/lean-tactics/tree/main/MotivatedMoves/LibrarySearch</a></p>",
+        "id": 403869305,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1700785592
+    },
+    {
+        "content": "<p>This is <a href=\"https://leanprover-community.github.io/mathlib4_docs/Mathlib/MeasureTheory/Function/L1Space.html#MeasureTheory.withDensitySMulLI_apply\">https://leanprover-community.github.io/mathlib4_docs/Mathlib/MeasureTheory/Function/L1Space.html#MeasureTheory.withDensitySMulLI_apply</a> . Is there really supposed to be two consecutive coercions in that statement?</p>",
+        "id": 403870808,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1700786449
+    },
+    {
+        "content": "<p>I think so. The inner one should be the <code>Subtype.val</code> to the space of equivalent classes of strongly measurable functions, and the outer is <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=MeasureTheory.AEEqFun.cast#doc\">docs#MeasureTheory.AEEqFun.cast</a></p>",
+        "id": 403887851,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1700795729
+    },
+    {
+        "content": "<p>I realize that the number 256 comes from doing a case split on the same lambda expression over and over, but once the choice has been made in one place, it should be the same everywhere else. If it's not too expensive I could locally cache the choices that have been made.</p>",
+        "id": 403953807,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1700827167
+    },
+    {
+        "content": "<p>I've implemented this now, and optimized the implementation further, so building the <code>DiscrTree</code> now takes very close to the amount of time I had before. <span aria-label=\"smiley\" class=\"emoji emoji-1f603\" role=\"img\" title=\"smiley\">:smiley:</span></p>",
+        "id": 404045869,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1700878748
+    },
+    {
+        "content": "<p>How should I go about getting this into Std? Do I simply make a pull request?</p>\n<p>I also use a monad transformer called <code>StateListT</code>, which I defined in a separate file. It is equivalent to wrapping <code>StateT</code> around <code>ListT</code> (which I also defined separately), but turns out to be more efficient (saving 5% on heartbeats in building the <code>DiscrTree</code>). I guess I would have to add this to Std as well then. Unless there is some better alternative.</p>",
+        "id": 404155375,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1700944539
+    },
+    {
+        "content": "<p>How do I get permission for pushing into Std?</p>",
+        "id": 404196591,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1700971861
+    },
+    {
+        "content": "<p>You just open a PR.</p>",
+        "id": 404198694,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700973860
+    },
+    {
+        "content": "<p>(from your fork)</p>",
+        "id": 404198700,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700973864
+    },
+    {
+        "content": "<p>I would really like to see this integrated into <code>exact?</code>. Is that your plan?</p>",
+        "id": 404198708,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700973877
+    },
+    {
+        "content": "<p>(<code>exact?</code> is currently still in Mathlib, but may be moving as soon as this week.)</p>",
+        "id": 404198724,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700973894
+    },
+    {
+        "content": "<p>I have some other library search functionality. I mainly want rewrite search in combination with a point &amp; click system. I also have an apply search which is more general that lean's apply. But for now plugging it in into <code>exact?</code> is probably the easiest first step</p>",
+        "id": 404253211,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1701001562
+    },
+    {
+        "content": "<p>I opened the PR</p>",
+        "id": 404253259,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1701001580
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"479299\">@Jovan Gerbscheid</span> I didn't mean to overwhelm you with my PR comments. This is a great PR, it just needs a lot of menial work to get up to merging into Std. Please ask if you have any questions!</p>",
+        "id": 404291754,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1701034142
+    },
+    {
+        "content": "<p>Thanks for the comments. I'm still a bit unsure about the <code>StateListT</code> situation. As you said, ideally a list monad structure is lazy, but simply replacing it with <code>MLList</code> also doesn't work. I'm curious what the general view is on list monads in lean, since it's such a key example of monads, and yet the instance <code>Monad List</code> isn't present in Lean, and <code>ListT</code> also doesn't exist in Lean.</p>",
+        "id": 404292487,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1701034822
+    },
+    {
+        "content": "<p>The problem is that <code>ListT</code> and <code>StateListT</code>, as you defined them, are not a valid monad transformers. The <code>bind_assoc</code> rule may fail when the base monad is not commutative (e.g. <code>IO</code> and many others). It is fine as a \"functor transformer\" but that's not that useful. Specialized versions are totally fine though, even if the inner monad is not commutative, so long as consequences are understood and managed. In your use case, the inner monad is <code>MetaM</code> which I'm not sure is commutative so this might lead to unexpected behavior where actions are reordered. The alternative is to use <code>MLList</code> which is safer but harder to use. :/</p>",
+        "id": 404293242,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1701035501
+    },
+    {
+        "content": "<p>PS: Since <code>ListT</code> is not actually used in your PR, it should be a separate PR. However, it will likely be rejected for reasons I mentioned.</p>",
+        "id": 404293476,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1701035754
+    },
+    {
+        "content": "<p>PPS: Please reply to the PR in comments since there are no notifications for edits of the PR description.</p>",
+        "id": 404294091,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1701036222
+    },
+    {
+        "content": "<p>That's actually very interesting, and I hadn't realized this problem. I made a minimal example of the non-commutativity:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">problem</span> <span class=\"o\">:</span> <span class=\"n\">ListT</span> <span class=\"o\">(</span><span class=\"n\">StateM</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">Nat</span><span class=\"o\">))</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">ListT.mk</span> <span class=\"bp\">$</span> <span class=\"n\">pure</span> <span class=\"o\">[(),()]</span>\n  <span class=\"n\">modify</span> <span class=\"o\">(</span><span class=\"bp\">·.</span><span class=\"n\">push</span> <span class=\"mi\">0</span><span class=\"o\">)</span>\n  <span class=\"n\">modify</span> <span class=\"o\">(</span><span class=\"bp\">·.</span><span class=\"n\">push</span> <span class=\"mi\">1</span><span class=\"o\">)</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">problem</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n</code></pre></div>\n<p>depending on the bracketing of the do block, you either get <code>#[0,1,0,1]</code> or <code>#[0,0,1,1]</code>. However with <code>MLList</code>, it always gives <code>#[0, 1, 0, 1]</code>.</p>",
+        "id": 404298004,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1701039963
+    },
+    {
+        "content": "<p>Also, I don't think I edited the PR description</p>",
+        "id": 404298042,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1701039980
+    },
+    {
+        "content": "<p>(I probably was mistaken. No worries.)</p>",
+        "id": 404298775,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1701040820
+    }
+]

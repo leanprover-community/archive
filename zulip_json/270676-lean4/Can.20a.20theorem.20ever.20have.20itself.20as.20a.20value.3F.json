@@ -1,0 +1,128 @@
+[
+    {
+        "content": "<p>In diving into <code>dsimp</code>, I noticed that it doesn't handle wrapped constants properly:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">theorem</span> <span class=\"n\">const_thm_internal</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">or</span> <span class=\"n\">true</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"o\">:=</span> <span class=\"n\">rfl</span>\n<span class=\"kd\">@[</span><span class=\"n\">simp</span><span class=\"kd\">]</span> <span class=\"kd\">theorem</span> <span class=\"n\">const_thm</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">or</span> <span class=\"n\">true</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"o\">:=</span> <span class=\"n\">const_thm_internal</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">or</span> <span class=\"n\">true</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">dsimp</span> <span class=\"c1\">-- dsimp made no progress</span>\n\n<span class=\"c1\">-- same thing, but with an (unused) argument:</span>\n<span class=\"kd\">theorem</span> <span class=\"n\">const_thm_internal'</span> <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">or</span> <span class=\"n\">true</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"o\">:=</span> <span class=\"n\">rfl</span>\n<span class=\"kd\">@[</span><span class=\"n\">simp</span><span class=\"kd\">]</span> <span class=\"kd\">theorem</span> <span class=\"n\">const_thm'</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">or</span> <span class=\"n\">true</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"o\">:=</span> <span class=\"n\">const_thm_internal'</span> <span class=\"mi\">0</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">or</span> <span class=\"n\">true</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">dsimp</span> <span class=\"c1\">-- success</span>\n</code></pre></div>\n<p>Whether a theorem is marked as <code>dsimp</code>-worthy is determined by the mutually recursive functions <code>isRflProofCore (type proof : Expr)</code> and <code>isRflTheorem (declName : Name)</code>. <code>isRflTheorem</code> just gets the <code>ConstantInfo</code> of the <code>declName</code> theorem if it can, makes sure it's a <code>.thmInfo</code>, then feeds the <code>.type</code> and <code>.value</code> of the enclosed <code>TheoremVal</code> to <code>isRflPRoofCore</code>.</p>\n<p>An easy fix would be to allow <code>isRflProofCore</code> to then check if that <code>info.value</code> is itself a constant, and, if so, pass it back to <code>isRflTheorem</code>. Currently, it demands that it's an application. This amounts to simply removing the condition <code>proof.isApp &amp;&amp; ...</code> before <code>proof.getAppFn.isConst</code>.</p>\n<p>My concern is that that could somehow loop. I'd expect (and hope) that looping in this way is impossible, but I'd also want to not introduce the possibility for nontermination even in edge cases or due to hacks/implementation details. Would such a change be safe?</p>\n<p>Moreover, is there a reason that we <em>shouldn't</em> change this in the first place? Some case in which the wrapping theorem should <em>not</em> be used for <code>dsimp</code> even if the wrapped theorem should? I can't think of one, but maybe I'm just not coming up with it.</p>\n<p>I imagine wrapped constants like this are relatively rare in practice, but I haven't checked.</p>",
+        "id": 396558208,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697223875
+    },
+    {
+        "content": "<p>If your code sees the same declaration values as <code>#print</code>, then it seems like self-referencing recursive declarations will already be translated to applications of <code>WellFounded.fix</code>. Example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">inductive</span> <span class=\"n\">MyFalse</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span>\n<span class=\"bp\">|</span> <span class=\"n\">mk</span> <span class=\"o\">:</span> <span class=\"n\">MyFalse</span> <span class=\"bp\">→</span> <span class=\"n\">MyFalse</span>\n\n<span class=\"c1\">-- theorem whose proof is an application of itself</span>\n<span class=\"kd\">theorem</span> <span class=\"n\">false_of_myFalse</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">MyFalse</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">False</span> <span class=\"o\">:=</span>\n  <span class=\"n\">false_of_myFalse</span> <span class=\"bp\">&lt;|</span> <span class=\"k\">let</span> <span class=\"bp\">.</span><span class=\"n\">mk</span> <span class=\"n\">h'</span> <span class=\"o\">:=</span> <span class=\"n\">h</span><span class=\"bp\">;</span> <span class=\"n\">h'</span>\n<span class=\"n\">termination_by</span> <span class=\"n\">false_of_myFalse</span> <span class=\"n\">h</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">h</span>\n<span class=\"n\">decreasing_by</span> <span class=\"gr\">sorry</span> <span class=\"c1\">-- proof omitted</span>\n\n<span class=\"k\">#print</span> <span class=\"n\">false_of_myFalse</span>\n<span class=\"c1\">-- theorem false_of_myFalse : MyFalse → False :=</span>\n<span class=\"c1\">--   WellFounded.fix (...)</span>\n</code></pre></div>",
+        "id": 396563092,
+        "sender_full_name": "Timo Carlin-Burns",
+        "timestamp": 1697226451
+    },
+    {
+        "content": "<p>That's encouraging! My biggest fear is some kind of hack or implementation detail that keeps (or makes) it recursive for some reason.</p>",
+        "id": 396567012,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697228823
+    },
+    {
+        "content": "<p>No, theorems cannot be recursive. (I know this since I recently implemented the kernel!) Definitions are typechecked in a context that does not contain them, unless they are marked as <code>.partial</code> or <code>.unsafe</code> (note, these are related but different from the <code>partial</code> and <code>unsafe</code> keywords you can actually write on a definition), and unsafe/partial theorems do not exist (they only support the <code>.safe</code> safety marking)</p>",
+        "id": 396576054,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697234312
+    },
+    {
+        "content": "<p>Making dsimp work for Iff.rfl went through just fine in Lean3 when I added that feature there, so I'd be surprised if there's any particularly troublesome obstacle here</p>",
+        "id": 396576607,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1697234662
+    },
+    {
+        "content": "<p>(though indeed we never attempted to unwrap)</p>",
+        "id": 396576675,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1697234723
+    },
+    {
+        "content": "<p>I don't think unwrapping is necessary or desirable</p>",
+        "id": 396576831,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697234811
+    },
+    {
+        "content": "<p>I think it is fine just to look for <code>Iff.rfl</code> or <code>rfl</code> as the proof. Don't make this more complicated than it has to be to address the existing issues</p>",
+        "id": 396577033,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697234932
+    },
+    {
+        "content": "<p>I mean, this is a separate issue that doesn’t have to do with <code>Iff</code> at all, I just was explaining the context; original message now edited to remove unnecessary info.</p>\n<p>The current infrastructure already unwraps, it just artificially prevents itself from doing so when the constant isn’t applied to anything by checking <code>proof.isApp</code>. I’m not adding anything there</p>",
+        "id": 396577437,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697235186
+    },
+    {
+        "content": "<p>(As long as we’re on the same page as to what unwrapping means. I’m using it just to mean “recursively exposes constants in heads of <code>Expr</code>s”)</p>",
+        "id": 396577586,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697235269
+    },
+    {
+        "content": "<p>To wrap this up: I think there might have been a misunderstanding here. This doesn't have anything to do with <code>Iff</code>; I'm not proposing a new unwrapping feature; and I think the edge case shown at the top should not happen. My inclination is to open a small issue and a draft PR, which consists of a 15-character deletion (plus a test)—but I don't want to proceed under apparent advice not to. :)</p>",
+        "id": 396686286,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697327689
+    },
+    {
+        "content": "<p>I think it's fine (and important) to add iff to the existing handling without changing the other stuff. I don't think unwrapping is necessary but if the code is pre-existing then this is a separate matter</p>",
+        "id": 396687538,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697328784
+    },
+    {
+        "content": "<p>Yes, this thread is 100% unrelated to handling <code>Iff</code>, and <code>simp</code> already unwraps. It just explicitly stops itself from doing so in the edge case at the top for some reason—maybe there's a good reason, but it could also be an oversight.</p>",
+        "id": 396687996,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697329130
+    },
+    {
+        "content": "<p>maybe I don't understand what the thread (or proposed PR) is about then</p>",
+        "id": 396688039,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697329167
+    },
+    {
+        "content": "<p>Current status quo: if a <code>@[simp]</code> theorem has a proof that's a constant applied to some arguments, and that constant is a rfl theorem, it gets used by <code>dsimp</code>. Example: (note that we are just manipulating bools for the sake of something to manipulate)</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">theorem</span> <span class=\"n\">const_thm_internal_with_arg</span> <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">or</span> <span class=\"n\">true</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"o\">:=</span> <span class=\"n\">rfl</span>\n<span class=\"kd\">@[</span><span class=\"n\">simp</span><span class=\"kd\">]</span> <span class=\"kd\">theorem</span> <span class=\"n\">const_thm'</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">or</span> <span class=\"n\">true</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"o\">:=</span> <span class=\"n\">const_thm_internal_with_arg</span> <span class=\"mi\">0</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">or</span> <span class=\"n\">true</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">dsimp</span> <span class=\"c1\">-- success</span>\n</code></pre></div>",
+        "id": 396688255,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697329308
+    },
+    {
+        "content": "<p>However, if the proof of the simp theorem is a constant that doesn't have any arguments, it doesn't get used by dsimp.</p>",
+        "id": 396688313,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697329329
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- exactly the same but without the `Nat` argument</span>\n<span class=\"kd\">theorem</span> <span class=\"n\">const_thm_internal</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">or</span> <span class=\"n\">true</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"o\">:=</span> <span class=\"n\">rfl</span>\n<span class=\"kd\">@[</span><span class=\"n\">simp</span><span class=\"kd\">]</span> <span class=\"kd\">theorem</span> <span class=\"n\">const_thm</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">or</span> <span class=\"n\">true</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"o\">:=</span> <span class=\"n\">const_thm_internal</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">or</span> <span class=\"n\">true</span> <span class=\"n\">false</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">true</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">dsimp</span> <span class=\"c1\">-- dsimp made no progress</span>\n</code></pre></div>",
+        "id": 396688332,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697329338
+    },
+    {
+        "content": "<p>This is because the check for whether something is a <code>rfl</code> theorem explicitly excludes this case:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">if</span> <span class=\"n\">proof.isApp</span> <span class=\"bp\">&amp;&amp;</span> <span class=\"n\">proof.getAppFn.isConst</span> <span class=\"k\">then</span>\n  <span class=\"bp\">&lt;</span><span class=\"n\">unwrap</span> <span class=\"n\">proof.getAppFn</span> <span class=\"n\">and</span> <span class=\"n\">eventually</span> <span class=\"n\">recurse</span><span class=\"bp\">&gt;</span>\n</code></pre></div>\n<p>but it doesn't mention <em>why</em> it demands <code>proof.isApp</code>.</p>",
+        "id": 396688656,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697329553
+    },
+    {
+        "content": "<p>The title of this thread is one part of the question: is there a good reason for the code being the way it is? For instance, maybe if we didn't check <code>proof.isApp</code>, some theorem would unwrap to itself when we recursed, and then the check would never terminate? Or can we just delete this part of the check?</p>",
+        "id": 396688959,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697329737
+    },
+    {
+        "content": "<p>The proposed PR is just “delete <code>proof.isApp &amp;&amp; </code> and see if that’s still fine”. It <em>should</em> make <code>dsimp</code> work in the case where it doesn’t (and not change its behavior otherwise).</p>",
+        "id": 396690593,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1697330661
+    },
+    {
+        "content": "<p>sgtm</p>",
+        "id": 396690720,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697330750
+    }
+]

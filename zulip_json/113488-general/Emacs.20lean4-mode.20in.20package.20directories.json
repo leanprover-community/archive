@@ -1,0 +1,116 @@
+[
+    {
+        "content": "<p>Emacs lean4-mode and <code>lake build</code> cooperate well while editing the files of the top-level project, but visiting a file in a referenced package causes that file and all its dependencies to be rebuilt (and then rebuilt again, when returning to the top-level project). It's a pain! Anyone know why this happens, and how to work around or fix it?</p>",
+        "id": 379855936,
+        "sender_full_name": "Richard Copley",
+        "timestamp": 1690651473
+    },
+    {
+        "content": "<p>Yeah, I'm noticing this behavior too. It seems to have been a recent regression.</p>",
+        "id": 379872380,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1690657220
+    },
+    {
+        "content": "<p>If this is a recent regression, then you can try to <code>git bisect</code> it and find the offending commit.</p>",
+        "id": 379898154,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1690669493
+    },
+    {
+        "content": "<p>Great idea. But lsp-mode, lean4-mode and Lean 4 itself all change rapidly enough that finding compatible combinations is not a simple matter. I tried quite hard to get a bisection to work (I won't bore you with the details), and in my judgement it's not worth trying harder. It would be easier to get to the bottom of this the old-fashioned way, by understanding what goes wrong. At a guess, it's the lean4-mode developers who are best placed to do that, assuming they're interested.</p>",
+        "id": 379921818,
+        "sender_full_name": "Richard Copley",
+        "timestamp": 1690682729
+    },
+    {
+        "content": "<p>I believe the regression was in mathlib/lake/lean4, not in lean4-mode</p>",
+        "id": 379924119,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1690684206
+    },
+    {
+        "content": "<p>Do you know if there is a similar issue in VS Code?</p>",
+        "id": 379925216,
+        "sender_full_name": "Richard Copley",
+        "timestamp": 1690684967
+    },
+    {
+        "content": "<p>The behavior I'm seeing:</p>\n<ol>\n<li>I have a project that depends on mathlib4.</li>\n<li>I run <code>git clean -xffd</code> to clear out any local cache.</li>\n<li>I run <code>lake exe cache get</code> to download oleans</li>\n<li>I run <code>lake build</code></li>\n<li>I open a file in the project in emacs. Nothing needs to get rebuilt.</li>\n<li>The file has a reference to <code>Real.tan</code>.  I jump to definition on that.</li>\n<li>Then I see LSP building a bunch of files in <code>Std</code>, <code>Qq</code> and <code>Aesop</code>, (but not in <code>Mathlib</code>). This takes maybe 20 seconds and then it finishes.</li>\n</ol>",
+        "id": 379925719,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1690685300
+    },
+    {
+        "content": "<p>The building that happens in step 7 is what was surprising me, but on further reflection, I'm not so sure it's a regression.</p>",
+        "id": 379925759,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1690685333
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"400544\">@Buster</span> sounds like maybe you were seeing a behavior that's more pathological than this</p>",
+        "id": 379925919,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1690685418
+    },
+    {
+        "content": "<p>I have not updated my lean4-mode or other emacs packages in a while, so it's possible that your issue comes from newer versions of those.</p>",
+        "id": 379926013,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1690685482
+    },
+    {
+        "content": "<p>I see the same up to step 6, then visit a file in mathlib (by following a reference, or by using <code>find-file</code>), and its dependencies (in mathlib) get recompiled. Anything from a few files to a few thousand files. I'm not sure I remember a time when this didn't happen. I do keep my packages up to date.</p>",
+        "id": 379927725,
+        "sender_full_name": "Richard Copley",
+        "timestamp": 1690686584
+    },
+    {
+        "content": "<p>Does <code>M-x lsp-describe-session</code> indicate that lsp-mode opened a new workspace for the dependency?</p>",
+        "id": 379965714,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1690706682
+    },
+    {
+        "content": "<p>Yes, it does.</p>",
+        "id": 379982247,
+        "sender_full_name": "Richard Copley",
+        "timestamp": 1690711379
+    },
+    {
+        "content": "<p>That's the issue then. It's not really something lean4-mode has any influence on.</p>",
+        "id": 379994346,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1690714216
+    },
+    {
+        "content": "<p>Thanks. Perhaps another angle of approach, then. It's a minor inconvenience to have two workspaces, each with its own lake process, but it wouldn't be so bad if lake did not rebuild the unmodified sources. It uses the same toolchain and reproduces the same oleans with the same filenames. Do you know if there's a good reason for lake to behave that way? If not, maybe it can be fixed.</p>",
+        "id": 380022755,
+        "sender_full_name": "Richard Copley",
+        "timestamp": 1690720984
+    },
+    {
+        "content": "<p>The dependency is a valid Lake package in itself, it is not Lake's fault that the editor decided to use two independent workspace roots</p>",
+        "id": 380035586,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1690723901
+    },
+    {
+        "content": "<p>Note that there is no guarantee that the two toolchains are identical, so even with a user-wide Lake cache this could lead to rebuilds</p>",
+        "id": 380036300,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1690724061
+    },
+    {
+        "content": "<p>Here's a fix for \"lean4-mode.el\":</p>\n<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"gh\">diff --git a/lean4-mode.el b/lean4-mode.el</span>\n<span class=\"gh\">index 30d3d15..ac71446 100644</span>\n<span class=\"gd\">--- a/lean4-mode.el</span>\n<span class=\"gi\">+++ b/lean4-mode.el</span>\n<span class=\"gu\">@@ -190,6 +190,9 @@ This will allow us to use Emacs when a repo contains multiple lean packages.\"</span>\n<span class=\"w\"> </span>  (when-let ((file-name (buffer-file-name))\n<span class=\"w\"> </span>             (root (vc-find-root (buffer-file-name)\n<span class=\"w\"> </span>                                 \"lakefile.lean\")))\n<span class=\"gi\">+    (while (let ((parent (f-parent root)))</span>\n<span class=\"gi\">+             (when (string= (f-filename parent) \"lake-packages\")</span>\n<span class=\"gi\">+               (setq root (f-parent parent)))))</span>\n<span class=\"w\"> </span>    (lsp-workspace-folders-add root)))\n\n<span class=\"w\"> </span>;; Automode List\n<span class=\"gd\">--</span>\n</code></pre></div>\n<p>After finding the nearest ancestor directory containing a lakefile, if that directory's parent is named \"lake-packages\", step up two more directories (and check again).</p>\n<p>Your list of workspace folders in <code>~/.emacs.d/.lsp-session-v1</code> likely already contains package subdirectories. Restart Emacs and delete that file.</p>",
+        "id": 382441228,
+        "sender_full_name": "Richard Copley",
+        "timestamp": 1691355982
+    },
+    {
+        "content": "<p>Could you please open a PR?</p>",
+        "id": 382473815,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1691373921
+    }
+]

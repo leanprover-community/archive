@@ -1,0 +1,74 @@
+[
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> Sorry to bring up this again. I did not mention that in the group chat, so I am writing this to share my concerns.</p>\n<h3>Description</h3>\n<p>Currently, <code>thread</code>-level initialization does not have C interfaces. This makes spawning or initializing lean threads infeasible in the FFI environment. I wonder if some or all of the following functions can be exposed:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">namespace</span> <span class=\"n\">lean</span> <span class=\"o\">{</span>\n<span class=\"n\">void</span> <span class=\"n\">initialize_thread</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n<span class=\"n\">void</span> <span class=\"n\">finalize_thread</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n\n<span class=\"n\">typedef</span> <span class=\"n\">void</span> <span class=\"o\">(</span><span class=\"bp\">*</span><span class=\"n\">thread_finalizer</span><span class=\"o\">)(</span><span class=\"n\">void</span> <span class=\"bp\">*</span><span class=\"o\">)</span><span class=\"bp\">;</span> <span class=\"bp\">//</span> <span class=\"n\">NOLINT</span>\n<span class=\"n\">void</span> <span class=\"n\">register_post_thread_finalizer</span><span class=\"o\">(</span><span class=\"n\">thread_finalizer</span> <span class=\"n\">fn</span><span class=\"o\">,</span> <span class=\"n\">void</span> <span class=\"bp\">*</span> <span class=\"n\">p</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n<span class=\"n\">void</span> <span class=\"n\">register_thread_finalizer</span><span class=\"o\">(</span><span class=\"n\">thread_finalizer</span> <span class=\"n\">fn</span><span class=\"o\">,</span> <span class=\"n\">void</span> <span class=\"bp\">*</span> <span class=\"n\">p</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n<span class=\"n\">void</span> <span class=\"n\">run_thread_finalizers</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n<span class=\"n\">void</span> <span class=\"n\">run_post_thread_finalizers</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n<span class=\"n\">void</span> <span class=\"n\">delete_thread_finalizer_manager</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n<span class=\"n\">bool</span> <span class=\"n\">in_thread_finalization</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n<span class=\"n\">void</span> <span class=\"n\">reset_thread_local</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n<span class=\"o\">}</span>\n</code></pre></div>\n<h3>Steps to Reproduce</h3>\n<p>N/A</p>\n<h3>Versions</h3>\n<p>N/A</p>\n<h3>Additional Information</h3>\n<p>Let us say we want to run test cases for lean API bindings in Rust. Then, we actually need to provide a way to at least initialize the thread-local heaps. Otherwise, it can be really hard to test such functions in parallel.</p>\n<p>Another way to workaround this is to only expose APIs to spawn a lean task/thread. If one wants to run anything in a foreign language (assuming <code>lean_initialize</code> is called), the user spawns a thread/task to run it; but this method itself is heavy and less customizable.</p>",
+        "id": 387373357,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1693016548
+    },
+    {
+        "content": "<p>The thread API isnt meant for public consumption. A task is completely different from a thread. Tasks are scheduled on a thread pool and do not get preempted by other tasks in their execution. So if you have 8 tasks running and they are just all doing say a heavy computation all of the other tasks will starve.</p>\n<p>I didn't try this yet but the task API is linked into lean via @extern, is it not already callable from FFI? If it isnt then we probably should make it so.</p>\n<p>(That said I believe that the behavior of the current task implementation is not a very nice concurrency primitive at all but that's just my opinion)</p>",
+        "id": 387413242,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1693046914
+    },
+    {
+        "content": "<p>this is about threads, not tasks</p>",
+        "id": 387413287,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693046960
+    },
+    {
+        "content": "<p>the issue is that there are some thread locals that can't be initialized from a thread which was not created by lean (and these thread locals are necessary for the lean allocator to work, so you can't call any lean code on the thread otherwise)</p>",
+        "id": 387413310,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693046984
+    },
+    {
+        "content": "<p>currently <code>lean_initialize()</code> is exposed but not <code>lean_thread_initialize()</code></p>",
+        "id": 387413369,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693047009
+    },
+    {
+        "content": "<p>But why would the FFI want to spawn a lean thread in the first place if tasks are supposed to be the primitive?</p>",
+        "id": 387413414,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1693047052
+    },
+    {
+        "content": "<p>it's not spawning a lean thread</p>",
+        "id": 387413438,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693047066
+    },
+    {
+        "content": "<p>it's running lean code on a pre-existing thread (which was spawned by not-lean)</p>",
+        "id": 387413451,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693047080
+    },
+    {
+        "content": "<p>Also, I don't think lean has jurisdiction over what a \"primitive\" is when interacting over FFI. If you are e.g. linking to curl, you can't just tell it not to use threads</p>",
+        "id": 387413860,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693047380
+    },
+    {
+        "content": "<p>I'm pretty sure the current set of exposed functions was just a historical accident of what was actually used in FFI projects thus far. I mean, <code>initialize</code> is exposed but <code>finalize</code> isn't, this makes no sense</p>",
+        "id": 387414164,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693047641
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/pull/2464\">lean4#2464</a></p>",
+        "id": 387419950,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693051056
+    },
+    {
+        "content": "<p>For instance,</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">test</span><span class=\"o\">]</span>\n    <span class=\"n\">fn</span> <span class=\"n\">type_with_allocations</span><span class=\"o\">()</span> <span class=\"o\">{</span>\n        <span class=\"n\">initialize_thread_local_runtime</span><span class=\"o\">()</span><span class=\"bp\">;</span>\n        <span class=\"n\">for</span> <span class=\"n\">x</span> <span class=\"k\">in</span> <span class=\"mi\">0</span><span class=\"bp\">..</span><span class=\"mi\">10</span> <span class=\"o\">{</span>\n            <span class=\"n\">for</span> <span class=\"n\">y</span> <span class=\"k\">in</span> <span class=\"mi\">0xFFFFFFE0</span><span class=\"bp\">..</span><span class=\"mi\">0xFFFFFFFF</span> <span class=\"o\">{</span>\n                <span class=\"n\">for</span> <span class=\"n\">z</span> <span class=\"k\">in</span> <span class=\"mi\">0</span><span class=\"bp\">..</span><span class=\"mi\">64</span> <span class=\"o\">{</span>\n                    <span class=\"k\">let</span> <span class=\"n\">closure</span> <span class=\"bp\">=</span> <span class=\"n\">lean_closure</span><span class=\"bp\">!</span> <span class=\"o\">{</span>\n                        <span class=\"o\">[</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">usize</span><span class=\"o\">,</span> <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">usize</span><span class=\"o\">]</span> <span class=\"bp\">|</span> <span class=\"n\">z</span> <span class=\"o\">:</span> <span class=\"n\">usize</span> <span class=\"bp\">|</span> <span class=\"bp\">-&gt;</span> <span class=\"n\">usize</span> <span class=\"o\">{</span>\n                        <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"bp\">*</span> <span class=\"n\">y</span><span class=\"o\">)</span> <span class=\"bp\">^</span> <span class=\"n\">z</span>\n                    <span class=\"o\">}}</span><span class=\"bp\">;</span> <span class=\"bp\">//</span> <span class=\"n\">this</span> <span class=\"n\">closure</span> <span class=\"n\">is</span> <span class=\"n\">a</span>  <span class=\"n\">wrapper</span> <span class=\"n\">around</span> <span class=\"bp\">`*</span><span class=\"n\">mut</span> <span class=\"n\">lean_object</span><span class=\"bp\">`.</span>\n                    <span class=\"k\">let</span> <span class=\"n\">res</span><span class=\"o\">:</span> <span class=\"n\">usize</span> <span class=\"bp\">=</span> <span class=\"n\">closure.invoke</span><span class=\"o\">(</span><span class=\"mi\">1</span> <span class=\"bp\">&lt;&lt;</span> <span class=\"n\">z</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n                    <span class=\"n\">assert_eq</span><span class=\"bp\">!</span><span class=\"o\">(</span><span class=\"n\">res</span><span class=\"o\">,</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"bp\">*</span> <span class=\"n\">y</span><span class=\"o\">)</span> <span class=\"bp\">^</span> <span class=\"o\">(</span><span class=\"mi\">1</span> <span class=\"bp\">&lt;&lt;</span> <span class=\"n\">z</span><span class=\"o\">))</span>\n                <span class=\"o\">}</span>\n            <span class=\"o\">}</span>\n        <span class=\"o\">}</span>\n    <span class=\"o\">}</span>\n</code></pre></div>\n<p>One may want to write test cases in Rust involving allocations in lean routines. In order for this to work, the thread-local heap (local pages) must be initialized.</p>",
+        "id": 387449512,
+        "sender_full_name": "Schrodinger ZHU Yifan",
+        "timestamp": 1693075427
+    }
+]

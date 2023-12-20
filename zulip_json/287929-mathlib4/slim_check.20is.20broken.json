@@ -1,0 +1,80 @@
+[
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/3114\">!4#3114</a> adds a tactic frontend for <code>slim_check</code>. It's been sitting there for a while, and <span class=\"user-mention\" data-user-id=\"260507\">@Heather Macbeth</span> just added an example where it isn't finding an easy counterexample.</p>\n<p>Motivated by this, I decided to try adding some further instances of <code>ExtSampleable</code> and <code>Testable</code>, but I think I decided that the current design of the plumbing is actually broken. (This doesn't affect the porcelain in <a href=\"https://github.com/leanprover-community/mathlib4/pull/3114\">!4#3114</a>, which could still be merged either way.)</p>\n<p>In particular, I claim it is impossible to make, with the current design, a polymorphic <code>Shrinkable (List α)</code> instance.</p>\n<p>The problem is that we have <code>Shrinkable</code> extend <code>WellFoundedRel</code>, which pulls in fields <code>rel</code> and <code>wf : WellFounded rel</code>. However we have no control over what that <code>rel</code> is, and that lack of control will bite us. In the instances that exist so far, the instance that gets found provides <code>rel a b := sizeOf a &lt; sizeOf b</code>, and indeed there are places in the documentation that assume that the relation is actually this!</p>\n<p>Suppose we try to construct <code>instance [Shrinkable α] : Shrinkable (List α)</code>. (It doesn't really matter how we plan to implement it: perhaps some combination of dropping elements and/or shrinking elements.). Then we'll pull in the <code>WellFoundRel</code> instance for <code>List α</code>, which is in terms of the default <code>SizeOf</code> instance for lists. However there's no guarantee that the relation embedded in <code>Shrinkable α</code> has anything to do with <code>SizeOf</code>...</p>\n<p>One possible fix would be to not extend <code>WellFoundRel</code>, and instead just change the signature of <code>Shrinkable.shrink</code>, so it reads</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">shrink</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">List</span> <span class=\"o\">{</span> <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">//</span> <span class=\"n\">sizeOf</span> <span class=\"n\">y</span> <span class=\"bp\">&lt;</span> <span class=\"n\">sizeOf</span> <span class=\"n\">x</span> <span class=\"o\">}</span>\n</code></pre></div>\n<p>i.e. force always using <code>sizeOf</code>. This would require us to parametrize <code>Shrinkable α</code> by a <code>SizeOf α</code> instance.</p>\n<p>The problem we quickly run into here is that the <code>SizeOf</code> instances available are, well, crap. They're often noncomputable, and often not the convenient thing to work with.</p>\n<p>A solution would be to just add a field <code>size : α → ℕ</code> to <code>Shrinkable</code>, and then have</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">shrink</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"bp\">→</span> <span class=\"n\">List</span> <span class=\"o\">{</span> <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">//</span> <span class=\"n\">size</span> <span class=\"n\">y</span> <span class=\"bp\">&lt;</span> <span class=\"n\">size</span> <span class=\"n\">x</span> <span class=\"o\">}</span>\n</code></pre></div>\n<p>This, I think, would actually be workable.</p>\n<p>However I want to propose something else, which is to just drop all the proofs from <code>Shrinkable</code> entirely. I don't really see why they are there, and they add considerably to the burden for someone wanting to create new <code>SampleableExt</code> instances.</p>\n<p>The only thing we gain from these proofs is that <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=SlimCheck.Testable.minimize#doc\">docs4#SlimCheck.Testable.minimize</a> is an entire function. Without these proofs, we have to put <code>partial</code> on <code>minimizeAux</code>. But ... who cares? It's not like we are ever going to need a <em>proof</em> that if slim_check finds a counterexample, and then it finds a smaller one, that smaller one is really smaller... It's still a perfectly fine counterexample. Nor do we care about proofs that <code>slim_check</code> will actually terminate.</p>\n<p>This would make everything simpler, a function only used in metaprogramming gains a <code>partial</code>, and we can actually (and easily) implement <code>Shrinkable (List α)</code>.</p>\n<p><span class=\"user-mention\" data-user-id=\"395550\">@Henrik Böving</span>, <span class=\"user-mention\" data-user-id=\"110026\">@Simon Hudon</span>, others, any opinions on all this? You can see this worked out at <a href=\"https://github.com/leanprover-community/mathlib4/compare/slim_check_frontend...slim_check_no_proofs?expand=1\">https://github.com/leanprover-community/mathlib4/compare/slim_check_frontend...slim_check_no_proofs?expand=1</a>.</p>",
+        "id": 356447820,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683452546
+    },
+    {
+        "content": "<p>A related observation about slim_check; in lean 3 it was only able to verify counterexamples with <code>by decide</code>, which means it's useless for equalities of real numbers even in places where <code>norm_num</code> knew the answer</p>",
+        "id": 356454295,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1683454945
+    },
+    {
+        "content": "<p>So this SizeOf behavior that you are seeing right now is precisely what we also observed while designing this API. In fact I would say 60% of the port was hammering slim_check into a form where this proof would work out, Simon and I spent several days trying to figure something out that worked.</p>\n<p>I think dropping the termination proof could be fine. For me slim_check was mostly a project to see whether Lean at the time could actually verify a non trivial piece of software in a way that is not completely convoluted and I think it did^^ But for usability sake I would say it is fine that we drop this property and instead just assume the users are providing lawful instances (maybe until one day the automation is good enough to add it back!!)</p>",
+        "id": 356468029,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1683459106
+    },
+    {
+        "content": "<p>It seems like to answer Eric's question, some rearrangement of the monads is necessary. We need to work with both <code>Rand</code> (for generating examples) and <code>MetaM</code> (for e.g. running <code>norm_num</code> or whatever to generate proofs).</p>",
+        "id": 356468457,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683459244
+    },
+    {
+        "content": "<p>I made <a href=\"https://github.com/leanprover-community/mathlib4/pull/3835\">!4#3835</a>, removing the proofs, and adding a sampleable instance for List.</p>",
+        "id": 356469320,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683459531
+    },
+    {
+        "content": "<p>At risk of a tangent, is there a way to write a function <code>(s : Finset X) (hs : s.nonempty) : Rand X</code> without needing <code>unsafe</code> or <code>partial</code>?</p>",
+        "id": 356470392,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1683459916
+    },
+    {
+        "content": "<p>Is there a function for getting a list from a finset?</p>",
+        "id": 356470854,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1683460062
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Quot.unquot#doc\">docs4#Quot.unquot</a></p>",
+        "id": 356470958,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1683460095
+    },
+    {
+        "content": "<p>Oh, or you can sort</p>",
+        "id": 356470995,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1683460113
+    },
+    {
+        "content": "<p>Maybe the answer is that in practice any concrete type can be sorted</p>",
+        "id": 356471057,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1683460146
+    },
+    {
+        "content": "<p>Right, if you can get a list there is a function for grabbing a random value from it, oneOf I think</p>",
+        "id": 356471410,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1683460273
+    },
+    {
+        "content": "<p>Yeah, but getting a list is unsafe without the handwave of \"randomness lets me pull a value out of the quotient\"</p>",
+        "id": 356471517,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1683460321
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> , <span class=\"user-mention\" data-user-id=\"395550\">@Henrik Böving</span>, <a href=\"https://github.com/leanprover-community/mathlib4/pull/3838\">!4#3838</a> makes some tweaks to <code>Rand</code>, <code>Gen</code>, and then slim_check that I think should allow it to call <code>norm_num</code> or other tactics while testing. It comes at some expense: <code>Rand</code> is now a monad transformer, not just a monad...</p>\n<p>I didn't actually implement a <code>Testable</code> that makes use of this new-found freedom to work in <code>MetaM</code>, but I'm out of time for now and thought I'd show you both this at this stage. I <em>think</em> it should be straightforward from here to add some <code>Testable</code>s that use <code>norm_num</code> to do computations in <code>Real</code>, etc.</p>",
+        "id": 356486238,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1683465075
+    }
+]

@@ -1,0 +1,128 @@
+[
+    {
+        "content": "<p>Let's say I have some syntax <code>$a:term</code> that I'm using in a tactic elaboration. I'd like it to be a string literal before I use it, but I'd like it to be able to be specified some other way, e.g. by a prior declaration <code>let myStr := \"foo\"</code> or by a computation (so I really do want a <code>term</code>, or at least want something broader than a <code>str</code>). How can I unfold all definitions in the course of elaborating the syntax so that I can try to get a string literal?</p>\n<p>I've tried using <code>withTransparency .all</code> before elaborating, using <code>evalTerm</code> (but it complains that this is unsafe), and a couple other things. (I would have liked to try something like <code>isDefEq (.lit m) aExpr</code> with <code>m</code> a metavariable under the appropriate transparency, but then I'd need some hypothetical <code>mkFreshLiteralMVar</code> instead of <code>mkFreshExprMVar</code> to make the types work.)</p>\n<p>Is there a simple solution I'm missing?</p>",
+        "id": 327200558,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1676101489
+    },
+    {
+        "content": "<p><code>evalConstCheck</code> or <code>evalTerm</code></p>",
+        "id": 327200955,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1676101728
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean.Elab.Eval</span>\n<span class=\"kn\">import</span> <span class=\"n\">Std.Util.TermUnsafe</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span> <span class=\"n\">Elab</span> <span class=\"n\">Command</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"eval_my_string\"</span> <span class=\"n\">s</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">command</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">s</span> <span class=\"bp\">←</span> <span class=\"n\">liftTermElabM</span> <span class=\"bp\">&lt;|</span>\n    <span class=\"n\">unsafe</span> <span class=\"n\">Term.evalTerm</span> <span class=\"n\">String</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">const</span> <span class=\"bp\">``</span><span class=\"n\">String</span> <span class=\"o\">[])</span> <span class=\"n\">s</span>\n  <span class=\"n\">logInfo</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"got: {s}\"</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">head</span> <span class=\"o\">:</span> <span class=\"n\">String</span> <span class=\"o\">:=</span> <span class=\"s2\">\"hello\"</span>\n\n<span class=\"n\">eval_my_string</span> <span class=\"n\">head</span> <span class=\"bp\">++</span> <span class=\"s2\">\" world\"</span>\n</code></pre></div>",
+        "id": 327201370,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1676101977
+    },
+    {
+        "content": "<p>and yes, this is unsafe</p>",
+        "id": 327201414,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1676102013
+    },
+    {
+        "content": "<p>Works like a charm! Thanks for pointing me to that <code>Std</code> file, I probably wouldn't have found that. :)</p>",
+        "id": 327201949,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1676102388
+    },
+    {
+        "content": "<p>As for safety I guess I can just live on the edge? Hopefully any breakages are caught by a standard <code>try</code>/<code>catch</code>?</p>",
+        "id": 327202014,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1676102409
+    },
+    {
+        "content": "<p>heh, no <code>unsafe</code> issues aren't caught by <code>try</code>/<code>catch</code> they are likely to crash lean at best</p>",
+        "id": 327202198,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1676102534
+    },
+    {
+        "content": "<p>ahh lol</p>",
+        "id": 327202206,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1676102550
+    },
+    {
+        "content": "<p>regarding what the unsafety here specifically is, we are trusting (1) that the type <code>String</code> corresponds to the expression <code>.const ``String []</code> and (2) the environment at run time is at least an extension of the environment at compile time, so that it makes sense to trust that the types of things in the environment have something to do with the compiled functions also in the environment that we will be calling</p>",
+        "id": 327202277,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1676102635
+    },
+    {
+        "content": "<p>(1) is relatively easy to check locally and to some extent can be automated by a macro</p>",
+        "id": 327202355,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1676102670
+    },
+    {
+        "content": "<p>(2) is almost always the case unless you are running mathlib tactics in the context of a standalone executable with a <code>def main</code> which calls <code>importModulesConst</code> to get access to an environment, not necessarily related to the one that was used to compile the program</p>",
+        "id": 327202446,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1676102745
+    },
+    {
+        "content": "<p>basically <code>unsafe</code> in lean means something similar to <code>unsafe</code> in rust: it is an unchecked proof obligation of the programmer, such that the consequence of violating the preconditions are usually UB (undefined behavior)</p>",
+        "id": 327202629,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1676102853
+    },
+    {
+        "content": "<p>Of course since lean has a proof language we try to put these proof obligations as literal proof obligations where possible, but they aren't always expressible in the language of lean, if for example they involve interaction with lean runtime representations or other things not visible to the logic</p>",
+        "id": 327202772,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1676102951
+    },
+    {
+        "content": "<p>ohhkay, cool, that's really informative, thx—prior to that explanation <code>unsafe</code> just seemed like a black box that sometimes exploded. now I can see the kind of things that can make it explode! is that a totally exhaustive list?</p>",
+        "id": 327202992,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1676103106
+    },
+    {
+        "content": "<p>that's the list of things that can make <code>evalTerm</code> specifically explode</p>",
+        "id": 327207902,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1676105894
+    },
+    {
+        "content": "<p>every unsafe declaration has its own preconditions/postconditions for sound usage</p>",
+        "id": 327207939,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1676105915
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 327219481,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1676110464
+    },
+    {
+        "content": "<p>can <code>unsafe</code> cause Lean to accept an unsound proof?</p>",
+        "id": 327247116,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1676120531
+    },
+    {
+        "content": "<p>yes, easily</p>",
+        "id": 327247187,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1676120563
+    },
+    {
+        "content": "<p><code>unsafe def foo : False := foo</code></p>",
+        "id": 327247211,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1676120570
+    },
+    {
+        "content": "<p>well, <code>unsafe</code> functions are taint-tracked by the kernel so you can't use them to prove things about non-<code>unsafe</code></p>",
+        "id": 327247299,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1676120606
+    }
+]

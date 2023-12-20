@@ -1,0 +1,206 @@
+[
+    {
+        "content": "<p>I have this piece of code on todays nightly:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">fib</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span>\n  <span class=\"k\">match</span> <span class=\"n\">n</span> <span class=\"k\">with</span>\n  <span class=\"bp\">|</span> <span class=\"mi\">0</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">0</span>\n  <span class=\"bp\">|</span> <span class=\"mi\">1</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">1</span>\n  <span class=\"bp\">|</span> <span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">2</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">fib</span> <span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"n\">fib</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">tasks</span> <span class=\"bp\">←</span> <span class=\"n\">List.range</span> <span class=\"mi\">8</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">mapM</span> <span class=\"k\">fun</span> <span class=\"n\">i</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">IO.asTask</span> <span class=\"k\">do</span>\n      <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"{fib (35 + i)}\"</span>\n  <span class=\"n\">for</span> <span class=\"n\">t</span> <span class=\"k\">in</span> <span class=\"n\">tasks</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">IO.wait</span> <span class=\"n\">t</span>\n</code></pre></div>\n<p>to try and get Lean to compute all of the fib numbers in parallel. However when I execute it and check my htop I see that Lean is going completely single core here. I thought that Tasks are our unit of parallelism but that doesn't seem to be happening here? What am I doing wrong?</p>",
+        "id": 377643220,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1690043820
+    },
+    {
+        "content": "<p>Interesting. If I just spawn a ton of additional tasks I can see all of them in my htop, now I'm even more confused as to why these tasks where each of them is clearly taking a bit of time to compute do seemingly not show up there /o\\</p>",
+        "id": 377667489,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1690053242
+    },
+    {
+        "content": "<p>what is the definition of <code>fib</code>?</p>",
+        "id": 377669631,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690054223
+    },
+    {
+        "content": "<p>(I would hope that an actual computation of <code>fib 35</code> is not so slow as to be good for benchmarking!)</p>",
+        "id": 377669683,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690054258
+    },
+    {
+        "content": "<p>are you running this in the interpreter or compiled?</p>",
+        "id": 377669885,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690054367
+    },
+    {
+        "content": "<p>Edited. I am running compiled and the computation does take roughly 8 seconds overall and reports a cpu load of 99%.</p>",
+        "id": 377669978,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1690054412
+    },
+    {
+        "content": "<p>Looking at the C code, it appears the <code>fib</code> computation has been lifted out of the <code>IO.asTask</code></p>",
+        "id": 377670246,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690054540
+    },
+    {
+        "content": "<p>Gaaaah</p>",
+        "id": 377670262,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1690054552
+    },
+    {
+        "content": "<p>And I thought I had outsmarted the compiler by using a variable...</p>",
+        "id": 377670277,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1690054560
+    },
+    {
+        "content": "<p>actually, looking at the lean code this isn't even the compiler getting smart, there really isn't anything forcing the computation to be delayed</p>",
+        "id": 377670655,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690054733
+    },
+    {
+        "content": "<p>because <code>do x</code> just macro expands to <code>x</code></p>",
+        "id": 377670691,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690054756
+    },
+    {
+        "content": "<p>meaning the code is essentially <code>IO.asTask (IO.println (fib (35 + i)))</code></p>",
+        "id": 377670720,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690054779
+    },
+    {
+        "content": "<p>which of course evaluates <code>fib</code> before constructing the task</p>",
+        "id": 377670733,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690054795
+    },
+    {
+        "content": "<p>Ah that also explains why it started working when I switched over to Task.spawn instead....</p>",
+        "id": 377670819,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1690054823
+    },
+    {
+        "content": "<p>do we have an API that ...does not do this? For IO tasks that is</p>",
+        "id": 377670853,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1690054841
+    },
+    {
+        "content": "<p>if you do something like <code>do pure (); IO.println s!\"{fib (35 + i)}\"</code> it will probably work</p>",
+        "id": 377670871,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690054848
+    },
+    {
+        "content": "<p>just anything to wrap a thunk around the computation</p>",
+        "id": 377670916,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690054867
+    },
+    {
+        "content": "<p>yeah that works...</p>",
+        "id": 377670946,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1690054883
+    },
+    {
+        "content": "<p>Well thank you^^ But we should certianly fix this</p>",
+        "id": 377670970,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1690054905
+    },
+    {
+        "content": "<p>A version of <code>asTask</code> that takes <code>Unit -&gt; IO A</code> would presumably work</p>",
+        "id": 377671074,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690054944
+    },
+    {
+        "content": "<p>I mean is it even reasonable to have <code>asTask</code> if it has this footgun? Why not just refactor generally?</p>",
+        "id": 377671255,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1690055042
+    },
+    {
+        "content": "<p>I wouldn't put the blame on <code>asTask</code>, this is true for anything that takes an argument of type <code>IO A</code></p>",
+        "id": 377671328,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690055068
+    },
+    {
+        "content": "<p>it's certainly a bit frustrating since <code>IO</code> is already a thunk type</p>",
+        "id": 377671446,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690055137
+    },
+    {
+        "content": "<p>but when you write an expression which evaluates to a function type, how do you know whether it should be eta-expanded or not? I don't see how the <code>do</code> notation could do this correctly either</p>",
+        "id": 377671745,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690055253
+    },
+    {
+        "content": "<p>Right, by \"refactoring in general\" I didn't mean changing the IO behavior in general, I was more thinking about changing the type of IO.asTask. I believe this to be reasonable because the usual floating computations around behavior in a single threaded context is fine right. It should be about the same speed (modulo cache) and do the same interactions with the environment and produce the same result. But in an IO.asTask context lifting things out of the argument does actually (as we can see) potentially drastically impact what is going to happen.</p>",
+        "id": 377672272,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1690055489
+    },
+    {
+        "content": "<p>like I said, the same issue happens for any function which takes an argument of type <code>IO A</code></p>",
+        "id": 377672845,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690055785
+    },
+    {
+        "content": "<p>because if you have such an argument you presumably are interested in not running it yet</p>",
+        "id": 377672866,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690055808
+    },
+    {
+        "content": "<p>so running the first part of it is probably wrong</p>",
+        "id": 377672872,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690055821
+    },
+    {
+        "content": "<p>...except when you do want to precalculate part of it, and there are issues in the other direction too</p>",
+        "id": 377673082,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690055938
+    },
+    {
+        "content": "<p>For many of these lifting pure computations over them does not matter. Changing the signature of <code>asTask</code> does not sound too far-fetched to me</p>",
+        "id": 377673295,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1690056019
+    },
+    {
+        "content": "<p>BTW, what Lean does(not) calculate at compile time? AFAIR, Haskell inlines a lot.</p>",
+        "id": 377673315,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1690056032
+    },
+    {
+        "content": "<p>Inlining itself should not change <em>when</em> something is computed, except by enabling other optimizations</p>",
+        "id": 377673545,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1690056133
+    },
+    {
+        "content": "<p>In theory, <code>do</code> could insert a call of</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">defer</span> <span class=\"o\">[</span><span class=\"n\">Monad</span> <span class=\"n\">m</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">Unit</span> <span class=\"bp\">→</span> <span class=\"n\">m</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">m</span> <span class=\"n\">α</span> <span class=\"o\">:=</span>\n  <span class=\"n\">pure</span> <span class=\"o\">()</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">f</span>\n</code></pre></div>\n<p>but that's not as clear-cut in a language where one might actually want to look at the resulting term</p>",
+        "id": 377673715,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1690056228
+    },
+    {
+        "content": "<p>here's a trick that seems to work without changing the type signature of <code>asTask</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[macro_inline]</span> <span class=\"kd\">def</span> <span class=\"n\">IO.asTask'</span> <span class=\"o\">(</span><span class=\"n\">m</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">BaseIO</span> <span class=\"o\">(</span><span class=\"n\">Task</span> <span class=\"o\">(</span><span class=\"n\">Except</span> <span class=\"n\">Error</span> <span class=\"n\">A</span><span class=\"o\">))</span> <span class=\"o\">:=</span>\n  <span class=\"n\">IO.asTask</span> <span class=\"k\">fun</span> <span class=\"n\">w</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">m</span> <span class=\"n\">w</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">tasks</span> <span class=\"bp\">←</span> <span class=\"n\">List.range</span> <span class=\"mi\">8</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">mapM</span> <span class=\"k\">fun</span> <span class=\"n\">i</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">IO.asTask'</span> <span class=\"k\">do</span>\n      <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"{fib (35 + i)}\"</span>\n  <span class=\"n\">for</span> <span class=\"n\">t</span> <span class=\"k\">in</span> <span class=\"n\">tasks</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">IO.wait</span> <span class=\"n\">t</span>\n</code></pre></div>",
+        "id": 377674530,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690056624
+    }
+]

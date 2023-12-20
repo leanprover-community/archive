@@ -1,0 +1,56 @@
+[
+    {
+        "content": "<p>Hi, i've seen that the internals of lean uses some extern/export trick to forward-declare some functions such as <code>whnf</code> and <code>inferType</code> (see <a href=\"https://github.com/leanprover/lean4/blob/96c59ccced148afbb8fc54f4d05a66b050f75d54/src/Lean/Meta/Basic.lean#L418\">here</a> for the extern calls, and <a href=\"https://github.com/leanprover/lean4/blob/96c59ccced148afbb8fc54f4d05a66b050f75d54/src/Lean/Meta/WHNF.lean#L858\">here</a> for an export). I wanted to try and reproduce this on a local project of mine, but was faced with linking issues when doing so:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">stderr</span><span class=\"o\">:</span>\n<span class=\"n\">could</span> <span class=\"n\">not</span> <span class=\"n\">find</span> <span class=\"n\">native</span> <span class=\"n\">implementation</span> <span class=\"n\">of</span> <span class=\"n\">external</span> <span class=\"n\">declaration</span> <span class=\"bp\">'</span><span class=\"n\">whnf'</span> <span class=\"o\">(</span><span class=\"n\">symbols</span> <span class=\"bp\">'</span><span class=\"n\">l_whnf___boxed'</span> <span class=\"n\">or</span> <span class=\"bp\">'</span><span class=\"n\">l_whnf'</span><span class=\"o\">)</span>\n<span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">external</span> <span class=\"n\">command</span> <span class=\"bp\">`</span><span class=\"n\">c</span><span class=\"o\">:</span><span class=\"bp\">\\</span><span class=\"n\">Users</span><span class=\"bp\">\\</span><span class=\"n\">aarth</span><span class=\"bp\">\\.</span><span class=\"n\">elan</span><span class=\"bp\">\\</span><span class=\"n\">toolchains</span><span class=\"bp\">\\</span><span class=\"n\">leanprover</span><span class=\"c1\">--lean4---nightly-2023-07-01\\bin\\lean.exe` exited with code 1</span>\n</code></pre></div>\n<p>I am completely illiterate when it comes to linking, and couldn't find much useful information online. Is there any way to reproduce the forward declaration trick on local lean projects ?</p>\n<p>For reference, I have tried making use of <code>-rdynamic</code> to solve this, but to no avail. My lakefile looks like this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lake</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lake</span> <span class=\"n\">DSL</span>\n\n<span class=\"n\">package</span> <span class=\"n\">proost</span>\n\n<span class=\"n\">lean_lib</span> <span class=\"n\">Proost</span>\n\n<span class=\"kd\">@[default_target]</span>\n<span class=\"n\">lean_exe</span> <span class=\"n\">proost</span> <span class=\"n\">where</span>\n  <span class=\"n\">root</span> <span class=\"o\">:=</span> <span class=\"bp\">`</span><span class=\"n\">Main</span>\n  <span class=\"n\">moreLeanArgs</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[</span>\n    <span class=\"s2\">\"-DautoImplicit=false\"</span><span class=\"o\">]</span>\n  <span class=\"n\">moreLinkArgs</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"s2\">\"-rdynamic\"</span><span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 378566121,
+        "sender_full_name": "Arthur Adjedj",
+        "timestamp": 1690308643
+    },
+    {
+        "content": "<p>No, I don't think this trick works in user code</p>",
+        "id": 378568029,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690309096
+    },
+    {
+        "content": "<p>hm... actually this seems to work as intended:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lake</span>\n<span class=\"kn\">open</span> <span class=\"n\">Lake</span> <span class=\"n\">DSL</span>\n\n<span class=\"n\">package</span> <span class=\"n\">test</span>\n\n<span class=\"kd\">@[default_target]</span>\n<span class=\"n\">lean_exe</span> <span class=\"n\">test</span> <span class=\"n\">where</span>\n  <span class=\"n\">root</span> <span class=\"o\">:=</span> <span class=\"bp\">`</span><span class=\"n\">Test</span>\n</code></pre></div>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[extern \"foo\"]</span> <span class=\"n\">opaque</span> <span class=\"n\">fooExtern</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span>\n\n<span class=\"kd\">@[export foo]</span> <span class=\"kd\">def</span> <span class=\"n\">fooExport</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"n\">Nat.succ</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"{fooExtern 0}\"</span>\n</code></pre></div>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">$</span> <span class=\"n\">lake</span> <span class=\"n\">exe</span> <span class=\"n\">test</span>\n<span class=\"n\">info</span><span class=\"o\">:</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"bp\">/</span><span class=\"mi\">2</span><span class=\"o\">]</span> <span class=\"n\">Building</span> <span class=\"n\">Test</span>\n<span class=\"n\">info</span><span class=\"o\">:</span> <span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"bp\">/</span><span class=\"mi\">2</span><span class=\"o\">]</span> <span class=\"n\">Compiling</span> <span class=\"n\">Test</span>\n<span class=\"mi\">1</span>\n</code></pre></div>",
+        "id": 378569866,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690309522
+    },
+    {
+        "content": "<p>it also works if I put <code>fooExtern</code> in a separate file</p>",
+        "id": 378570518,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1690309682
+    },
+    {
+        "content": "<p>Hmm, this might happen because I’m on windows, I’ll be trying again in WSL</p>",
+        "id": 378572930,
+        "sender_full_name": "Arthur Adjedj",
+        "timestamp": 1690310251
+    },
+    {
+        "content": "<p>I can reproduce your test, and the linking does work for me in that case, but it still fails in my own project, even in WSL, so I've probably done something wrong on my end. Thanks for your help !</p>",
+        "id": 378580297,
+        "sender_full_name": "Arthur Adjedj",
+        "timestamp": 1690311964
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 378583585,
+        "sender_full_name": "Arthur Adjedj",
+        "timestamp": 1690312846
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 378598215,
+        "sender_full_name": "Arthur Adjedj",
+        "timestamp": 1690317085
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"432410\">Arthur Adjedj</span> has marked this topic as resolved.</p>",
+        "id": 378608951,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1690321000
+    }
+]

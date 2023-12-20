@@ -1,0 +1,80 @@
+[
+    {
+        "content": "<p>I want to try something that’s possibly crazy: Symbolically execute a Lean program.</p>\n<p>My plan is to compile my Lean program to C, compile that C code to LLVM bitcode, and then run <a href=\"http://klee.github.io/\">KLEE</a> on the result. For this to work, I also need to get the lean4 run-time into LLVM bitcode, so I can link it against that of my particular program. Otherwise KLEE will not find symbols defined by the run-time:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">$</span> <span class=\"n\">lli</span> <span class=\"n\">hello.ll</span>\n<span class=\"n\">JIT</span> <span class=\"n\">session</span> <span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">Symbols</span> <span class=\"n\">not</span> <span class=\"n\">found</span><span class=\"o\">:</span> <span class=\"o\">[</span> <span class=\"n\">_lean_initialize_runtime_module</span><span class=\"o\">,</span> <span class=\"n\">_lean_io_mark_end_initialization</span><span class=\"o\">,</span> <span class=\"n\">_lean_mk_string_from_bytes</span><span class=\"o\">,</span> <span class=\"n\">_lean_mark_persistent</span><span class=\"o\">,</span> <span class=\"n\">_initialize_Init</span><span class=\"o\">,</span> <span class=\"n\">_lean_init_task_manager</span><span class=\"o\">,</span> <span class=\"n\">_lean_get_stdout</span><span class=\"o\">,</span> <span class=\"n\">_lean_set_panic_messages</span><span class=\"o\">,</span> <span class=\"n\">_lean_inc_ref_cold</span><span class=\"o\">,</span> <span class=\"n\">_lean_io_result_show_error</span><span class=\"o\">,</span> <span class=\"n\">_l_IO_FS_Stream_putStrLn</span><span class=\"o\">,</span> <span class=\"n\">_lean_alloc_small</span><span class=\"o\">,</span> <span class=\"n\">_lean_finalize_task_manager</span><span class=\"o\">,</span> <span class=\"n\">_lean_notify_assert</span><span class=\"o\">,</span> <span class=\"n\">_lean_dec_ref_cold</span> <span class=\"o\">]</span>\n<span class=\"n\">lli</span><span class=\"o\">:</span> <span class=\"n\">Failed</span> <span class=\"n\">to</span> <span class=\"n\">materialize</span> <span class=\"n\">symbols</span><span class=\"o\">:</span> <span class=\"o\">{</span> <span class=\"o\">(</span><span class=\"n\">main</span><span class=\"o\">,</span> <span class=\"o\">{</span> <span class=\"n\">_initialize_hello</span><span class=\"o\">,</span> <span class=\"n\">_main</span><span class=\"o\">,</span> <span class=\"n\">__lean_main</span> <span class=\"o\">})</span> <span class=\"o\">}</span>\n</code></pre></div>\n<p>My thought for this is to use <a href=\"https://github.com/travitch/whole-program-llvm\">wllvm</a> to attempt to build lean4 and then link against the produced bitcode for the library. I managed to build lean4 with wllvm (I think), but I'm not sure what to do next. What bits of what I've built do I need to collect with own program? It's presumably whatever <code>leanc</code> uses when it links, but I'm not sure what that is.</p>",
+        "id": 396361014,
+        "sender_full_name": "Mike Hicks",
+        "timestamp": 1697143093
+    },
+    {
+        "content": "<p>You can add <code>-v</code> to the leanc cmdline to see what it uses, does that help?</p>",
+        "id": 396361409,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1697143288
+    },
+    {
+        "content": "<p>For simple \"hello world\" it uses <code>-lleancpp -lInit -lLean -lleanrt -lc++</code>. Looks like the first four are Lean libraries. I'll play around with those. Kind of shocking that the final executable is 3+ MB (the C version is 33K). Hopefully all that extra code does not confuse KLEE, if I get that far.</p>",
+        "id": 396367641,
+        "sender_full_name": "Mike Hicks",
+        "timestamp": 1697146325
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"658606\">@Mike Hicks</span> if you build lean with the LLVM backend, you can also pass the flag <code>lean -b &lt;bitcode-file.bc</code> and that gives a self-contained LLVM bitcode (with the Lean runtime in it).</p>",
+        "id": 396426608,
+        "sender_full_name": "Siddharth Bhat",
+        "timestamp": 1697174706
+    },
+    {
+        "content": "<p>Wow, amazing!  Where can I learn how to build the LLVM backend <span class=\"user-mention\" data-user-id=\"130575\">@Siddharth Bhat</span> ? I poked around <a href=\"http://lean-lang.org\">lean-lang.org</a> and <a href=\"http://github.com/leanprover/lean4\">github.com/leanprover/lean4</a> but I didn't see anything obvious.</p>\n<p>Does that work for multifile developments? I wouldn't want each file to include the Lean runtime in it. Perhaps you just pass all the files to <code>lean</code> at once and it will merge them into a single bitcode file, with the runtime? That's basically what I want.</p>",
+        "id": 396497603,
+        "sender_full_name": "Mike Hicks",
+        "timestamp": 1697200644
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"658606\">Mike Hicks</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Compiling.20runtime.20to.20LLVM.20bitcode.3F/near/396497603\">said</a>:</p>\n<blockquote>\n<p>Wow, amazing!  Where can I learn how to build the LLVM backend <span class=\"user-mention silent\" data-user-id=\"130575\">Siddharth Bhat</span> ? I poked around <a href=\"http://lean-lang.org\">lean-lang.org</a> and <a href=\"http://github.com/leanprover/lean4\">github.com/leanprover/lean4</a> but I didn't see anything obvious.</p>\n<p>Does that work for multifile developments? I wouldn't want each file to include the Lean runtime in it. Perhaps you just pass all the files to <code>lean</code> at once and it will merge them into a single bitcode file, with the runtime? That's basically what I want.</p>\n</blockquote>\n<p>The basic setup is as follows: You need LLVM 15 + Clang(++) 15 in your PATH. Then I run:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">cmake</span> <span class=\"bp\">-</span><span class=\"n\">DCMAKE_EXPORT_COMPILE_COMMANDS</span><span class=\"bp\">=</span><span class=\"n\">ON</span>  <span class=\"bp\">-</span><span class=\"n\">DCMAKE_CXX_COMPILER</span><span class=\"bp\">=</span><span class=\"n\">clang</span><span class=\"bp\">++</span> <span class=\"bp\">-</span><span class=\"n\">DCMAKE_C_COMPILER</span><span class=\"bp\">=</span><span class=\"n\">clang</span> <span class=\"bp\">-</span><span class=\"n\">DLLVM</span><span class=\"bp\">=</span><span class=\"n\">ON</span> <span class=\"bp\">-</span><span class=\"n\">DLLVM_CONFIG</span><span class=\"bp\">=</span><span class=\"n\">llvm</span><span class=\"bp\">-</span><span class=\"n\">config</span>  <span class=\"bp\">-</span><span class=\"n\">DCMAKE_CXX_COMPILER</span><span class=\"bp\">=</span><span class=\"n\">clang</span><span class=\"bp\">++</span> <span class=\"bp\">../../</span>\n</code></pre></div>\n<p>and from there its just <code>make -j$(nproc)</code> and you're good</p>",
+        "id": 396502955,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1697202559
+    },
+    {
+        "content": "<p>And yes it is important that it is LLVM/Clang 15^^  If you can't get your hands on that because your package manager has already phased it out you can  compiler it from source which takes a bit more effort though. That said we do plan on eventually updating to more recent versions of course</p>",
+        "id": 396503317,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1697202703
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"130575\">Siddharth Bhat</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Compiling.20runtime.20to.20LLVM.20bitcode.3F/near/396426608\">said</a>:</p>\n<blockquote>\n<p>that gives a self-contained LLVM bitcode (with the Lean runtime in it).</p>\n</blockquote>\n<p>This isn't true, is it? The file should still depend on libleanrt, and likely libleancpp as well. Afaik, the output will not be materially different right now from what one would get from compiling the .c file to bitcode so I'm not sure using the LLVM backend here will simplify anything, or am I mistaken?</p>",
+        "id": 396508648,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1697204588
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"658606\">Mike Hicks</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Compiling.20runtime.20to.20LLVM.20bitcode.3F/near/396497603\">said</a>:</p>\n<blockquote>\n<p>Does that work for multifile developments?</p>\n</blockquote>\n<p>Lake support for LLVM backend is in development -- <a href=\"https://github.com/leanprover/lean4/pull/2571\">lean4#2571</a> -- and should be merged very soon. This will hopefully greatly simplify the process for multifile projects.</p>",
+        "id": 396526399,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1697210526
+    },
+    {
+        "content": "<p>Unfortunately I couldn't get the LLVM backend to build on my system. I have MacOS Ventura, and I used homebrew to install LLVM 15, putting that at the front of my PATH. It crapped out when building <code>.lean</code> files:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[</span>    <span class=\"o\">]</span> <span class=\"n\">Building</span> <span class=\"n\">Init</span><span class=\"bp\">/</span><span class=\"n\">Data</span><span class=\"bp\">/</span><span class=\"n\">ToString.lean</span>\n<span class=\"o\">[</span>    <span class=\"o\">]</span> <span class=\"n\">Building</span> <span class=\"n\">Init</span><span class=\"bp\">/</span><span class=\"n\">NotationExtra.lean</span>\n<span class=\"n\">make</span><span class=\"o\">[</span><span class=\"mi\">7</span><span class=\"o\">]:</span> <span class=\"bp\">***</span> <span class=\"o\">[</span><span class=\"bp\">../</span><span class=\"n\">build</span><span class=\"bp\">/</span><span class=\"n\">release</span><span class=\"bp\">/</span><span class=\"n\">stage1</span><span class=\"bp\">/</span><span class=\"n\">lib</span><span class=\"bp\">/</span><span class=\"n\">lean</span><span class=\"bp\">/</span><span class=\"n\">Init</span><span class=\"bp\">/</span><span class=\"n\">NotationExtra.olean</span><span class=\"o\">]</span> <span class=\"n\">Trace</span><span class=\"bp\">/</span><span class=\"n\">BPT</span> <span class=\"n\">trap</span><span class=\"o\">:</span> <span class=\"mi\">5</span>\n<span class=\"n\">make</span><span class=\"o\">[</span><span class=\"mi\">6</span><span class=\"o\">]:</span> <span class=\"bp\">***</span> <span class=\"o\">[</span><span class=\"n\">Init</span><span class=\"o\">]</span> <span class=\"n\">Error</span> <span class=\"mi\">2</span>\n<span class=\"n\">make</span><span class=\"o\">[</span><span class=\"mi\">5</span><span class=\"o\">]:</span> <span class=\"bp\">***</span> <span class=\"o\">[</span><span class=\"n\">CMakeFiles</span><span class=\"bp\">/</span><span class=\"n\">make_stdlib</span><span class=\"o\">]</span> <span class=\"n\">Error</span> <span class=\"mi\">2</span>\n<span class=\"n\">make</span><span class=\"o\">[</span><span class=\"mi\">4</span><span class=\"o\">]:</span> <span class=\"bp\">***</span> <span class=\"o\">[</span><span class=\"n\">CMakeFiles</span><span class=\"bp\">/</span><span class=\"n\">make_stdlib.dir</span><span class=\"bp\">/</span><span class=\"n\">all</span><span class=\"o\">]</span> <span class=\"n\">Error</span> <span class=\"mi\">2</span>\n<span class=\"n\">make</span><span class=\"o\">[</span><span class=\"mi\">3</span><span class=\"o\">]:</span> <span class=\"bp\">***</span> <span class=\"o\">[</span><span class=\"n\">all</span><span class=\"o\">]</span> <span class=\"n\">Error</span> <span class=\"mi\">2</span>\n<span class=\"n\">make</span><span class=\"o\">[</span><span class=\"mi\">2</span><span class=\"o\">]:</span> <span class=\"bp\">***</span> <span class=\"o\">[</span><span class=\"n\">stage1</span><span class=\"bp\">-</span><span class=\"kd\">prefix</span><span class=\"bp\">/</span><span class=\"n\">src</span><span class=\"bp\">/</span><span class=\"n\">stage1</span><span class=\"bp\">-</span><span class=\"n\">stamp</span><span class=\"bp\">/</span><span class=\"n\">stage1</span><span class=\"bp\">-</span><span class=\"n\">build</span><span class=\"o\">]</span> <span class=\"n\">Error</span> <span class=\"mi\">2</span>\n<span class=\"n\">make</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">]:</span> <span class=\"bp\">***</span> <span class=\"o\">[</span><span class=\"n\">CMakeFiles</span><span class=\"bp\">/</span><span class=\"n\">stage1.dir</span><span class=\"bp\">/</span><span class=\"n\">all</span><span class=\"o\">]</span> <span class=\"n\">Error</span> <span class=\"mi\">2</span>\n<span class=\"n\">make</span><span class=\"o\">:</span> <span class=\"bp\">***</span> <span class=\"o\">[</span><span class=\"n\">all</span><span class=\"o\">]</span> <span class=\"n\">Error</span> <span class=\"mi\">2</span>\n</code></pre></div>\n<p>The native <code>clang</code> with Xcode is also version 15, but other LLVM features seem to be missing; when I use that it dies very quickly after invoking <code>make</code> with </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- Executing 'llvm-config --version' at 'llvm-config' to check configuration.</span>\n<span class=\"n\">CMake</span> <span class=\"n\">Error</span> <span class=\"n\">at</span> <span class=\"n\">CMakeLists.txt</span><span class=\"o\">:</span><span class=\"mi\">262</span> <span class=\"o\">(</span><span class=\"n\">execute_process</span><span class=\"o\">):</span>\n  <span class=\"n\">execute_process</span> <span class=\"n\">error</span> <span class=\"n\">getting</span> <span class=\"n\">child</span> <span class=\"n\">return</span> <span class=\"n\">code</span><span class=\"o\">:</span> <span class=\"n\">No</span> <span class=\"n\">such</span> <span class=\"n\">file</span> <span class=\"n\">or</span> <span class=\"n\">directory</span>\n</code></pre></div>\n<p>I will wait to get an answer to <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> 's question; if using the LLVM backend is tantamount to compiling to C and converting that to bitcode, then I don't necessarily need the backend.</p>",
+        "id": 396529372,
+        "sender_full_name": "Mike Hicks",
+        "timestamp": 1697211473
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"658606\">@Mike Hicks</span> I retract my original statement, I didn't realize we wanted <em>all</em> the definitions. I'd suggest using the C backend for now</p>\n<p>Detailed build instructions for the LLVM backend live off-upstreamed (will be upstreamed soon <span aria-label=\"tm\" class=\"emoji emoji-2122\" role=\"img\" title=\"tm\">:tm:</span> ): <a href=\"https://github.com/bollu/lean4/blob/llvm/hargonix-collab/doc/llvm.md#llvm-backend\">https://github.com/bollu/lean4/blob/llvm/hargonix-collab/doc/llvm.md#llvm-backend</a></p>",
+        "id": 396556179,
+        "sender_full_name": "Siddharth Bhat",
+        "timestamp": 1697222902
+    },
+    {
+        "content": "<p>I think <code>wllvm</code> will be needed for both C and the LLVM backend to get all the bitcode.  If you are able to get the LLVM backend working, it may be possible to skip C generation.  I think <code>wllvm</code> will still collect bitcode built directly in addition to bitcode generate from C.</p>",
+        "id": 396559987,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1697224770
+    },
+    {
+        "content": "<p>Thanks for the help! I'll play with the C backend and <code>wllvm</code> and see how far I can get.</p>",
+        "id": 396568727,
+        "sender_full_name": "Mike Hicks",
+        "timestamp": 1697229911
+    }
+]

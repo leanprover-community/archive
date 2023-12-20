@@ -1,0 +1,50 @@
+[
+    {
+        "content": "<p>In particular there are these pieces of insight from the docs which I'd appreciate help in understanding (which might be obvious if I actually had a CS background):</p>\n<blockquote>\n<p>Arrays perform best when unshared; as long as they are used \"linearly\" all updates will be performed destructively on the array, so it has comparable performance to mutable arrays in imperative programming languages.</p>\n</blockquote>\n<blockquote>\n<p><code>List α</code> works well as a persistent data structure, when many copies of the tail are shared. When the value is not shared, <code>Array α</code> will have better performance because it can do destructive updates.</p>\n</blockquote>\n<p>What does it mean to be \"shared\"? I mean, intuitively, I can guess that it means \"used by multiple processes\" or \"appearing in multiple expressions\" somehow, but more importantly, how do you actually <em>tell</em> if you're sharing something or not by looking at the code? What does sharing mean precisely in this context?</p>\n<p>Likewise, what's \"\"linearly\"\" alluding to here?</p>",
+        "id": 342991524,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1679261810
+    },
+    {
+        "content": "<p>The basic distinction is whether you care about old values after mutation. Using something linearly roughly means using it only once. For example,</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">let</span> <span class=\"n\">xs</span> <span class=\"o\">:=</span> <span class=\"o\">[</span><span class=\"mi\">3</span><span class=\"o\">,</span><span class=\"mi\">4</span><span class=\"o\">,</span><span class=\"mi\">5</span><span class=\"o\">]</span>\n<span class=\"k\">let</span> <span class=\"n\">ys</span> <span class=\"o\">:=</span> <span class=\"mi\">2</span> <span class=\"o\">::</span> <span class=\"n\">xs</span>\n<span class=\"k\">let</span> <span class=\"n\">zs</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span> <span class=\"o\">::</span> <span class=\"n\">xs</span>\n</code></pre></div>\n<p>Here, <code>xs</code> is a shared tail of <code>ys</code> and <code>zs</code>, so it is <em>not</em> used linearly.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">let</span> <span class=\"n\">xs1</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">5</span><span class=\"o\">]</span>\n<span class=\"k\">let</span> <span class=\"n\">xs2</span> <span class=\"o\">:=</span> <span class=\"n\">xs1.push</span> <span class=\"mi\">4</span>\n<span class=\"k\">let</span> <span class=\"n\">xs3</span> <span class=\"o\">:=</span> <span class=\"n\">xs2.push</span> <span class=\"mi\">3</span>\n<span class=\"k\">let</span> <span class=\"n\">xs4</span> <span class=\"o\">:=</span> <span class=\"n\">xs3.push</span> <span class=\"mi\">2</span>\n</code></pre></div>\n<p>Here, we use values <code>xs1</code>, <code>xs2</code>, <code>xs3</code> only once. So, even though these are different variables, the compiler is free to destroy the old values (we never look at them again) and do in-place mutation.</p>",
+        "id": 342992360,
+        "sender_full_name": "Alex Keizer",
+        "timestamp": 1679262531
+    },
+    {
+        "content": "<p>Hmm, okay, thanks! I think the root of my confusion here might've sprung from not knowing how the compiler/flow of computation works at a deeper level...for example, if we have just</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">let</span> <span class=\"n\">xs</span> <span class=\"o\">:=</span> <span class=\"o\">[</span><span class=\"mi\">3</span><span class=\"o\">,</span><span class=\"mi\">4</span><span class=\"o\">,</span><span class=\"mi\">5</span><span class=\"o\">]</span>\n<span class=\"k\">let</span> <span class=\"n\">ys</span> <span class=\"o\">:=</span> <span class=\"mi\">2</span> <span class=\"o\">::</span> <span class=\"n\">xs</span>\n</code></pre></div>\n<p>(no <code>zs</code>) we do still <em>care</em> about <code>xs</code>—it's just inside of <code>ys</code>. But I gather a \"future use\" of <code>ys</code> here doesn't count as a \"future use\" of {<code>xs</code> as a <em>variable</em>}...or rather, all future uses of <code>xs</code> in this way factor through uses of <code>ys</code>, so the compiler can forget about <code>xs</code>. (Something about reference counting?)</p>",
+        "id": 342992968,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1679263076
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"548935\">@Thomas Murrills</span> that's right, as long as you never use <code>xs</code> again (in code! using it again to specify <code>Prop</code>erties is okay), it counts as linear use (strictly speaking 'linear' means exactly once, to ensure that values can be overwritten in-place we just need 'affine' which means at most once; but if we never use the value then it may as well not exist, so saying 'linear' also makes sense).</p>",
+        "id": 343012720,
+        "sender_full_name": "Wojciech Nawrocki",
+        "timestamp": 1679278235
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> <a href=\"#narrow/stream/270676-lean4/topic/When.20are.20Arrays.20faster.20than.20Lists.20.28and.20vice.20versa.29.3F/near/342992968\">said</a>:</p>\n<blockquote>\n<p>(Something about reference counting?)</p>\n</blockquote>\n<p>Indeed this optimisation is driven by refcounting. When <code>xs.push x</code> is executed and the refcount of <code>xs</code> is 1 (i.e. we're the only ones using it), then <code>xs</code> is destructively updated. If the refcount is &gt;1, a new copy of <code>xs</code> is created, which for arrays involves copying every element. If you do this in a loop, it's bad.</p>\n<p>But in situations where arrays are used linearly, they're <em>much</em> better. Perhaps even in situations where they are used non-linearly but the involved arrays are small.</p>",
+        "id": 343067853,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1679305670
+    },
+    {
+        "content": "<p>Array should also only be used when updates are inplace (like map/set) or at the end (push). Luckily that is the common case.</p>\n<p>For non-inplace updates in the middle of the sequence there are much better data structures, but we're currently missing them in Std :)</p>",
+        "id": 343203646,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1679338838
+    },
+    {
+        "content": "<p>(also, fwiw, both Array and List are \"destructively updated\" when used linearly -- the performance difference is mostly due to Array having good cache locality, e.g. all the data is stored contiguously in memory rather than scattered across many locations with pointers between them)</p>",
+        "id": 343204119,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1679338975
+    },
+    {
+        "content": "<p>I see! This is all very useful insight, thanks so much everyone! :)</p>",
+        "id": 343534638,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1679438494
+    }
+]

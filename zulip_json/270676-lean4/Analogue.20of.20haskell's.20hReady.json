@@ -1,0 +1,74 @@
+[
+    {
+        "content": "<p>Do we have an anlogue of <a href=\"https://hackage.haskell.org/package/base-4.18.0.0/docs/System-IO.html#v:hReady\">https://hackage.haskell.org/package/base-4.18.0.0/docs/System-IO.html#v:hReady</a> ?</p>",
+        "id": 364580134,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686234263
+    },
+    {
+        "content": "<p>Not that i know of, in General we do not have APIs that could help with a style of async programming (this would be a very low level primitive). </p>\n<p>Side note: If we eventually end up having some (higher level) async stuff I would prefer we model it after tokio instead of Haskell's IO based approach since their API leaves open holes for misuse even with very basic programs.</p>",
+        "id": 364688388,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1686262328
+    },
+    {
+        "content": "<p>(Note that this is not one of them but as soon as we get into select style world it begins)</p>",
+        "id": 364688451,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1686262370
+    },
+    {
+        "content": "<p>Thanks Henrik. To specify, I'm not looking for some full-fledged async programming. I just want to check (in a nonblocking way) whether some file handle has anything available to read. Do you know of some way to accomplish this with what's currently available (i.e. without FFI)?</p>",
+        "id": 364689269,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686262730
+    },
+    {
+        "content": "<p>I haven't heard of tokio before. Sounds interesting!</p>",
+        "id": 364689376,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1686262801
+    },
+    {
+        "content": "<p>This would require us to bind <code>select</code> <code>poll</code> or some linux/BSD/windows specific API, from a quick grep in the lean 4 repo it does not look like we have.</p>\n<p>Technically speaking you could create a Task that attempts to read data and cancel it if it does not respond within a timeout but this is a <strong>bad</strong> idea if you want to prevent data loss (and one of the mis designs of the haskell API that you can work around if you are aware that this is a bad idea). Because it can happen that you are canceling an in progress read which means that you loose data when trying the next read since the OS will not repeat bytes to you that you already saw. This is one of the reasons that the C  APIs above exist.</p>",
+        "id": 364691808,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1686263861
+    },
+    {
+        "content": "<p>To elaborate a little further on the Haskell API for future references you could write the equivalent of:</p>\n<div class=\"codehilite\" data-code-language=\"Haskell\"><pre><span></span><code><span class=\"nf\">race</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"n\">hGetLine</span><span class=\"w\"> </span><span class=\"n\">stream1</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"n\">hGetLine</span><span class=\"w\"> </span><span class=\"n\">stream2</span><span class=\"p\">)</span>\n</code></pre></div>\n<p>in Lean by making a Task out of each and have trace cancel the other task once one is done. But this has the data loss problem, if you are a little smarter you can come up with this: </p>\n<div class=\"codehilite\" data-code-language=\"Haskell\"><pre><span></span><code><span class=\"w\">  </span><span class=\"n\">rdy</span><span class=\"w\"> </span><span class=\"ow\">&lt;-</span><span class=\"w\"> </span><span class=\"n\">race</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"n\">hWaitForInput</span><span class=\"w\"> </span><span class=\"n\">stream1</span><span class=\"w\"> </span><span class=\"o\">-</span><span class=\"mi\">1</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"n\">hWaitForInput</span><span class=\"w\"> </span><span class=\"n\">stream2</span><span class=\"w\"> </span><span class=\"o\">-</span><span class=\"mi\">1</span><span class=\"p\">)</span>\n<span class=\"w\">  </span><span class=\"kr\">case</span><span class=\"w\"> </span><span class=\"n\">rdy</span><span class=\"w\"> </span><span class=\"kr\">of</span>\n<span class=\"w\">    </span><span class=\"kt\">Left</span><span class=\"w\"> </span><span class=\"kr\">_</span><span class=\"w\"> </span><span class=\"ow\">-&gt;</span><span class=\"w\"> </span><span class=\"n\">hGetLine</span><span class=\"w\"> </span><span class=\"n\">stream1</span>\n<span class=\"w\">    </span><span class=\"kt\">Right</span><span class=\"w\"> </span><span class=\"kr\">_</span><span class=\"w\"> </span><span class=\"ow\">-&gt;</span><span class=\"w\"> </span><span class=\"n\">hGetLine</span><span class=\"w\"> </span><span class=\"n\">stream2</span>\n</code></pre></div>\n<p>However depending on your implementation of <code>race</code> this is still bad because: assuming that <code>race</code> acts deterministically (that is it always starts by say checking the first argument) if your <code>stream1</code> is always ready your <code>stream2</code> will get starved so what you actually want is for <code>race</code> to pick the one to start at random (assuming you want fairness of course, which is usually the case) and so on and so forth.</p>\n<p>conclusion: dont <code>race</code> if you dont know what you are doing :D</p>",
+        "id": 364693507,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1686264691
+    },
+    {
+        "content": "<p>given the choice between replicating <code>mio</code> in lean, or building a wrapper around <code>tokio</code>, i might choose the wrapper... it's a huge pain that linux/bsd/windows all have their own apis for this</p>",
+        "id": 364968791,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1686344495
+    },
+    {
+        "content": "<p>if people would use it, maybe we should start building an experimental wrapper to see how it looks</p>",
+        "id": 364968953,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1686344536
+    },
+    {
+        "content": "<p>(I would use it, <code>Task</code> has been a bit of a battle for my async stuff <span aria-label=\"joy\" class=\"emoji emoji-1f602\" role=\"img\" title=\"joy\">:joy:</span>)</p>",
+        "id": 364969086,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1686344576
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"407274\">James Gallicchio</span> <a href=\"#narrow/stream/270676-lean4/topic/Analogue.20of.20haskell's.20hReady/near/364968791\">said</a>:</p>\n<blockquote>\n<p>given the choice between replicating <code>mio</code> in lean, or building a wrapper around <code>tokio</code>, i might choose the wrapper... it's a huge pain that linux/bsd/windows all have their own apis for this</p>\n</blockquote>\n<p>wrapping tokio is close to impossible if you aren't Rust. It is not meant to be called with C FFI at all. And the low level APIs aren't actually that bad really.</p>\n<p>Like:</p>\n<ul>\n<li>BSD: <a href=\"https://man.openbsd.org/kqueue.2\">https://man.openbsd.org/kqueue.2</a> literally two functions</li>\n<li>Linux, If you wanna do io_uring it does get a bit annoying yes but epoll itself is again just a handful of functions: <a href=\"https://man7.org/linux/man-pages/man7/epoll.7.html\">https://man7.org/linux/man-pages/man7/epoll.7.html</a> using io_uring would be a little more labor intensive though.</li>\n<li>Windows: I dont actually know what windows does, I know they have an io_uring knockoff. But I have no clue what they used before. However I would guess that it was probably not too distinct from the previous two.</li>\n</ul>\n<p>So yeah replicating mio really should be something that is possible without wanting to throw everything out of the window^^ The API on top will probably also only have to be tokio-like and not eactly tokio.</p>",
+        "id": 364977040,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1686347784
+    },
+    {
+        "content": "<p>interesting, okay. maybe i'll look at the mio interface and see how much pain it would be</p>",
+        "id": 364977592,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1686348003
+    }
+]

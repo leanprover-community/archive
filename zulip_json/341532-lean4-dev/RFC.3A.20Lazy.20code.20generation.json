@@ -1,0 +1,182 @@
+[
+    {
+        "content": "<p>I just had a talk with <span class=\"user-mention\" data-user-id=\"256311\">@Jannis Limperg</span> where he showed me a file that consumes several seconds of compilation time in the old code generator (the new one just a few hundred ms though <span aria-label=\"sparkles\" class=\"emoji emoji-2728\" role=\"img\" title=\"sparkles\">:sparkles:</span>) even though he only wants to live edit the file (so there is obviously need for constant recompilation by the LSP elaboration process). As I understand it we currently always add and compile declarations (that we can generate code for anyways) when they are done with being elaborated. I am guessing this is because we want to be able to always <code>#eval</code> them in the same file. However it is obviously not acceptable to wait ~5 seconds on a computation that has essentially no effect if you do not want to <code>#eval</code> and did not indicate to the lean compiler that you desire to output a binary (i.e. you are just editing code without using <code>#eval</code> which is the most common use case of Lean programmers).</p>\n<p>The most naive idea I'd have for \"fixing\" this (apart from finally gettig the new code generator done /o\\) would be to add an option that allows you to disable compilation completely (very similar to the new code generator option I proposed in this PR: <a href=\"https://github.com/leanprover/lean4/pull/2075\">https://github.com/leanprover/lean4/pull/2075</a>). A slightly better and more user friendly approach might be to compile code conditionally, that is things like <code>#eval</code> check if the declaration has been compiled and if it has not run the compilation procedure on it, this does obviously have some usability impacts as well since for example code generator error messages would be cumulated on the <code>#eval</code> line but those would be a bug anyways.</p>\n<p>If we wanted to do this the LSP Lean process would basically have to run in a \"no code generation\" (or \"lazy code generation\") mode (unless explicitly asked to, e.g. useful for code generator devs like me) while the flags that <code>lake</code> (or <code>cmake</code> for that matter) passes to the compiler would make it run the compilation procedure again.</p>\n<p>Does this approach sound reasonable?</p>",
+        "id": 344310036,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1679674066
+    },
+    {
+        "content": "<p>Re disabling compilation: in Lean 3 we had some issues with the code generator (i.e., the VM compiler) either mistakenly failing or taking a very long time, so since we were never going to put resources into fixing it, I added a <code>noncomputable!</code> modifier to turn it off completely for a definition. We had considered a <code>noncomputable! theory</code> to turn off code generation for all definitions, but, while I remember that there were reasons against having such a feature, I don't remember what they were.</p>",
+        "id": 344314470,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1679675160
+    },
+    {
+        "content": "<p>Do I remember correctly that the Lean 4 way of determining whether a definition is marked <code>noncomputable</code> is whether the code generator succeeds or not? If so, that's a complication to lazily generating code. (The Lean 4 situation is an improvement to the Lean 3 one, where there is a separate noncomputability checker that has to guess whether or not the VM compiler will succeed. The <code>noncomputable!</code> feature is partly there to override the checker when it is wrong.)</p>",
+        "id": 344315426,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1679675393
+    },
+    {
+        "content": "<p>Separating compilation from file elaboration is a topic that has come up a few times before, both to improve parallelism as well as efficiency of the hypothetical module system. For interpretation purposes I would indeed run the compiler pipeline on demand, ideally even a simpler pipeline than usual, and then throw away the results at the end of the file in favor of the proper compilation running as a separate build task.</p>",
+        "id": 344319420,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679676403
+    },
+    {
+        "content": "<p>But also what Kyle said sounds like a central issue, yeah</p>",
+        "id": 344319469,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1679676418
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"395550\">Henrik Böving</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/RFC.3A.20Lazy.20code.20generation/near/344310036\">said</a>:</p>\n<blockquote>\n<p>(the new one just a few hundred ms though <span aria-label=\"sparkles\" class=\"emoji emoji-2728\" role=\"img\" title=\"sparkles\">:sparkles:</span>) </p>\n</blockquote>\n<p>Small correction: the new codegen still takes 1.4s on my machine. Everything else about the file takes 2s, so disabling compilation would amount to a substantial speedup even with the new codegen.</p>\n<p>What's the trouble with a separate check for noncomputability? Is this inherently hard or is Lean 3 just buggy?</p>",
+        "id": 344799780,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1679906915
+    },
+    {
+        "content": "<p>\"Computable\" in Lean means \"we can generate code\", so the most accurate check is whether the code generator succeeds. I think most Lean 3 bugs are either (1) the noncomputability checker is too strict (i.e., it doesn't realize some noncomputable thing is dead code or otherwise transformable into something computable) or (2) the code generator has a bug and it fails to compile something that passes the noncomputability checker.</p>\n<p>It's clear what to do with the second sort of bug(*), but how do you handle the first type without eventually re-implementing most of the code generator?</p>\n<p>Rather than re-implementing it, maybe there's some part of the code generator that could run with some faster configuration (e.g., turn off optimizations that don't alter computability) that could serve as a noncomputability checker? This is similar to Sebastian's idea of a simpler pipeline.</p>\n<p>Or, maybe the way definitions are marked <code>noncomputable</code> could be re-thought? Does anything need to know what is <code>noncomputable</code> except for the code generator? Could the <code>noncomputable</code> modifiers be checked eventually rather than immediately? If there is something that wants to know, that thread could wait on the code generator for that definition.</p>\n<p>(*) It's been \"don't fix it because Lean 4 is around the corner\" <span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span></p>",
+        "id": 344807244,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1679909035
+    },
+    {
+        "content": "<p>One point of comparison here would be <code>cargo check</code> vs <code>cargo build</code> for rust code. <code>cargo check</code> is intended for active development, and it roughly speaking only runs the type checker and does not attempt to generate code, while <code>cargo build</code> also runs the code generator. There is a very small category of compile time errors that are caught only at <code>cargo build</code> time, called \"post-monomorphization errors\"; if you are doing development with <code>cargo check</code> only then you will not get these errors. (These include things like \"this type is too large to exist on the architecture\" in addition to static assertions about generic types; the latter category used to only be doable with complicated hacks but will soon get simpler syntax to invoke.)</p>\n<p>For lean, I find <code>cargo check</code> comparable to doing type checking without code generation (or only doing lazy code generation / interpreter code) and <code>cargo build</code> comparable to <code>lake build</code> done at the command line (including in particular anything which is cross-file). This would suggest the following course of action: <code>noncomputable</code> checking is simply not done at all in interactive mode (or it is controlled by a default-disabled flag), but it is done by <code>lake build</code> so you get errors about it at the command line.</p>",
+        "id": 344959152,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1679947923
+    },
+    {
+        "content": "<p>Mario's suggestion would be better than the status quo imo. But even better would be if we had a simple criterion for what should count as computable (i.e. Lean 3's computability checker, only not buggy). I feel like this criterion ought to be <em>much</em> simpler than the whole code generator and should be considered part of typechecking. However, I have not looked into this in any detail, so there may well be subtleties which make this intractable.</p>\n<p>If such a checker misses certain definitions for which code could be generated due to non-obvious optimisations, that to me is a feature. I don't want the computability of a definition to depend on codegen heuristics which may change at any time.</p>",
+        "id": 344961149,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1679948614
+    },
+    {
+        "content": "<p>What exactly is hard about computability checking? The only thing that we cannot generate code for right now is recursors right? (and that is also mostly because nobody has wanted to do this yet, its not like this is impossible, its just annoying to get right in a strict language). Are there any other things we look out for?</p>",
+        "id": 344964913,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1679950023
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"256311\">@Jannis Limperg</span> I'm not sure where you're getting the idea that the Lean 3 computability checker is <em>buggy</em> -- as far as I know it only lets through things that are computable, and it's the VM compiler that ends up being wrong due to its own bugs. The fundamental issue is having two parallel implementations of roughly the same things (inlining, let-substitutions, computational irrelevance analysis) and them not matching up exactly due to slight differences in how they're implemented.</p>\n<p>The noncomputability checker is <a href=\"https://github.com/leanprover-community/lean/blob/master/src/library/noncomputable.cpp\">fairly simple</a>, but it's frustrating when it mistakenly flags things as being noncomputable due to its simplistic algorithm. That's not a bug per se, but it being overly strict.</p>",
+        "id": 344965223,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1679950153
+    },
+    {
+        "content": "<p>Regarding <code>cargo check</code>, doesn't that involve compiling all the rust code to at least MIR to be able to do borrow checking analysis?</p>",
+        "id": 344965282,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1679950179
+    },
+    {
+        "content": "<p>Like rust, we don't need to run the entire code generator, just up to the point where we can do the analysis that can tell whether the definition is computable. (Examples of what needs to be done: inlining, applying <code>csimp</code> lemmas, ignoring computationally irrelevant values like types and proofs, ignoring arguments that are computationally irrelevant like the parameters and indices for constructors, ...)</p>",
+        "id": 344965455,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1679950233
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/RFC.3A.20Lazy.20code.20generation/near/344965282\">said</a>:</p>\n<blockquote>\n<p>Regarding <code>cargo check</code>, doesn't that involve compiling all the rust code to at least MIR to be able to do borrow checking analysis?</p>\n</blockquote>\n<p>Yes, but I would argue that this is roughly equivalent to lean having to elaborate the syntax into an <code>Expr</code>. In particular generic functions are still generic, so many optimization passes cannot run, or will need to be run again later (like inlining). I agree that the lean 3 style for doing noncomputable checking does not seem inherently flawed to me, and can fit as part of the \"check\" configuration, but not the lean 4 style which involves literally running the code generator.</p>",
+        "id": 345000411,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1679964340
+    },
+    {
+        "content": "<p>But I can understand if the maintenance overhead of a separate noncomputable checker is considered too high.</p>",
+        "id": 345000563,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1679964396
+    },
+    {
+        "content": "<p>One thing to consider about using a separate noncomputable checker which is framed in a more \"type checking\" way is that it would be less sensitive to optimizations. For example, calling a noncomputable function in a statement that is optimized out will probably work with lean 4 style checking, and that may not be a good thing (since it means that optimization changes can break code). This is a big no-no in rust, the compiler goes out of its way to avoid this situation because it has such a strong focus on avoiding breaking changes</p>",
+        "id": 345000868,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1679964546
+    },
+    {
+        "content": "<p>case in point:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">noncomputable</span> <span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span>\n<span class=\"kd\">def</span> <span class=\"n\">bar</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"k\">let</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">foo</span><span class=\"bp\">;</span> <span class=\"mi\">1</span>\n</code></pre></div>\n<p>lean 3 would not accept this code</p>",
+        "id": 345001074,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1679964627
+    },
+    {
+        "content": "<p>Lean 3 does accept this code:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">noncomputable</span><span class=\"bp\">!</span> <span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span>\n<span class=\"kd\">def</span> <span class=\"n\">bar</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span> <span class=\"k\">let</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">foo</span> <span class=\"k\">in</span> <span class=\"mi\">1</span>\n</code></pre></div>\n<p>(I put <code>noncomputable!</code> just to force <code>foo</code> to be noncomputable.)</p>\n<p>Just to make this more obvious that it's not unfolding <code>foo</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">noncomputable</span> <span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">:=</span> <span class=\"n\">classical.arbitrary</span> <span class=\"n\">ℕ</span>\n<span class=\"kd\">def</span> <span class=\"n\">bar</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span> <span class=\"k\">let</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">foo</span> <span class=\"k\">in</span> <span class=\"mi\">1</span>\n</code></pre></div>\n<p>And of course this does not affect Lean 4 computability:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">noncomputable</span> <span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">:=</span> <span class=\"n\">Classical.arbitrary</span> <span class=\"n\">Nat</span>\n<span class=\"kd\">def</span> <span class=\"n\">bar</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"k\">let</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">foo</span><span class=\"bp\">;</span> <span class=\"mi\">1</span>\n</code></pre></div>",
+        "id": 345017831,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1679975379
+    },
+    {
+        "content": "<p>How do you profile different compiler passes? How much time does it take to get to <code>compiler.stage2</code> (which is already pretty far along) vs running the whole thing? That's the point where at least computationally irrelevant things have been removed and simplification passes have been done, and these seem to happen after <code>compiler.stage1</code>. (Also, how close is this architecture to the new compiler?)</p>",
+        "id": 345020475,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1679977231
+    },
+    {
+        "content": "<p>hm, bad example. Better:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- Lean 4</span>\n<span class=\"kd\">noncomputable</span> <span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span>\n<span class=\"kd\">def</span> <span class=\"n\">bar</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"k\">have</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">foo</span><span class=\"bp\">;</span> <span class=\"mi\">1</span> <span class=\"c1\">-- ok</span>\n\n<span class=\"c1\">-- Lean 3</span>\n<span class=\"kd\">noncomputable</span><span class=\"bp\">!</span> <span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span>\n<span class=\"kd\">def</span> <span class=\"n\">bar</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span> <span class=\"k\">have</span> <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">nat</span><span class=\"o\">,</span> <span class=\"k\">from</span> <span class=\"n\">foo</span><span class=\"o\">,</span> <span class=\"mi\">1</span> <span class=\"c1\">-- fails</span>\n</code></pre></div>",
+        "id": 345023611,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1679979230
+    },
+    {
+        "content": "<p>I'd need to recompile Lean 3 to check, but I'd guess the Lean 3 example would be able to generate code anyway for that example.</p>\n<p>Here are examples with the same behavior but without the <code>have</code> notation:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c1\">-- Lean 4</span>\n<span class=\"kd\">noncomputable</span> <span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">:=</span> <span class=\"n\">Classical.arbitrary</span> <span class=\"n\">Nat</span>\n<span class=\"kd\">def</span> <span class=\"n\">bar</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"n\">foo</span> <span class=\"c1\">-- ok</span>\n\n<span class=\"c1\">-- Lean 3</span>\n<span class=\"kd\">noncomputable</span> <span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">:=</span> <span class=\"n\">classical.arbitrary</span> <span class=\"n\">ℕ</span>\n<span class=\"kd\">def</span> <span class=\"n\">bar</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"bp\">λ</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">),</span> <span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"n\">foo</span>\n</code></pre></div>\n<p>For Lean 4, both the <code>have</code> and <code>fun</code> examples pretty quickly see <code>foo</code> is unused and eliminate it (at least a few steps before <code>compiler.stage1</code>).</p>\n<p>The Lean 3 noncomputability checker only knows about <a href=\"https://github.com/leanprover-community/lean/blob/master/src/library/noncomputable.cpp#L197\">substituting <code>let</code>s</a>, which is arguably just an approximation. For <a href=\"https://github.com/leanprover-community/lean/blob/master/src/library/noncomputable.cpp#L160\">applications</a> it only knows about inlining, and that not every argument to a constructor is computationally relevant.</p>",
+        "id": 345037606,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1679984963
+    },
+    {
+        "content": "<p>Regarding me calling the Lean 3 checker \"buggy\": if the checker fails to recognise \"obvious\" computable functions as such, I would call this a bug as well. (A completeness bug, then, not a soundness bug.) My impression was that this was happening often enough to be annoying. But maybe these cases are actually rare and the involved functions can be rewritten fairly easily to satisfy the checker? I have no clear picture.</p>\n<p>I strongly agree with Mario's point that optimisations should not change what is or isn't considered noncomputable. So I would still advocate for a Lean 3-style checker. However, a compromise would be possible: introduce a checker, but also a keyword (<code>computable!</code>?) that disables the checker and defers the decision to the codegen. This way the hack is at least localised. This would also allow the checker to be even simpler, possibly even disabling let-inlining and such, if that's desired.</p>",
+        "id": 345163865,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1680016455
+    },
+    {
+        "content": "<p>I would prefer to solve the let-inlining situation by having a proper \"type system\" solution: marking let and lambda variables as \"ghost\" based on the results of computability analysis of the things assigned to them, and using that to propagate information to the body. In other words, it should be possible to argue that <code>have x := foo; 1</code> is computable <em>without</em> inlining</p>",
+        "id": 345266431,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680049197
+    },
+    {
+        "content": "<p>So not too different from irrelevance analysis in other systems. I wonder if we need to make it interprocedural (via annotations) if we want to avoid inlining (though adhering to <code>macro_inline</code> might still make sense). If someone was motivated, could be interesting to adjust/simplify the Lean 3 computability checker in that way and/or port and test it on Lean 4.</p>",
+        "id": 345329769,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1680078881
+    },
+    {
+        "content": "<p>the interprocedural version sounds doable but also much closer to a paper-worthy topic, since you would need a little algebra of \"this is computable if that is computable\" annotations on higher order functions</p>",
+        "id": 345333807,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680079731
+    },
+    {
+        "content": "<p>Yep, that's where the fun begins. Which is why we should first find out if there is a need for it.</p>",
+        "id": 345334118,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1680079807
+    },
+    {
+        "content": "<p>I would be happy with just a binary thing + some kind of inlining</p>",
+        "id": 345334265,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680079853
+    },
+    {
+        "content": "<p>IIRC one place where the noncomputable checker wasn't doing what I wanted was in <a href=\"https://leanprover-community.github.io/mathlib_docs/find/erased\">docs#erased</a></p>",
+        "id": 345334558,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680079932
+    },
+    {
+        "content": "<p><a href=\"#narrow/stream/113489-new-members/topic/nonconstructive.20proofs/near/252687109\">https://leanprover.zulipchat.com/#narrow/stream/113489-new-members/topic/nonconstructive.20proofs/near/252687109</a></p>",
+        "id": 345335153,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1680080084
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/RFC.3A.20Lazy.20code.20generation/near/345020475\">said</a>:</p>\n<blockquote>\n<p>How do you profile different compiler passes? How much time does it take to get to <code>compiler.stage2</code> (which is already pretty far along) vs running the whole thing? That's the point where at least computationally irrelevant things have been removed and simplification passes have been done, and these seem to happen after <code>compiler.stage1</code>. (Also, how close is this architecture to the new compiler?)</p>\n</blockquote>\n<p>Regarding the profiling passes, can someone explain to me of the <code>profiler</code> option makes the timings appear on the <code>synthInstance</code> traces? I'll add it for at least the new compiler then...I suspect the old compiler might be uglier since it stays in C++ until phase 3/3</p>",
+        "id": 346364292,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1680444080
+    }
+]

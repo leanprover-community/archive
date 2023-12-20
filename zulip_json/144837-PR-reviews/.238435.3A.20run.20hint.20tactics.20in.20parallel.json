@@ -1,0 +1,56 @@
+[
+    {
+        "content": "<p>Is working very nicely for me locally, and CI finally agrees.</p>\n<p>This changes <code>hint</code> so that all the registered <code>hint</code> tactics run in parallel, <em>and</em> automatically cancels any remaining tasks as soon as it finds one the closes the goal.</p>\n<p>In practice this often means a very fast response, if <code>decide</code> or <code>simp</code> or <code>solve_by_elim</code> (which <code>exact?</code> calls as a first step) works. The bigger tactics like <code>linarith</code> and <code>aesop</code> start up, but get cancelled quickly.</p>",
+        "id": 403133833,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700474417
+    },
+    {
+        "content": "<p>After this is in, I would like to optimize the set of tactics registered with <code>hint</code>.</p>",
+        "id": 403133898,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700474439
+    },
+    {
+        "content": "<p>And possibly work out how to make it even easier to run at an \"unsolved goals\" error.</p>",
+        "id": 403133956,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700474456
+    },
+    {
+        "content": "<p>If someone is able to have a look at this, that would be great.</p>\n<p>I don't think it needs the highest standards of review: Leo would like this moved upwards, so the <code>Task</code> handling stuff is going to get  a more thorough view later.</p>\n<p>Having this merged will unblock deciding exactly which tactics we want to <code>register_hint</code>, and start the process of upstreaming components.</p>",
+        "id": 403508388,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700622871
+    },
+    {
+        "content": "<p>So, I started a review by trying to see if I could eliminate the repetition of <code>asTask</code>(<code>'</code>) and <code>runGreedily</code>(<code>'</code>) by keeping only the <code>CoreM</code> <code>asTask</code> and using <code>MonadControlT</code> for the other monads. </p>\n<p>Interestingly, all the <code>runGreedily</code> tests passed, but the <code>hint</code> tests started to fail horribly! Each one was wildly nondeterministic, and even though sometimes it gave the “correct” result, sometimes it even said “no suggestions available”.</p>\n<p>So, I’m not going to make that part of reviewing this PR, but I thought I’d mention it out of interest.</p>",
+        "id": 403670202,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1700689903
+    },
+    {
+        "content": "<p>Specifically, I tried replacing all but <code>CoreM.asTask</code> with</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">variable</span> <span class=\"o\">[</span><span class=\"n\">Monad</span> <span class=\"n\">n</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">MonadControlT</span> <span class=\"n\">CoreM</span> <span class=\"n\">n</span><span class=\"o\">]</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">asTask</span> <span class=\"o\">(</span><span class=\"n\">t</span> <span class=\"o\">:</span> <span class=\"n\">n</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">n</span> <span class=\"o\">(</span><span class=\"n\">BaseIO</span> <span class=\"n\">Unit</span> <span class=\"bp\">×</span> <span class=\"n\">Task</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"n\">α</span><span class=\"o\">))</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">cancel</span><span class=\"o\">,</span> <span class=\"n\">task</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">liftWith</span> <span class=\"o\">(</span><span class=\"n\">m</span> <span class=\"o\">:=</span> <span class=\"n\">CoreM</span><span class=\"o\">)</span> <span class=\"k\">fun</span> <span class=\"n\">runInBase</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">(</span><span class=\"n\">runInBase</span> <span class=\"n\">t</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">asTask</span>\n  <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"n\">cancel</span><span class=\"o\">,</span> <span class=\"n\">task.map</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">c</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">liftWith</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">c</span><span class=\"o\">)</span> <span class=\"bp\">&gt;&gt;=</span> <span class=\"n\">restoreM</span><span class=\"o\">))</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">asTask'</span> <span class=\"o\">(</span><span class=\"n\">t</span> <span class=\"o\">:</span> <span class=\"n\">n</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">n</span> <span class=\"o\">(</span><span class=\"n\">Task</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"n\">α</span><span class=\"o\">))</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"bp\">·.</span><span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"bp\">&lt;$&gt;</span> <span class=\"n\">asTask</span> <span class=\"n\">t</span>\n</code></pre></div>\n<p>Even without any modifications to <code>runGreedily</code>, this produced wild behavior. (I also tried adjusting how <code>restoreM</code> works in <a href=\"https://github.com/leanprover/lean4/pull/2944\">lean4#2944</a> accordance with <a class=\"stream-topic\" data-stream-id=\"270676\" href=\"/#narrow/stream/270676-lean4/topic/MonadControlT.20vs.20transitive.20closure.20of.20MonadControl\">#lean4 &gt; MonadControlT vs transitive closure of MonadControl</a> so that the last line became <code>return (cancel, task.map restoreM)</code>, but to no avail.)</p>\n<p>I only partially get how <code>MonadControl</code> works, and not how <code>Task</code> works under the hood nearly at all, so maybe it's obvious why this is wrong to someone who has a better understanding!</p>",
+        "id": 403671415,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1700690554
+    },
+    {
+        "content": "<p>(Anyway, that's all a tangent at this point.)</p>",
+        "id": 403671613,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1700690629
+    },
+    {
+        "content": "<p>Sorry, I've never used <code>MonadControl</code>, and don't have time right now to explore this.</p>",
+        "id": 403683755,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1700698290
+    },
+    {
+        "content": "<p>Dependent PRs have landed, <a href=\"https://github.com/leanprover-community/mathlib4/pull/8435\">#8435</a> is ready for review/merge again.</p>",
+        "id": 407349546,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1702343532
+    }
+]

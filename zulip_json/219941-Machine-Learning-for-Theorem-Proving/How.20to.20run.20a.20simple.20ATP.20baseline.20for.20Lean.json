@@ -1,0 +1,92 @@
+[
+    {
+        "content": "<p>One idea I've long had is to run a simple ATP baseline (or two) for Lean 3 or Lean 4 to compare to the existing SoTA methods (which almost all rely on medium or large transformer models).  I'm wondering what tools are out there to make this baseline quick to implement.  Say I create a tactic <code>tac_predictor : Tactic List (Nat x String)</code> which just uses the current tactic state to predict the next tactic as a list of weighted strings.  It wouldn't use the pretty printed version of the state, but instead the types found in the environment.  I'd ideally like a way to plug <code>tac_predictor</code> into an existing open source evaluation framework.  Does something like that exist in say LeanDojo (<span class=\"user-mention\" data-user-id=\"584504\">@Kaiyu Yang</span>, <span class=\"user-mention\" data-user-id=\"437569\">@Alex Gu</span>) or llmstep (<span class=\"user-mention\" data-user-id=\"409334\">@Sean Welleck</span>) or even mathlib (<span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span>)?  I'd ideally like the following:</p>\n<ol>\n<li>Some code I could adapt or reuse to extract the data I need.  Again, this isn't a text representation, so I couldn't use an existing textual dataset, but it would still be tactic based, so I would need to access the lean proof state and the text of the tactic it was applied to.</li>\n<li>Some code to incorporate my <code>tac_predictor</code> into a tree search.  Ideally the tree search would be fast, since my tactic predictor would be really fast.</li>\n<li>Some code to do an apples-to-apples comparison with an existing system and benchmark (either MiniF2F or a held out portion of Mathlib).</li>\n</ol>\n<p>If I had to implement this on my own, I'd likely just reuse our code from PACT, but I was wondering if there was something more modern and standard.  Or if I did it in from scratch in Lean 4, I guess it would be a good project to learn Lean 4 meta-programming.  <span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span>  (Also, this is more hypothetical than a concrete plan.  I think it will depend how easy it is to execute.)</p>",
+        "id": 400605364,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1699302414
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 400605412,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1699302431
+    },
+    {
+        "content": "<p>Just to be clear, by ATP baseline I don’t mean a first order ATP.  This isn’t a hammer.  Think more hand crafted features put through a pre-deep-learning ML algorithm.</p>",
+        "id": 400606318,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1699302860
+    },
+    {
+        "content": "<blockquote>\n<p>Some code to incorporate my tac_predictor into a tree search. Ideally the tree search would be fast, since my tactic predictor would be really fast.</p>\n</blockquote>\n<p><span class=\"user-mention\" data-user-id=\"115715\">@Jason Rute</span>  It looks like our recent work on extending aesop to take a \"tactic generator\" is exactly what you need? (see <a href=\"https://github.com/leanprover-community/aesop/pull/70\">https://github.com/leanprover-community/aesop/pull/70</a> and <a href=\"https://github.com/leanprover-community/aesop/blob/master/AesopTest/TacGen.lean\">https://github.com/leanprover-community/aesop/blob/master/AesopTest/TacGen.lean</a>). It is part of our ongoing improvement to LeanInfer that combines LLM-generated tactics with aesop.  Here is an example of how to use it within LeanInfer: <a href=\"https://github.com/lean-dojo/LeanInfer/blob/main/LeanInferTests/Aesop.lean\">https://github.com/lean-dojo/LeanInfer/blob/main/LeanInferTests/Aesop.lean</a></p>",
+        "id": 400606528,
+        "sender_full_name": "Kaiyu Yang",
+        "timestamp": 1699302971
+    },
+    {
+        "content": "<blockquote>\n<p>Some code to do an apples-to-apples comparison with an existing system and benchmark (either MiniF2F or a held out portion of Mathlib).</p>\n</blockquote>\n<p>With this infrastructure, if you want to compare method A with method B, you can create two tactic generators and add them to two aesop rule sets, respectively. Then it's easy to just call <code>aesop</code> with different rule sets.</p>",
+        "id": 400607181,
+        "sender_full_name": "Kaiyu Yang",
+        "timestamp": 1699303299
+    },
+    {
+        "content": "<p>Interesting.  I’ll have a look.  I just assumed Aesop was like tidy and didn’t backtrack to a previous state.  Does this search/backtrack or is it more of a greedy search like tidy?</p>",
+        "id": 400610359,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1699304727
+    },
+    {
+        "content": "<p>Aesop uses best-first search, so it should backtrack.</p>",
+        "id": 400610833,
+        "sender_full_name": "Kaiyu Yang",
+        "timestamp": 1699304930
+    },
+    {
+        "content": "<p>Ok, I clearly don’t know how Aesop works.  What does vanilla Aesop use for a heuristic in its best-first search?  (Or maybe I should just read the Aesop paper.)</p>",
+        "id": 400611126,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1699305052
+    },
+    {
+        "content": "<p>Also, could your enhanced Aesop be able to, say, replicate your ReProver results (maybe just the baseline without retrieval)?</p>",
+        "id": 400611714,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1699305313
+    },
+    {
+        "content": "<p>Aesop automatically applies some built-in tactics, e.g., <code>simp_all</code>, and it also provides a set of \"rule builders\" that allow users to configure the set of tactics for expanding a node during best-first search. Our extension basically allows users to provide not only fixed tactics but also \"tactic generators <code>MVarId → MetaM (Array (String × Float))</code>\".  The tactic generator may or may not be based on LLMs.</p>\n<blockquote>\n<p>Also, could your enhanced Aesop be able to, say, replicate your ReProver results (maybe just the baseline without retrieval)?</p>\n</blockquote>\n<p>We tried on MiniF2F's validation set, and their performance were similar. However, they are not exactly the same, due to the details of aesop (e.g., it automatically normalizes proof states) and differences in resource limit (Lean 4 does not have Lean 3's<code>try_for_time</code>, so we can only use heartbeats as a proxy of timeouts).</p>",
+        "id": 400612133,
+        "sender_full_name": "Kaiyu Yang",
+        "timestamp": 1699305514
+    },
+    {
+        "content": "<p>As for my (1), do you have some tool which could take a function of form <code>MVarId → MetaM (Array Float)</code> and use it to get a vector embedding for each proof state (along with the text for the tactic)?  Then I could extract this embedding-tactic pair for every goal in Mathlib.</p>",
+        "id": 400617121,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1699307696
+    },
+    {
+        "content": "<p>Or even <code>MVarId → MetaM (String)</code> would be fine.  I could just serialize the data I want to extract.</p>",
+        "id": 400617249,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1699307763
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"115715\">Jason Rute</span> <a href=\"#narrow/stream/219941-Machine-Learning-for-Theorem-Proving/topic/How.20to.20run.20a.20simple.20ATP.20baseline.20for.20Lean/near/400617121\">said</a>:</p>\n<blockquote>\n<p>As for my (1), do you have some tool which could take a function of form <code>MVarId → MetaM (Array Float)</code> and use it to get a vector embedding for each proof state (along with the text for the tactic)?  Then I could extract this embedding-tactic pair for every goal in Mathlib.</p>\n</blockquote>\n<p>I think the code from <code>lean-training-data</code> shouldn't be too hard to modify to obtain this.</p>",
+        "id": 400617379,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1699307820
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"584504\">Kaiyu Yang</span> <a href=\"#narrow/stream/219941-Machine-Learning-for-Theorem-Proving/topic/How.20to.20run.20a.20simple.20ATP.20baseline.20for.20Lean/near/400606528\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>Some code to incorporate my tac_predictor into a tree search. Ideally the tree search would be fast, since my tactic predictor would be really fast.</p>\n</blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"115715\">Jason Rute</span>  It looks like our recent work on extending aesop to take a \"tactic generator\" is exactly what you need? (see <a href=\"https://github.com/leanprover-community/aesop/pull/70\">https://github.com/leanprover-community/aesop/pull/70</a> and <a href=\"https://github.com/leanprover-community/aesop/blob/master/AesopTest/TacGen.lean\">https://github.com/leanprover-community/aesop/blob/master/AesopTest/TacGen.lean</a>). It is part of our ongoing improvement to LeanInfer that combines LLM-generated tactics with aesop.  Here is an example of how to use it within LeanInfer: <a href=\"https://github.com/lean-dojo/LeanInfer/blob/main/LeanInferTests/Aesop.lean\">https://github.com/lean-dojo/LeanInfer/blob/main/LeanInferTests/Aesop.lean</a></p>\n</blockquote>\n<p>This is splendid. I had made a hacky equivalent in LeanAide, but this is much cleaner. It is also very nice that common tasks are getting upstreamed to avoid duplication.</p>",
+        "id": 400657140,
+        "sender_full_name": "Siddhartha Gadgil",
+        "timestamp": 1699328791
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"584504\">Kaiyu Yang</span> <a href=\"#narrow/stream/219941-Machine-Learning-for-Theorem-Proving/topic/How.20to.20run.20a.20simple.20ATP.20baseline.20for.20Lean/near/400612133\">said</a>:</p>\n<blockquote>\n<p>Aesop automatically applies some built-in tactics, e.g., <code>simp_all</code>, and it also provides a set of \"rule builders\" that allow users to configure the set of tactics for expanding a node during best-first search. Our extension basically allows users to provide not only fixed tactics but also \"tactic generators <code>MVarId → MetaM (Array (String × Float))</code>\".  The tactic generator may or may not be based on LLMs.</p>\n</blockquote>\n<p>I came across the TensorFlow GNN [Graph Neural Networks] (<a href=\"https://github.com/tensorflow/gnn\">https://github.com/tensorflow/gnn</a>) library. It helps to work with graph data structures in neural networks, such as using GNNs to model abstract syntax trees (ASTs) in compilers.</p>\n<p>It seems that the output of tactic generators could be graphical data structures combined with rankings. GNN may potentially make it easier to implement \"tactic generation/Aesop as a neural network problem.\"</p>",
+        "id": 401025687,
+        "sender_full_name": "Min-Hsien Weng",
+        "timestamp": 1699478728
+    }
+]

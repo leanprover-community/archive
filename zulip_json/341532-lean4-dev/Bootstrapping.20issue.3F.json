@@ -1,0 +1,146 @@
+[
+    {
+        "content": "<p>I took a shot at adding support for LSP's position encoding negotiation today, to make it easier to write tools that interface with Lean. It was easy getting messages from the client to the server to work right, but the server's messages to the client require a bit more work.</p>\n<p>In particular, <code>Lean.DeclarationRange</code> includes a cached LSP-encoded position to avoid heavy IO in order to recompute it. Rather than have an application-wide invariant that these cached values always match the LSP client's setting, I figured I'd just compute all three allowed encodings and see if that caused problems in benchmarks. Having modified <code>DeclarationRange.mk</code> and the various instances in the module (including <code>ToExpr</code> instances), I encountered a strange issue when trying to build, namely errors of the form:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Lean</span><span class=\"bp\">/</span><span class=\"n\">Parser</span><span class=\"bp\">/</span><span class=\"n\">Attr.lean</span><span class=\"o\">:</span><span class=\"mi\">43</span><span class=\"o\">:</span><span class=\"mi\">2</span><span class=\"o\">:</span> <span class=\"n\">error</span><span class=\"o\">:</span> <span class=\"n\">failed</span> <span class=\"n\">to</span> <span class=\"n\">emit</span> <span class=\"n\">registration</span> <span class=\"n\">code</span> <span class=\"n\">for</span> <span class=\"n\">builtin</span> <span class=\"bp\">'</span><span class=\"n\">Lean.Parser.Attr.instance.declRange'</span><span class=\"o\">:</span> <span class=\"n\">application</span> <span class=\"n\">type</span> <span class=\"n\">mismatch</span>\n  <span class=\"n\">Lean.DeclarationRange.mk</span> <span class=\"o\">{</span> <span class=\"n\">line</span> <span class=\"o\">:=</span> <span class=\"mi\">43</span><span class=\"o\">,</span> <span class=\"n\">column</span> <span class=\"o\">:=</span> <span class=\"mi\">23</span> <span class=\"o\">}</span> <span class=\"mi\">23</span>\n<span class=\"n\">argument</span> <span class=\"n\">has</span> <span class=\"n\">type</span>\n  <span class=\"n\">Nat</span>\n<span class=\"n\">but</span> <span class=\"n\">function</span> <span class=\"n\">has</span> <span class=\"n\">type</span>\n  <span class=\"n\">Lean.EncodedPosition</span> <span class=\"bp\">→</span> <span class=\"n\">Lean.Position</span> <span class=\"bp\">→</span> <span class=\"n\">Lean.EncodedPosition</span> <span class=\"bp\">→</span> <span class=\"n\">Lean.DeclarationRange</span>\n</code></pre></div>\n<p>Following the code, it looks like the update to the <code>ToExpr</code> instance should have been responsible for fixing this, and this makes me think that I'm running into a bootstrapping issue - after all, blobs of syntax seem like the kind of thing that would migrate across stages!</p>\n<p>I tried to follow the instructions to work around bootstrapping issues in <a href=\"https://github.com/leanprover/lean4/blob/master/doc/dev/bootstrap.md\">https://github.com/leanprover/lean4/blob/master/doc/dev/bootstrap.md</a>, which pointed to an example PR that modified <code>stdlib.make.in</code> and a NIx config file. It seems that the settings infrastructure has changed since then - there's now two Nix configurations (one a flake) and the setting in question has disappeared from <code>stdlib.make.in</code>. I  tried re-adding it and rebuilding without luck. Are there updated instructions somewhere?</p>",
+        "id": 395279767,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696605036
+    },
+    {
+        "content": "<p>Wait - I realized that I put too much stock in the examples and not enough in the text, and  I missed the last paragraph. Sorry about that - I'll check back in if I get stuck again.</p>",
+        "id": 395280420,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696605288
+    },
+    {
+        "content": "<p>OK, I've tried those options, and still no luck. The same errors are happening, and my theory is still that the generated code is using the old <code>ToExpr</code> instances. But I'll continue looking around a bit more.</p>",
+        "id": 395281854,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696605774
+    },
+    {
+        "content": "<p>My immediate suggestion would be to try setting <code>parseQuotWithCurrentStage</code> in <code>stage0/src/stdlib_flags.h</code></p>",
+        "id": 395282178,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696605877
+    },
+    {
+        "content": "<p>Yeah, I set both that and <code>prefer_native</code> without luck</p>",
+        "id": 395282338,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696605920
+    },
+    {
+        "content": "<p>It could also be that there's just a quotation somewhere that's building things by hand that I need to fix, which is what I'm currently skimming for</p>",
+        "id": 395282417,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696605945
+    },
+    {
+        "content": "<p>could you post your branch somewhere?</p>",
+        "id": 395282577,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696605981
+    },
+    {
+        "content": "<p>I have some possible suggestions for places to fix but I'm not sure if you have already modified them</p>",
+        "id": 395282687,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696606022
+    },
+    {
+        "content": "<p><a href=\"https://github.com/david-christiansen/lean4/tree/lsp-ecodings\">https://github.com/david-christiansen/lean4/tree/lsp-ecodings</a></p>",
+        "id": 395282794,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696606062
+    },
+    {
+        "content": "<p>Thank you! This is only my second nontrivial patch, so I really appreciate the help</p>",
+        "id": 395282899,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696606089
+    },
+    {
+        "content": "<p>okay so my theory is that the stage0 code of <code>mkElabAttribute</code>, which calls the bad <code>ToExpr DeclarationRange</code> implementation, is being run by <code>@[builtin_attr_parser]</code> when compiling stage1</p>",
+        "id": 395283987,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696606408
+    },
+    {
+        "content": "<p>In order to fix this, I think you have to first fix the <code>mkElabAttribute</code> implementation, then update-stage0, then update the <code>DeclarationRange</code> type</p>",
+        "id": 395284386,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696606512
+    },
+    {
+        "content": "<p>this is awkward because you have to generate code for a <code>DeclarationRange</code> type that doesn't exist yet</p>",
+        "id": 395284461,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696606533
+    },
+    {
+        "content": "<p>Actually, maybe a simpler option, since declaration ranges are not essential for compilation, is just to comment out the declaration ranges stuff entirely from <code>mkElabAttribute</code>, update the <code>DeclarationRange</code> type, update-stage0, then restore declaration ranges support to <code>mkElabAttribute</code></p>",
+        "id": 395285025,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1696606672
+    },
+    {
+        "content": "<p>Thank you for the suggestion! I'll give it a go.</p>",
+        "id": 395288895,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696607891
+    },
+    {
+        "content": "<p>The suggestion worked - thank you again!</p>",
+        "id": 395320852,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696622246
+    },
+    {
+        "content": "<p>Is it important to preserve a series of commits that include updates to stage0, or is it OK to squash it together?</p>",
+        "id": 395878519,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696942837
+    },
+    {
+        "content": "<p>Yes, we always preserve the update-stage0 commits as is</p>",
+        "id": 395885806,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1696945193
+    },
+    {
+        "content": "<p>Do we have an expectation that every commit in the history passes the tests and generally works?</p>",
+        "id": 395886072,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696945266
+    },
+    {
+        "content": "<p>I'm basically trying to figure out the best way to fix up this icky history here</p>",
+        "id": 395886354,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696945336
+    },
+    {
+        "content": "<p>It is a nice-to-have but we only ever test it for the head commit of the PR</p>",
+        "id": 395886645,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1696945420
+    },
+    {
+        "content": "<p>Do the stage0 updates need to be alone in their commits? Our can the commit include the changes that were included in the stage0 update?</p>",
+        "id": 395886879,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696945496
+    },
+    {
+        "content": "<p>stage0 updates are set apart in a single <code>chore: update stage0</code> commit in the history (in every case I have seen).</p>",
+        "id": 395897870,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1696948534
+    },
+    {
+        "content": "<p>All right, thanks! Sounds like I've got some quality time with Git in my near future :)</p>",
+        "id": 395943441,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1696963925
+    }
+]

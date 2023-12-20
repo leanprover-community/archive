@@ -1,0 +1,308 @@
+[
+    {
+        "content": "<p>It seems that <code>refine</code> will remove pre-existing goals from the goal list even if they're unsolved:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"bp\">∧</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"c1\">-- (kernel) declaration has metavariables '_example'</span>\n  <span class=\"n\">constructor</span>\n  <span class=\"bp\">·</span> <span class=\"n\">refine</span> <span class=\"bp\">?</span><span class=\"n\">left</span>\n  <span class=\"bp\">·</span> <span class=\"n\">refine</span> <span class=\"bp\">?</span><span class=\"n\">right</span>\n</code></pre></div>\n<p><code>refine ?left</code> involves running <code>elabTermWithHoles</code> on <code>?left</code>, and returns <code>(?left, [])</code>. I'm not sure if <code>elabTermWithHoles</code> is intended to return all unsolved metavariables in the expression, or merely all <em>new</em> metavariables created during elaboration.</p>\n<p>I suspect that some inconsistency in <code>elabTermWithHoles</code> might be the source of this one way or another, since using <code>refine'</code> (which just flips <code>allowNaturalHoles</code> to <code>true</code> in the arguments of <code>elabTermWithHoles</code>) solves the issue, and returns <code>(?left, [?left])</code> internally:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"bp\">∧</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">constructor</span>\n  <span class=\"bp\">·</span> <span class=\"n\">refine'</span> <span class=\"bp\">?</span><span class=\"n\">left</span> <span class=\"c1\">-- unsolved goals ...</span>\n  <span class=\"bp\">·</span> <span class=\"n\">refine'</span> <span class=\"bp\">?</span><span class=\"n\">right</span> <span class=\"c1\">-- unsolved goals ...</span>\n</code></pre></div>\n<p>Intuitively, I'd expect the list of returned mvars to be consistent here whether we allow natural holes in <code>stx</code> or not. Is there a reason it should differ?</p>",
+        "id": 385539984,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1692219060
+    },
+    {
+        "content": "<p>Oh, I see what's happening: in <code>withCollectingNewGoalsFrom</code>, we don't distinguish between natural metavariables created <em>before</em> elaboration and those created <em>during</em> when creating the list of new metavariables, even though we do when logging errors. <code>constructor</code> creates natural metavariables, which then get ignored in the <code>allowNaturalHoles := false</code> case (which only returns synthetic mvars).</p>",
+        "id": 385544619,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1692220825
+    },
+    {
+        "content": "<p>The relevant code:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>    <span class=\"bp\">...</span>\n    <span class=\"k\">let</span> <span class=\"n\">newMVarIds</span> <span class=\"bp\">←</span> <span class=\"k\">if</span> <span class=\"n\">allowNaturalHoles</span> <span class=\"k\">then</span>\n      <span class=\"n\">pure</span> <span class=\"n\">newMVarIds.toList</span>\n    <span class=\"k\">else</span>\n      <span class=\"k\">let</span> <span class=\"n\">naturalMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">newMVarIds.filterM</span> <span class=\"k\">fun</span> <span class=\"n\">mvarId</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mvarId.getKind</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">isNatural</span>\n      <span class=\"k\">let</span> <span class=\"n\">syntheticMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">newMVarIds.filterM</span> <span class=\"k\">fun</span> <span class=\"n\">mvarId</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"bp\">!</span><span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mvarId.getKind</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">isNatural</span>\n      <span class=\"k\">let</span> <span class=\"n\">naturalMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">filterOldMVars</span> <span class=\"n\">naturalMVarIds</span> <span class=\"n\">mvarCounterSaved</span>\n      <span class=\"n\">logUnassignedAndAbort</span> <span class=\"n\">naturalMVarIds</span>\n      <span class=\"n\">pure</span> <span class=\"n\">syntheticMVarIds.toList</span>\n    <span class=\"bp\">...</span>\n</code></pre></div>",
+        "id": 385544707,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1692220871
+    },
+    {
+        "content": "<p>I suppose the <code>else</code> block should look something like this instead:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>      <span class=\"bp\">...</span>\n      <span class=\"k\">let</span> <span class=\"n\">naturalMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">newMVarIds.filterM</span> <span class=\"k\">fun</span> <span class=\"n\">mvarId</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mvarId.getKind</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">isNatural</span>\n      <span class=\"k\">let</span> <span class=\"n\">syntheticMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">newMVarIds.filterM</span> <span class=\"k\">fun</span> <span class=\"n\">mvarId</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"bp\">!</span><span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mvarId.getKind</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">isNatural</span>\n      <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">newNaturalMVarIds</span><span class=\"o\">,</span> <span class=\"n\">oldNaturalMVarIds</span><span class=\"o\">)</span> <span class=\"bp\">←</span>\n        <span class=\"n\">partitionNewAndOldMVars</span> <span class=\"n\">naturalMVarIds</span> <span class=\"n\">mvarCounterSaved</span>\n      <span class=\"n\">logUnassignedAndAbort</span> <span class=\"n\">newNaturalMVarIds</span>\n      <span class=\"n\">pure</span> <span class=\"o\">(</span><span class=\"n\">oldNaturalMVarIds</span> <span class=\"bp\">++</span> <span class=\"n\">syntheticMVarIds</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">toList</span>\n      <span class=\"bp\">...</span>\n</code></pre></div>\n<p>where, in parallel to <code>filterOldMVars</code>,</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">partitionNewAndOldMVars</span> <span class=\"o\">(</span><span class=\"n\">mvarIds</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">mvarCounterSaved</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span>\n    <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">MVarId</span> <span class=\"bp\">×</span> <span class=\"n\">Array</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mctx</span> <span class=\"bp\">←</span> <span class=\"n\">getMCtx</span>\n  <span class=\"n\">return</span> <span class=\"n\">mvarIds.partition</span> <span class=\"k\">fun</span> <span class=\"n\">mvarId</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">(</span><span class=\"n\">mctx.getDecl</span> <span class=\"n\">mvarId</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">index</span><span class=\"o\">)</span> <span class=\"bp\">&gt;=</span> <span class=\"n\">mvarCounterSaved</span>\n</code></pre></div>\n<p>This seems to work when testing locally.</p>\n<p>If it'd be appreciated, I can open an issue and/or PR on the lean4 repo; just let me know. :)</p>",
+        "id": 385547527,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1692222297
+    },
+    {
+        "content": "<p>This does look like a bug. Opening an issue would be great.</p>\n<p>I haven't looked at the code yet, but something seems fishy in your diagnosis. At very least <code>newMVarIds</code> is mis-named if a moment later you are extracting a subset of it called <code>oldNaturalMVarIds</code>, and I think getting to the bottom of that might be essential.</p>\n<p>If you'd like to open a PR as well:</p>\n<ul>\n<li>open the issue first</li>\n<li>write as many tests as you can think of!</li>\n<li>make sure there is a comment at the call site of <code>partitionNewAndOldMVars</code> explaining why it is necessary there</li>\n<li>have a doc-string for <code>partitionNewAndOldMVars</code>.</li>\n</ul>",
+        "id": 385554628,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1692226560
+    },
+    {
+        "content": "<p>Ok, <a href=\"https://github.com/leanprover/lean4/pull/2434\">lean4#2434</a> and <a href=\"https://github.com/leanprover/lean4/pull/2435\">lean4#2435</a> (draft PR, but please feel free to upgrade if it passes CI) :)</p>",
+        "id": 386059381,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1692428758
+    },
+    {
+        "content": "<p>(Note: I hope the issue text isn't too long; I tried to summarize it succinctly up front, and relegate the \"proof\"/argumentation that this is actually what's going on to the Additional Information section. If this is discouraged, I can shorten it.)</p>",
+        "id": 386059524,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1692428863
+    },
+    {
+        "content": "<p>So, update/context: fixing this bug meant not only changing how <code>refine</code> behaves, but changing how <code>elabTermWithHoles</code> behaves. This has—perhaps unsurprisingly—broken some things in mathlib, notably <code>change</code>. As such, <a href=\"https://github.com/leanprover/lean4/pull/2435\">lean4#2435</a> was reverted while we fix <code>change</code> (<a href=\"https://github.com/leanprover-community/mathlib4/pull/6888\">#6888</a>).</p>\n<p>However, some proofs (~10-20, judging by the build output on a custom branch) using just <code>refine</code> will also break, because <code>refine</code> now includes some mvars in its output that it didn't before. Looking at some examples, either the change in goal ordering was what made the proofs break, or the proofs were working around the goal-discarding behavior by jumping back out to a prior focus, e.g.:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"bp\">·</span> <span class=\"n\">refine</span> <span class=\"n\">foo</span> <span class=\"c1\">-- erroneously discards existing goal `?a`, producing `case b`, `case c`</span>\n    <span class=\"bp\">·</span> <span class=\"n\">tac1</span> <span class=\"c1\">-- solve `?b`</span>\n    <span class=\"bp\">·</span> <span class=\"n\">tac2</span> <span class=\"c1\">-- solve `?c`</span>\n  <span class=\"n\">tac3</span> <span class=\"c1\">-- solve `?a` out here</span>\n</code></pre></div>",
+        "id": 388275920,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693470871
+    },
+    {
+        "content": "<p>Separately, this also happened to reveal that <code>refine</code> (unmodified by any bugfix) can duplicate goals in the infoview. (This is a cosmetic bug only; they have the same <code>MVarId</code>.) <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"k\">have</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"bp\">?</span><span class=\"n\">a</span>\n  <span class=\"n\">refine</span> <span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"c1\">-- two case `a`s in the infoview</span>\n</code></pre></div>\n<p>The reason I bring up this other bug is that fixing it could break all the same proofs (depending on how we fix it), and I'd like to make the least noise possible, i.e. only fix the proofs once. With <a href=\"https://github.com/leanprover/lean4/pull/2435\">lean4#2435</a> reverted, it might make sense to do both at once, especially since fixing them might involve acting on the same part of the code.</p>",
+        "id": 388276095,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693470932
+    },
+    {
+        "content": "<p>However, the following example shows how figuring out the \"right\" behavior might be a bit subtle.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">axiom</span> <span class=\"n\">g</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">True</span> <span class=\"c1\">-- takes an implicit type argument</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"k\">have</span> <span class=\"o\">:</span> <span class=\"bp\">?</span><span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"bp\">?</span><span class=\"n\">b</span> <span class=\"c1\">-- such that ?b : ?a</span>\n  <span class=\"n\">refine</span> <span class=\"n\">g</span> <span class=\"bp\">?</span><span class=\"n\">b</span> <span class=\"c1\">-- elaborates to include both an explicit and implicit pre-existing mvar (@g ?a ?b)</span>\n</code></pre></div>\n<p>What should the user expect to see in the infoview in this situation, and why? (Note: currently, it produces <code>case a</code>, <code>case b</code>, <code>case a</code>, <code>case b</code>.)</p>\n<p>A. On first glance I'd think they expect to see <code>case b</code>, <code>case a</code>, because <code>?b</code> is explicit in the refined syntax. Even this can be achieved (and thought of) in two ways, though:</p>\n<ol>\n<li>don't return <code>?a</code> from <code>refine</code> at all, because it existed previously and was not explicitly mentioned; remove <code>?b</code> from the remaining goal list because it appears in the output of <code>refine</code></li>\n<li>or: re-sort the goals resulting from <code>refine</code> (putting <code>?b</code> at the top because it appears in the syntax), and remove them from the remaining goal list.</li>\n</ol>\n<p>B. But there's a good argument for <code>case a</code>, <code>case b</code> too: <code>?a</code> and <code>?b</code> already exist as goals after the <code>have</code>, so <code>refine</code> shouldn't even return them, as they're not <em>new</em> goals created during elaboration. (This fix is the most straightforward to implement.)</p>\n<p>C. You can say that <code>?a</code> and <code>?b</code> appear in the elaborated expression and therefore should be returned by <code>refine</code>, but to my mind this sets up users of refine for a gotcha and makes the behavior less predictable and transparent.</p>\n<p>If I were choosing, I'd go with option B: if someone is explicitly referencing an existing goal, they probably don't need <code>refine</code> to, in effect, simply move it up higher on the goal list. Plus, it's easy to reason about as a user, and lends itself to a clear implementation.</p>\n<p>I realize this might be a lot of thought about a minor issue—but <code>refine</code> is pretty well-used in tactic proofs, so maybe it's worth it for it to be solid.</p>",
+        "id": 388277583,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693471493
+    },
+    {
+        "content": "<p>Issue: <a href=\"https://github.com/leanprover/lean4/pull/2495\">lean4#2495</a></p>",
+        "id": 388278566,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693471874
+    },
+    {
+        "content": "<p>I worry that you are setting yourself up for never getting anything changes but wanting to fix both these issues at once. I'd suggest work out a way to resolve one, do that, then the other. How about assume for now that the behaviour of <code>refine</code> in core is not going to be changed quickly. What is best in that scenario?</p>",
+        "id": 388283423,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693473776
+    },
+    {
+        "content": "<p>Good point, thanks for the perspective. I was too focused on the fact that the second issue could potentially render the first moot, and probably underestimated how much more discussion and reviewing would have to go into it before we got there. :)</p>\n<p>I suppose the path with the least friction and quickest resulting changes here is: </p>\n<ol>\n<li>I confirm that all breakages of <code>refine</code> from <a href=\"https://github.com/leanprover/lean4/pull/2435\">lean4#2435</a> are indeed simple \"rearrangement issues\", and prepare an anticipatory bump PR for Mathlib (on top of <a href=\"https://github.com/leanprover-community/mathlib4/pull/6888\">#6888</a>, and using the PR release temporarily for CI); </li>\n<li>we merge <a href=\"https://github.com/leanprover-community/mathlib4/pull/6888\">#6888</a> (after some tests/docs are added) </li>\n<li>we restore <a href=\"https://github.com/leanprover/lean4/pull/2435\">lean4#2435</a> (via <a href=\"https://github.com/leanprover/lean4/pull/2493\">lean4#2493</a>)</li>\n<li>we bump Mathlib's Lean version</li>\n</ol>\n<p>(Then we deal with the second issue separately.) Does that sound more realistic?</p>",
+        "id": 388300540,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693480674
+    },
+    {
+        "content": "<p>With your very first example, it seems to me that the main bug is that <code>refine</code>'s occurs checks aren't working properly. In <code>refine ?left</code>, I believe this should either be an error or specifically be coded to be a no-op. Note that <code>refine id ?left</code> does correctly trigger an error.</p>\n<p>Let's take a look at <code>refineCore</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">refineCore</span> <span class=\"o\">(</span><span class=\"n\">stx</span> <span class=\"o\">:</span> <span class=\"n\">Syntax</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">tagSuffix</span> <span class=\"o\">:</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">allowNaturalHoles</span> <span class=\"o\">:</span> <span class=\"n\">Bool</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">TacticM</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">withMainContext</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">val</span><span class=\"o\">,</span> <span class=\"n\">mvarIds'</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">elabTermWithHoles</span> <span class=\"n\">stx</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getMainTarget</span><span class=\"o\">)</span> <span class=\"n\">tagSuffix</span> <span class=\"n\">allowNaturalHoles</span>\n    <span class=\"k\">let</span> <span class=\"n\">mvarId</span> <span class=\"bp\">←</span> <span class=\"n\">getMainGoal</span>\n    <span class=\"k\">let</span> <span class=\"n\">val</span> <span class=\"bp\">←</span> <span class=\"n\">instantiateMVars</span> <span class=\"n\">val</span>\n    <span class=\"n\">unless</span> <span class=\"n\">val</span> <span class=\"bp\">==</span> <span class=\"n\">mkMVar</span> <span class=\"n\">mvarId</span> <span class=\"k\">do</span>\n      <span class=\"k\">if</span> <span class=\"n\">val.findMVar</span><span class=\"bp\">?</span> <span class=\"o\">(</span><span class=\"bp\">·</span> <span class=\"bp\">==</span> <span class=\"n\">mvarId</span><span class=\"o\">)</span> <span class=\"n\">matches</span> <span class=\"n\">some</span> <span class=\"n\">_</span> <span class=\"k\">then</span>\n        <span class=\"n\">throwError</span> <span class=\"s2\">\"'refine' tactic failed, value{indentExpr val}</span><span class=\"se\">\\n</span><span class=\"s2\">depends on the main goal metavariable '{mkMVar mvarId}'\"</span>\n      <span class=\"n\">mvarId.assign</span> <span class=\"n\">val</span>\n    <span class=\"n\">replaceMainGoal</span> <span class=\"n\">mvarIds'</span>\n</code></pre></div>\n<p>Notice that there is special handling for whether the <code>val</code> is <code>mvarid</code> itself, which is to skip assigning <code>mvarId</code>. But, it still does <code>replaceMainGoal</code> with the wrong <code>mvarIds'</code>!</p>\n<p>I would suggest this simple change to fix <code>refine</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">refineCore</span> <span class=\"o\">(</span><span class=\"n\">stx</span> <span class=\"o\">:</span> <span class=\"n\">Syntax</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">tagSuffix</span> <span class=\"o\">:</span> <span class=\"n\">Name</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">allowNaturalHoles</span> <span class=\"o\">:</span> <span class=\"n\">Bool</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">TacticM</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">withMainContext</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">val</span><span class=\"o\">,</span> <span class=\"n\">mvarIds'</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">elabTermWithHoles</span> <span class=\"n\">stx</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getMainTarget</span><span class=\"o\">)</span> <span class=\"n\">tagSuffix</span> <span class=\"n\">allowNaturalHoles</span>\n    <span class=\"k\">let</span> <span class=\"n\">mvarId</span> <span class=\"bp\">←</span> <span class=\"n\">getMainGoal</span>\n    <span class=\"k\">let</span> <span class=\"n\">val</span> <span class=\"bp\">←</span> <span class=\"n\">instantiateMVars</span> <span class=\"n\">val</span>\n    <span class=\"n\">unless</span> <span class=\"n\">val</span> <span class=\"bp\">==</span> <span class=\"n\">mkMVar</span> <span class=\"n\">mvarId</span> <span class=\"k\">do</span>\n      <span class=\"k\">if</span> <span class=\"n\">val.findMVar</span><span class=\"bp\">?</span> <span class=\"o\">(</span><span class=\"bp\">·</span> <span class=\"bp\">==</span> <span class=\"n\">mvarId</span><span class=\"o\">)</span> <span class=\"n\">matches</span> <span class=\"n\">some</span> <span class=\"n\">_</span> <span class=\"k\">then</span>\n        <span class=\"n\">throwError</span> <span class=\"s2\">\"'refine' tactic failed, value{indentExpr val}</span><span class=\"se\">\\n</span><span class=\"s2\">depends on the main goal metavariable '{mkMVar mvarId}'\"</span>\n      <span class=\"n\">mvarId.assign</span> <span class=\"n\">val</span>\n      <span class=\"n\">replaceMainGoal</span> <span class=\"n\">mvarIds'</span>\n</code></pre></div>\n<p>This causes <code>refine ?left</code> to be a no-op.</p>",
+        "id": 388310148,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693484112
+    },
+    {
+        "content": "<p>There's the separate issue of duplicating goals in the <code>example : True := by have : True := ?a; refine ?a</code> example.</p>\n<p>For this, could you explain why the problem in <code>withCollectingNewGoalsFrom</code> isn't fixed by just changing</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>    <span class=\"k\">let</span> <span class=\"n\">newMVarIds</span> <span class=\"bp\">←</span> <span class=\"k\">if</span> <span class=\"n\">allowNaturalHoles</span> <span class=\"k\">then</span>\n      <span class=\"n\">pure</span> <span class=\"n\">newMVarIds.toList</span>\n    <span class=\"k\">else</span>\n      <span class=\"k\">let</span> <span class=\"n\">naturalMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">newMVarIds.filterM</span> <span class=\"k\">fun</span> <span class=\"n\">mvarId</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mvarId.getKind</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">isNatural</span>\n      <span class=\"k\">let</span> <span class=\"n\">syntheticMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">newMVarIds.filterM</span> <span class=\"k\">fun</span> <span class=\"n\">mvarId</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"bp\">!</span><span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mvarId.getKind</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">isNatural</span>\n      <span class=\"k\">let</span> <span class=\"n\">naturalMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">filterOldMVars</span> <span class=\"n\">naturalMVarIds</span> <span class=\"n\">mvarCounterSaved</span>\n      <span class=\"n\">logUnassignedAndAbort</span> <span class=\"n\">naturalMVarIds</span>\n      <span class=\"n\">pure</span> <span class=\"n\">syntheticMVarIds.toList</span>\n</code></pre></div>\n<p>to</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>    <span class=\"k\">let</span> <span class=\"n\">newMVarIds</span> <span class=\"bp\">←</span> <span class=\"k\">if</span> <span class=\"n\">allowNaturalHoles</span> <span class=\"k\">then</span>\n      <span class=\"n\">pure</span> <span class=\"n\">newMVarIds.toList</span>\n    <span class=\"k\">else</span>\n      <span class=\"k\">let</span> <span class=\"n\">naturalMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">newMVarIds.filterM</span> <span class=\"k\">fun</span> <span class=\"n\">mvarId</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mvarId.getKind</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">isNatural</span>\n      <span class=\"k\">let</span> <span class=\"n\">syntheticMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">newMVarIds.filterM</span> <span class=\"k\">fun</span> <span class=\"n\">mvarId</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"bp\">!</span><span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mvarId.getKind</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">isNatural</span>\n      <span class=\"k\">let</span> <span class=\"n\">naturalMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">filterOldMVars</span> <span class=\"n\">naturalMVarIds</span> <span class=\"n\">mvarCounterSaved</span>\n      <span class=\"n\">logUnassignedAndAbort</span> <span class=\"n\">naturalMVarIds</span>\n      <span class=\"n\">pure</span> <span class=\"n\">syntheticMVarIds.toList</span>\n    <span class=\"k\">let</span> <span class=\"n\">newMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">filterOldMVars</span> <span class=\"n\">naturalMVarIds</span> <span class=\"n\">mvarCounterSaved</span>\n</code></pre></div>\n<p>?</p>\n<p>It seems odd calling it <code>newMVarIds</code> if they aren't new, so maybe it's an oversight that they're not being filtered?</p>",
+        "id": 388311153,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693484466
+    },
+    {
+        "content": "<p>Re: the occurs check, I think it's functioning as intended, even if I also wouldn't necessarily intend it that way! The test file <code>refineOccursCheck.lean</code> specifically ensures this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">theorem</span> <span class=\"n\">ex1</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">refine</span> <span class=\"bp\">?</span><span class=\"n\">a</span>\n  <span class=\"n\">refine</span> <span class=\"bp\">?</span><span class=\"n\">a</span>\n  <span class=\"n\">refine</span> <span class=\"bp\">?</span><span class=\"n\">a</span>\n  <span class=\"n\">exact</span> <span class=\"n\">True.intro</span>\n</code></pre></div>\n<p>(This is intended to succeed, and shows that it's not the source of the bug in general.)</p>\n<p>EDIT: I guess this behavior would be achieved by by a no-op too. But if you expect <code>elabTermWithHoles</code> to return <em>all</em> holes in the expression, then you expect it to also include the main goal in <code>mvarIds'</code>, so we don't replace the main goal with the \"wrong\" list. It's internally consistent, at least.</p>",
+        "id": 388417983,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693522744
+    },
+    {
+        "content": "<p>The main bug (re: <code>refine ?left</code>) is definitely about losing track of existing natural mvars, I believe; see the examples in the additional information section of <a href=\"https://github.com/leanprover/lean4/pull/2434\">lean4#2434</a>, as well as the test file <code>refinePreservesNaturalMVars.lean</code> in <a href=\"https://github.com/leanprover/lean4/pull/2435\">lean4#2435</a>, which test with natural mvars that are not the main goal. (Note that <code>newMVarIds</code> (which is just what <code>withCollectingNewGoalsFrom</code> calls <em>all</em> of the mvars it collects, for some reason) becomes simply <code>syntheticMVarIds.toList</code> in the <code>allowNaturalHoles := false</code> case. The natural MVarIds are lost.)</p>",
+        "id": 388417992,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693522748
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Bug.20in.20.60refine.60/near/388311153\">said</a>:</p>\n<blockquote>\n<p>There's the separate issue of duplicating goals in the <code>example : True := by have : True := ?a; refine ?a</code> example.</p>\n<p>For this, could you explain why the problem in <code>withCollectingNewGoalsFrom</code> isn't fixed by just ...</p>\n</blockquote>\n<p>Indeed, simply adding the line <code>let newMVarIds ← filterOldMVars newMVarIds mvarCounterSaved</code> fixes this! This is option B. that I mentioned, and that's what I was talking about when mentioning it was easier to implement. :) It would probably break several things, though; I noticed it already breaks one test.</p>\n<p>I started exploring this on the (very WIP) draft PR <a href=\"https://github.com/leanprover/lean4/pull/2496\">lean4#2496</a> last night. Note that I take the \"cautious\" route of adding an optional toggle for this behavior to <code>elabTermWithHoles</code> and <code>withCollectingNewGoalsFrom</code> (<code>onlyNewGoals := false</code>) so as to not break existing other uses of that function in mathlib. Plus, sometimes you might <em>want</em> to collect all the holes that appear in an expression when using <code>elabTermWithHoles</code>, not just the new ones. (That would also mean we should probably rename <code>withCollectingNewGoalsFrom</code> to <code>withCollectingGoalsFrom</code>.)</p>\n<p>I'd need to look at the existing uses in mathlib to see if we ever actually <em>do</em> want to collect all goals, though. If they all <em>should</em> use only new goals, we could just change the behavior (and that would probably make sense for defs named <code>elabTermWithHoles</code> and <code>withCollectingNewGoalsFrom</code>).</p>",
+        "id": 388419187,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693523440
+    },
+    {
+        "content": "<p>My understanding of <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.Tactic.withCollectingNewGoalsFrom#doc\">docs#Lean.Elab.Tactic.withCollectingNewGoalsFrom</a> is that it's meant for collecting <em>new</em> goals from an expression (hence its name). That's what's useful if you write a tactic that elaborates an expression and you need to create some side-goals for any remaining metavariables that haven't already been accounted for. The name of <code>elabTermWithHoles</code> at least isn't promising that it returns all holes -- and its definition is a one-liner calling <code>withCollectingNewGoalsFrom</code>, so the intent seems clear. It could also have been called <code>elabTermCollectingNewGoals</code>, and that would be what I'd want if I were to implement <code>refine</code> from scratch.</p>\n<p>I find it very hard to support the argument that elaborating an expression should be able to capture pre-existing goals to create new goals. It seems really hard to reason about goal order if you allow this. (I think that's what you're saying in C.) It's also breaking what I've assumed is the invariant that each goal in the goal list has multiplicity one.</p>\n<p>Re the occurs check: allowing <code>refine ?foo</code> with <code>?foo</code> being the current goal is sort of an absurd thing to do, so it might be worth looking into the git blame to see why this was special cased.</p>",
+        "id": 388422423,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693525589
+    },
+    {
+        "content": "<p>Re mathlib, I know that every time I've used <code>elabTermWithHoles</code> I had thought it was only returning metavariables that otherwise weren't going to be handled by anyone (i.e., things that should be filled in by the user as a goal).</p>",
+        "id": 388422699,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693525769
+    },
+    {
+        "content": "<p>That sounds entirely reasonable to me! It's what I expected to happen until I read through the code too; I'd be happy for it to change. It would solve both original issues in one fell swoop (<a href=\"https://github.com/leanprover/lean4/pull/2434\">lean4#2434</a> and <a href=\"https://github.com/leanprover/lean4/pull/2495\">lean4#2495</a>) (and might mean that <code>change</code> doesn't need pre-fixing via <a href=\"https://github.com/leanprover-community/mathlib4/pull/6888\">#6888</a>).</p>\n<p>Note that we could then replace the whole block</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>   <span class=\"k\">let</span> <span class=\"n\">newMVarIds</span> <span class=\"bp\">←</span> <span class=\"k\">if</span> <span class=\"n\">allowNaturalHoles</span> <span class=\"k\">then</span>\n      <span class=\"n\">pure</span> <span class=\"n\">newMVarIds.toList</span>\n    <span class=\"k\">else</span>\n      <span class=\"k\">let</span> <span class=\"n\">naturalMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">newMVarIds.filterM</span> <span class=\"k\">fun</span> <span class=\"n\">mvarId</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mvarId.getKind</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">isNatural</span>\n      <span class=\"k\">let</span> <span class=\"n\">syntheticMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">newMVarIds.filterM</span> <span class=\"k\">fun</span> <span class=\"n\">mvarId</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"bp\">!</span><span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mvarId.getKind</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">isNatural</span>\n      <span class=\"k\">let</span> <span class=\"n\">naturalMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">filterOldMVars</span> <span class=\"n\">naturalMVarIds</span> <span class=\"n\">mvarCounterSaved</span>\n      <span class=\"n\">logUnassignedAndAbort</span> <span class=\"n\">naturalMVarIds</span>\n      <span class=\"n\">pure</span> <span class=\"n\">syntheticMVarIds.toList</span>\n</code></pre></div>\n<p>with just</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>   <span class=\"k\">let</span> <span class=\"n\">newMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">filterOldMVars</span> <span class=\"n\">newMVarIds</span> <span class=\"n\">mvarCounterSaved</span>\n   <span class=\"n\">unless</span> <span class=\"n\">allowNaturalHoles</span> <span class=\"k\">do</span>\n      <span class=\"k\">let</span> <span class=\"n\">naturalMVarIds</span> <span class=\"bp\">←</span> <span class=\"n\">newMVarIds.filterM</span> <span class=\"k\">fun</span> <span class=\"n\">mvarId</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mvarId.getKind</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">isNatural</span>\n      <span class=\"n\">logUnassignedAndAbort</span> <span class=\"n\">naturalMVarIds</span>\n</code></pre></div>\n<p>which is rather nice. :) I'll try this out and see how this affects mathlib on a draft lean PR.</p>",
+        "id": 388423692,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693526405
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Bug.20in.20.60refine.60/near/388422423\">said</a>:</p>\n<blockquote>\n<p>Re the occurs check: allowing <code>refine ?foo</code> with <code>?foo</code> being the current goal is sort of an absurd thing to do, so it might be worth looking into the git blame to see why this was special cased.</p>\n</blockquote>\n<p>I specifically recall getting some nasty stack overflows when playing around with <code>refine</code> applied to existing metavariables, so this was likely a bug fix</p>",
+        "id": 388429201,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693529113
+    },
+    {
+        "content": "<p>The model of named metavariables is actually kind of broken, because they are not hygienic and you can get really surprising results because of this</p>",
+        "id": 388429385,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693529178
+    },
+    {
+        "content": "<p>The stack overflow is still present:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">refine</span> <span class=\"bp\">?</span><span class=\"n\">a</span>\n  <span class=\"n\">exact</span> <span class=\"n\">id</span> <span class=\"bp\">?</span><span class=\"n\">a</span>\n</code></pre></div>",
+        "id": 388429850,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1693529381
+    },
+    {
+        "content": "<p>Interesting -- looks like <code>exact</code> doesn't actually have an occurs check (it only checks that there are no <em>new</em> metavariables remaining in the assigned expression). I've found the lack of occurs checks in meta code to be a bit worrisome, but I wouldn't have expected <code>exact</code> to have an issue.</p>",
+        "id": 388432752,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693530586
+    },
+    {
+        "content": "<p>I filed an issue for this: <a href=\"https://github.com/leanprover/lean4/pull/2504\">lean4#2504</a></p>",
+        "id": 388512195,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1693571028
+    },
+    {
+        "content": "<p>Ok, after exploring the \"single fix\" option (just filter all old mvars out) and fixing the resulting breakages in mathlib, my thoughts are that this is actually the smoother and least-friction option, despite being the bigger change! In particular</p>\n<ul>\n<li>this streamlines the lean4 code</li>\n<li>this resolves both <a href=\"https://github.com/leanprover/lean4/pull/2495\">lean4#2495</a> and <a href=\"https://github.com/leanprover/lean4/pull/2434\">lean4#2434</a> at once</li>\n<li>the breakages to mathlib are minimal, and all come from <code>refine</code> or <code>convert</code> via the same phenomenon (goals \"tunneling through\" to appear in the goal list after a <code>refine</code> or <code>convert</code>, when in fact they were created and unsolved far earlier)</li>\n<li>notably, the fix to <code>change</code>, <a href=\"https://github.com/leanprover-community/mathlib4/pull/6888\">#6888</a>, is now wholly unnecessary (in fact, all <a href=\"https://github.com/leanprover-community/mathlib4/pull/6888\">#6888</a> did was filter out the old mvars in <code>change</code>)</li>\n</ul>",
+        "id": 388725160,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693685468
+    },
+    {
+        "content": "<p>The mathlib PR <a href=\"https://github.com/leanprover-community/mathlib4/pull/6928\">#6928</a> is the anticipatory bump PR, and fixes all those breakages. There were 8 breakages arising from this change in total.</p>",
+        "id": 388725336,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693685542
+    },
+    {
+        "content": "<p>The draft lean4 PR for this change is <a href=\"https://github.com/leanprover/lean4/pull/2502\">lean4#2502</a>.</p>",
+        "id": 388728213,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693688182
+    },
+    {
+        "content": "<p>(In writing the description, I noticed that <code>specialize</code>, which uses <code>elabTermWithHoles</code>, is also missing an occurs check and produces a stack overflow: <a href=\"https://github.com/leanprover/lean4/pull/2506\">lean4#2506</a>)</p>",
+        "id": 388729512,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693689345
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"548935\">@Thomas Murrills</span>, would you mind closing the non-preferred PRs on lean4? At present one needs to read lots of context to work out what to look at and not look at.</p>",
+        "id": 388872032,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693783387
+    },
+    {
+        "content": "<p>No problem, sorry, I assumed draft PRs were irrelevant unless noted! <a href=\"https://github.com/leanprover/lean4/pull/2502\">lean4#2502</a> should be self-contained (please let me know if I left some context out).</p>",
+        "id": 388872138,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693783493
+    },
+    {
+        "content": "<p>Draft PRs are certainly easy to avoid looking at. The problem is that you had 3 draft PRs, and I wanted to look at just one. :-)</p>",
+        "id": 388872363,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693783740
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"548935\">@Thomas Murrills</span>, is <a href=\"https://github.com/leanprover/lean4/pull/2434\">lean4#2434</a> meant to be closed?</p>",
+        "id": 388872469,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693783807
+    },
+    {
+        "content": "<p>No, it was automatically closed when the original PR in this saga was merged, and was not reopened when that PR was reverted. (I wasn’t able to reopen it.)</p>",
+        "id": 388872601,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693783930
+    },
+    {
+        "content": "<p>(I also figured it would be closed again soon in any case, and might not be worth the noise to reopen and re-close. :) )</p>",
+        "id": 388872627,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693783972
+    },
+    {
+        "content": "<p>I've reopened. :-) Your PR is confusing if it is referring to fixing already closed issues.</p>",
+        "id": 388872644,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693784008
+    },
+    {
+        "content": "<p>Ah, right—<em>that</em> was the context I left out! I knew there was something. :)</p>",
+        "id": 388872743,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693784095
+    },
+    {
+        "content": "<p>I’ve changed it to <code>awaiting-review</code> to indicate that I’m done with my work on it; just checking, is this a correct use of the label on the lean4 repo?</p>",
+        "id": 388874578,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693785734
+    },
+    {
+        "content": "<p>Also, should I make it a full-fledged PR at this point, or should I wait for a sort of “pre-review” to finish here before doing so?</p>\n<p>EDIT: I’ll wait at least until I do what’s suggested below. :)</p>",
+        "id": 388874587,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693785744
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"548935\">@Thomas Murrills</span>, re: the mathlib PR <a href=\"https://github.com/leanprover-community/mathlib4/pull/6928\">#6928</a>. If you merge all of that over to <code>lean-pr-testing-2502</code> (which is an automatically generated branch), then hopefully it will report back to the Lean 4 repository automatically that it <code>builds-mathlib</code>, rather than <code>breaks-mathlib</code>.</p>",
+        "id": 388874602,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693785757
+    },
+    {
+        "content": "<p>(This CI integration is still a work in progress, sorting out kinks, sorry.)</p>",
+        "id": 388874623,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693785771
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> <a href=\"#narrow/stream/270676-lean4/topic/Bug.20in.20.60refine.60/near/388874578\">said</a>:</p>\n<blockquote>\n<p>I’ve changed it to <code>awaiting-review</code> to indicate that I’m done with my work on it; just checking, is this a correct use of the label on the lean4 repo?</p>\n</blockquote>\n<p>Yes!</p>",
+        "id": 388874638,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693785777
+    },
+    {
+        "content": "<p>(You might even change <a href=\"https://github.com/leanprover-community/mathlib4/pull/6928\">#6928</a> so it is uses that branch.)</p>",
+        "id": 388874807,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693785889
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/270676-lean4/topic/Bug.20in.20.60refine.60/near/388874623\">said</a>:</p>\n<blockquote>\n<p>(This CI integration is still a work in progress, sorting out kinks, sorry.)</p>\n</blockquote>\n<p>Don’t worry at all—after all, progress can only be made by putting things in practice! :) Btw, I really appreciate the work you’ve done/are doing on CI and automation—I certainly wouldn’t have been able to make these PRs without the lean4 pr release framework. Or, at least, it would have taken a <em>lot</em> longer, and been a lot more work. :)</p>",
+        "id": 388881015,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693788905
+    },
+    {
+        "content": "<p>I’ve merged the changes into <code>lean4-pr-testing-2502</code> (but have to run and can’t change the mathlib4 PR branch right now); it’s currently building. :)</p>",
+        "id": 388881497,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693789100
+    },
+    {
+        "content": "<p>Hooray, the <code>builds-mathlib</code> label was bestowed automatically. :-)</p>",
+        "id": 388892989,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693794821
+    },
+    {
+        "content": "<p>Shall I convert <a href=\"https://github.com/leanprover/lean4/pull/2502\">lean4#2502</a> from a draft PR to a normal PR now that the reviews have been addressed?</p>",
+        "id": 389298180,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693955028
+    },
+    {
+        "content": "<p>Yes, please.</p>",
+        "id": 389304436,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1693958723
+    },
+    {
+        "content": "<p>Done. :)</p>",
+        "id": 389306636,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1693959801
+    },
+    {
+        "content": "<p>I'm trying to keep the anticipatory bump PR <a href=\"https://github.com/leanprover-community/mathlib4/pull/6928\">#6928</a> up to date, but I'm hitting a weird error during the \"check the cache\" stage after build proper:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Run</span> <span class=\"n\">lake</span> <span class=\"n\">exe</span> <span class=\"n\">cache</span> <span class=\"n\">get</span>\n  <span class=\"n\">lake</span> <span class=\"n\">exe</span> <span class=\"n\">cache</span> <span class=\"n\">get</span>\n  <span class=\"bp\">#</span> <span class=\"n\">We</span> <span class=\"n\">pipe</span> <span class=\"n\">the</span> <span class=\"n\">output</span> <span class=\"n\">of</span> <span class=\"bp\">`</span><span class=\"n\">lake</span> <span class=\"n\">build</span><span class=\"bp\">`</span> <span class=\"n\">to</span> <span class=\"n\">a</span> <span class=\"n\">file</span><span class=\"o\">,</span>\n  <span class=\"bp\">#</span> <span class=\"n\">and</span> <span class=\"k\">if</span> <span class=\"n\">we</span> <span class=\"n\">find</span> <span class=\"s2\">\" Building Mathlib\"</span> <span class=\"k\">in</span> <span class=\"n\">that</span> <span class=\"n\">file</span> <span class=\"n\">we</span> <span class=\"n\">kill</span> <span class=\"bp\">`</span><span class=\"n\">lake</span> <span class=\"n\">build</span><span class=\"bp\">`</span><span class=\"o\">,</span> <span class=\"n\">and</span> <span class=\"n\">error.</span>\n  <span class=\"n\">lake</span> <span class=\"n\">build</span> <span class=\"bp\">&gt;</span> <span class=\"n\">tmp</span> <span class=\"bp\">&amp;</span> <span class=\"n\">tail</span> <span class=\"c1\">--pid=$! -n +1 -F tmp | (! (grep -m 1 \" Building Mathlib\" &amp;&amp; kill $! ))</span>\n  <span class=\"n\">shell</span><span class=\"o\">:</span> <span class=\"bp\">/</span><span class=\"n\">usr</span><span class=\"bp\">/</span><span class=\"n\">bin</span><span class=\"bp\">/</span><span class=\"n\">bash</span> <span class=\"bp\">-</span><span class=\"n\">e</span> <span class=\"o\">{</span><span class=\"mi\">0</span><span class=\"o\">}</span>\n\n<span class=\"n\">No</span> <span class=\"n\">files</span> <span class=\"n\">to</span> <span class=\"n\">download</span>\n<span class=\"n\">Decompressing</span> <span class=\"mi\">3776</span> <span class=\"n\">file</span><span class=\"o\">(</span><span class=\"n\">s</span><span class=\"o\">)</span>\n<span class=\"n\">unpacked</span> <span class=\"k\">in</span> <span class=\"mi\">1736</span> <span class=\"n\">ms</span>\n<span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"bp\">/</span><span class=\"mi\">5</span><span class=\"o\">]</span> <span class=\"n\">Building</span> <span class=\"n\">Mathlib.Mathport.Rename</span>\n<span class=\"n\">Error</span><span class=\"o\">:</span> <span class=\"n\">Process</span> <span class=\"n\">completed</span> <span class=\"k\">with</span> <span class=\"n\">exit</span> <span class=\"n\">code</span> <span class=\"mi\">1</span><span class=\"bp\">.</span>\n</code></pre></div>\n<p>What's going on here?</p>",
+        "id": 392217662,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1695250022
+    }
+]

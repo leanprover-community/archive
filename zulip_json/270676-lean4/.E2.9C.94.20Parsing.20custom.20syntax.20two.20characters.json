@@ -1,0 +1,50 @@
+[
+    {
+        "content": "<p>Hi :)</p>\n<p>I want to define custom syntax of the form: two uppercase letters A-Z, e.g. AB. <br>\nI have a syntax such as \"My bag holds AA, DF, XZ balls\" and I want to parse this into a list of strings \"AA\", \"DF\", \"XZ\".</p>\n<p>I tried to use the parser strLit via</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">syntax</span> <span class=\"s2\">\"My bag holds \"</span> <span class=\"n\">str</span><span class=\"o\">,</span><span class=\"bp\">+</span><span class=\"s2\">\" balls\"</span>\n</code></pre></div>\n<p>but this parses syntax of the form <code>My bag holds \"AA\", \"DF\", \"XZ\" balls</code>. I don't want to use quotations here.</p>\n<p>I achieved this behavior by defining a syntax category <code>label</code> and then adding  <code>syntax \"AA\" : label</code> and a macro rule </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">macro_rules</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">label</span><span class=\"bp\">|</span> <span class=\"n\">AA</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"s2\">\"AA\"</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>for each such pair of characters, but this seems ugly. Is there a more idiomatic way of doing this in Lean?</p>",
+        "id": 348074468,
+        "sender_full_name": "Ajda Lampe",
+        "timestamp": 1681063600
+    },
+    {
+        "content": "<p>the way you encoded it will also parse other strings like <code>My bag holds \"Foo\", \"BAR\", \"baz\" balls</code>. If you're fine with that, you can use an identifier instead of a string</p>",
+        "id": 348086249,
+        "sender_full_name": "Andrés Goens",
+        "timestamp": 1681070351
+    },
+    {
+        "content": "<p>as in <code>syntax \"My bag holds \" ident,+\" balls\" : bag</code></p>",
+        "id": 348086364,
+        "sender_full_name": "Andrés Goens",
+        "timestamp": 1681070410
+    },
+    {
+        "content": "<p>Thank you for this idea. Ideally, I would like to limit it to parsing only two consecutive uppercase characters (e.g. <code>AA</code>) and transforming that to a string (e.g. <code>\"AA\"</code>) if there exists a reasonable way to achieve that.</p>",
+        "id": 348174205,
+        "sender_full_name": "Ajda Lampe",
+        "timestamp": 1681119958
+    },
+    {
+        "content": "<p>note that that doesn't work with your original syntax above either! I don't know what qualifies as reasonable, I'm inclined to say \"no\". In the sense that there's not a very ergonomic way to do it know, AFAIU.</p>\n<p>The best way to achieve that is probably to build a custom parser that consumes exactly two of those tokens, which would be easy if you define a parser that takes in an upercase character and combine it twice to create your parser.  The syntax extending syntax you use there <code>syntax \"My bag holds\" str,+ \" balls\"</code> is actually syntactic sugar for building parser combinators, but that means looking into the <code>Lean</code> source code for documentation I'm afraid (I don't think the <a href=\"https://github.com/arthurpaulino/lean4-metaprogramming-book\">metaprogramming book</a> covers that as of now)</p>",
+        "id": 348183010,
+        "sender_full_name": "Andrés Goens",
+        "timestamp": 1681122888
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"n\">declare_syntax_cat</span> <span class=\"n\">twoletter</span>\n\n<span class=\"n\">syntax</span> <span class=\"s2\">\"[twoletter|\"</span> <span class=\"s2\">\"my bag holds\"</span> <span class=\"n\">ident</span><span class=\"o\">,</span><span class=\"bp\">+</span> <span class=\"s2\">\"balls\"</span> <span class=\"s2\">\"]\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Macro</span> <span class=\"n\">Tactic</span> <span class=\"k\">in</span>\n<span class=\"n\">macro_rules</span>\n<span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">([</span><span class=\"n\">twoletter</span><span class=\"bp\">|</span> <span class=\"n\">my</span> <span class=\"n\">bag</span> <span class=\"n\">holds</span> <span class=\"bp\">$</span><span class=\"n\">xs</span><span class=\"o\">,</span><span class=\"bp\">*</span> <span class=\"n\">balls</span> <span class=\"o\">])</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">outs</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"o\">(</span><span class=\"n\">TSyntax</span> <span class=\"bp\">`</span><span class=\"n\">str</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[]</span>\n    <span class=\"n\">for</span> <span class=\"n\">x</span> <span class=\"k\">in</span> <span class=\"n\">xs.getElems</span> <span class=\"k\">do</span>\n      <span class=\"k\">let</span> <span class=\"n\">xstr</span> <span class=\"o\">:=</span> <span class=\"n\">x.getId.toString</span>\n\n      <span class=\"c1\">-- TODO: what is the right way to index a String?</span>\n      <span class=\"k\">if</span> <span class=\"n\">xstr.length</span> <span class=\"bp\">=</span> <span class=\"mi\">2</span> <span class=\"bp\">&amp;&amp;</span> <span class=\"n\">xstr.get</span><span class=\"bp\">!</span> <span class=\"o\">⟨</span><span class=\"mi\">0</span><span class=\"o\">⟩</span> <span class=\"bp\">=</span> <span class=\"n\">xstr.get</span><span class=\"bp\">!</span> <span class=\"o\">⟨</span><span class=\"mi\">1</span><span class=\"o\">⟩</span> <span class=\"k\">then</span>\n        <span class=\"k\">do</span> <span class=\"n\">outs</span> <span class=\"o\">:=</span> <span class=\"n\">outs.push</span> <span class=\"o\">(</span><span class=\"n\">Lean.quote</span> <span class=\"n\">xstr</span><span class=\"o\">)</span>\n        <span class=\"k\">else</span> <span class=\"n\">Macro.throwErrorAt</span> <span class=\"n\">x</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"expected two letter repeated string, found '{xstr}'\"</span>\n    <span class=\"bp\">`</span><span class=\"o\">([</span> <span class=\"bp\">$</span><span class=\"n\">outs</span><span class=\"o\">,</span><span class=\"bp\">*</span> <span class=\"o\">])</span>\n\n<span class=\"k\">#reduce</span> <span class=\"o\">[</span><span class=\"n\">twoletter</span><span class=\"bp\">|</span> <span class=\"n\">my</span> <span class=\"n\">bag</span> <span class=\"n\">holds</span> <span class=\"n\">AA</span><span class=\"o\">,</span> <span class=\"n\">BB</span><span class=\"o\">,</span> <span class=\"n\">CC</span> <span class=\"n\">balls</span><span class=\"o\">]</span>  <span class=\"c1\">-- [\"AA\", \"BB\", \"CC\"]</span>\n<span class=\"k\">#reduce</span> <span class=\"o\">[</span><span class=\"n\">twoletter</span><span class=\"bp\">|</span> <span class=\"n\">my</span> <span class=\"n\">bag</span> <span class=\"n\">holds</span> <span class=\"n\">AA</span><span class=\"o\">,</span> <span class=\"n\">BB</span><span class=\"o\">,</span> <span class=\"n\">CX</span> <span class=\"n\">balls</span><span class=\"o\">]</span>  <span class=\"c1\">-- expected two letter repeated string, found 'CX'</span>\n<span class=\"k\">#reduce</span> <span class=\"o\">[</span><span class=\"n\">twoletter</span><span class=\"bp\">|</span> <span class=\"n\">my</span> <span class=\"n\">bag</span> <span class=\"n\">holds</span> <span class=\"n\">AAA</span> <span class=\"n\">balls</span><span class=\"o\">]</span>  <span class=\"c1\">-- expected two letter repeated string, found 'AAA'</span>\n</code></pre></div>\n<p>Does this do what you wanted, <span class=\"user-mention\" data-user-id=\"608293\">@Ajda Lampe</span> ?</p>",
+        "id": 348190221,
+        "sender_full_name": "Siddharth Bhat",
+        "timestamp": 1681125379
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"130575\">@Siddharth Bhat</span> Great, this is just what I needed. Thank you very much!</p>",
+        "id": 348224551,
+        "sender_full_name": "Ajda Lampe",
+        "timestamp": 1681135555
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"608293\">Ajda Lampe</span> has marked this topic as resolved.</p>",
+        "id": 348227320,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1681136173
+    }
+]

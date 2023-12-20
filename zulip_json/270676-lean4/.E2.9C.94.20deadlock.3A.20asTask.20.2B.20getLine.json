@@ -1,0 +1,128 @@
+[
+    {
+        "content": "<p>I have implemented a simple job queue that runs arbitrarily many jobs across n threads (code below). In my use case, each job launches a process, writes to its stdin, and waits for its stdout.</p>\n<p>But I'm seeing weird behavior where it spawns n processes, and then n-1 of them go to sleep waiting for more input on stdin (???). Eventually some of them wake up, but there are always 1 &lt;= _ &lt; n processes awake at a given time.</p>\n<p>Then, the tasks that <em>do</em> wake up and run eventually finish and become zombies for a long time. I don't really know if/when they all get cleaned up, but the tasks that depend on the captured output do eventually get executed.</p>\n<p>So, I suspect I am mis-using the task scheduler. But I have no clue where. Anyone see anything glaringly wrong with either of these snippets?</p>\n<p>Work queue:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">WorkQueue.launch</span> <span class=\"o\">(</span><span class=\"n\">threads</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">jobs</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">IO</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">queue</span> <span class=\"bp\">←</span> <span class=\"n\">IO.Mutex.new</span> <span class=\"o\">(</span><span class=\"n\">jobs.mapIdx</span> <span class=\"o\">(</span><span class=\"bp\">·</span><span class=\"o\">,</span> <span class=\"bp\">·</span><span class=\"o\">))</span>\n  <span class=\"k\">let</span> <span class=\"n\">results</span> <span class=\"o\">:</span> <span class=\"n\">IO.Mutex</span> <span class=\"o\">(</span><span class=\"n\">List</span> <span class=\"o\">(</span><span class=\"n\">Nat</span> <span class=\"bp\">×</span> <span class=\"n\">β</span><span class=\"o\">))</span> <span class=\"bp\">←</span> <span class=\"n\">IO.Mutex.new</span> <span class=\"o\">[]</span>\n\n  <span class=\"k\">let</span> <span class=\"n\">tasks</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"o\">(</span><span class=\"n\">Task</span> <span class=\"o\">(</span><span class=\"n\">Except</span> <span class=\"n\">_</span> <span class=\"n\">Unit</span><span class=\"o\">))</span> <span class=\"bp\">←</span>\n    <span class=\"o\">(</span><span class=\"n\">List.range</span> <span class=\"n\">threads</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">mapM</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">IO.asTask</span> <span class=\"o\">(</span><span class=\"n\">prio</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">dedicated</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"k\">do</span>\n      <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">curJob</span> <span class=\"o\">:</span> <span class=\"n\">Option</span> <span class=\"o\">(</span><span class=\"n\">Nat</span> <span class=\"bp\">×</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">nextJob</span> <span class=\"n\">queue</span>\n\n      <span class=\"n\">while</span> <span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">curJob.isSome</span> <span class=\"k\">do</span>\n        <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">idx</span><span class=\"o\">,</span><span class=\"n\">job</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">curJob.get</span> <span class=\"n\">h</span>\n        <span class=\"k\">let</span> <span class=\"n\">b</span> <span class=\"bp\">←</span> <span class=\"n\">f</span> <span class=\"n\">job</span>\n        <span class=\"n\">results.atomically</span> <span class=\"o\">(</span><span class=\"k\">do</span>\n          <span class=\"k\">let</span> <span class=\"n\">list</span> <span class=\"bp\">←</span> <span class=\"n\">get</span>\n          <span class=\"n\">set</span> <span class=\"o\">((</span><span class=\"n\">idx</span><span class=\"o\">,</span><span class=\"n\">b</span><span class=\"o\">)</span> <span class=\"o\">::</span> <span class=\"n\">list</span><span class=\"o\">)</span>\n        <span class=\"o\">)</span>\n        <span class=\"n\">curJob</span> <span class=\"bp\">←</span> <span class=\"n\">nextJob</span> <span class=\"n\">queue</span>\n    <span class=\"o\">))</span>\n\n  <span class=\"k\">let</span> <span class=\"n\">res</span> <span class=\"bp\">←</span> <span class=\"n\">IO.mapTasks</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">L</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n      <span class=\"n\">L.foldlM</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"o\">()</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">IO.ofExcept</span><span class=\"o\">)</span> <span class=\"o\">()</span>\n      <span class=\"k\">let</span> <span class=\"n\">res</span> <span class=\"bp\">←</span> <span class=\"n\">results.atomically</span> <span class=\"n\">get</span>\n      <span class=\"n\">return</span> <span class=\"n\">res.toArray.insertionSort</span> <span class=\"o\">(</span><span class=\"bp\">·.</span><span class=\"mi\">1</span> <span class=\"bp\">&lt;</span> <span class=\"bp\">·.</span><span class=\"mi\">1</span><span class=\"o\">)</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">toList.map</span> <span class=\"o\">(</span><span class=\"bp\">·.</span><span class=\"mi\">2</span><span class=\"o\">)</span>\n    <span class=\"o\">)</span> <span class=\"n\">tasks</span>\n\n  <span class=\"n\">return</span> <span class=\"bp\">←</span> <span class=\"n\">IO.ofExcept</span> <span class=\"n\">res.get</span>\n<span class=\"n\">where</span> <span class=\"n\">nextJob</span> <span class=\"o\">(</span><span class=\"n\">queue</span> <span class=\"o\">:</span> <span class=\"n\">IO.Mutex</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"o\">(</span><span class=\"n\">Option</span> <span class=\"o\">(</span><span class=\"n\">Nat</span> <span class=\"bp\">×</span> <span class=\"n\">α</span><span class=\"o\">))</span> <span class=\"o\">:=</span>\n  <span class=\"n\">queue.atomically</span> <span class=\"o\">(</span><span class=\"k\">do</span>\n    <span class=\"k\">match</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">get</span><span class=\"o\">)</span> <span class=\"k\">with</span>\n    <span class=\"bp\">|</span> <span class=\"n\">job</span> <span class=\"o\">::</span> <span class=\"n\">jobs</span> <span class=\"bp\">=&gt;</span>\n      <span class=\"n\">set</span> <span class=\"n\">jobs</span>\n      <span class=\"n\">return</span> <span class=\"n\">some</span> <span class=\"n\">job</span>\n    <span class=\"bp\">|</span> <span class=\"o\">[]</span> <span class=\"bp\">=&gt;</span>\n      <span class=\"n\">return</span> <span class=\"n\">none</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>The process launching code:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"k\">let</span> <span class=\"n\">child</span> <span class=\"bp\">←</span> <span class=\"n\">IO.Process.spawn</span> <span class=\"o\">{</span>\n    <span class=\"n\">cmd</span> <span class=\"o\">:=</span> <span class=\"n\">cmd</span>\n    <span class=\"n\">args</span> <span class=\"o\">:=</span> <span class=\"n\">flags.toArray</span>\n    <span class=\"n\">stdin</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">piped</span>\n    <span class=\"n\">stdout</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">piped</span>\n  <span class=\"o\">}</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">stdin</span><span class=\"o\">,</span> <span class=\"n\">child</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">child.takeStdin</span>\n  <span class=\"n\">Dimacs.printFormula</span> <span class=\"o\">(</span><span class=\"n\">stdin.putStr</span><span class=\"o\">)</span> <span class=\"n\">fml</span>\n  <span class=\"n\">stdin.flush</span>\n  <span class=\"k\">let</span> <span class=\"n\">output</span> <span class=\"bp\">←</span> <span class=\"n\">IO.asTask</span> <span class=\"n\">child.stdout.readToEnd</span> <span class=\"n\">Task.Priority.dedicated</span>\n  <span class=\"k\">let</span> <span class=\"n\">outputStr</span> <span class=\"bp\">←</span> <span class=\"n\">IO.ofExcept</span> <span class=\"n\">output.get</span>\n  <span class=\"n\">IO.ofExcept</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">Dimacs.parseResult</span> <span class=\"n\">fml.numVars</span> <span class=\"n\">outputStr</span>\n</code></pre></div>",
+        "id": 339963783,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678135193
+    },
+    {
+        "content": "<p>I guess my main question is, how are processes cleaned up? Are they cleaned up once refcount = 0? If so, what might be holding a reference to them still?</p>",
+        "id": 339964307,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678135400
+    },
+    {
+        "content": "<p>In this case I'd just use <code>Task</code> as a work queue.</p>",
+        "id": 339964598,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1678135515
+    },
+    {
+        "content": "<p>I was trying that for a while, but I was spawning 7000 processes and wrecking the fd table <span aria-label=\"joy\" class=\"emoji emoji-1f602\" role=\"img\" title=\"joy\">:joy:</span></p>",
+        "id": 339964820,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678135587
+    },
+    {
+        "content": "<p>If you leave out the dedicated, then it will only spawn as many as you have CPU cores.</p>",
+        "id": 339964887,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1678135612
+    },
+    {
+        "content": "<p>leave out dedicated on the output capture task?</p>",
+        "id": 339964983,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678135654
+    },
+    {
+        "content": "<p>I also was interested in processing the tasks in a specific order, where 10 priorities wasn't really enough to express that. Is there a more fine grained way to specify priorities? Or should I just rely on tasks being started immediately, so that tasks started first are guaranteed to be run to completion first..?</p>",
+        "id": 339965572,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678135872
+    },
+    {
+        "content": "<p>hum, even using no dedicated tasks (and no work queue) it gets stuck. Let me try to make something more reproducible.</p>",
+        "id": 339968065,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678136787
+    },
+    {
+        "content": "<p>okay, try this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">makeProc</span> <span class=\"o\">(</span><span class=\"n\">str</span> <span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">String</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">child</span> <span class=\"bp\">←</span> <span class=\"n\">IO.Process.spawn</span> <span class=\"o\">{</span>\n    <span class=\"n\">cmd</span> <span class=\"o\">:=</span> <span class=\"s2\">\"bash\"</span>\n    <span class=\"n\">args</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"s2\">\"-c\"</span><span class=\"o\">,</span> <span class=\"s2\">\"a=</span><span class=\"se\">\\\"</span><span class=\"s2\">$(&lt;/dev/stdin)</span><span class=\"se\">\\\"</span><span class=\"s2\">;  echo </span><span class=\"se\">\\\"</span><span class=\"s2\">$a $a</span><span class=\"se\">\\\"</span><span class=\"s2\">\"</span><span class=\"o\">]</span>\n    <span class=\"n\">stdin</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">piped</span>\n    <span class=\"n\">stdout</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">piped</span>\n  <span class=\"o\">}</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">stdin</span><span class=\"o\">,</span> <span class=\"n\">child</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">child.takeStdin</span>\n  <span class=\"n\">stdin.putStr</span> <span class=\"n\">str</span>\n  <span class=\"n\">stdin.flush</span>\n  <span class=\"k\">let</span> <span class=\"n\">outputStr</span> <span class=\"bp\">←</span> <span class=\"n\">child.stdout.readToEnd</span>\n  <span class=\"n\">return</span> <span class=\"n\">outputStr</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">allTheStrings</span> <span class=\"o\">:=</span> <span class=\"n\">List.range</span> <span class=\"mi\">20</span> <span class=\"bp\">|&gt;.</span><span class=\"n\">map</span> <span class=\"n\">toString</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">UInt32</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">IO.println</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">makeProc</span> <span class=\"s2\">\"test\"</span><span class=\"o\">)</span>\n\n  <span class=\"k\">let</span> <span class=\"n\">tasks</span> <span class=\"bp\">←</span> <span class=\"n\">allTheStrings.mapM</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">IO.asTask</span> <span class=\"bp\">&lt;|</span> <span class=\"k\">do</span>\n    <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"Starting {s}\"</span>\n    <span class=\"n\">makeProc</span> <span class=\"n\">s</span>\n  <span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">res</span> <span class=\"bp\">←</span> <span class=\"n\">IO.mapTasks</span> <span class=\"o\">(</span><span class=\"bp\">·.</span><span class=\"n\">mapM</span> <span class=\"n\">IO.ofExcept</span><span class=\"o\">)</span> <span class=\"n\">tasks</span>\n  <span class=\"n\">IO.println</span> <span class=\"s2\">\"\"</span>\n  <span class=\"n\">IO.println</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">IO.ofExcept</span> <span class=\"n\">res.get</span><span class=\"o\">)</span>\n  <span class=\"n\">return</span> <span class=\"mi\">0</span>\n</code></pre></div>",
+        "id": 339970467,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678137874
+    },
+    {
+        "content": "<p>The behavior on my computer is that it successfully prints <code>test test</code>, then starts all 20 processes, then hangs (all the processes are sleeping according to my system monitor)</p>",
+        "id": 339970541,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678137911
+    },
+    {
+        "content": "<p>so now the question is whether <code>mapTasks</code> is the culprit, or something in the child process code :p</p>",
+        "id": 339970674,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678137965
+    },
+    {
+        "content": "<p>running strace on the program is maybe interesting, it gets stuck on a bunch of futex calls, but I don't really know how to parse the output</p>",
+        "id": 339972326,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678138647
+    },
+    {
+        "content": "<p>Usually just attaching <code>gdb</code> and e.g. running <code>info threads</code> should give a pretty good idea about the deadlock</p>",
+        "id": 339972445,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1678138691
+    },
+    {
+        "content": "<p>Ok, I think I need to defer to someone who understands the task runtime. I have no clue what any of these system calls are.</p>\n<p>If it helps to sometimes run correctly, changing 20 -&gt; 5 (+- 2) gives a mix of successful runs and deadlocks</p>",
+        "id": 339978268,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678141086
+    },
+    {
+        "content": "<p>It also deadlocks without calling mapTasks:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">makeProc</span> <span class=\"o\">(</span><span class=\"n\">str</span> <span class=\"o\">:</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">String</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">child</span> <span class=\"bp\">←</span> <span class=\"n\">IO.Process.spawn</span> <span class=\"o\">{</span>\n    <span class=\"n\">cmd</span> <span class=\"o\">:=</span> <span class=\"s2\">\"bash\"</span>\n    <span class=\"n\">args</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"s2\">\"-c\"</span><span class=\"o\">,</span> <span class=\"s2\">\"a=</span><span class=\"se\">\\\"</span><span class=\"s2\">$(&lt;/dev/stdin)</span><span class=\"se\">\\\"</span><span class=\"s2\">;  echo </span><span class=\"se\">\\\"</span><span class=\"s2\">$a $a</span><span class=\"se\">\\\"</span><span class=\"s2\">\"</span><span class=\"o\">]</span>\n    <span class=\"n\">stdin</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">piped</span>\n    <span class=\"n\">stdout</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">piped</span>\n  <span class=\"o\">}</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">stdin</span><span class=\"o\">,</span> <span class=\"n\">child</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">child.takeStdin</span>\n  <span class=\"n\">stdin.putStr</span> <span class=\"n\">str</span>\n  <span class=\"n\">stdin.flush</span>\n  <span class=\"k\">let</span> <span class=\"n\">outputStr</span> <span class=\"bp\">←</span> <span class=\"n\">child.stdout.getLine</span>\n  <span class=\"n\">return</span> <span class=\"n\">outputStr</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">UInt32</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">IO.println</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">makeProc</span> <span class=\"s2\">\"test\"</span><span class=\"o\">)</span>\n\n  <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"o\">(</span><span class=\"n\">List.range</span> <span class=\"mi\">7</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">mapM</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">s</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">IO.asTask</span> <span class=\"k\">do</span>\n    <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"Starting {s}\"</span>\n    <span class=\"n\">makeProc</span> <span class=\"o\">(</span><span class=\"n\">toString</span> <span class=\"n\">s</span><span class=\"o\">)</span>\n  <span class=\"o\">)</span>\n  <span class=\"n\">return</span> <span class=\"mi\">0</span>\n</code></pre></div>",
+        "id": 339979577,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678141661
+    },
+    {
+        "content": "<p>both stdin and stdout pipes are necessary to deadlock, and it looks like it's getting stuck at the <code>getLine</code> line.</p>",
+        "id": 339979879,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678141778
+    },
+    {
+        "content": "<p>Though providing 0 bytes of input works as well:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">makeProc</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">child</span> <span class=\"bp\">←</span> <span class=\"n\">IO.Process.spawn</span> <span class=\"o\">{</span>\n    <span class=\"n\">cmd</span> <span class=\"o\">:=</span> <span class=\"s2\">\"bash\"</span>\n    <span class=\"n\">args</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"s2\">\"-c\"</span><span class=\"o\">,</span> <span class=\"s2\">\"a=</span><span class=\"se\">\\\"</span><span class=\"s2\">$(&lt;/dev/stdin)</span><span class=\"se\">\\\"</span><span class=\"s2\">;  echo </span><span class=\"se\">\\\"</span><span class=\"s2\">got: $a</span><span class=\"se\">\\\"</span><span class=\"s2\">\"</span><span class=\"o\">]</span>\n    <span class=\"n\">stdin</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">piped</span>\n    <span class=\"n\">stdout</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">piped</span>\n  <span class=\"o\">}</span>\n  <span class=\"n\">IO.print</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">child.stdout.getLine</span><span class=\"o\">)</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">(</span><span class=\"n\">_</span> <span class=\"o\">:</span> <span class=\"n\">List</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">UInt32</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"n\">IO.println</span> <span class=\"s2\">\"test\"</span>\n  <span class=\"n\">makeProc</span>\n  <span class=\"n\">IO.println</span> <span class=\"s2\">\"done test\"</span>\n\n  <span class=\"n\">for</span> <span class=\"n\">_</span> <span class=\"k\">in</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"o\">:</span><span class=\"mi\">6</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">IO.asTask</span> <span class=\"n\">makeProc</span>\n\n  <span class=\"n\">return</span> <span class=\"mi\">0</span>\n</code></pre></div>",
+        "id": 339983525,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678143360
+    },
+    {
+        "content": "<p>This is an interesting bug.  You can replace the bash script with a <code>cat</code> btw.</p>",
+        "id": 340001123,
+        "sender_full_name": "Gabriel Ebner",
+        "timestamp": 1678152432
+    },
+    {
+        "content": "<p>I'll file an issue. Does someone have time to look at it this week? My use case sort of requires piped input/output and tasks, but I can probably just stop using Lean to do the multithreading.</p>",
+        "id": 340003809,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678154242
+    },
+    {
+        "content": "<p>thank you sebastian!</p>",
+        "id": 341199657,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1678580260
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"407274\">James Gallicchio</span> has marked this topic as resolved.</p>",
+        "id": 341199669,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1678580266
+    }
+]

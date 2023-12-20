@@ -1,0 +1,386 @@
+[
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.profiler</span> <span class=\"n\">true</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">i</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">3</span><span class=\"o\">)</span> <span class=\"bp\">≠</span> <span class=\"k\">fun</span> <span class=\"n\">i</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">4</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">Function.funext_iff</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>This takes a concerning amount of time for me - around 2 seconds. The Lean 3 version takes around 10ms. What's making <code>simp</code> so slow on something this simple? The profiler trace seems to print out a bunch of decidable instances.</p>\n<p>(Also, in Lean 3 it works with just <code>simp</code>, but not in Lean 4! The difference seems to be that <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Function.const_inj#doc\">docs4#Function.const_inj</a> isn't firing for some reason...?)</p>",
+        "id": 396322203,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1697127206
+    },
+    {
+        "content": "<p><code> (config := {decide := false})</code> makes it twice as fast</p>",
+        "id": 396360443,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1697142847
+    },
+    {
+        "content": "<p>Though the web editor runs 3x faster than your quoted time either way</p>",
+        "id": 396360474,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1697142871
+    },
+    {
+        "content": "<p>I have tried a few times to change the default to <code>{decide := false}</code>, and in principle there is agreement to merge such a change. If anyone would like to attempt this again, feel free to ping me on a PR. :-)</p>",
+        "id": 396366051,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1697145571
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/287929-mathlib4/topic/Regression.20in.20simp/near/396360474\">said</a>:</p>\n<blockquote>\n<p>Though the web editor runs 3x faster than your quoted time either way</p>\n</blockquote>\n<p>I think that's my laptop being slow! But I did the mathlib3 and mathlib4 timing on the same machine, so hopefully the ratio is consistent</p>",
+        "id": 396380384,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1697152723
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/287929-mathlib4/topic/Regression.20in.20simp/near/396360443\">said</a>:</p>\n<blockquote>\n<p><code> (config := {decide := false})</code> makes it twice as fast</p>\n</blockquote>\n<p>That's still much slower than the Lean 3 version though, so I'm not sure this is much of a fix...</p>",
+        "id": 396380421,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1697152755
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/287929-mathlib4/topic/Regression.20in.20simp/near/396360443\">said</a>:</p>\n<blockquote>\n<p><code> (config := {decide := false})</code> makes it twice as fast</p>\n</blockquote>\n<p>Even disabling <code>decide</code>, you can see in the trace that Lean spends a bunch of time trying to synthesize various Singleton instances. This is because <code>eq_iff_true_of_subsingleton</code> was inadvertently added to the simp set in Mathlib.Logic.Unique, see <a href=\"https://github.com/leanprover-community/mathlib4/pull/7678\">#7678</a>.</p>",
+        "id": 396675223,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697314516
+    },
+    {
+        "content": "<p>Unrelated to this, I wonder why synthesizing <code>CharZero ℕ</code> takes more than 100ms. Enabling <code>set_option trace.Meta.synthInstance true</code> results in a hilarious trace, though.</p>",
+        "id": 396676049,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697315637
+    },
+    {
+        "content": "<p>The CharZero problem is that there are two \"lower priority instances\", <code>instance (priority := 100) charZero_of_expChar_one' [hq : ExpChar R 1] : CharZero R</code> (in Mathlib.Algebra.CharP.ExpChar) and <code>instance (priority := 100) StrictOrderedSemiring.to_charZero [StrictOrderedSemiring α] : CharZero α</code> (in Mathlib.Algebra.Order.Ring.CharZero). The former gets tried first and is comparatively very slow (and fails), while the latter succeeds (actually NumberField.to_charZero is also tried, but it is fast to fail).</p>",
+        "id": 397513802,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697724439
+    },
+    {
+        "content": "<p>Would bumping the priority of <code>StrictOrderedSemiring.to_charZero</code> to 200 be OK? <a href=\"https://github.com/leanprover-community/mathlib4/pull/7777\">#7777</a></p>",
+        "id": 397514958,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697724733
+    },
+    {
+        "content": "<p>That's weird, I can't see any instances of <code>ExpChar</code> in mathlib, so while silly I don't understand how that can be slow</p>",
+        "id": 397541770,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1697733693
+    },
+    {
+        "content": "<p>You're right, but this instance is in a section containing <code>variable [Nontrivial R]</code> and <code>variable [Semiring R]</code>, and Lean does something very weird while trying to synthesize Nontrivial Nat</p>",
+        "id": 397543312,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697734357
+    },
+    {
+        "content": "<p>This is the synthInstance trace for finding the <code>CharZero Nat</code> instance currently: <a href=\"https://gist.github.com/collares/8590a08c79eed16879a823233b03ba70\">https://gist.github.com/collares/8590a08c79eed16879a823233b03ba70</a></p>",
+        "id": 397544005,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697734664
+    },
+    {
+        "content": "<p>I wonder if it tries every possible way to get a Nontrivial instance (<code>[Infinite.instNontrivial, @GroupWithZero.toNontrivial, @CommGroupWithZero.toNontrivial, @LinearOrderedAddCommGroupWithTop.toNontrivial, @IsDomain.toNontrivial, @StrictOrderedSemiring.toNontrivial, @StrictOrderedRing.toNontrivial, @LinearOrderedCommGroupWithZero.toNontrivial, @instNontrivial, @DivisionSemiring.toNontrivial, @DivisionRing.toNontrivial, @Semifield.toNontrivial, @Field.toNontrivial, @IsSimpleOrder.toNontrivial, Nat.nontrivial]</code>), and for each one figures out that ExpChar instances don't exist. It tries <code>Nat.nontrivial</code> first, which is fast, but then it keeps going once it doesn't find the ExpChar instance.</p>",
+        "id": 397544115,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697734714
+    },
+    {
+        "content": "<p>I see! perhaps we need a new rule of thumb \"put the more likely to fail instance parameters first when defining instances\"</p>",
+        "id": 397545995,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1697735508
+    },
+    {
+        "content": "<p>Or a smarter search algorithm of course</p>",
+        "id": 397546428,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1697735663
+    },
+    {
+        "content": "<p>Do you think</p>\n<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"gd\">-instance (priority := 100) charZero_of_expChar_one' [hq : ExpChar R 1] : CharZero R := by</span>\n<span class=\"gi\">+instance (priority := 100) charZero_of_expChar_one' [hq : ExpChar R 1] [Nontrivial R] : CharZero R := by</span>\n</code></pre></div>\n<p>is a better fix than increasing <code>StrictOrderedSemiring.to_charZero</code>'s priority?</p>",
+        "id": 397546651,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697735758
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"127136\">Alex J. Best</span> <a href=\"#narrow/stream/287929-mathlib4/topic/Regression.20in.20simp/near/397545995\">said</a>:</p>\n<blockquote>\n<p>I see! perhaps we need a new rule of thumb \"put the more likely to fail instance parameters first when defining instances\"</p>\n</blockquote>\n<p>The way the <code>variable</code> command works really encourages the other way around.</p>",
+        "id": 397546980,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697735876
+    },
+    {
+        "content": "<p>I'd be happy to just remove that instance (ie. make it a theorem with a note) as the bandaid, if there are no instances of <code>ExpChar</code> around then clearly it will not be useful with the current state of the library, so mayaswell be removed</p>",
+        "id": 397547234,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1697735980
+    },
+    {
+        "content": "<p>I think</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">Foo</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span>\n<span class=\"kd\">class</span> <span class=\"n\">Bar</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span>\n<span class=\"kd\">class</span> <span class=\"n\">Baz</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n\n<span class=\"kd\">instance</span> <span class=\"n\">a1</span> <span class=\"o\">:</span> <span class=\"n\">Foo</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n<span class=\"kd\">instance</span> <span class=\"n\">a2</span> <span class=\"o\">:</span> <span class=\"n\">Foo</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">(</span><span class=\"n\">R</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">)</span> <span class=\"o\">[</span><span class=\"n\">Foo</span> <span class=\"n\">R</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">Bar</span> <span class=\"n\">R</span><span class=\"o\">]</span> <span class=\"o\">:</span> <span class=\"n\">Baz</span> <span class=\"n\">R</span> <span class=\"o\">:=</span> <span class=\"gr\">sorry</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.Meta.synthInstance</span> <span class=\"n\">true</span>\n<span class=\"bp\">#</span><span class=\"n\">synth</span> <span class=\"n\">Baz</span> <span class=\"n\">a</span>\n</code></pre></div>\n<p>would be an ok RFC for the lean 4 repo (assuming it's not there already)</p>",
+        "id": 397547491,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1697736108
+    },
+    {
+        "content": "<p>Must an RFC contain a proposed solution? I don't think I'm qualified to write one (better than \"better heuristics plzzz\") if so, and I'd be happy if you or someone else filed the issue. I can certainly file a bug report, though.</p>",
+        "id": 397682704,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697798889
+    },
+    {
+        "content": "<p>I guess just aborting the whole search if some class ia found to have no instances would be the bare minimum, but this wouldn't cover the case where there are several Foo instances none of which apply.</p>",
+        "id": 397683206,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697799089
+    },
+    {
+        "content": "<p>I don't think you need to propose a solution, just be clear about what the issue is and why a better heuristic should be possible. Maybe making a second synthetic example with <code>a1 - a1000</code> to show that is can be slow or something</p>",
+        "id": 397683979,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1697799364
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/Regression.20in.20simp/near/396366051\">said</a>:</p>\n<blockquote>\n<p>I have tried a few times to change the default to <code>{decide := false}</code>, and in principle there is agreement to merge such a change. If anyone would like to attempt this again, feel free to ping me on a PR. :-)</p>\n</blockquote>\n<p><a href=\"https://github.com/leanprover/lean4/pull/2722\">lean4#2722</a> is green, but I think the Std4 fallout should be fixed by adding more simp lemmas instead of adding <code>decide := true</code> to all relevant simp calls there.</p>",
+        "id": 397834185,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697881723
+    },
+    {
+        "content": "<p>I pushed a bunch of fixes to <a href=\"https://github.com/leanprover-community/mathlib4/tree/lean-pr-testing-2722\">branch#lean-pr-testing-2722</a>, but there's still a lot of work to do.</p>",
+        "id": 397869512,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697912992
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"325367\">@Mauricio Collares</span>, thanks for tackling this! </p>\n<p>Could you open a draft PR based on <a href=\"https://github.com/leanprover-community/mathlib4/tree/lean-pr-testing-2722\">branch#lean-pr-testing-2722</a> to make it easier to review changes, and see CI output?</p>",
+        "id": 397884854,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1697931681
+    },
+    {
+        "content": "<p>(and so once it compiles we can benchmark!)</p>",
+        "id": 397884859,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1697931697
+    },
+    {
+        "content": "<p>Done: <a href=\"https://github.com/leanprover-community/mathlib4/pull/7834\">#7834</a></p>",
+        "id": 397937052,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697973679
+    },
+    {
+        "content": "<p>All done, except that <code>test/ComputeDegree.lean</code> fails because <code>ComputeDegree</code> is less powerful now because its simp calls (either direct or indirect via <code>norm_num</code>) don't do decidability and can't simplify stuff like <code>6 ≤ WithBot.unbot' 0 48</code>. I don't know what an appropriate solution for this is, so I will leave it to somebody else.</p>",
+        "id": 397963032,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697998472
+    },
+    {
+        "content": "<p>Can't you just make compute_degree use <code>simp (decide := true)</code> in the interim?</p>",
+        "id": 397963310,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1697998812
+    },
+    {
+        "content": "<p>I can alter it to make the direct calls use it, but norm_num does not have configuration options (<code>test/norm_num_ext.lean</code> also fails for the same reason). I'm sure there's a way to change <code>norm_num</code> as well (although I personally would not be able to find it easily), but I don't know if the change is wanted and because of that I'd rather not do the change myself.</p>",
+        "id": 397963477,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1697999024
+    },
+    {
+        "content": "<p>Speaking for <code>compute_degree</code>, I think that it is the version with <code>!</code> that is affected by this.  The <code>!</code>-version essentially tries <code>norm_num &lt;;&gt; assumption</code> on all the goals that <code>compute_degree</code> would leave.  I would expect <code>compute_degree!</code> to work on the test cases, but really because I would expect <code>norm_num</code> to be the actually finishing tactic...</p>",
+        "id": 397964896,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1698000734
+    },
+    {
+        "content": "<p>I guess the problem here is that <code>rfl</code> or <code>decide</code> solve the goal below, but <code>simp</code> by itself does not:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">WithBot.unbot'</span> <span class=\"mi\">0</span> <span class=\"o\">(</span><span class=\"mi\">40</span> <span class=\"o\">:</span> <span class=\"n\">WithBot</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"mi\">40</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">simp</span> <span class=\"c1\">-- fails when decide := false</span>\n</code></pre></div>",
+        "id": 397967895,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1698003964
+    },
+    {
+        "content": "<p>I would say that whether or not this is within <code>simp</code>'s remit, I would definitely expect <code>norm_num</code> to solve this!</p>",
+        "id": 397968079,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1698004153
+    },
+    {
+        "content": "<p>Though maybe the solution is to add a simp-lemma?</p>",
+        "id": 397968102,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1698004193
+    },
+    {
+        "content": "<p>Agreed! It doesn't at the moment (it does on master, but that's because it calls simp and simp calls decide).</p>",
+        "id": 397968114,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1698004203
+    },
+    {
+        "content": "<p>Honestly, I find <code>simp; rfl</code> a bit of an anti-pattern and would like to have a way flag simp to try rfl...</p>",
+        "id": 397968186,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1698004268
+    },
+    {
+        "content": "<p><code>norm_cast</code> solves the goal, though</p>",
+        "id": 397968190,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1698004287
+    },
+    {
+        "content": "<p>Good!  <code>norm_cast</code> also should prove it!</p>",
+        "id": 397968283,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1698004350
+    },
+    {
+        "content": "<p>Anyway, from the point of view of <code>compute_degree</code>, I would expect the current tests to work.  I do not mind if this entails reworking the discharger for <code>compute_degree</code>, though.</p>",
+        "id": 397968422,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1698004501
+    },
+    {
+        "content": "<p>Likely, this means simply adapting this line</p>\n<p><a href=\"https://github.com/leanprover-community/mathlib4/blob/master/Mathlib/Tactic/ComputeDegree.lean#L456\">https://github.com/leanprover-community/mathlib4/blob/master/Mathlib/Tactic/ComputeDegree.lean#L456</a></p>\n<p>to solve the goals in the test file.</p>",
+        "id": 397968558,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1698004658
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> Do you think it would be OK to comment out <a href=\"https://github.com/leanprover-community/mathlib4/blob/49b7459e781c2cea928235d669585fb02ff89efe/test/norm_num_ext.lean#L338-L349\">https://github.com/leanprover-community/mathlib4/blob/49b7459e781c2cea928235d669585fb02ff89efe/test/norm_num_ext.lean#L338-L349</a> in <a href=\"https://github.com/leanprover-community/mathlib4/pull/7834\">#7834</a>? I think the List/Multiset tests aren't testing norm_num extensions, but are calling decide via simp (replacing <code>by norm_num only</code> with <code>by decide</code> makes them pass).</p>",
+        "id": 398007835,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1698034806
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> The PR builds now. I had to comment a few <code>norm_num_ext</code> tests when I think weren't testing norm_num extensions (see above), let's see if Kyle thinks that's OK.</p>",
+        "id": 398018816,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1698042488
+    },
+    {
+        "content": "<p>(The ComputeDegree test now passes, I combined Alex's and Damiano's suggestions to fix it. Thanks!)</p>",
+        "id": 398021607,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1698043811
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"325367\">@Mauricio Collares</span>, you will need to rebase <a href=\"https://github.com/leanprover/lean4/pull/2722\">lean4#2722</a> onto <code>master</code> many spurious diffs are showing up on the PR. I can start reviewing it after you've done that.</p>",
+        "id": 398028298,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1698046552
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"325367\">@Mauricio Collares</span> I just ported those tests from mathlib3. Commenting them out makes sense -- if you do, then please add a comment that it's because <code>by decide</code> suffices. A reason not to delete them is that there might be a <code>norm_num</code> extension for these at some later point.</p>",
+        "id": 398412736,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1698211520
+    },
+    {
+        "content": "<p>Status update: <a href=\"https://github.com/leanprover-community/mathlib4/pull/7777\">#7777</a> was just merged (thanks Rob Lewis and Alex Best!), and <a href=\"https://github.com/leanprover-community/mathlib4/pull/7678\">#7678</a> and <a href=\"https://github.com/leanprover/lean4/pull/2722\">lean4#2722</a> are pending.</p>",
+        "id": 399777157,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1698863425
+    },
+    {
+        "content": "<p>I've just merged <a href=\"https://github.com/leanprover/lean4/pull/2722\">lean4#2722</a> earlier today. Thank you for this, we're excited to see this finally happen!</p>",
+        "id": 399829465,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1698886807
+    },
+    {
+        "content": "<p>Thank you so much!</p>",
+        "id": 399873612,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1698911240
+    },
+    {
+        "content": "<p>I'll bump <a href=\"https://github.com/leanprover-community/mathlib4/pull/7834\">#7834</a> as soon as the new lean nightly appears (seems like there was <a href=\"https://github.com/leanprover/lean4/actions/runs/6729418292/job/18291893678\">a problem there due to a recent force push</a>), and then after <a href=\"https://github.com/leanprover/std4/pull/312\">std4#312</a> is merged into the <code>bump/v4.4.0</code> branch.</p>",
+        "id": 399885609,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1698915824
+    },
+    {
+        "content": "<p>Sorry, the latest nightly release has been delayed due to me .... breaking various aspects of Lean CI tonight. :-) Working on it!</p>",
+        "id": 399908829,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1698923041
+    },
+    {
+        "content": "<p>(In fact, it may just be delayed until tomorrow's run.)</p>",
+        "id": 399909327,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1698923167
+    },
+    {
+        "content": "<p>Thank you very much for this work as well! Juggling all the different PR branches sounds exhausting</p>",
+        "id": 399918983,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1698926166
+    },
+    {
+        "content": "<p>Rebased <a href=\"https://github.com/leanprover-community/mathlib4/pull/7834\">#7834</a></p>",
+        "id": 400107461,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1699008111
+    },
+    {
+        "content": "<p>I'll merge <a href=\"https://github.com/leanprover-community/mathlib4/pull/7834\">#7834</a> (just into <code>bump/v4.4.0</code> for now, it needs to wait a while for <code>master</code>) once <a href=\"https://github.com/leanprover/std4/pull/312\">std#312</a> has been merged.</p>",
+        "id": 400114043,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1699010623
+    },
+    {
+        "content": "<p>Great, thanks! What should I do wrt reviews after <a href=\"https://github.com/leanprover-community/mathlib4/pull/7834\">#7834</a> is merged? I would open a separate PR targeting master, but I think CI might not be too happy with that.</p>",
+        "id": 400131603,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1699017257
+    },
+    {
+        "content": "<p>Sorry, reviews of what?</p>",
+        "id": 400250317,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1699072301
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/7834\">#7834</a> has been approved and merged now, so I don't think there's any further scope for reviews?</p>",
+        "id": 400250414,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1699072336
+    },
+    {
+        "content": "<p>Ah, even better then! I thought it would need to go through a separate review process to be approved for mathlib master.</p>",
+        "id": 400264539,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1699082062
+    },
+    {
+        "content": "<p>(Looks like it hasn't actually been merged btw)</p>",
+        "id": 400271679,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1699088278
+    },
+    {
+        "content": "<p>Ah, thanks. Solution: merge <code>master</code> into <code>bump/v4.4.0</code> (always allowed!) and merge <code>bump/v4.4.0</code> into <a href=\"https://github.com/leanprover-community/mathlib4/pull/7834\">#7834</a>. Phew.</p>",
+        "id": 400290633,
+        "sender_full_name": "Scott Morrison",
+        "timestamp": 1699097068
+    },
+    {
+        "content": "<p>Merging master caused a new build failure, fixed now.</p>",
+        "id": 400296874,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1699103030
+    },
+    {
+        "content": "<p>One pending thing here is to decide is <code>norm_num</code> should call simp with <code>decide := true</code> by default, and perhaps add an option to configure this behaviour (regardless of the default).</p>",
+        "id": 400298996,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1699104813
+    },
+    {
+        "content": "<p>On mathlib master:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[</span><span class=\"n\">Elab.command</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"bp\">.</span><span class=\"mi\">046074</span><span class=\"n\">s</span><span class=\"o\">]</span> <span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">i</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">3</span><span class=\"o\">)</span> <span class=\"bp\">≠</span> <span class=\"k\">fun</span> <span class=\"n\">i</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">=&gt;</span> <span class=\"mi\">4</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">Function.funext_iff</span><span class=\"o\">]</span>\n  <span class=\"o\">[</span><span class=\"n\">Elab.step</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"bp\">.</span><span class=\"mi\">042768</span><span class=\"n\">s</span><span class=\"o\">]</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">Function.funext_iff</span><span class=\"o\">]</span>\n    <span class=\"o\">[</span><span class=\"n\">Elab.step</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"bp\">.</span><span class=\"mi\">042752</span><span class=\"n\">s</span><span class=\"o\">]</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">Function.funext_iff</span><span class=\"o\">]</span>\n      <span class=\"o\">[</span><span class=\"n\">Elab.step</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"bp\">.</span><span class=\"mi\">042731</span><span class=\"n\">s</span><span class=\"o\">]</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">Function.funext_iff</span><span class=\"o\">]</span>\n        <span class=\"o\">[</span><span class=\"n\">Meta.synthInstance</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"bp\">.</span><span class=\"mi\">011645</span><span class=\"n\">s</span><span class=\"o\">]</span> <span class=\"bp\">✅</span> <span class=\"n\">CharZero</span> <span class=\"n\">ℕ</span>\n</code></pre></div>",
+        "id": 402660183,
+        "sender_full_name": "Mauricio Collares",
+        "timestamp": 1700215377
+    }
+]
