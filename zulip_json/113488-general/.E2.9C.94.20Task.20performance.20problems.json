@@ -1,0 +1,104 @@
+[
+    {
+        "content": "<p>Ok, so I learned in my <a href=\"#narrow/stream/113488-general/topic/.E2.9C.94.20Leaking.20child.20processes\">last question</a> that I need to wait on my child processes.</p>\n<p>However, when I introduced what seems like a simple fix to my program, I start getting severe performance problems.</p>\n<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"gd\">-def runCmdSimple (cmd : String) (args : Array String := #[]) : IO SimpleChild :=</span>\n<span class=\"gd\">-  IO.Process.spawn</span>\n<span class=\"gi\">+def runCmdSimple (cmd : String) (args : Array String := #[]) : IO Unit := do</span>\n<span class=\"gi\">+  let child ← IO.Process.spawn</span>\n<span class=\"w\"> </span>    { cmd := cmd,\n<span class=\"w\"> </span>      args := args,\n\n<span class=\"gu\">@@ -63,8 +63,9 @@</span>\n<span class=\"w\"> </span>      stdout := .null,\n<span class=\"w\"> </span>      stderr := .null,\n<span class=\"w\"> </span>    }\n<span class=\"gi\">+  _ ← IO.asTask do child.wait</span>\n\n<span class=\"gd\">-def notify (message : String) : IO SimpleChild :=</span>\n<span class=\"gi\">+def notify (message : String) : IO Unit := do</span>\n<span class=\"w\"> </span>  -- TODO wrap libnotify with FFI so we can do this properly\n<span class=\"w\"> </span>  runCmdSimple \"notify-send\" #[message]\n</code></pre></div>\n<p>Here's the PR: <a href=\"https://github.com/sullyj3/sand/pull/28\">https://github.com/sullyj3/sand/pull/28</a></p>\n<p>This program runs as a systemd daemon with a command line client. Each time the client is invoked, it sends a command to the daemon, waits for a reply, and exits. One such command is <code>sand 0</code> which creates a zero duration countdown timer.</p>\n<p>Before this change, I can run the <code>sand 0</code> command in a shell loop, and it doesn't execute especially fast, but at least continuously. After the change, running <code>sand 0</code> in a shell loop results in multi-second lag spikes every  several (three to eight) invocations. </p>\n<p><code>runCmdSimple</code> is only called 3 times per cli client invocation, so I'm surprised this change could cause such a severe regression in performance! Any ideas what could be going on?</p>",
+        "id": 455608170,
+        "sender_full_name": "James Sully",
+        "timestamp": 1722507013
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"621161\">@James Sully</span> , as far as I know the Task runtime is asynchronous but blocking. So any operation that requires the current thread executing the Task to wait, will cause that thread to block. Could that explain your slowdown?</p>",
+        "id": 455624217,
+        "sender_full_name": "Yuri",
+        "timestamp": 1722512186
+    },
+    {
+        "content": "<p>Ahhh. Yeah, one of the processes I'm launching is playing an audio file.</p>",
+        "id": 455624658,
+        "sender_full_name": "James Sully",
+        "timestamp": 1722512372
+    },
+    {
+        "content": "<p>The task threadpool is limited to the number of CPUs by default if you do not start the tasks with <code>Priority.dedicated</code></p>",
+        "id": 455625064,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1722512543
+    },
+    {
+        "content": "<p>That explains it. Thanks very much</p>",
+        "id": 455625152,
+        "sender_full_name": "James Sully",
+        "timestamp": 1722512585
+    },
+    {
+        "content": "<p>So this task is only there to wait for a background process I'm executing for side effects, whose result I don't need. The only purpose of the task is to avoid leaking processes.</p>\n<p>Given all that, would it make more sense for me to just spawn these ones with a lower priority, to ensure that the other tasks doing socket communication are always prioritised? then the program can get around to cleaning up child processes when it has a spare moment</p>",
+        "id": 455625962,
+        "sender_full_name": "James Sully",
+        "timestamp": 1722512884
+    },
+    {
+        "content": "<p>ah nevermind, I see from the docs the default priority is the lowest anyway</p>",
+        "id": 455626151,
+        "sender_full_name": "James Sully",
+        "timestamp": 1722512965
+    },
+    {
+        "content": "<p>You can still get into trouble this way.</p>\n<p>Supposed you have a thread pool of 8 task-executing-threads. Currently all of them are busy with high priority work. Then nothing high priority happens and they all decide to work on some low priority thing which will block. You are still hanging up the runtime in this way. The runtime will not dynamically switch to more higher priority work, it has to wait until a task is fully done executing before performing a context switch (yes this is really bad for lots of practical things that you want to do and it will be addressed eventually)</p>",
+        "id": 455626362,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1722513039
+    },
+    {
+        "content": "<p>Good point</p>",
+        "id": 455626501,
+        "sender_full_name": "James Sully",
+        "timestamp": 1722513101
+    },
+    {
+        "content": "<p>The soltuion that \"works\" would be to use dedicated tasks because they get their own threads. However that involves allocating a new stack etc. so spawning a dedicated task is a non trivial operation. You'll only want to do that if you can be sure that you do not call the function that does the spawning as often.</p>",
+        "id": 455626691,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1722513158
+    },
+    {
+        "content": "<p>I'm spawning small k tasks (I think 3) per cli invocation</p>",
+        "id": 455627239,
+        "sender_full_name": "James Sully",
+        "timestamp": 1722513359
+    },
+    {
+        "content": "<p>is that infrequent enough?</p>",
+        "id": 455627327,
+        "sender_full_name": "James Sully",
+        "timestamp": 1722513373
+    },
+    {
+        "content": "<p>anyway I'll try it</p>",
+        "id": 455627472,
+        "sender_full_name": "James Sully",
+        "timestamp": 1722513439
+    },
+    {
+        "content": "<p>What is and is not too slow/costly for you mostly depends on your use cases so you'll have to figure that out yourself^^</p>",
+        "id": 455627520,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1722513466
+    },
+    {
+        "content": "<p>Backup plan is to just leak processes like a sieve and shut the daemon down once there are no running timers, relying on systemd to start me back up when needed.</p>",
+        "id": 455627666,
+        "sender_full_name": "James Sully",
+        "timestamp": 1722513506
+    },
+    {
+        "content": "<p>Yeah, setting <code>(prio := .dedicated)</code> everywhere completely solved the problem, thanks.</p>",
+        "id": 455629400,
+        "sender_full_name": "James Sully",
+        "timestamp": 1722513938
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"621161\">James Sully</span> has marked this topic as resolved.</p>",
+        "id": 455629406,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1722513940
+    }
+]

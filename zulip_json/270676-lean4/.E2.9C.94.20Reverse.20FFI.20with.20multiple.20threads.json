@@ -1,0 +1,80 @@
+[
+    {
+        "content": "<p>What is required for invoking Lean from multiple threads?</p>\n<p>I have a setup like this:</p>\n<div class=\"codehilite\" data-code-language=\"Rust\"><pre><span></span><code><span class=\"n\">lean_initialize_runtime_module</span><span class=\"p\">();</span>\n<span class=\"n\">lean_initialize</span><span class=\"p\">();</span>\n<span class=\"kd\">let</span><span class=\"w\"> </span><span class=\"n\">res</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">initialize_Callee</span><span class=\"p\">();</span><span class=\"w\"> </span><span class=\"c1\">// initializes the called FFI library</span>\n<span class=\"fm\">assert!</span><span class=\"p\">(</span><span class=\"n\">lean_io_result_is_ok</span><span class=\"p\">(</span><span class=\"n\">res</span><span class=\"p\">));</span>\n<span class=\"o\">..</span><span class=\"p\">.</span>\n\n<span class=\"n\">std</span>::<span class=\"n\">thread</span>::<span class=\"n\">spawn</span><span class=\"p\">(</span><span class=\"k\">move</span><span class=\"w\"> </span><span class=\"o\">||</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">  </span><span class=\"n\">lean_initialize_thread</span><span class=\"p\">();</span>\n<span class=\"w\">  </span><span class=\"o\">..</span><span class=\"p\">.</span>\n<span class=\"w\">  </span><span class=\"n\">lean_finalize_thread</span><span class=\"p\">();</span>\n<span class=\"p\">})</span>\n</code></pre></div>\n<p>However when I have this setup, the program segfaults. Is there anything needed besides calling <code>lean_initialize_thread()</code> from each spawned thread? Is it ok to share pointers (<code>*lean_object</code>s) between threads?</p>\n<p>I'm following the <a href=\"https://lean-lang.org/lean4/doc/dev/ffi.html#initialization\">Lean FFI Manual</a></p>",
+        "id": 426850619,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1710554687
+    },
+    {
+        "content": "<p>This happens even when no objects are shared across threads (via <code>lean_mark_mt</code>)</p>",
+        "id": 426850995,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1710555049
+    },
+    {
+        "content": "<p>The segfault occured upon calling <code>lean_initialize_thread</code></p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"mi\">0</span>  <span class=\"mi\">0x00007ffff3aa6254</span> <span class=\"k\">in</span> <span class=\"n\">pthread_mutex_lock</span><span class=\"bp\">@@</span><span class=\"n\">GLIBC_2.2.5</span> <span class=\"o\">()</span>\n   <span class=\"k\">from</span> <span class=\"bp\">/</span><span class=\"n\">nix</span><span class=\"bp\">/</span><span class=\"n\">store</span><span class=\"bp\">/</span><span class=\"n\">gqghjch4p1s69sv4mcjksb2kb65rwqjy</span><span class=\"bp\">-</span><span class=\"n\">glibc</span><span class=\"bp\">-</span><span class=\"mi\">2</span><span class=\"bp\">.</span><span class=\"mi\">38</span><span class=\"bp\">-</span><span class=\"mi\">23</span><span class=\"bp\">/</span><span class=\"n\">lib</span><span class=\"bp\">/</span><span class=\"n\">libc.so.6</span>\n<span class=\"bp\">#</span><span class=\"mi\">1</span>  <span class=\"mi\">0x00007ffff3fa121f</span> <span class=\"k\">in</span> <span class=\"n\">lean</span><span class=\"o\">::</span><span class=\"n\">allocator</span><span class=\"o\">::</span><span class=\"n\">init_heap</span><span class=\"o\">(</span><span class=\"n\">bool</span><span class=\"o\">)</span> <span class=\"o\">()</span>\n   <span class=\"k\">from</span> <span class=\"bp\">/</span><span class=\"n\">nix</span><span class=\"bp\">/</span><span class=\"n\">store</span><span class=\"bp\">/</span><span class=\"mi\">3</span><span class=\"n\">skdg8g3k215zpyjghffm6ckq3bzk06x</span><span class=\"bp\">-</span><span class=\"n\">lean</span><span class=\"bp\">-</span><span class=\"n\">stage1</span><span class=\"bp\">/</span><span class=\"n\">lib</span><span class=\"bp\">/</span><span class=\"n\">lean</span><span class=\"bp\">/</span><span class=\"n\">libInit_shared.so</span>\n</code></pre></div>",
+        "id": 426851494,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1710555541
+    },
+    {
+        "content": "<p>My best guess is that <code>g_heap_manager</code> is not initialized at the point you called <code>lean_initialize_thread()</code>, but <code>lean_initialize_runtime_module()</code> should do this. Is it possible to run it in a debugger and see whether any suspicious null pointers are hanging around?</p>",
+        "id": 426852532,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710556497
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Reverse.20FFI.20with.20multiple.20threads/near/426852532\">said</a>:</p>\n<blockquote>\n<p>My best guess is that <code>g_heap_manager</code> is not initialized at the point you called <code>lean_initialize_thread()</code>, but <code>lean_initialize_runtime_module()</code> should do this. Is it possible to run it in a debugger and see whether any suspicious null pointers are hanging around?</p>\n</blockquote>\n<p>I generated the backtrace in gdb, but it is in a compiled binary. Where should I look for such null pointers?</p>\n<p>Also should I call <code>lean_initialize_runtime_module</code> in each thread?</p>",
+        "id": 426852592,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1710556563
+    },
+    {
+        "content": "<p>no, it's global initialization</p>",
+        "id": 426852634,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710556579
+    },
+    {
+        "content": "<p>Do you have a <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a> I can test with?</p>",
+        "id": 426852708,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710556666
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Reverse.20FFI.20with.20multiple.20threads/near/426852708\">said</a>:</p>\n<blockquote>\n<p>Do you have a <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a> I can test with?</p>\n</blockquote>\n<p>is it ok if its in rust?</p>",
+        "id": 426852724,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1710556680
+    },
+    {
+        "content": "<p>I would assume it is</p>",
+        "id": 426852767,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710556688
+    },
+    {
+        "content": "<p>if not I can dust off my own rffi <code>lean-rs</code> library but it hasn't been touched in several versions so I have some fixing to do first</p>",
+        "id": 426852800,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710556727
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Reverse.20FFI.20with.20multiple.20threads/near/426852800\">said</a>:</p>\n<blockquote>\n<p>if not I can dust off my own rffi <code>lean-rs</code> library but it hasn't been touched in several versions so I have some fixing to do first</p>\n</blockquote>\n<p>I'm trying to produce this MWE but the scaled down example doesn't segfault. The code which segfaults calls a bunch of CoreM monads</p>",
+        "id": 426852816,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1710556742
+    },
+    {
+        "content": "<p>I found the problem. It was on the call side. <code>lean_initialize_thread</code> should not be called in the main thread</p>",
+        "id": 426854494,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1710558394
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"599027\">Leni Aniva</span> has marked this topic as resolved.</p>",
+        "id": 426855746,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1710559638
+    }
+]

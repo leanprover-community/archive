@@ -1,0 +1,110 @@
+[
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">open</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Expr</span>\n\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">myCoreM</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">CoreM</span><span class=\"w\"> </span><span class=\"n\">Unit</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">env</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">getEnv</span>\n<span class=\"w\">  </span><span class=\"n\">for</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">n</span><span class=\"o\">,</span><span class=\"n\">c</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"k\">in</span><span class=\"w\"> </span><span class=\"n\">env</span><span class=\"bp\">.</span><span class=\"n\">constants</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">    </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">none</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">env</span><span class=\"bp\">.</span><span class=\"n\">getModuleIdxFor?</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"k\">then</span><span class=\"w\"> </span><span class=\"n\">println!</span><span class=\"w\"> </span><span class=\"n\">n</span>\n</code></pre></div>\n<p>The above code will work out of the box without any additional declaration. How does Lean get exactly the right <code>CoreM</code> (and not, e.g., the default <code>CoreM</code> with an empty environment) such that <code>env ← getEnv</code> gets the current environment? Any reading in the Lean4 source that could help me figure this out?</p>",
+        "id": 480722954,
+        "sender_full_name": "nrs",
+        "timestamp": 1730813921
+    },
+    {
+        "content": "<p>There is only one <code>CoreM</code>, the monad constructs a function that accepts an environment. So <code>myCoreM</code> is actually a function, and when you call it you have to provide the environment to run on</p>",
+        "id": 480730851,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1730816142
+    },
+    {
+        "content": "<p>when you use <code>#eval</code> or <code>run_meta</code> to evaluate things in <code>CoreM</code>, it implicitly passes the current environment. But you can call <code>myCoreM</code> under an empty environment if you want</p>",
+        "id": 480731046,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1730816197
+    },
+    {
+        "content": "<p>ah I see, that makes a lot of sense, ty! I will look into <code>#eval</code></p>",
+        "id": 480731233,
+        "sender_full_name": "nrs",
+        "timestamp": 1730816252
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/270676-lean4/topic/How.20does.20Lean.20get.20the.20right.20CoreM.20in.20the.20following.20example.3F/near/480731046\">said</a>:</p>\n<blockquote>\n<p>when you use <code>#eval</code> or <code>run_meta</code> to evaluate things in <code>CoreM</code>, it implicitly passes the current environment. But you can call <code>myCoreM</code> under an empty environment if you want</p>\n</blockquote>\n<p>hm, would you know if <code>elabEvalCoreUnsafe</code> presupposes <code>CommandElabM Unit</code> is already given a context?</p>",
+        "id": 480808096,
+        "sender_full_name": "nrs",
+        "timestamp": 1730844656
+    },
+    {
+        "content": "<p>yes, it's all a bit metacircular, <code>#eval</code> itself is a command running in <code>CommandElabM</code> which is given an environment to run on and modify</p>",
+        "id": 480808281,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1730844766
+    },
+    {
+        "content": "<p>hm ok I see, does context-giving have any clear entry-point I could take a look at?</p>",
+        "id": 480808490,
+        "sender_full_name": "nrs",
+        "timestamp": 1730844861
+    },
+    {
+        "content": "<p>and it evaluates the provided code by elaborating it to a value of type <code>CommandElabM Unit</code> (give or take) and then running it using regular monad bind, which runs the user code in the context of the environment available to the <code>#eval</code>  command</p>",
+        "id": 480808503,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1730844874
+    },
+    {
+        "content": "<p>what kind of thing are you looking for specifically?</p>",
+        "id": 480808566,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1730844904
+    },
+    {
+        "content": "<p>the main body of a lean file is exactly commands like this, since the environment is not just context but mutable state of the <code>CommandElabM</code> monad</p>",
+        "id": 480808618,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1730844938
+    },
+    {
+        "content": "<p>so you start from an empty* environment, run all the commands, which each add something to the environment and chain together, then you take the resulting environment and write it to a file</p>",
+        "id": 480808757,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1730845012
+    },
+    {
+        "content": "<p>if you are looking for something that does things to the environment rather than just passing it around like a token, that would be <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Environment.addDecl#doc\">docs#Lean.Environment.addDecl</a>, which kernel-checks and adds a declaration to the environment</p>",
+        "id": 480808925,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1730845105
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/270676-lean4/topic/How.20does.20Lean.20get.20the.20right.20CoreM.20in.20the.20following.20example.3F/near/480808566\">said</a>:</p>\n<blockquote>\n<p>what kind of thing are you looking for specifically?</p>\n</blockquote>\n<p>I'm trying to sketch what the pipeline looks like when you start with a pure <code>.lean</code> file with commands, and obtain an environment where there are inhabitants to <code>[Lean.ConstantInfo](https://leanprover-community.github.io/mathlib4_docs/Lean/Declaration.html#Lean.ConstantInfo)</code> corresponding to each command.</p>\n<p>So I'm trying to sketch the pipeline that goes from having a pure text file to having an environment filled with declarations</p>",
+        "id": 480809008,
+        "sender_full_name": "nrs",
+        "timestamp": 1730845153
+    },
+    {
+        "content": "<p>You may also be interested in the server state, which contains a bunch of <code>Snapshot</code> objects which contain environments in them, so that when you make a modification in the middle of the file it can easily roll back to the right parent environment to re-elaborate the current command</p>",
+        "id": 480809052,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1730845190
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"749978\">nrs</span> <a href=\"#narrow/channel/270676-lean4/topic/How.20does.20Lean.20get.20the.20right.20CoreM.20in.20the.20following.20example.3F/near/480809008\">said</a>:</p>\n<blockquote>\n<p>So I'm trying to sketch the pipeline that goes from having a pure text file to having an environment filled with declarations</p>\n</blockquote>\n<p>Okay so my addDecl comment was the right response</p>",
+        "id": 480809155,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1730845224
+    },
+    {
+        "content": "<p>that's the piece that actually modifies the hashmaps containing constantinfos</p>",
+        "id": 480809181,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1730845245
+    },
+    {
+        "content": "<p>ah yes <code>addDecl</code> does exactly what I'm looking for. I'll be delving deeper into it to figure out how it works, thank you very much for the comments!</p>",
+        "id": 480809253,
+        "sender_full_name": "nrs",
+        "timestamp": 1730845297
+    },
+    {
+        "content": "<p>server state also seems relevant, I'll slowly be reading through all of this, thank you very much!!</p>",
+        "id": 480809334,
+        "sender_full_name": "nrs",
+        "timestamp": 1730845323
+    }
+]

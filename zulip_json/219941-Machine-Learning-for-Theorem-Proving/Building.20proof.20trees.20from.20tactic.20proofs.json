@@ -1,0 +1,92 @@
+[
+    {
+        "content": "<p>Do you know about any way to parse tactic-style proofs into proof trees? I.e. a node using <code>induction</code> tactic on <code>Nat</code> should have two independent outgoing branches (up to potential metavariable coupling) corresponding to <code>zero</code> and <code>succ</code> cases. This is how I think about proofs in Lean.  However, it is not how they are represented in Lean's AST and elaboration. Instead, <code>induction</code> simply has one output containing two new goals (and possibly some other unchanged goals) which are used as inputs to some other tactic down the line. That leaves the problem of pairing output goals (from <code>Elab.TacticInfo.goalsAfter</code>) with input goals (<code>goalsBefore</code>) via the appropriate tactics which is not trivial because</p>\n<ul>\n<li>IDs of the goal metavariables can change between tactics and cannot be used for identifying a goal over time (as far as I understand),</li>\n<li>not all goals have a <code>userName</code>,</li>\n<li>the exact syntax of goals can change over time because of metavariables,</li>\n<li>it's unclear which and how many goals were affected by a tactic (consider <code>try</code>, <code>repeat</code>, <code>any_goals</code>, ...) nor how many new goals were created.</li>\n</ul>\n<p>Additionally, some tactics do not operate on the main goal or even go against the tree formulation by operating on multiple goals but can be handled manually when building the tree (relatively easily?), e.g. <code>all_goals</code>, <code>switch</code>, <code>case</code>, <code>rotate_left</code>, <code>&lt;;&gt;</code>, <code>have</code>, ...</p>\n<p>Metavariable coupling means that goals cannot always be split into independent branches, so the objective is to split them into minimal \"connected components\", i.e. as much as possible.</p>\n<p>The only time something like this has been done that I know of is in the paper HyperTree Proof Search for Neural Theorem Proving (<span class=\"user-mention\" data-user-id=\"258218\">@Guillaume</span>) where they interfaced directly with the Lean C++ kernel but they unfortunately didn't port it to Lean 4. Another option is to use the syntax-level <code>InfoTree</code>s extracted from elaboration using a Lean script (approach used by LeanDojo <span class=\"user-mention\" data-user-id=\"584504\">@Kaiyu Yang</span>). Yet another is to actually run the tactics in Lean and report their result (used by Pantograph <span class=\"user-mention\" data-user-id=\"599027\">@Leni Aniva</span>). Using neither of these for proof tree extraction seem straightforward so I'm going to try my luck here before I spend a few months on trial-and-error :) Any suggestions or ideas are welcome.</p>\n<p>My goal with this is to compute for each state the number of its descendants - something approximating the difficulty of going from that state to proof end. Such data can then be used for a ML-based critic guiding a tree search.</p>",
+        "id": 496422622,
+        "sender_full_name": "Matěj Kripner",
+        "timestamp": 1738097722
+    },
+    {
+        "content": "<p>I think the biggest problem is that the tactics essentially are free to do whatever they want with the syntax tree going in, and the common protocol of all the tactics is they modify the current set of goals in some way. In this respect it would be impossible to write a system that pairs Lean source code with tactics, unless you write specific handlers for each tactic. Moreover its very easy to mix tactic and expression style proofs, so the question of pairing goalsAfter and goalsBefore may not be defined in some cases.</p>",
+        "id": 496423184,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1738097931
+    },
+    {
+        "content": "<p>One approximation to 'compute subgoals created by a tactic <code>T</code> from a given goal <code>G</code>' is to look at the term that <code>G</code>'s metavariable has been assigned to. Then we define the subgoals of <code>G</code> as the set of metavariables appearing in the term <code>t</code> where <code>G := t</code> is the metavariable assignment created by <code>T</code>. In practice you have to filter this set a bit, and as Leni said the general problem isn't solvable, but it works reasonably well for many tactics. You can try it out <a href=\"https://live.lean-lang.org/#url=https%3A%2F%2Fraw.githubusercontent.com%2Fleanprover-community%2FProofWidgets4%2Frefs%2Fheads%2Fmain%2FProofWidgets%2FDemos%2FGraph%2FMVarGraph.lean\">here</a>.</p>",
+        "id": 496429974,
+        "sender_full_name": "𝚠𝚘𝚓𝚌𝚒𝚎𝚌𝚑 𝚗𝚊𝚠𝚛𝚘𝚌𝚔𝚒",
+        "timestamp": 1738100875
+    },
+    {
+        "content": "<p>Like the hypertree proof search paper, I did this also in Lean 3 (if I understand the question).  I didn't use the kernel, but I used that there was a particular piece of Lean 3 code that ran before and after each tactic (in Lean 3). If I modified that, then I could:</p>\n<ul>\n<li>record goal states and positions every time each tactic was run (which could be multiple times per tactic)</li>\n<li>I could use the tactic environment to keep counters and stacks to figure out where I was in the proof tree.  (Here by \"proof tree\" I mean the environment tree, where a state extends another state if it is in a later branch of the environment.)</li>\n<li>I think I also keep track of goal mvarids and hashes.</li>\n</ul>",
+        "id": 496447878,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1738110669
+    },
+    {
+        "content": "<p>So for tactics like <code>rw [foo]; repeat {intro &lt;|&gt; simp}</code> I could see the goal state before and after the full tactic command, the goal state before and after <code>rw [foo]</code>, the goal state before and after each invocation of <code>repeat {...}</code>, the goal state before and after <code>intro</code> (if it succeeded), and the goal state before and after <code>simp</code> if it ran.</p>",
+        "id": 496447884,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1738110675
+    },
+    {
+        "content": "<p>Then I found with this data, I could usually piece together the needed information to make a tree.  There may have been exceptions, but I think 90 percent of cases it worked.</p>",
+        "id": 496447897,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1738110683
+    },
+    {
+        "content": "<p>I have no idea if anything like this is applicable to Lean 4.  But if it helps, my code is <a href=\"https://github.com/jasonrute/lean_proof_recording\">https://github.com/jasonrute/lean_proof_recording</a></p>",
+        "id": 496447904,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1738110690
+    },
+    {
+        "content": "<p>But my recommendation would be to gather the data and look at it closely for patterns.  For example, <a href=\"https://github.com/kim-em/lean-training-data\">https://github.com/kim-em/lean-training-data</a> is very easy to modify to get extra data like metavariable ids, hashes, and other data which might help.  Then when you have enough data you could see if you could extract a tree in 90 percent of cases.</p>",
+        "id": 496447917,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1738110695
+    },
+    {
+        "content": "<p>Also, to address your bullets:</p>\n<ul>\n<li>I would test that metavariable ID assumption at scale.  (It doesn't sound like this is usual, but I don't know Lean 4 well so maybe it is.) If they change, why?  Are the goals the same expressions?  If so, you could use hashes to compare?  If they are somehow fundamentally different, then maybe that should be taken into account.</li>\n<li>Yeah, userName is probably not the best unique id, but if it does exist it could help.</li>\n<li>If there is metavariable coupling, then you may not want to treat the coupled goals as different, since changing one goal will change its coupled goals.</li>\n<li>As for tactic combinators, is this not tracked with tools like <a href=\"https://github.com/kim-em/lean-training-data\">https://github.com/kim-em/lean-training-data</a> ?  At least, in that you can see the before and after for each atomic tactic application inside repeat, try, any_goals even if that tactic is run multiple times?  (Actually for <code>any_goals</code> and similar tactics, wouldn't you be able to see the exact before goal for each tactic application?)</li>\n</ul>",
+        "id": 496447926,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1738110702
+    },
+    {
+        "content": "<p>Also, maybe ask <span class=\"user-mention\" data-user-id=\"210057\">@Fabian Glöckle</span>, since he extended HTPS to Lean 4.  Or talk to <span class=\"user-mention\" data-user-id=\"243791\">@David Renshaw</span> since he has tools that show each step of a proof.  (I thought his tools were able to distinguish what goal a tactic is being applied to, but maybe that is a hack.)</p>",
+        "id": 496447931,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1738110706
+    },
+    {
+        "content": "<blockquote>\n<p>That leaves the problem of pairing output goals (from <code>Elab.TacticInfo.goalsAfter</code>) with input goals (<code>goalsBefore</code>) via the appropriate tactics which is not trivial because<br>\n* IDs of the goal metavariables can change between tactics and cannot be used for identifying a goal over time (as far as I understand)</p>\n</blockquote>\n<p><a href=\"https://github.com/dwrensha/animate-lean-proofs\">animate-lean-proofs</a> performs a multi-stage transformation of an <code>InfoTree</code> to get a linear sequence of actions that can be animated. It links up tactic steps by matching <code>MVarId</code>s of output goals and input goals. This works well, at least for the proofs that I've tried to animate so far. It currently does not work for proofs that are not properly focused (i.e. those that would not pass the <a href=\"https://github.com/leanprover-community/mathlib4/blob/f3eaa8093bc0fa45145db394b1681d4667a4b509/Mathlib/Tactic/Linter/Multigoal.lean\"><code>multiGoal</code> linter</a>), but that might be fixable.</p>",
+        "id": 496450141,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1738112126
+    },
+    {
+        "content": "<p>I believe <span class=\"user-mention\" data-user-id=\"321459\">@Damiano Testa</span> thought about such questions (matching goals before and after a tactic) in the context of mathlib's multi-goal and flexible linters</p>",
+        "id": 496491067,
+        "sender_full_name": "Michael Rothgang",
+        "timestamp": 1738138388
+    },
+    {
+        "content": "<p>Yes, and even more so in the <code>flexibleTactic</code> linter.</p>",
+        "id": 496491341,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1738138489
+    },
+    {
+        "content": "<p>Ultimately, it mostly boils down to seeing if an MVarId name stayed the same, and then making the assumption that the names that do not appear before and after the tactic are matched.</p>",
+        "id": 496491613,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1738138598
+    },
+    {
+        "content": "<p>I think that PaperProof also does the same thing.</p>",
+        "id": 496499109,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1738141463
+    }
+]

@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>I'm trying to make a macro or elaborator that would produce the same term as does <code>beta% clear% (by reduce x; exact x)</code>, so I'm trying to figure out how it is that a tactic block gets embedded within a term. Is there a coercion that lifts <code>TacticM</code> to <code>TermElabM</code> or something of the sort? Is there any place in source I should take a look at to further investigate the question?</p>",
+        "id": 485748357,
+        "sender_full_name": "nrs",
+        "timestamp": 1733198244
+    },
+    {
+        "content": "<p>looks like <code>Term.Elab.Tactic.run</code> is responsible for this</p>",
+        "id": 485749135,
+        "sender_full_name": "nrs",
+        "timestamp": 1733198719
+    },
+    {
+        "content": "<p>Was it not sufficient making a <code>macro</code>?</p>",
+        "id": 485859357,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1733234329
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/How.20is.20TacticM.20lifted.20to.20TermElabM.3F/near/485859357\">said</a>:</p>\n<blockquote>\n<p>Was it not sufficient making a <code>macro</code>?</p>\n</blockquote>\n<p>Was having a hard time using <code>TSynx `Lean.Parser.Tactic.location</code> to make <code> ... =&gt; `(beta% clear% (by reduce $x; exact $x)</code>. Went to sleep straight after reading that you can make a coercion from <code>term</code> to that parser, will report back after testing this</p>",
+        "id": 485860804,
+        "sender_full_name": "nrs",
+        "timestamp": 1733234661
+    },
+    {
+        "content": "<p>hm even so, the problem with </p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">syntax</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">name</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">reduce</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"s2\">\"reduce%\"</span><span class=\"w\"> </span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">term</span>\n\n<span class=\"kd\">@[</span><span class=\"n\">macro</span><span class=\"w\"> </span><span class=\"n\">reduce</span><span class=\"kd\">]</span>\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">reduceImpl</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Macro</span>\n<span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">reduce</span><span class=\"bp\">%</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">t</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">beta</span><span class=\"bp\">%</span><span class=\"w\"> </span><span class=\"n\">clear</span><span class=\"bp\">%</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">reduce</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">t</span><span class=\"bp\">;</span><span class=\"w\"> </span><span class=\"n\">exact</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">t</span><span class=\"o\">))</span>\n<span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">Macro</span><span class=\"bp\">.</span><span class=\"n\">throwUnsupported</span>\n</code></pre></div>\n<p>seems to be that <code>beta%</code> and <code>clear%</code> are immediately elaborated within the syntax quotation, any clue how to prevent this? i.e. they need to be passed as literals instead (i think?) <br>\nedit: I think you can do this with the <code>Syntax.mk...</code> API</p>",
+        "id": 485873930,
+        "sender_full_name": "nrs",
+        "timestamp": 1733237783
+    },
+    {
+        "content": "<p>They're definitely not elaborated within the quotation, the issue is that <code>reduce $t</code> with <code>t : Term</code> is not syntax. In your other thread, you were using <code>reduce at x</code></p>",
+        "id": 485891898,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1733241966
+    },
+    {
+        "content": "<p>I'm also really not sure what <code>clear%</code> is meant to be doing here. Are you wanting to clear a variable, or is that a typo for <code>clean%</code>?</p>",
+        "id": 485892589,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1733242140
+    },
+    {
+        "content": "<p>Anyway, without it, this is how you could make a macro:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">macro</span><span class=\"w\"> </span><span class=\"s2\">\"reduce%\"</span><span class=\"w\"> </span><span class=\"n\">t</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">  </span><span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">beta</span><span class=\"bp\">%</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"k\">have</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">t</span><span class=\"bp\">;</span><span class=\"w\"> </span><span class=\"n\">reduce</span><span class=\"w\"> </span><span class=\"k\">at</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"bp\">;</span><span class=\"w\"> </span><span class=\"n\">exact</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"o\">))</span>\n</code></pre></div>",
+        "id": 485892712,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1733242176
+    },
+    {
+        "content": "<p>whoops yeah I meant <code>%clean</code>!</p>",
+        "id": 485892901,
+        "sender_full_name": "nrs",
+        "timestamp": 1733242213
+    },
+    {
+        "content": "<p>ah I see, thank you very much for taking the time!</p>",
+        "id": 485892938,
+        "sender_full_name": "nrs",
+        "timestamp": 1733242225
+    }
+]

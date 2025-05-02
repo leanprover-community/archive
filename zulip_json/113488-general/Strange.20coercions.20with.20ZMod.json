@@ -1,0 +1,146 @@
+[
+    {
+        "content": "<p>This threw me completely:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#eval</span> <span class=\"o\">(</span><span class=\"mi\">8</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"o\">(</span><span class=\"mi\">0</span> <span class=\"o\">:</span> <span class=\"n\">ZMod</span> <span class=\"mi\">4</span><span class=\"o\">)</span> <span class=\"c1\">-- result: \"false\"</span>\n<span class=\"k\">#eval</span> <span class=\"o\">(</span><span class=\"mi\">0</span> <span class=\"o\">:</span> <span class=\"n\">ZMod</span> <span class=\"mi\">4</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"o\">(</span><span class=\"mi\">8</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"c1\">-- result: \"true\"</span>\n</code></pre></div>\n<p>The problem seems to be that the map <code>ZMod.cast</code> sending <code>ZMod N</code> to <code>ℤ</code>, which sends a residue class to its least non-negative representative, is registered as a coercion; but the map <code>Int.cast</code> mapping <code>ℤ</code> to an arbitrary ring is <em>also</em> a coercion, and it seems Lean's rules for which coercion it picks depend on which way round the equality is written.</p>\n<p>Personally I find it deeply disturbing that <code>ZMod.cast : ZMod 4 → ℤ</code> is a coercion; in first-year algebra lectures we spend a great deal of effort trying to train students <em>not</em> to think of ℤ / N as \"{0, ..., N-1} with funny arithmetic operations\". It looks like mathlib does exactly that internally (<code>ZMod N</code> is an alias for <code>Fin N</code>); but shouldn't that be a guilty secret of the implementation, to be concealed as much as possible in the API?</p>",
+        "id": 416547726,
+        "sender_full_name": "David Loeffler",
+        "timestamp": 1705575925
+    },
+    {
+        "content": "<p>seems the least we could do is make it a scoped instance</p>",
+        "id": 416548055,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705576050
+    },
+    {
+        "content": "<p>This is another issue of <code>ZMod</code> and <code>Fin</code> being semantically different. <code>ZMod.cast</code> is a horrible function, it doesn't have good mathematical properties, it's a great idea to scope it. I am now worried that someone who knows what a bitvec is will start arguing that it should definitely be there because computer scientists love it for some reason.</p>",
+        "id": 416549060,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1705576430
+    },
+    {
+        "content": "<p>We've had discussions about it before. I think one argument for it was that although it isn't generally sensible, there are cases where it makes sense, like the map from <code>Z/6</code> to <code>Z/3</code> composing this function with the quotient map</p>",
+        "id": 416550783,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705577080
+    },
+    {
+        "content": "<p>so you can rationalize it on the grounds of \"garbage in garbage out\"</p>",
+        "id": 416550916,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705577152
+    },
+    {
+        "content": "<p>But I think it's a sufficiently niche usage that scoping it should suffice</p>",
+        "id": 416551002,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705577172
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"481963\">David Loeffler</span> <a href=\"#narrow/stream/113488-general/topic/Strange.20coercions.20with.20ZMod/near/416547726\">said</a>:</p>\n<blockquote>\n<p>Personally I find it deeply disturbing that <code>ZMod.cast : ZMod 4 → ℤ</code> is a coercion</p>\n</blockquote>\n<p>I agree with this (here's <a href=\"#narrow/stream/217875-Is-there-code-for-X.3F/topic/ZMod.20lemma/near/404690515\">a previous thread</a>; I can't find the one where I wrote down the same sort of example as yours).</p>\n<p>This coercion also breaks the assumption of the expression tree elaborator, which is responsible for arithmetic and inequalities, that there are no nontrivial loops when you compose coercions.</p>",
+        "id": 416551464,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705577363
+    },
+    {
+        "content": "<p>Oh there are not supposed to be nontrivial loops? Then scoping it is a done deal!</p>",
+        "id": 416551707,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1705577458
+    },
+    {
+        "content": "<p>Yep, definitely not! The elaborator tries to find some type among all the leaf terms in an arithmetic expression that all the leaves can be coerced to, and if there's a nontrivial loop of coercions that includes all the types, then who knows what the resulting type will be.</p>\n<p>With David's examples, the first one is an equality of Int and the second is an equality of ZMod, for no good reason other than whatever order the elaboration algorithm happens to visit the leaf terms. (A \"leaf\" is anything that sits inside a tree of operators and (in)equalities; in <code>a + f b * (c : Int) = d</code>, then the leaves are <code>a</code>, <code>f b</code>, <code>(c : Int)</code>, and <code>d</code>.)</p>",
+        "id": 416552688,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705577795
+    },
+    {
+        "content": "<p>Found my previous example:</p>\n<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Visibility.20of.20coercions/near/402293652\">said</a>:</p>\n<blockquote>\n<p><div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Tactic</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"mi\">100</span>\n<span class=\"kd\">def</span> <span class=\"n\">m</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"mi\">100</span> <span class=\"o\">:=</span> <span class=\"mi\">50</span>\n<span class=\"k\">#eval</span> <span class=\"n\">m</span> <span class=\"bp\">≤</span> <span class=\"n\">n</span> <span class=\"c1\">-- false</span>\n<span class=\"k\">#eval</span> <span class=\"n\">n</span> <span class=\"bp\">≤</span> <span class=\"n\">m</span> <span class=\"c1\">-- false</span>\n</code></pre></div><br>\n</p>\n</blockquote>",
+        "id": 416553135,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705577975
+    },
+    {
+        "content": "<p>I'm creating a PR that removes the coercion.</p>",
+        "id": 416566523,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1705582890
+    },
+    {
+        "content": "<p>I hope that we can also remove one of the <code>Fin</code> coercions, where we have very similar behavior that is also very confusing. (In this case, I think we should remove the coercion <code>Nat -&gt; Fin n</code>.)</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Data.Fin.Basic</span>\n<span class=\"k\">#eval</span> <span class=\"o\">(</span><span class=\"mi\">8</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"o\">(</span><span class=\"mi\">0</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"mi\">4</span><span class=\"o\">)</span> <span class=\"c1\">-- false</span>\n<span class=\"k\">#eval</span> <span class=\"o\">(</span><span class=\"mi\">0</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"mi\">4</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"o\">(</span><span class=\"mi\">8</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"c1\">-- true</span>\n<span class=\"k\">#eval</span> <span class=\"o\">(</span><span class=\"mi\">0</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"mi\">4</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"o\">(</span><span class=\"mi\">8</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"c1\">-- false</span>\n<span class=\"k\">#eval</span> <span class=\"o\">(((</span><span class=\"mi\">5</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"mi\">8</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"mi\">4</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"mi\">8</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span> <span class=\"c1\">-- true</span>\n</code></pre></div>",
+        "id": 416574739,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1705585673
+    },
+    {
+        "content": "<blockquote>\n<p>refactor(ZMod): remove coe out of ZMod <a href=\"https://github.com/leanprover-community/mathlib4/pull/9839\">#9839</a></p>\n</blockquote>",
+        "id": 416575181,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1705585823
+    },
+    {
+        "content": "<p>Would it be reasonable to keep around the coercion in the case where <code>[Fact (m ∣ n)] [CharP R m]</code>? Or is that still harmful?</p>",
+        "id": 416592334,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705590917
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"111080\">Floris van Doorn</span> <a href=\"#narrow/stream/113488-general/topic/Strange.20coercions.20with.20ZMod/near/416574739\">said</a>:</p>\n<blockquote>\n<p>I hope that we can also remove one of the <code>Fin</code> coercions, where we have very similar behavior that is also very confusing. (In this case, I think we should remove the coercion <code>Nat -&gt; Fin n</code>.)</p>\n</blockquote>\n<p>I don't think we can easily remove that coercion without also removing <code>n : R</code> for any ring</p>",
+        "id": 416592422,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705590948
+    },
+    {
+        "content": "<p>Though putting the ring instance on Fin in a scope would solve it</p>",
+        "id": 416592530,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705590968
+    },
+    {
+        "content": "<p>Oh, that's where the coercion comes from. That's fair. I think scoping the ring instance is reasonable.</p>",
+        "id": 416594075,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1705591370
+    },
+    {
+        "content": "<p>If we really want to go in that direction, should we replace <code>Fin n</code> by <code>ZMod n</code> wherever it is used as a ring?</p>",
+        "id": 416595737,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1705591842
+    },
+    {
+        "content": "<p><del>No, because that has the wrong behavior for <code>Fin 0</code> and bitvectors.</del> I think the <code>Fin</code> ring behavior is correct for the people who want it, but it's totally fine to make them ask for it with <code>open scoped</code></p>",
+        "id": 416596384,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705592009
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/113488-general/topic/Strange.20coercions.20with.20ZMod/near/416592334\">said</a>:</p>\n<blockquote>\n<p>Would it be reasonable to keep around the coercion in the case where <code>[Fact (m ∣ n)] [CharP R m]</code>? Or is that still harmful?</p>\n</blockquote>\n<p>There is a ring homomorphism from <code>ZMod n</code> to <code>ZMod m</code>(and thence to <code>R</code>) when <code>m</code> divides <code>n</code>, so this definitely makes sense from a mathematical point of view, and I would think we really want to have it.</p>",
+        "id": 416602397,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1705593864
+    },
+    {
+        "content": "<p>Does it have to be a coercion though? I think it's fine to just write <code>ZMod.cast a</code> (or something similar for a bundle homomorphism)?</p>",
+        "id": 416606657,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1705595197
+    },
+    {
+        "content": "<p>We have <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=ZMod.castHom#doc\">docs#ZMod.castHom</a></p>",
+        "id": 416616101,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1705598325
+    },
+    {
+        "content": "<p>Yes, I imagine that in most cases we will want the bundled hom instead of the coe.</p>",
+        "id": 416616280,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1705598395
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/113488-general/topic/Strange.20coercions.20with.20ZMod/near/416592334\">said</a>:</p>\n<blockquote>\n<p>Would it be reasonable to keep around the coercion in the case where <code>[Fact (m ∣ n)] [CharP R m]</code>? Or is that still harmful?</p>\n</blockquote>\n<p>Arguably we could even have an <code>Algebra</code> instance under those assumptions. Of course there will be a diamond for <code>R = Zmod n</code>. But this diamond issue also exists for your proposed coe.</p>",
+        "id": 416616530,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1705598476
+    }
+]

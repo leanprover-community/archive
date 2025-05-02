@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>I noticed that <code>simp</code> would sometimes try more general lemmas before more specific, doing unnecessary work (<a href=\"https://github.com/leanprover/lean4/pull/4173\">lean4#4173</a>), so I experimented with a different order (<a href=\"https://github.com/leanprover/lean4/pull/4158\">lean4#4158</a>), but (unfortunately, but not unexpectedly) breaks a fair number of proofs. Even <code>simp only</code> proofs, which we consider to be a rather stable, are affected!</p>\n<p>You can see some of the changes I had to in <a href=\"https://github.com/leanprover-community/mathlib4/compare/nightly-testing...lean-pr-testing-4158\">https://github.com/leanprover-community/mathlib4/compare/nightly-testing...lean-pr-testing-4158</a>.</p>\n<p>There are some interesting insights here. For example can reveal that a certain lemma in the default simp set really isn’t that useful (e.g. <code>List.length_pos</code>, un-simp’ing proposed in <a href=\"https://github.com/leanprover-community/mathlib4/pull/4172\">#4172</a>).</p>\n<p>It can also reveal proofs that really only through mostly by accident, for example </p>\n<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"gu\">@@ -1118,7 +1118,9 @@ lemma mul_div_mul_comm_of_dvd_dvd (hba : b ∣ a) (hdc : d ∣ c) :</span>\n<span class=\"w\"> </span>lemma pow_mod (a b n : ℕ) : a ^ b % n = (a % n) ^ b % n := by\n<span class=\"w\"> </span>  induction b with\n<span class=\"w\"> </span>  | zero =&gt; rfl\n<span class=\"gd\">-  | succ b ih =&gt; simp [Nat.pow_succ, Nat.mul_mod, ih]</span>\n<span class=\"gi\">+  | succ b ih =&gt;</span>\n<span class=\"gi\">+    conv_lhs =&gt; rw [Nat.pow_succ, Nat.mul_mod, ih]</span>\n<span class=\"gi\">+    conv_rhs =&gt; rw [Nat.pow_succ, Nat.mul_mod, Nat.mod_mod]</span>\n</code></pre></div>\n<p>where <code>Nat.mul_mod</code> is an inherently looping rewrite rules.</p>\n<p>Similarly, in </p>\n<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"w\"> </span>theorem zipWith_distrib_tail : (zipWith f l l').tail = zipWith f l.tail l'.tail := by\n<span class=\"gd\">-  rw [← drop_one]; simp [zipWith_distrib_drop]</span>\n<span class=\"gi\">+  simp only [← drop_one, zipWith_distrib_drop]</span>\n</code></pre></div>\n<p>the original proof only worked because simp did not happen to rewrite with <code>drop_one</code>, as it would otherwise just undo the <code>rw</code> before.</p>\n<p>I am a bit unsure what to do with these observations, though.</p>\n<p>I would be curious if <a href=\"https://github.com/leanprover/lean4/pull/4158\">lean4#4158</a> yields a noticable performance improvement. But having to fix all of mathlib for that alone is probably too much work. And since I expect this to show up in particular for structurally recursive definitions with a catch-all match statement, mathlib probably won’t provide any signal at all.</p>\n<p>Another motivation to push through fixing this branch is to discover more “issues” with the existing mathlib proofs or the default simp setup. I probably won’t be able to do that, but maybe someone else is interested in this experiment? (If so, feel free to just use my branch).</p>\n<p>And maybe, independent of this draft PR, there may be some take away here? If math values robust proofs, could and should we lint <code>simp</code> proofs for non-confluence issues? Exhaustively exploring all rewrites, when more than one applies,  is likely far too slow and hard to do with the simp machinery. But I could imagine an option that makes simp reverse the order of all candidates, or even a <code>set_option simp_shuffle_seed</code> that lets simp deterministically shuffles all candidates (of the same priority), and then CI could ensure that all <code>simp</code> proofs in Mathlib are robust against changes of lemma order. Would this be useful enough, given that it isn’t a particularly cheap thing to lint for, and probably often annoying.</p>",
+        "id": 438798070,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1715778566
+    },
+    {
+        "content": "<p>Interesting experiment! Do you have an indication of how much effort fixing the branch would be?</p>",
+        "id": 438798674,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1715778738
+    },
+    {
+        "content": "<p>As in, which fraction of mathlib did you fix, and how long did it take you?</p>",
+        "id": 438798742,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1715778760
+    },
+    {
+        "content": "<p>Aha, I just looked at your branch. You changed ~17 files, and they are all pretty low-level. So probably there will be <em>a lot</em> that needs to be fixed. <span aria-label=\"oops\" class=\"emoji emoji-1f643\" role=\"img\" title=\"oops\">:oops:</span></p>",
+        "id": 438798959,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1715778840
+    },
+    {
+        "content": "<p>I touched 14 files so far, it seems that 1163 files work now, and cache still tries to download 3316 files. So maybe a few dozen proofs to look at at that rate?</p>",
+        "id": 438799185,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1715778899
+    },
+    {
+        "content": "<p>Ooh, ok. That's better than I expected. I thought maybe ~200 files would work now.</p>",
+        "id": 438799500,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1715778994
+    },
+    {
+        "content": "<p>Default to filling with <code>sorry</code> and only fix things that contain data. Then you can bench it.</p>",
+        "id": 438800815,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1715779384
+    },
+    {
+        "content": "<p>But isn't <code>sorry</code> much faster than <code>simp + rest of proof</code>?</p>",
+        "id": 438801492,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1715779572
+    },
+    {
+        "content": "<p>I can bench the two <code>sorried</code>’s versions against each other, to compare the impact of  a change to <code>lean4</code>, that’s true. Does the speedcenter accept mathlib versions with <code>sorry</code>s?</p>",
+        "id": 438801645,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1715779621
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"112680\">Johan Commelin</span> <a href=\"#narrow/stream/287929-mathlib4/topic/simp.20proofs.20depend.20on.20order.20in.20which.20lemmas.20are.20tried/near/438801492\">said</a>:</p>\n<blockquote>\n<p>But isn't <code>sorry</code> much faster than <code>simp + rest of proof</code>?</p>\n</blockquote>\n<p>Yeah, but you can still often see the signal through this. Or as <span class=\"user-mention\" data-user-id=\"470149\">@Joachim Breitner</span> suggested, you can normalize the comp.</p>",
+        "id": 438802292,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1715779802
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/287929-mathlib4/topic/simp.20proofs.20depend.20on.20order.20in.20which.20lemmas.20are.20tried/near/438798070\">said</a>:</p>\n<blockquote>\n<p>It can also reveal proofs that really only through mostly by accident, for example [...]</p>\n</blockquote>\n<p>I myself needed a better fix for this proof ages ago. Don't remember which PR of mine this is in. Probably the best way to find out is to merge <a href=\"https://github.com/leanprover-community/mathlib4/pulls/YaelDillies\">them all</a> <span aria-label=\"stuck out tongue\" class=\"emoji emoji-1f61b\" role=\"img\" title=\"stuck out tongue\">:stuck_out_tongue:</span></p>",
+        "id": 438805548,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715780689
+    }
+]

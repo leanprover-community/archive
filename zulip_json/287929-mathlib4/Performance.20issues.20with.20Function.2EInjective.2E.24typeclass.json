@@ -1,0 +1,116 @@
+[
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/287929-mathlib4/topic/Instance.20diamond.20in.20Equiv.2ETransferInstance/near/427146833\">said</a>:</p>\n<blockquote>\n<p>(<a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Function.injective.addCommGroup#doc\">docs#Function.injective.addCommGroup</a> etc)</p>\n</blockquote>\n<p>I thought we needed to avoid those for reasons I don't understand</p>",
+        "id": 427180222,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1710698284
+    },
+    {
+        "content": "<p>For now I think it's better to use them and take a performance hit rather than do a whole lot more work at each call site; I think there's a best-of-both-worlds solution that unfold those functions at elaboration time</p>",
+        "id": 427190375,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1710701120
+    },
+    {
+        "content": "<p>The issue is that for all <code>Function.Injective/Surjective</code> typeclass constructors expose too much data to unification. Because you have a copy of each operation on the source and the target as parameters to the function, Lean has to check the data at each call site. </p>\n<p>You can </p>\n<ol>\n<li>Rip these out at the call site and do things by hand <a href=\"https://github.com/leanprover-community/mathlib4/pull/10617\">#10617</a>. </li>\n<li>Make constructors that don't expose the data by taking the appropriate parent classes as parameters. Eg. take <code>[CommMonoid B]</code> and <code>[Monoid A]</code> for <code>f : A \\to B</code> injective if you want a <code>CommMonoid A</code>.  <a href=\"https://github.com/leanprover-community/mathlib4/pull/11029\">#11029</a></li>\n</ol>\n<p>They each result in the same performance gain (~1.5%) overall with the benefit concentrated in areas that heavily use subobjects. </p>\n<p>The disadvantage of 1 is that maintainability goes out the window. The disadvantage of 2 is that preferred parents are a choice and you might want another choice so might need multiple versions of these depending on inheritance. </p>\n<p>I got distracted by the question of what the preferred parent should actually be for instead of polishing this...</p>",
+        "id": 427569113,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1710793677
+    },
+    {
+        "content": "<p>The best-of-both-worlds solution is a metaprogram that does 1, taking the status quo as input</p>",
+        "id": 427582796,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1710799381
+    },
+    {
+        "content": "<p>Here's a prototype of that metaprogram:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.GroupTheory.Subgroup.Basic</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"optimize_inst%\"</span> <span class=\"n\">arg</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">&lt;=</span> <span class=\"n\">expectedType</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"bp\">.</span><span class=\"n\">some</span> <span class=\"n\">className</span> <span class=\"bp\">←</span> <span class=\"n\">Lean.Meta.isClass</span><span class=\"bp\">?</span> <span class=\"n\">expectedType</span> <span class=\"bp\">|</span>\n    <span class=\"n\">throwError</span> <span class=\"s2\">\"Can only be used for classes\"</span>\n  <span class=\"k\">let</span> <span class=\"n\">ctor</span> <span class=\"o\">:=</span> <span class=\"n\">Lean.getStructureCtor</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getEnv</span><span class=\"o\">)</span> <span class=\"n\">className</span>\n  <span class=\"n\">Lean.logInfo</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"{ctor.numParams} {ctor.numFields}\"</span>\n  <span class=\"k\">let</span> <span class=\"n\">provided</span> <span class=\"bp\">←</span> <span class=\"n\">Lean.Elab.Term.elabTerm</span> <span class=\"n\">arg</span> <span class=\"o\">(</span><span class=\"n\">some</span> <span class=\"n\">expectedType</span><span class=\"o\">)</span>\n  <span class=\"c1\">-- create universe variables</span>\n  <span class=\"k\">let</span> <span class=\"n\">levels</span> <span class=\"bp\">←</span> <span class=\"n\">Meta.mkFreshLevelMVarsFor</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">ctorInfo</span> <span class=\"n\">ctor</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">e</span> <span class=\"o\">:=</span> <span class=\"n\">Expr.const</span> <span class=\"n\">ctor.name</span> <span class=\"n\">levels</span>\n  <span class=\"c1\">-- get argument types</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">mvars</span><span class=\"o\">,</span> <span class=\"n\">binders</span><span class=\"o\">,</span> <span class=\"n\">_body_</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">forallMetaTelescope</span> <span class=\"o\">(</span><span class=\"bp\">←</span><span class=\"n\">inferType</span> <span class=\"n\">e</span><span class=\"o\">)</span>\n  <span class=\"n\">e</span> <span class=\"o\">:=</span> <span class=\"n\">mkAppN</span> <span class=\"n\">e</span> <span class=\"n\">mvars</span>\n  <span class=\"n\">guard</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">isDefEq</span> <span class=\"o\">(</span><span class=\"bp\">←</span><span class=\"n\">inferType</span> <span class=\"n\">e</span><span class=\"o\">)</span> <span class=\"n\">expectedType</span><span class=\"o\">)</span>\n  <span class=\"n\">e</span> <span class=\"bp\">←</span> <span class=\"n\">instantiateMVars</span> <span class=\"n\">e</span>\n  <span class=\"c1\">-- substitute parent classes with direct instances, if possible</span>\n  <span class=\"n\">for</span> <span class=\"n\">arg</span> <span class=\"k\">in</span> <span class=\"n\">mvars.extract</span> <span class=\"n\">ctor.numParams</span> <span class=\"o\">(</span><span class=\"n\">ctor.numParams</span> <span class=\"bp\">+</span> <span class=\"n\">ctor.numFields</span><span class=\"o\">),</span>\n      <span class=\"n\">bi</span> <span class=\"k\">in</span> <span class=\"n\">binders.extract</span> <span class=\"n\">ctor.numParams</span> <span class=\"o\">(</span><span class=\"n\">ctor.numParams</span> <span class=\"bp\">+</span> <span class=\"n\">ctor.numFields</span><span class=\"o\">)</span> <span class=\"k\">do</span>\n    <span class=\"k\">if</span> <span class=\"k\">let</span> <span class=\"bp\">.</span><span class=\"n\">instImplicit</span> <span class=\"o\">:=</span> <span class=\"n\">bi</span> <span class=\"k\">then</span>\n      <span class=\"k\">if</span> <span class=\"k\">let</span> <span class=\"bp\">.</span><span class=\"n\">some</span> <span class=\"n\">new_arg</span> <span class=\"bp\">←</span> <span class=\"n\">trySynthInstance</span> <span class=\"o\">(</span><span class=\"bp\">←</span><span class=\"n\">inferType</span> <span class=\"n\">arg</span><span class=\"o\">)</span> <span class=\"k\">then</span>\n        <span class=\"n\">arg.mvarId</span><span class=\"bp\">!.</span><span class=\"n\">assign</span> <span class=\"n\">new_arg</span>\n        <span class=\"n\">Lean.logInfo</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"{arg} ← {new_arg}\"</span>\n        <span class=\"n\">e</span> <span class=\"bp\">←</span> <span class=\"n\">instantiateMVars</span> <span class=\"n\">e</span>\n  <span class=\"c1\">-- must be defeq to what the user passed</span>\n  <span class=\"k\">if</span> <span class=\"bp\">!</span><span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">isDefEq</span> <span class=\"n\">provided</span> <span class=\"n\">e</span><span class=\"o\">)</span> <span class=\"k\">then</span>\n    <span class=\"n\">Lean.logError</span> <span class=\"s2\">\"Not defeq\"</span>\n  <span class=\"n\">pure</span> <span class=\"n\">e</span>\n\n<span class=\"kd\">variable</span> <span class=\"o\">{</span><span class=\"n\">G</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">CommGroup</span> <span class=\"n\">G</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">H</span> <span class=\"o\">:</span> <span class=\"n\">Subgroup</span> <span class=\"n\">G</span><span class=\"o\">)</span>\n\n<span class=\"c1\">-- pretend we are running before these exist</span>\n<span class=\"kn\">attribute</span> <span class=\"o\">[</span><span class=\"bp\">-</span><span class=\"kd\">instance</span><span class=\"o\">]</span> <span class=\"n\">Subgroup.toCommGroup</span> <span class=\"n\">SubgroupClass.toCommGroup</span>\n\n<span class=\"kd\">instance</span> <span class=\"o\">(</span><span class=\"n\">priority</span> <span class=\"o\">:=</span> <span class=\"mi\">75</span><span class=\"o\">)</span> <span class=\"n\">foo</span> <span class=\"o\">:</span> <span class=\"n\">CommGroup</span> <span class=\"n\">H</span> <span class=\"o\">:=</span>\n  <span class=\"n\">optimize_inst</span><span class=\"bp\">%</span>\n    <span class=\"n\">Subtype.coe_injective.commGroup</span> <span class=\"n\">_</span> <span class=\"n\">rfl</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">rfl</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">rfl</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">rfl</span><span class=\"o\">)</span>\n      <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">rfl</span><span class=\"o\">)</span> <span class=\"k\">fun</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">rfl</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">info: def foo.{u_1} : {G : Type u_1} → [inst : CommGroup G] → (H : @Subgroup G (@CommGroup.toGroup G inst)) → CommGroup ↥H :=</span>\n<span class=\"sd\">fun {G} [inst : CommGroup G] H ↦ @CommGroup.mk (↥H) (@Subgroup.toGroup G (@CommGroup.toGroup G inst) H) ⋯</span>\n<span class=\"sd\">-/</span>\n<span class=\"bp\">#</span><span class=\"n\">guard_msgs</span> <span class=\"k\">in</span>\n<span class=\"kd\">set_option</span> <span class=\"n\">pp.explicit</span> <span class=\"n\">true</span> <span class=\"k\">in</span>\n<span class=\"k\">#print</span> <span class=\"n\">foo</span>\n</code></pre></div>",
+        "id": 427652688,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1710841282
+    },
+    {
+        "content": "<p>Great! I think that is a good start. Let me play dumb. What is the advantage of the current design?</p>",
+        "id": 427659572,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1710843691
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306577\">Matthew Ballard</span> <a href=\"#narrow/stream/287929-mathlib4/topic/Instance.20diamond.20in.20Equiv.2ETransferInstance/near/427659572\">said</a>:</p>\n<blockquote>\n<p>Great! I think that is a good start. Let me play dumb. What is the advantage of the current design?</p>\n</blockquote>\n<p>This kinda got lost. I think it would be a good guide for any final <code>optimize_inst%</code></p>",
+        "id": 427750723,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1710862245
+    },
+    {
+        "content": "<p>The main way I've seen it used is that people build the data classes and then just go for the jugular and define say a <code>Field</code> using <code>Function.Injective.field</code></p>",
+        "id": 427751037,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1710862319
+    },
+    {
+        "content": "<p>It didn't get lost but it was feeling a bit shunning to say \"There's none\" <span aria-label=\"grinning\" class=\"emoji emoji-1f600\" role=\"img\" title=\"grinning\">:grinning:</span></p>",
+        "id": 427751253,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1710862364
+    },
+    {
+        "content": "<p>I think Eric's idea is useful well beyond this case. But it should apply to all structures and back propagate to make the parents</p>",
+        "id": 427751716,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1710862465
+    },
+    {
+        "content": "<p>What are you referring to by \"current design\"; the pattern of using <code>Function.Injective.foo</code>?</p>",
+        "id": 427776537,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1710869246
+    },
+    {
+        "content": "<p>The statement also</p>",
+        "id": 427776635,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1710869275
+    },
+    {
+        "content": "<p>The statement of what?</p>",
+        "id": 427822402,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1710887644
+    },
+    {
+        "content": "<p>The idea of the pattern is</p>\n<ul>\n<li>You have to construct most of the data fields yourself anyway; they typically amount to showing closure of your property. If you don't construct <em>all</em> of them, you get bad defeqs (things like <code>coe_sub</code> are not then dsimp lemmas)</li>\n<li>You don't want to do any proofs about the algebraic structure; the statement is just \"well obviously it inherits the structure, all the operators are the same\".</li>\n</ul>",
+        "id": 427822645,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1710887786
+    },
+    {
+        "content": "<p>The other consideration is:</p>\n<ul>\n<li>The order of type class parents is an implementation detail that you the mathematician never want to have to even know exists</li>\n</ul>",
+        "id": 427822723,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1710887847
+    },
+    {
+        "content": "<p>I've PR'd the above at <a href=\"https://github.com/leanprover-community/mathlib4/pull/11521\">#11521</a></p>",
+        "id": 427831350,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1710893132
+    },
+    {
+        "content": "<p>28 messages were moved here from <a class=\"stream-topic\" data-stream-id=\"287929\" href=\"/#narrow/stream/287929-mathlib4/topic/Instance.20diamond.20in.20Equiv.2ETransferInstance\">#mathlib4 &gt; Instance diamond in Equiv.TransferInstance</a> by <span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span>.</p>",
+        "id": 427836904,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1710897573
+    },
+    {
+        "content": "<p>(for small values of 28)</p>",
+        "id": 427837122,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1710897740
+    },
+    {
+        "content": "<p>I'm adding the whole hierarchy of algebraic instances for DirectLimit <a href=\"https://github.com/leanprover-community/mathlib4/blob/TensorProduct.DirectLimit.Semiring/Mathlib/Algebra/DirectLimit.lean#L45-L370\">in #19772</a>, and I think it might benefit from your PR, which probably also solves the other issue that sometimes some data field available in ancestor instances are not picked up in descendent instances, resulting in those fields being filled by npowRec etc. causing a diamond. It took me some effort to locate a diamond that reports the Semiring and Field instances are not the same, which <a href=\"https://github.com/leanprover-community/mathlib4/pull/19772/commits/25e093d9d4d317eaba776f8e55b0fa94ea0953e3#diff-95a2226722d03828318ab6792cb4756cdd0895e156a1e97ffd2a3b3145f682dcR278-R281\">turned out</a> to be due to the Semiring instance not picking up npow from Monoid. Before your PR is merged, is there a way to ensure that data fields don't get automatically get filled by automation? I recall this question being asked on Zulip sometime ago, but I don't remember the keywords to find the discussion.</p>",
+        "id": 487067782,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1733768637
+    }
+]

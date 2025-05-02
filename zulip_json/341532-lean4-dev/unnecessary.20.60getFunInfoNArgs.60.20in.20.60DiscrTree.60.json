@@ -1,0 +1,182 @@
+[
+    {
+        "content": "<p>When building the <code>DiscrTree</code>,  for each <code>Expr.const</code>, <code>Expr.proj</code> and <code>Expr.fvar</code>, the function <code>getFunInfoNArgs</code> is called. This function computes many things about the type of this function, but the only thing that is used is the <code>BinderInfo</code> for each argument. I propose that instead, the <code>BinderInfo</code> is obtained directly form the type, which is more efficient. I saw a speedup of 10% with this change. Note that the result of <code>getFunInfoNArgs</code> is cached, but in the case of <code>Expr.proj</code>, the expression can contain metavariables, so in that case the cache is useless and the result has to be computed.</p>\n<p>The <code>BinderInfo</code> is used to determine whether an argument should be ignored. It is equivalent to this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">ignoreArg</span> <span class=\"o\">(</span><span class=\"n\">arg</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">i</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">binderInfos</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">BinderInfo</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"n\">Bool</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">if</span> <span class=\"k\">let</span> <span class=\"n\">some</span> <span class=\"n\">binderInfo</span> <span class=\"o\">:=</span> <span class=\"n\">binderInfos</span><span class=\"o\">[</span><span class=\"n\">i</span><span class=\"o\">]</span><span class=\"bp\">?</span> <span class=\"k\">then</span>\n    <span class=\"k\">match</span> <span class=\"n\">binderInfo</span> <span class=\"k\">with</span>\n    <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">instImplicit</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"n\">true</span>\n    <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">implicit</span>\n    <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">strictImplicit</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"n\">not</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">isType</span> <span class=\"n\">arg</span><span class=\"o\">)</span>\n    <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">default</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">isProof</span> <span class=\"n\">arg</span>\n  <span class=\"k\">else</span>\n    <span class=\"n\">isProof</span> <span class=\"n\">arg</span>\n</code></pre></div>\n<p>One concern could be that <code>getFunInfoNArgs</code> applies <code>whnf</code> to the function type in case it does not match <code>Expr.forallE</code>, which means that it can get more <code>BinderInfo</code> than we could get without using <code>whnf</code>. Note that when no <code>BinderInfo</code> is available, it assumes <code>BinderInfo.default</code>. I found that there is only one constant in Mathlib that unfolds to a <code>Expr.forallE</code> in this way that is not <code>.default</code>, which is <code>def Presieve [Category C] (X : C) := ∀ ⦃Y⦄, Set (Y ⟶ X)</code>, which is <code>.strictImplicit</code>. I'm not an expert on <code>Presieve</code>s, but I think it is reasonable to treat the argument as a <code>.default</code> and not to ignore its argument in the <code>DiscrTree</code>.</p>",
+        "id": 409584334,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1703252328
+    },
+    {
+        "content": "<p>I also want to ask  why implicit arguments are ignored when they are not types, because I can't think of many cases where an implicit argument is not a type. Could we instead treat <code>.implicit</code> and <code>strictImplicit</code> in the same way as <code>.default</code>?</p>",
+        "id": 409584398,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1703252359
+    },
+    {
+        "content": "<p>When you say \"speedup of 10%\", what did you test?</p>",
+        "id": 409619725,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1703266811
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/unnecessary.20.60getFunInfoNArgs.60.20in.20.60DiscrTree.60/near/409584334\">said</a>:</p>\n<blockquote>\n<p>I'm not an expert on <code>Presieve</code>s, but I think it is reasonable to treat the argument as a <code>.default</code> and not to ignore its argument in the <code>DiscrTree</code>.</p>\n</blockquote>\n<p>I think there would need to be a very good justification to break the assumption that the discrimination tree processes function types using their true binder infos.</p>",
+        "id": 409621104,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1703267506
+    },
+    {
+        "content": "<p>Incidentally, there might be a bug in the current binder infos calculation, where it doesn't take into account the arguments passed to the function. It's possible for the arity of a function to be bigger than the one implied by its type due to the particular arguments passed to it. For example, <code>id id 2</code> is using <code>id</code> with arity 2.</p>\n<p>I've swapped out <code>getFunInfoNArgs</code> with a function that calculates the correct BinderInfos (and only BinderInfos, rather than the full FunInfo), and I'm going to test it out with building mathlib.</p>",
+        "id": 409621216,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1703267552
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/unnecessary.20.60getFunInfoNArgs.60.20in.20.60DiscrTree.60/near/409584398\">said</a>:</p>\n<blockquote>\n<p>I also want to ask  why implicit arguments are ignored when they are not types, because I can't think of many cases where an implicit argument is not a type.</p>\n</blockquote>\n<p>Probably most if not all functions about <code>Fin</code> have an implicit <code>Nat</code> argument, for example.</p>",
+        "id": 409625735,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1703269596
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/unnecessary.20.60getFunInfoNArgs.60.20in.20.60DiscrTree.60/near/409619725\">said</a>:</p>\n<blockquote>\n<p>When you say \"speedup of 10%\", what did you test?</p>\n</blockquote>\n<p>I built the <code>DiscrTree</code> used by the <code>rw?</code> tactic. It went from 31.9 sec to 28.9 sec, and the heartbeats went from 282664 to 252320. The time was measured using <code>set_option profiler true</code>.</p>",
+        "id": 409642862,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1703279546
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/unnecessary.20.60getFunInfoNArgs.60.20in.20.60DiscrTree.60/near/409625735\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/unnecessary.20.60getFunInfoNArgs.60.20in.20.60DiscrTree.60/near/409584398\">said</a>:</p>\n<blockquote>\n<p>I also want to ask  why implicit arguments are ignored when they are not types, because I can't think of many cases where an implicit argument is not a type.</p>\n</blockquote>\n<p>Probably most if not all functions about <code>Fin</code> have an implicit <code>Nat</code> argument, for example.</p>\n</blockquote>\n<p>I still don't see why we would not treat these implicit <code>Nat</code> arguments the same way as we treat implicit type arguments. Most lemma's about <code>Fin</code> are about a general <code>n</code> anyways, so in that case either way this argument turns into a <code>.star</code>.</p>",
+        "id": 409643452,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1703279993
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/unnecessary.20.60getFunInfoNArgs.60.20in.20.60DiscrTree.60/near/409621216\">said</a>:</p>\n<blockquote>\n<p>Incidentally, there might be a bug in the current binder infos calculation, where it doesn't take into account the arguments passed to the function.</p>\n</blockquote>\n<p>This is indeed a bit of a problem, but I wonder how the cost of the extra computation compares to value we get out of knowing every single <code>BinderInfo</code>, i.e. is it worth it?</p>",
+        "id": 409643882,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1703280261
+    },
+    {
+        "content": "<p>Another suggestion I have is that besides the <code>BinderInfo</code>, you can also find out if an argument is an <code>outParam</code>, using <code>Expr.isOutParam</code> on the domain of the <code>Expr.forallE</code>. I would ignore the outParams for the same reason as the <code>.instImplicit</code> arguments: they are supposed to be inferable from the other arguments. In particular this would apply to addition, where the third type parameter is redundant.</p>",
+        "id": 409645779,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1703281520
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/unnecessary.20.60getFunInfoNArgs.60.20in.20.60DiscrTree.60/near/409643452\">said</a>:</p>\n<blockquote>\n<p>I still don't see why we would not treat these implicit <code>Nat</code> arguments the same way as we treat implicit type arguments. Most lemma's about <code>Fin</code> are about a general <code>n</code> anyways, so in that case either way this argument turns into a <code>.star</code>.</p>\n</blockquote>\n<p>I was only answering your question about cases where implicit arguments aren't types. It happens very frequently, and you probably wouldn't want the discrimination tree to do a more expensive defeq check for such arguments during lookup. Instance arguments are another example of an implicit argument that's not a type.</p>\n<p>There are also plenty of lemmas about <code>Fin (n + 1)</code>, etc. This is also not just a matter about the lemmas themselves that can apply, but about the definitions that the lemmas refer to. Definitions that use <code>Fin</code> can have implicit arguments, and maybe the the lemma has some expression involving <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Fin.succ#doc\">docs#Fin.succ</a> being passed to some other definition.</p>",
+        "id": 409646800,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1703282246
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/unnecessary.20.60getFunInfoNArgs.60.20in.20.60DiscrTree.60/near/409643882\">said</a>:</p>\n<blockquote>\n<p>This is indeed a bit of a problem, but I wonder how the cost of the extra computation compares to value we get out of knowing every single <code>BinderInfo</code>, i.e. is it worth it?</p>\n</blockquote>\n<p>It seems that you might be only accounting for the time to create a discrimination tree? If I understand it correctly, if you assume it's a default binder then that means during lookup that entails a defeq check. This means getting it wrong can make lookups more expensive. What does that do for <code>simp</code> across all of mathlib for example?</p>\n<p>The tradeoff is whether you make discrimination trees more permissive in what they match (perhaps making them faster to construct?) at the expense of having potentially a lot more theorems to test using more expensive defeq checks.</p>",
+        "id": 409646955,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1703282346
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/unnecessary.20.60getFunInfoNArgs.60.20in.20.60DiscrTree.60/near/409645779\">said</a>:</p>\n<blockquote>\n<p>Another suggestion I have is that besides the <code>BinderInfo</code>, you can also find out if an argument is an <code>outParam</code></p>\n</blockquote>\n<p>That seems sensible. It might be interesting to measure the effect.</p>",
+        "id": 409647632,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1703282671
+    },
+    {
+        "content": "<p>Actually, I suggested that in the <code>.implicit</code> and <code>.instImplicit</code> cases we would index the argument when it is not a type (currently it only does so when it is a type), just like for <code>.default</code>. This would mean that the DiscrTree is less permissive in what it matches. (So thereby less defeq checks)</p>",
+        "id": 409647737,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1703282752
+    },
+    {
+        "content": "<p>Or, maybe keep those the same as they are now, but when you don't know the <code>BinderInfo</code>, default to the <code>.default</code>, which makes the argument more likely to be indexed in the tree.</p>",
+        "id": 409648048,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1703282943
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/unnecessary.20.60getFunInfoNArgs.60.20in.20.60DiscrTree.60/near/409642862\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/unnecessary.20.60getFunInfoNArgs.60.20in.20.60DiscrTree.60/near/409619725\">said</a>:</p>\n<blockquote>\n<p>When you say \"speedup of 10%\", what did you test?</p>\n</blockquote>\n<p>I built the <code>DiscrTree</code> used by the <code>rw?</code> tactic. It went from 31.9 sec to 28.9 sec, and the heartbeats went from 282664 to 252320. The time was measured using <code>set_option profiler true</code>.</p>\n</blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/unnecessary.20.60getFunInfoNArgs.60.20in.20.60DiscrTree.60/near/409646955\">said</a>:</p>\n<blockquote>\n<p>It seems that you might be only accounting for the time to create a discrimination tree? If I understand it correctly, if you assume it's a default binder then that means during lookup that entails a defeq check. This means getting it wrong can make lookups more expensive. What does that do for <code>simp</code> across all of mathlib for example?</p>\n</blockquote>\n<p>This happened before with the DiscrTree PR in std. You reported a perf win regarding construction of discrimination trees, but discrimination trees are a kind of lookup table, they are optimized for lookup not for construction, so you really need to be including performance testing of lookups, with construction being only a secondary metric.</p>",
+        "id": 409648904,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1703283586
+    },
+    {
+        "content": "<p>the fastest discrimination tree to construct is of course the one that maps everything to <code>.star</code> <span aria-label=\"wink\" class=\"emoji emoji-1f609\" role=\"img\" title=\"wink\">:wink:</span></p>",
+        "id": 409649084,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1703283708
+    },
+    {
+        "content": "<p>Is there a standard test for <code>DiscrTree</code> lookup performance? Because I suppose that the performance gain/loss for lookup is more in what the tactics do with the obtained result than in the lookup itself. Testing it with building Mathlib would be ideal, but I don't think I can feasibly do that.</p>",
+        "id": 409659257,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1703290664
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/unnecessary.20.60getFunInfoNArgs.60.20in.20.60DiscrTree.60/near/409621216\">said</a>:</p>\n<blockquote>\n<p>I've swapped out <code>getFunInfoNArgs</code> with a function that calculates the correct BinderInfos</p>\n</blockquote>\n<p>I've tried the same, and I now have a version that builds around 5% faster than the standard <code>DiscrTree</code>. It uses some nice optimization inspired by <code>inferAppType</code> in <code>Lean.Meta.InferType</code>,  so I though I'd share that part:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">argsIgnore</span> <span class=\"o\">(</span><span class=\"n\">fn</span> <span class=\"o\">:</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">args</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Expr</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"o\">(</span><span class=\"n\">Array</span> <span class=\"n\">Bool</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">fnType</span> <span class=\"bp\">←</span> <span class=\"n\">inferType</span> <span class=\"n\">fn</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">result</span> <span class=\"o\">:=</span> <span class=\"n\">Array.mkEmpty</span> <span class=\"n\">args.size</span>\n  <span class=\"k\">let</span> <span class=\"n\">mut</span> <span class=\"n\">j</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span>\n  <span class=\"n\">for</span> <span class=\"n\">i</span> <span class=\"k\">in</span> <span class=\"o\">[:</span><span class=\"n\">args.size</span><span class=\"o\">]</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">arg</span> <span class=\"o\">:=</span> <span class=\"n\">args</span><span class=\"o\">[</span><span class=\"n\">i</span><span class=\"o\">]</span><span class=\"bp\">!</span>\n    <span class=\"n\">unless</span> <span class=\"n\">fnType</span> <span class=\"n\">matches</span> <span class=\"bp\">.</span><span class=\"n\">forallE</span> <span class=\"bp\">..</span> <span class=\"k\">do</span>\n      <span class=\"n\">fnType</span> <span class=\"bp\">←</span> <span class=\"n\">whnfD</span> <span class=\"o\">(</span><span class=\"n\">fnType.instantiateRevRange</span> <span class=\"n\">j</span> <span class=\"n\">i</span> <span class=\"n\">args</span><span class=\"o\">)</span>\n      <span class=\"n\">j</span> <span class=\"o\">:=</span> <span class=\"n\">i</span>\n    <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">forallE</span> <span class=\"n\">_</span> <span class=\"n\">d</span> <span class=\"n\">b</span> <span class=\"n\">binderInfo</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"n\">fnType</span> <span class=\"bp\">|</span> <span class=\"n\">throwError</span> <span class=\"n\">m</span><span class=\"bp\">!</span> <span class=\"s2\">\"expected function type {indentExpr fnType}\"</span>\n    <span class=\"k\">let</span> <span class=\"n\">ignore</span> <span class=\"bp\">←</span> <span class=\"o\">(</span><span class=\"k\">do</span>\n      <span class=\"k\">if</span> <span class=\"n\">d.isOutParam</span> <span class=\"k\">then</span>\n        <span class=\"n\">return</span> <span class=\"n\">true</span>\n      <span class=\"k\">else</span>\n        <span class=\"k\">match</span> <span class=\"n\">binderInfo</span> <span class=\"k\">with</span>\n        <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">instImplicit</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"n\">true</span>\n        <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">default</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">isProof</span> <span class=\"n\">arg</span>\n        <span class=\"bp\">|</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">return</span> <span class=\"bp\">!</span><span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">isType</span> <span class=\"n\">arg</span><span class=\"o\">))</span>\n    <span class=\"n\">fnType</span> <span class=\"o\">:=</span> <span class=\"n\">b</span>\n    <span class=\"n\">result</span> <span class=\"o\">:=</span> <span class=\"n\">result.push</span> <span class=\"n\">ignore</span>\n  <span class=\"n\">return</span> <span class=\"n\">result</span>\n</code></pre></div>",
+        "id": 409734114,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1703351146
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/unnecessary.20.60getFunInfoNArgs.60.20in.20.60DiscrTree.60/near/409659257\">said</a>:</p>\n<blockquote>\n<p>Testing it with building Mathlib would be ideal, but I don't think I can feasibly do that.</p>\n</blockquote>\n<p>Why do you say that? Just make a branch and a draft PR, and run <code>!bench</code>.</p>",
+        "id": 411143353,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1704355140
+    },
+    {
+        "content": "<p>I've never used !bench before. Can it also benchmark mathlib with changes to core lean? And should that be with a PR to core or to mathlib?</p>",
+        "id": 411190894,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1704375720
+    },
+    {
+        "content": "<p>When you create a PR against core, it will make a “release” for just your PR.</p>\n<p>Also, if your PR branches off  the tag <code>nightly-with-mathlib</code>, then the lean CI will automatically create a branch in the mathlib repo that tests your changes. But you can create such a branch in mathlib youself (which is what Scott wants to say here): A normal mathlib (draft) PR with <code>lean-toolchain</code> changed to your PR’s release. Then you can comment <code>!bench</code> there and some <span aria-label=\"cloud\" class=\"emoji emoji-2601\" role=\"img\" title=\"cloud\">:cloud:</span> <span aria-label=\"computer\" class=\"emoji emoji-1f4bb\" role=\"img\" title=\"computer\">:computer:</span>  will benchmark your changes.</p>\n<p>It can be a bit tricky to make sure the bench comparison really only captures your changes. Probably best to rebase your core PR onto the particular release tag that mathlib is using, so that only your changes are included.</p>",
+        "id": 411191702,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1704376035
+    },
+    {
+        "content": "<p>By the way, I made a draft PR at <a href=\"https://github.com/leanprover/lean4/pull/3113\">lean4#3113</a> with conservative changes (no changes in functionality, just use an optimized binderinfo collector), but CI didn't go through and I forgot about it over the rest of the holidays.</p>",
+        "id": 411215606,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1704383832
+    },
+    {
+        "content": "<p>So I would need to make a PR in lean branching off of leanprover/lean4:v4.5.0-rc1, and a PR in mathlib, setting the toolchain to the release corresponding to the lean PR, and then comment <code>!bench</code> in the mathlib PR?</p>",
+        "id": 411353630,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1704454563
+    },
+    {
+        "content": "<p>But it seems <span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> didn't make a separate PR to mathlib for this, or just not yet?</p>",
+        "id": 411353779,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1704454646
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"479299\">@Jovan Gerbscheid</span> I just rebased that Lean branch on top of a nightly branch (<code>nightly-with-mathlib</code>), and hopefully that will cause the CI to automatically create that mathlib branch</p>",
+        "id": 411361321,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1704457411
+    },
+    {
+        "content": "<p>If it doesn’t ping me and I can have a look why not. It should be working again these days :)</p>",
+        "id": 411362380,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1704457984
+    },
+    {
+        "content": "<p>It built, and I got it to benchmark, but there are no benchmark results to compare against. <a href=\"https://github.com/leanprover-community/mathlib4/pull/9460\">https://github.com/leanprover-community/mathlib4/pull/9460</a></p>\n<p>Could someone who has privileges to do so get f038bf8f141f7790d7c4e5903a7bfad571985094 to be benchmarked? That's the parent commit, which seems reasonable enough to compare against.</p>",
+        "id": 411388681,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1704468968
+    },
+    {
+        "content": "<p>Ah, yes, I keep running into this. What I do in that case is create a dummy branch from that commit, create a draft PR (against <code>master</code> or whater), run <code>!bench</code> there, and manually find the two runs on the speedcenter and compare.</p>",
+        "id": 411397307,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1704472377
+    },
+    {
+        "content": "<p>This is very tedious, I agree. I wonder if we should automatically bench all <code>nightly-testing</code> commits? Would that have helped here? I assume so.</p>",
+        "id": 411397769,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1704472575
+    }
+]

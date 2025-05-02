@@ -1,0 +1,44 @@
+[
+    {
+        "content": "<p>(Apologies for an imprecise question, I'm still debugging, and I'm somewhat confident I'll figure out what's up today, but I figure I'll ask anyways in case <span class=\"user-mention\" data-user-id=\"128280\">@Wojciech Nawrocki</span> you don't mind the ping and know immediately what's up(</p>\n<p>I notice in <code>lean.nvim</code> that we occasionally get -32900's / <code>rpcNeedsReconnect</code> sent back (possibly even deterministically) after calling <code>getWidgets</code>. I don't really understand yet how that can be, as from glancing at what the RPC side is doing, that seems to mean that the session ID isn't known by the server, but I've confirmed the session ID we send back matches what was received. I know that keep alive isn't the issue, as this behavior happens deterministically in <code>lean.nvim</code>'s test suite where the whole session is happening super quickly. I <em>think</em> the code block we hit is <a href=\"https://github.com/leanprover/lean4/blob/abae95e1701a081701ef132a35b3b409594e3907/src/Lean/Server/FileWorker.lean#L608\">https://github.com/leanprover/lean4/blob/abae95e1701a081701ef132a35b3b409594e3907/src/Lean/Server/FileWorker.lean#L608</a> but if I don't figure this out externally I'll hack some debugging into a build of Lean 4 on that line (unless some exists already I can use).</p>\n<p>My imprecise question is two parts \"do you happen to have any idea what's happening from that description\"? Is it possible the server is unhappy with a request and purging sessions? The second part is more precise: it seems to me like the client side should have some generic wrapper around RPC calls which reconnects if the server indicates that the session is stale, but I don't see the vscode-lean4 extension doing this anywhere, so either I'm missing it, or it doesn't do so? What makes me think it is is that I've been testing our behavior even with intentionally making the session go stale, which for <code>lean.nvim</code> is doable if you leave neovim open, let the computer go to sleep for &gt; 30 seconds, and then during sleep no keep alive messages are sent, so when we wake up, the session is stale and we get an error. But I don't notice this happening in VSCode, so somehow the extension is handling it, I just don't see where.</p>",
+        "id": 475571136,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1728396243
+    },
+    {
+        "content": "<p>(For the latter question, to be clear, I'm interested in the case where the cursor doesn't move or anything --  I know if it does, a new session at the new position will get opened, this lean.nvim does already as well of course.)</p>",
+        "id": 475572528,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1728396577
+    },
+    {
+        "content": "<p>One quick observation: if you are getting this in a <code>getWidgets</code> RPC, it cannot be the linked line since that only runs for <code>getInteractiveDiagnostics</code>.</p>",
+        "id": 475572614,
+        "sender_full_name": "𝚠𝚘𝚓𝚌𝚒𝚎𝚌𝚑 𝚗𝚊𝚠𝚛𝚘𝚌𝚔𝚒",
+        "timestamp": 1728396598
+    },
+    {
+        "content": "<p>Uh, indeed, thanks, that was me linking the wrong line, there are 2 places that seemed to return this error, I meant to link the other one -- <a href=\"https://github.com/leanprover/lean4/blob/abae95e1701a081701ef132a35b3b409594e3907/src/Lean/Server/Rpc/RequestHandling.lean#L73\">https://github.com/leanprover/lean4/blob/abae95e1701a081701ef132a35b3b409594e3907/src/Lean/Server/Rpc/RequestHandling.lean#L73</a></p>",
+        "id": 475573094,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1728396707
+    },
+    {
+        "content": "<p>As for how restarting is handled in vscode-lean4, IIRC there is no general mechanism for doing this. Instead it is handled on case-by-case basis at call sites. For instance <a href=\"https://github.com/leanprover/vscode-lean4/blob/33e54067d5fefcdf7f28e4993324fd486a53421c/lean4-infoview/src/infoview/info.tsx#L465\">here</a>. These handlers make the infoview fairly robust to RPC session restarts, so it is not completely out of the question that there is a bug in the server unnecessarily dropping sessions which doesn't impact the UX very much. That said, the server should not drop a session that hasn't expired (e.g. on bad <code>rpc/call</code> requests), but it will drop a session if you <code>rpc/connect</code> again for the same file (<a href=\"https://github.com/leanprover/lean4/blob/abae95e1701a081701ef132a35b3b409594e3907/src/Lean/Server/FileWorker.lean#L510\">code</a>). Perhaps nvim is doing that? Another possible reason is just if the file worker restarts. But I don't have any good guess for what might be happening other than these. Adding some debug output to the server would certainly help.</p>",
+        "id": 475576389,
+        "sender_full_name": "𝚠𝚘𝚓𝚌𝚒𝚎𝚌𝚑 𝚗𝚊𝚠𝚛𝚘𝚌𝚔𝚒",
+        "timestamp": 1728397332
+    },
+    {
+        "content": "<p>Thanks, that's quite helpful already, that line looks like what I was looking for yesterday. OK, will do some more digging today. Appreciate the tips so far.</p>",
+        "id": 475577869,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1728397568
+    },
+    {
+        "content": "<blockquote>\n<p>it will drop a session if you <code>rpc/connect</code> again for the same file (<a href=\"https://github.com/leanprover/lean4/blob/abae95e1701a081701ef132a35b3b409594e3907/src/Lean/Server/FileWorker.lean#L510\">code</a>). Perhaps nvim is doing that?</p>\n</blockquote>\n<p>This turned out to explain most (but not all!) of the issue, so thanks again. (We were keying RPC sessions off of neovim buffer IDs, but that's not right, we should be and now are keying them off of file URIs so that we reuse sessions even across multiple places if they're meant for the same URI.) As I say there's still one or two places that <em>still</em> give 32900's (which I've worked around with a retry and may come back and try to figure out). But yeah productive day.</p>",
+        "id": 475710800,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1728439178
+    }
+]

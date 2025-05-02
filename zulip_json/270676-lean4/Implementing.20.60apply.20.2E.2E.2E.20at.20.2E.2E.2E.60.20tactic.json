@@ -1,0 +1,92 @@
+[
+    {
+        "content": "<p>Hey! I was trying to implement something like <code>apply ... at ...</code> tactic and got stuck a bit. </p>\n<p>Suppose we have a term <code>t</code> of type <code>forall n m, n = m -&gt; m = n</code>, and a hypothesis <code>h : 5 = 4</code> in our proof context. <code>apply t at h</code> should change the type of <code>h</code> to <code>4 = 5</code>. In general, it should instantiate with <code>h</code> the first argument of <code>t</code> with a matching type. And then instantiate all arguments of <code>t</code> which <code>h</code> depends on. <br>\nIf I understand it correctly, the first step here would be to find an argument of <code>t</code>, that matches a type of <code>h</code>. I have managed to do that. But I have no idea what to do next. <br>\nCould someone please help me with it?</p>",
+        "id": 421612351,
+        "sender_full_name": "Vladimir Gladstein",
+        "timestamp": 1707989028
+    },
+    {
+        "content": "<p>I'm not sure what you're asking. Does this not work for you, or are you asking about the implementation of <code>apply</code>?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">h1</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"n\">m</span> <span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">,</span> <span class=\"n\">m</span> <span class=\"bp\">=</span> <span class=\"n\">n</span> <span class=\"bp\">→</span> <span class=\"n\">n</span> <span class=\"bp\">=</span> <span class=\"n\">m</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h2</span> <span class=\"o\">:</span> <span class=\"mi\">5</span> <span class=\"bp\">=</span> <span class=\"mi\">4</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">apply</span> <span class=\"n\">h1</span> <span class=\"n\">at</span> <span class=\"n\">h2</span>\n  <span class=\"n\">guard_hyp</span> <span class=\"n\">h2</span> <span class=\"o\">:</span> <span class=\"mi\">4</span> <span class=\"bp\">=</span> <span class=\"mi\">5</span>\n  <span class=\"n\">trivial</span>\n</code></pre></div>",
+        "id": 421612913,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1707989200
+    },
+    {
+        "content": "<p>Thank you! I didn't try to find one in mathlib</p>",
+        "id": 421613172,
+        "sender_full_name": "Vladimir Gladstein",
+        "timestamp": 1707989278
+    },
+    {
+        "content": "<p>Actually, that is not exactly what I want. This tactic creates a new metavariable for each uninstantiated hypothesis. But I want is to leave those hypothesise as preconditions of <code>h</code><br>\nLike if we apply <code>forall n m, n &gt; 0 -&gt; n = m -&gt; n = m</code> at <code>h</code>, the type of <code>h : 5 = 6</code> should be <code>6 &gt; 0 -&gt; 6 = 5</code></p>",
+        "id": 421615199,
+        "sender_full_name": "Vladimir Gladstein",
+        "timestamp": 1707989945
+    },
+    {
+        "content": "<p>One possible algorithm is this:</p>\n<ul>\n<li>Use <code>withNewMCtxDepth</code> to make sure that the following only assigns metavariables created by you. (Presumably, this is what you want.)</li>\n<li>Use <code>forallMetaTelescope</code> on the type of <code>t</code> to create metavariables <code>?n : Nat</code>, <code>?m : Nat</code>, <code>?h : ?n = ?m</code>.</li>\n<li>For each such metavariable <code>?x</code>, run <code>isDefEq ?x T</code>, where <code>T</code> is the type of your hypothesis (here <code>4 = 5</code>).</li>\n<li>If any of these calls succeeds, say <code>?h</code> unifies with the type of <code>h</code>, create the proof <code>t ?n ?m h</code>. (What if multiple calls succeed?)</li>\n<li>Instantiate metavariables in this proof to obtain <code>t n m h</code>.</li>\n<li>Your spec doesn't mention this, but you probably want to support typeclass arguments. If so, go through the metavariables and try to <code>synthInstance</code> those that represent typeclass arguments.</li>\n<li>In case the proof still contains metavariables, use <code>abstractMVars</code> to turn them into lambdas.</li>\n<li><code>assert</code> the resulting proof as a new hypothesis.</li>\n</ul>\n<p><a href=\"https://github.com/leanprover-community/aesop/blob/e4660fa21444bcfe5c70d37b09cc0517accd8ad7/Aesop/RuleTac/Forward.lean#L16\">This code</a> implements this procedure, though it also does a bunch of other things so it's maybe a bit opaque.</p>",
+        "id": 421624913,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1707993266
+    },
+    {
+        "content": "<p>Thank you! <code>abstractMVars</code> was a missing piece for me.</p>",
+        "id": 421634380,
+        "sender_full_name": "Vladimir Gladstein",
+        "timestamp": 1707996882
+    },
+    {
+        "content": "<p>This sounds exactly like <code>apply ... at</code> except you <em>also</em> match on the body of the telescoped hypothesis.</p>",
+        "id": 421653771,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1708003784
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"197836\">Jireh Loreaux</span> <a href=\"#narrow/stream/270676-lean4/topic/Implementing.20.60apply.20.2E.2E.2E.20at.20.2E.2E.2E.60.20tactic/near/421653771\">said</a>:</p>\n<blockquote>\n<p>This sounds exactly like <code>apply ... at</code> except you <em>also</em> match on the body of the telescoped hypothesis.</p>\n</blockquote>\n<p>I am not entirely sure what do you mean. But the algorithm by <span class=\"user-mention\" data-user-id=\"256311\">@Jannis Limperg</span> exactly does what I wanted.</p>",
+        "id": 421661618,
+        "sender_full_name": "Vladimir Gladstein",
+        "timestamp": 1708006353
+    },
+    {
+        "content": "<p>I think this is a strictly better version than the current <code>apply at</code>, if you want to PR it.</p>",
+        "id": 421663002,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1708006683
+    },
+    {
+        "content": "<p>Note that the usual <code>apply</code> adds missing hypotheses as additional goals. This was the idea behind the current behavior of <code>apply ... at ...</code>.</p>",
+        "id": 421664805,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1708007152
+    },
+    {
+        "content": "<p>If you do change this behavior, then I would check with <span class=\"user-mention\" data-user-id=\"110038\">@Kevin Buzzard</span> who is using this tactic in the natural number game.</p>",
+        "id": 421664893,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1708007172
+    },
+    {
+        "content": "<p>Actually, I didn't intend to change the behaviour of the current version of <code>apply at</code>. The reason I need it, is that I am porting Coq <a href=\"https://ilyasergey.net/util/ssreflect-manual.pdf\">ssreflect</a> tactic language to Lean, and there is something similar there</p>",
+        "id": 421666763,
+        "sender_full_name": "Vladimir Gladstein",
+        "timestamp": 1708007748
+    },
+    {
+        "content": "<p>But I can make a PR is you think it is a better version</p>",
+        "id": 421667231,
+        "sender_full_name": "Vladimir Gladstein",
+        "timestamp": 1708007881
+    },
+    {
+        "content": "<p>I think it is unconventional in lean for anything to put subgoals as implications in the goal except the <code>revert</code> tactic which is specifically for doing that. This is significantly different from ssreflect where most subgoals end up as implications in the goal</p>",
+        "id": 421675874,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1708009840
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"690517\">Vladimir Gladstein</span> <a href=\"#narrow/stream/270676-lean4/topic/Implementing.20.60apply.20.2E.2E.2E.20at.20.2E.2E.2E.60.20tactic/near/421661618\">said</a>:</p>\n<blockquote>\n<p>I am not entirely sure what do you mean. But the algorithm by <span class=\"user-mention silent\" data-user-id=\"256311\">Jannis Limperg</span> exactly does what I wanted.</p>\n</blockquote>\n<p>Sorry, I misunderstood because I failed to read this message carefully.<br>\n<span class=\"user-mention silent\" data-user-id=\"690517\">Vladimir Gladstein</span> <a href=\"#narrow/stream/270676-lean4/topic/Implementing.20.60apply.20.2E.2E.2E.20at.20.2E.2E.2E.60.20tactic/near/421615199\">said</a>:</p>\n<blockquote>\n<p>Actually, that is not exactly what I want. This tactic creates a new metavariable for each uninstantiated hypothesis. But I want is to leave those hypothesise as preconditions of <code>h</code><br>\nLike if we apply <code>forall n m, n &gt; 0 -&gt; n = m -&gt; n = m</code> at <code>h</code>, the type of <code>h : 5 = 6</code> should be <code>6 &gt; 0 -&gt; 6 = 5</code></p>\n</blockquote>",
+        "id": 421686681,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1708012804
+    }
+]

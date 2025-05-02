@@ -1,0 +1,38 @@
+[
+    {
+        "content": "<p>I tried to replicate a python test case where one has to instantiate a large array:</p>\n<div class=\"codehilite\" data-code-language=\"Python\"><pre><span></span><code><span class=\"c1\"># snip</span>\n<span class=\"n\">h</span><span class=\"o\">.</span><span class=\"n\">update</span><span class=\"p\">(</span><span class=\"sa\">b</span><span class=\"s2\">\"</span><span class=\"se\">\\x00</span><span class=\"s2\">\"</span> <span class=\"o\">*</span> <span class=\"mi\">1</span><span class=\"p\">)</span>\n<span class=\"n\">h</span><span class=\"o\">.</span><span class=\"n\">update</span><span class=\"p\">(</span><span class=\"sa\">b</span><span class=\"s2\">\"</span><span class=\"se\">\\x00</span><span class=\"s2\">\"</span> <span class=\"o\">*</span> <span class=\"mi\">4294967295</span><span class=\"p\">)</span>\n<span class=\"nb\">print</span><span class=\"p\">(</span><span class=\"n\">h</span><span class=\"o\">.</span><span class=\"n\">hexdigest</span><span class=\"p\">())</span>\n</code></pre></div>\n<p>The following works, but it takes a very long time to instantiate <code>b</code> using Lean 4.13.0. Is it normal and/or is there a better way to do it?</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"bp\">—</span><span class=\"w\"> </span><span class=\"n\">snip</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">ByteArray</span><span class=\"bp\">.</span><span class=\"n\">mk</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"w\"> </span><span class=\"n\">mkArray</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"mi\">0</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">ByteArray</span><span class=\"bp\">.</span><span class=\"n\">mk</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"w\"> </span><span class=\"n\">mkArray</span><span class=\"w\"> </span><span class=\"mi\">4294967295</span><span class=\"w\"> </span><span class=\"mi\">0</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">state</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">SHA3_224</span><span class=\"bp\">.</span><span class=\"n\">mk</span><span class=\"w\"> </span><span class=\"bp\">|&gt;</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">SHA3_224</span><span class=\"bp\">.</span><span class=\"n\">update</span><span class=\"w\"> </span><span class=\"bp\">·</span><span class=\"w\">  </span><span class=\"n\">a</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">|&gt;</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">SHA3_224</span><span class=\"bp\">.</span><span class=\"n\">update</span><span class=\"w\"> </span><span class=\"bp\">·</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"n\">IO</span><span class=\"bp\">.</span><span class=\"n\">println</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"w\"> </span><span class=\"n\">HexString</span><span class=\"bp\">.</span><span class=\"n\">toHexString</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"w\"> </span><span class=\"n\">SHA3_224</span><span class=\"bp\">.</span><span class=\"n\">final</span><span class=\"w\"> </span><span class=\"n\">state</span>\n</code></pre></div>",
+        "id": 480986575,
+        "sender_full_name": "Carbon",
+        "timestamp": 1730921275
+    },
+    {
+        "content": "<p>I've not used <code>ByteArray</code> before, but is it possible python is compiling the bytes into a single 4GB object before timing it (possibly creating a massive .pyc file)? Also, maybe mkArray is taking up most of the time, and there might be a faster way to create it? This is just speculation though.</p>",
+        "id": 481009473,
+        "sender_full_name": "Niels Voss",
+        "timestamp": 1730931227
+    },
+    {
+        "content": "<p>Possible. I did not observe the creation of a .pyc file but python is incredibly faster for sure. Not a show-stopper for me for now, but I was wondering if there were better ways to do it.</p>",
+        "id": 481153755,
+        "sender_full_name": "Carbon",
+        "timestamp": 1730996015
+    },
+    {
+        "content": "<p>Using <code>mkEmpty</code> with the correct capacity + <code>push</code> is likely faster but really there should be a version of <code>Array.mkArray</code>. Could you open an issue?</p>",
+        "id": 481157373,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1730997087
+    },
+    {
+        "content": "<p>Something like the code below? Still looks very slow. Happy to open an issue! Is the request specifically to make version of <code>Array.mkArray</code> that is efficient for large arrays? As a side note, glancing at the process memory size, it gets much larger than the requested size in both implementations.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">fill</span><span class=\"w\">  </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">Id</span><span class=\"bp\">.</span><span class=\"n\">run</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">mut</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Array</span><span class=\"w\"> </span><span class=\"n\">UInt8</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">Array</span><span class=\"bp\">.</span><span class=\"n\">mkEmpty</span><span class=\"w\"> </span><span class=\"mi\">4294967295</span>\n<span class=\"w\">  </span><span class=\"n\">for</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"k\">in</span><span class=\"w\"> </span><span class=\"o\">[:</span><span class=\"mi\">4294967295</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">    </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"n\">push</span><span class=\"w\"> </span><span class=\"mi\">0</span>\n<span class=\"w\">  </span><span class=\"n\">x</span>\n</code></pre></div>",
+        "id": 481166857,
+        "sender_full_name": "Carbon",
+        "timestamp": 1731000101
+    },
+    {
+        "content": "<p>I meant using <code>ByteArray.mkEmpty</code>. Which is still not very fast, but should be memory-efficient.</p>",
+        "id": 481281193,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1731060534
+    }
+]

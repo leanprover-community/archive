@@ -1,0 +1,122 @@
+[
+    {
+        "content": "<p>I tried to use <code>isDefEq</code> in a situation where there are metavariables that are not assignable (because I use <code>withNewMCtxDepth</code>), and I hoped that these metavariables would act in the same way as how free variables would, but it turns out to be less powerful than I hoped. For example <code>?a =?= (fun x =&gt; ?a) b</code> evaluates to false when <code>?a</code> is not assignable, whereas it returns true when replacing <code>?a</code> with a free variable, or an assignable metavariable. Is there any way around this other than to use free variables in the first place?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">a</span> <span class=\"bp\">←</span> <span class=\"n\">mkFreshExprMVar</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Nat</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">c</span> <span class=\"o\">:=</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkLambda</span> <span class=\"bp\">`</span><span class=\"n\">x</span> <span class=\"bp\">.</span><span class=\"n\">default</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Nat.zero</span><span class=\"o\">)</span>\n  <span class=\"n\">withNewMCtxDepth</span> <span class=\"k\">do</span> <span class=\"n\">isExprDefEq</span> <span class=\"n\">a</span> <span class=\"n\">c</span>\n</code></pre></div>",
+        "id": 420586076,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1707454055
+    },
+    {
+        "content": "<p>Hmm, I don't know about the exact workings of Lean, but the <code>?a</code> in <code>fun x =&gt; ?a</code> has its De Bruijn indices incremented by one, so it cannot mention <code>x</code> and therefore a rule could be made to see through the beta-substitution. But this would only be one exception, how should lean handle <code>(fun x =&gt; (fun y =&gt; ?a) x) b</code> for instance?</p>",
+        "id": 420636294,
+        "sender_full_name": "Emilie (Shad Amethyst)",
+        "timestamp": 1707479271
+    },
+    {
+        "content": "<p>If Lean sees <code>a =?= (fun x =&gt; _) _</code>, with <code>a</code> a free variable, then it will do the beta-reduction. But when it sees <code>?a =?= (fun x =&gt; _) _</code> with <code>?a</code> an unassignable metavariable, then it will not do the beta-reduction. So what I would need here is a setting that makes lean treat metavariables with a lower <code>MetavarContext.depth</code> in the same way as free variables.</p>\n<p>However, it seems that this problem doesn't actually appear in my code. I was just checking that my code worked by throwing an error is <code>isDefEq</code> returned false on two expressions that should be defEq. So then I got confused thinking there was a bug in my code.</p>",
+        "id": 420655674,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1707486499
+    },
+    {
+        "content": "<p>For debugging, here's a start:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"foo\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">a</span> <span class=\"bp\">←</span> <span class=\"n\">mkFreshExprMVar</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Nat</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">c</span> <span class=\"o\">:=</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkLambda</span> <span class=\"bp\">`</span><span class=\"n\">x</span> <span class=\"bp\">.</span><span class=\"n\">default</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Nat.zero</span><span class=\"o\">)</span>\n  <span class=\"n\">return</span> <span class=\"n\">toExpr</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">←</span> <span class=\"n\">withNewMCtxDepth</span> <span class=\"k\">do</span> <span class=\"n\">isExprDefEq</span> <span class=\"n\">a</span> <span class=\"n\">c</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.Meta.isDefEq</span> <span class=\"n\">true</span>\n<span class=\"k\">#check</span> <span class=\"n\">foo</span>\n</code></pre></div>\n<p>It gets to <a href=\"https://github.com/leanprover/lean4/blob/master/src/Lean/Meta/ExprDefEq.lean#L1589\">this message</a> before failing:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">?</span><span class=\"n\">m.833</span> <span class=\"o\">[</span><span class=\"n\">nonassignable</span><span class=\"o\">]</span> <span class=\"bp\">=?=</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"bp\">↦</span> <span class=\"bp\">?</span><span class=\"n\">m.833</span><span class=\"o\">)</span> <span class=\"n\">Nat.zero</span> <span class=\"o\">[</span><span class=\"n\">nonassignable</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>I'm not sure what it's doing after that message though. For all I know, the function it's in returns <code>undef</code>.</p>",
+        "id": 420696535,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1707498885
+    },
+    {
+        "content": "<p>More robust trace classes here would be nice. I wrote one for depth at some point for personal use. It’s probably rotted by now though</p>",
+        "id": 420696811,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1707498996
+    },
+    {
+        "content": "<p>Do you think it is a feature or a bug? because I imagine that in other circumstances (e.g. type class inference) this behaviour is correct?</p>",
+        "id": 420697228,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1707499149
+    },
+    {
+        "content": "<p>It seems like a bug to me that <code>?a =?= (fun x =&gt; ?a) b</code> is failing when <code>?a</code> is unassignable, but I'm not sure what the bug is exactly. There are a lot of moving parts in <code>isDefEq</code>.</p>",
+        "id": 420698089,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1707499447
+    },
+    {
+        "content": "<p>Here's another test using an unassignable metavariable:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"foo\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">a</span> <span class=\"bp\">←</span> <span class=\"n\">mkFreshExprSyntheticOpaqueMVar</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Nat</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">c</span> <span class=\"o\">:=</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkLambda</span> <span class=\"bp\">`</span><span class=\"n\">x</span> <span class=\"bp\">.</span><span class=\"n\">default</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Nat.zero</span><span class=\"o\">)</span>\n  <span class=\"n\">return</span> <span class=\"n\">toExpr</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">←</span> <span class=\"n\">isExprDefEq</span> <span class=\"n\">a</span> <span class=\"n\">c</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.Meta.isDefEq</span> <span class=\"n\">true</span>\n<span class=\"k\">#check</span> <span class=\"n\">foo</span>\n<span class=\"c1\">-- false</span>\n</code></pre></div>",
+        "id": 420698177,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1707499492
+    },
+    {
+        "content": "<p>That at least suggests it's about assignability, rather than say how depths are handled.</p>",
+        "id": 420698367,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1707499563
+    },
+    {
+        "content": "<p>I thought unification just throws up its hands when there are no assignable meta variables left?</p>",
+        "id": 420700560,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1707500337
+    },
+    {
+        "content": "<p>Looking at the code, it looks to me like it first calls <code>isDefEqQuick</code>, which then calls <code>isDefEqQuickOther</code>, and it gives that trace message, and then returns <code>LBool.false</code>, which terminates the process.</p>",
+        "id": 420700603,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1707500356
+    },
+    {
+        "content": "<p>I think the problem is that at that trace message, the person writing the code expected both sides to be a metavariable, so then it makes sense to return false.</p>",
+        "id": 420700959,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1707500514
+    },
+    {
+        "content": "<p>The comment at that point starts with:<br>\nTrying to unify <code>?m ... =?= ?n ...</code> where both <code>?m</code> and <code>?n</code> cannot be assigned.</p>",
+        "id": 420701212,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1707500607
+    },
+    {
+        "content": "<p>Here's verification that <code>isDefEqQuickOther</code> is indeed returning <code>false</code></p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"foo\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">a</span> <span class=\"bp\">←</span> <span class=\"n\">mkFreshExprSyntheticOpaqueMVar</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Nat</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"n\">c</span> <span class=\"o\">:=</span> <span class=\"n\">mkApp</span> <span class=\"o\">(</span><span class=\"n\">mkLambda</span> <span class=\"bp\">`</span><span class=\"n\">x</span> <span class=\"bp\">.</span><span class=\"n\">default</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">mkConst</span> <span class=\"bp\">``</span><span class=\"n\">Nat.zero</span><span class=\"o\">)</span>\n  <span class=\"n\">withTheReader</span> <span class=\"n\">Meta.Context</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">c</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span><span class=\"n\">c</span> <span class=\"k\">with</span> <span class=\"n\">config</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">c.config</span> <span class=\"k\">with</span> <span class=\"n\">isDefEqStuckEx</span> <span class=\"o\">:=</span> <span class=\"n\">true</span><span class=\"o\">}})</span> <span class=\"k\">do</span>\n  <span class=\"n\">return</span> <span class=\"n\">toExpr</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">←</span> <span class=\"n\">isExprDefEq</span> <span class=\"n\">a</span> <span class=\"n\">c</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.Meta.isDefEq</span> <span class=\"n\">true</span>\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.Meta.isDefEq.stuck</span> <span class=\"n\">true</span>\n<span class=\"k\">#check</span> <span class=\"n\">foo</span>\n<span class=\"c1\">-- ...</span>\n<span class=\"c1\">-- [stuck] ?m.654 =?= (fun x ↦ ?m.654) Nat.zero</span>\n</code></pre></div>",
+        "id": 420702510,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1707501089
+    },
+    {
+        "content": "<p>The function nicely handles the cases where</p>\n<ul>\n<li>neither side is an mvar</li>\n<li>one side is an assignable mvar and the other side is a not assignable mvar or not an mvar</li>\n<li>both are unassignable mvars</li>\n</ul>\n<p>but it somehow forgets to check that it is possible that one is not assignable and the other is not an mvar, and so it just ends up doing the code for the third option.<br>\nSo I feel like this shouldn't be that hard to fix.</p>",
+        "id": 420703245,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1707501367
+    },
+    {
+        "content": "<p>So I suggest that is should return <code>LBool.undef</code> whenever one side is an unassignable mvar and the other side is not an mvar</p>",
+        "id": 420703575,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1707501495
+    },
+    {
+        "content": "<p>Are we talking about line 1641 for Kyle’s trace?</p>",
+        "id": 420703658,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1707501535
+    },
+    {
+        "content": "<p>Yes</p>",
+        "id": 420703730,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1707501567
+    },
+    {
+        "content": "<p>I've made an issue to track this: <a href=\"https://github.com/leanprover/lean4/pull/3293\">lean4#3293</a></p>",
+        "id": 420704381,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1707501784
+    },
+    {
+        "content": "<p>Here's  an example that failed in my actual code (not when I was debugging):</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"test\"</span> <span class=\"o\">:</span> <span class=\"n\">command</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Elab.Command.liftTermElabM</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">n1</span> <span class=\"o\">:=</span> <span class=\"bp\">``</span><span class=\"n\">PiLp.add_apply</span>\n  <span class=\"k\">let</span> <span class=\"n\">t1</span> <span class=\"bp\">←</span> <span class=\"n\">inferType</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mkConstWithFreshMVarLevels</span> <span class=\"n\">n1</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span><span class=\"n\">_</span><span class=\"o\">,</span><span class=\"n\">t1</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">forallMetaTelescope</span> <span class=\"n\">t1</span>\n  <span class=\"n\">withNewMCtxDepth</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">n2</span> <span class=\"o\">:=</span> <span class=\"bp\">``</span><span class=\"k\">Pi</span><span class=\"bp\">.</span><span class=\"n\">add_apply</span>\n  <span class=\"k\">let</span> <span class=\"n\">t2</span> <span class=\"bp\">←</span> <span class=\"n\">inferType</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mkConstWithFreshMVarLevels</span> <span class=\"n\">n2</span><span class=\"o\">)</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">,</span><span class=\"n\">_</span><span class=\"o\">,</span><span class=\"n\">t2</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">forallMetaTelescope</span> <span class=\"n\">t2</span>\n  <span class=\"n\">logInfo</span>  <span class=\"bp\">&lt;|</span> <span class=\"n\">toExpr</span> <span class=\"bp\">&lt;|</span> <span class=\"bp\">←</span> <span class=\"n\">isDefEq</span> <span class=\"n\">t1.appFn</span><span class=\"bp\">!.</span><span class=\"n\">appArg</span><span class=\"bp\">!</span> <span class=\"n\">t2.appFn</span><span class=\"bp\">!.</span><span class=\"n\">appArg</span><span class=\"bp\">!</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.Meta.isDefEq</span> <span class=\"n\">true</span>\n<span class=\"n\">test</span>\n</code></pre></div>\n<p>After a minute of clicking though the <code>isDefEq</code> trace, you can find that it fails on this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[]</span> <span class=\"bp\">?</span><span class=\"n\">β</span> <span class=\"n\">i</span> <span class=\"o\">[</span><span class=\"n\">nonassignable</span><span class=\"o\">]</span> <span class=\"bp\">=?=</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">i</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">i</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">i</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">(</span><span class=\"k\">fun</span> <span class=\"n\">i</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">?</span><span class=\"n\">β</span> <span class=\"n\">i</span><span class=\"o\">)</span> <span class=\"n\">i</span><span class=\"o\">)</span> <span class=\"n\">i</span><span class=\"o\">)</span> <span class=\"n\">i</span><span class=\"o\">)</span> <span class=\"n\">i</span> <span class=\"o\">[</span><span class=\"n\">nonassignable</span><span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 420722455,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1707509061
+    }
+]

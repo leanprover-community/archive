@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>I'm having an issue since 4.8.0 with notation not showing in the (VScode) pretty-printer when defined in a namespace. </p>\n<p>Removing the <code>namespace</code> fixes the below. Can someone tell me how to make it appear? </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Data.Set.Basic</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">Set</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">MySubset</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">s</span> <span class=\"n\">t</span> <span class=\"o\">:</span> <span class=\"n\">Set</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span> <span class=\"o\">:=</span> <span class=\"n\">s</span> <span class=\"bp\">⊆</span> <span class=\"n\">t</span>\n\n<span class=\"kd\">infix</span><span class=\"o\">:</span><span class=\"mi\">50</span> <span class=\"s2\">\" ⊆⊆ \"</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">MySubset</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">{</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">s</span> <span class=\"n\">t</span> <span class=\"o\">:</span> <span class=\"n\">Set</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">s</span> <span class=\"bp\">⊆⊆</span> <span class=\"n\">t</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">s</span> <span class=\"bp\">⊆</span> <span class=\"n\">t</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"c1\">-- pp shows `h : s.MySubset t` rather than `s ⊆⊆ t`.</span>\n  <span class=\"n\">exact</span> <span class=\"n\">h</span>\n\n<span class=\"kd\">end</span> <span class=\"n\">Set</span>\n</code></pre></div>",
+        "id": 437016468,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1714824296
+    },
+    {
+        "content": "<p>Could this have to do with <code>pp_dot</code> now being the default?</p>",
+        "id": 437016932,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1714824671
+    },
+    {
+        "content": "<p>On mobile, but guessing that <code>pp_nodot</code> will fix it. Presumably this isn’t intended behaviour, though.</p>",
+        "id": 437025720,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1714832559
+    },
+    {
+        "content": "<p>Thanks for the report, looking into fixing this. Most notations go through a notation typeclass, which prevents this interaction between the dot notation pretty printer and the unexpander from <code>infix</code>/etc.</p>\n<p>The issue is that the dot notation pretty printer can collapse projections to parent structures, so to prevent any backtracking in pretty printing, once it determines that dot notation is possible it commits to it.</p>",
+        "id": 437035434,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1714842148
+    },
+    {
+        "content": "<p><code>pp_nodot</code> does fix it for the time being. Is there any way to (in a local project) add that attribute to a declaration already in mathlib that has been broken by this? </p>\n<p>If I try  <code>attribute [pp_nodot] Matroid.Restriction</code> (for example), then I get <code>invalid attribute 'pp_nodot', declaration is in an imported module</code>.</p>",
+        "id": 437106129,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1714910761
+    },
+    {
+        "content": "<p>Unfortunately no, since <code>pp_nodot</code> is a TagAttribute.</p>\n<p>If this is for fixing pretty printing, then what you could do is make a delaborator (rather than an unexpander) which would be unaffected.</p>",
+        "id": 437140130,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1714924087
+    },
+    {
+        "content": "<p>If you add this chunk of code it'll fix pretty printing locally:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">PrettyPrinter</span> <span class=\"n\">Delaborator</span> <span class=\"n\">SubExpr</span> <span class=\"k\">in</span>\n<span class=\"kd\">@[</span><span class=\"n\">delab</span> <span class=\"n\">app.Matroid.Restriction</span><span class=\"kd\">]</span>\n<span class=\"kn\">private</span> <span class=\"kd\">def</span> <span class=\"n\">delabRestriction</span> <span class=\"o\">:</span> <span class=\"n\">Delab</span> <span class=\"o\">:=</span>\n  <span class=\"n\">whenPPOption</span> <span class=\"n\">getPPNotation</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">whenNotPPOption</span> <span class=\"n\">getPPExplicit</span> <span class=\"k\">do</span>\n    <span class=\"n\">guard</span> <span class=\"bp\">&lt;|</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getExpr</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">getAppNumArgs</span> <span class=\"bp\">=</span> <span class=\"mi\">3</span>\n    <span class=\"k\">let</span> <span class=\"n\">a</span> <span class=\"bp\">←</span> <span class=\"n\">withAppFn</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">withAppArg</span> <span class=\"n\">delab</span>\n    <span class=\"k\">let</span> <span class=\"n\">b</span> <span class=\"bp\">←</span> <span class=\"n\">withAppArg</span> <span class=\"n\">delab</span>\n    <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">a</span> <span class=\"bp\">≤</span><span class=\"n\">r</span> <span class=\"bp\">$</span><span class=\"n\">b</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 437140524,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1714924284
+    },
+    {
+        "content": "<p>Otherwise, in order to fix the pretty printing globally in mathlib, is adding <code>pp_nodot</code> the recommended solution?</p>",
+        "id": 437141145,
+        "sender_full_name": "Joël Riou",
+        "timestamp": 1714924598
+    },
+    {
+        "content": "<p>I'm hoping to fix this in time for the next rc (it seems like there will be one), so I'd hold off on adding <code>pp_nodot</code>s if that's possible. What notations are affecting you <span class=\"user-mention\" data-user-id=\"459699\">@Joël Riou</span>?</p>",
+        "id": 437141560,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1714924880
+    },
+    {
+        "content": "<p>I have observed this behaviour also for <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=CategoryTheory.Functor.comp#doc\">docs#CategoryTheory.Functor.comp</a>, but if there is a better fix, I can wait :-)</p>",
+        "id": 437141739,
+        "sender_full_name": "Joël Riou",
+        "timestamp": 1714924978
+    },
+    {
+        "content": "<p>Once <a href=\"https://github.com/leanprover/lean4/pull/4071\">lean4#4071</a> finishes building and succeeds in building mathlib, I'll check that these mathlib notations actually pretty print</p>",
+        "id": 437163704,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1714943864
+    }
+]

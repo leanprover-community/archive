@@ -1,0 +1,80 @@
+[
+    {
+        "content": "<p>When given multiple inputs that have messages in outputs, it seems that <code>repl</code> will accumulate these messages for later outputs, particularly, these messages are marked with positions from previous inputs, causing confusing results.</p>\n<p>2 minimal example input/output pairs of <code>repl</code>:</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n<p>REPL</p>\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<p>% repl<br>\n{\"cmd\": \"def f := 2\\n#check f\", \"env\": null}</p>\n<p>{\"messages\":<br>\n [{\"severity\": \"info\",<br>\n   \"pos\": {\"line\": 2, \"column\": 0},<br>\n   \"endPos\": {\"line\": 2, \"column\": 6},<br>\n   \"data\": \"f : Nat\"}],<br>\n \"env\": 0}</p>\n<p>{\"cmd\": \"example : 1 = 2 := sorry\", \"env\": 0}</p>\n<p>{\"sorries\":<br>\n [{\"proofState\": 0,<br>\n   \"pos\": {\"line\": 1, \"column\": 19},<br>\n   \"goal\": \"⊢ 1 = 2\",<br>\n   \"endPos\": {\"line\": 1, \"column\": 24}}],<br>\n \"messages\":<br>\n [{\"severity\": \"info\",<br>\n   \"pos\": {\"line\": 2, \"column\": 0},<br>\n   \"endPos\": {\"line\": 2, \"column\": 6},<br>\n   \"data\": \"f : Nat\"},<br>\n  {\"severity\": \"warning\",<br>\n   \"pos\": {\"line\": 1, \"column\": 0},<br>\n   \"endPos\": {\"line\": 1, \"column\": 7},<br>\n   \"data\": \"declaration uses 'sorry'\"}],<br>\n \"env\": 1}</p>\n</div></div>\n<p>Note that, the 2nd command contains only 1 line, but there is a message marked with position on line 2 that is from the previous command.</p>\n<p>Filed as <a href=\"https://github.com/leanprover-community/repl/pull/40\">leanprover-community/repl#40</a> . <span class=\"user-mention\" data-user-id=\"110087\">@Kim Morrison</span> Sorry for cross-posting and the ping, is this output expected, and is there a way I can extract only the messages for the last output?</p>",
+        "id": 438290857,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1715584825
+    },
+    {
+        "content": "<p>No, this is definitely a bug!</p>",
+        "id": 438291045,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715584878
+    },
+    {
+        "content": "<p>Yeah, maybe running repl in batch mode during dataset extraction would not discover it, but I'm doing this interactively.</p>",
+        "id": 438291725,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1715585086
+    },
+    {
+        "content": "<p>I may be able to create a PR for this with some pointers if you are busy.</p>",
+        "id": 438291889,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1715585135
+    },
+    {
+        "content": "<p>I'm looking into this more deeply. I was trying to see if I can do the same filtering as proof states, it turns out they are also not filtered.</p>\n<p>To see this clearly,</p>\n<p><a href=\"/user_uploads/3121/t9ednrXqMbTgmWJzpSYf_Gw4/image.png\">image.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/t9ednrXqMbTgmWJzpSYf_Gw4/image.png\" title=\"image.png\"><img src=\"/user_uploads/3121/t9ednrXqMbTgmWJzpSYf_Gw4/image.png\"></a></div>",
+        "id": 438741071,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1715757903
+    },
+    {
+        "content": "<p>How repl works is to treat the previous inputs as a  <code>commandState</code>, process the current input into a <code>parserState</code>,  then feed them into <code>IO.processCommands</code> which passed on to <code>Frontend.processCommands</code> to process them as a whole, and all messages, all sorries etc. are returned. </p>\n<p>From <a href=\"https://github.com/leanprover/lean4/blob/master/src/Lean/Server/README.md\">Lean/Server/README.md</a>:</p>\n<blockquote>\n<p>Once a relevant <code>Snapshot</code> <code>snap</code> has been located, <code>snap.infoTree.smallestInfo?</code> and other functions from <code>Lean.Server.InfoUtils</code> can be used to further locate information about a document position.</p>\n</blockquote>\n<p>Maybe I could give this a try.</p>",
+        "id": 438747523,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1715760403
+    },
+    {
+        "content": "<p>I'm sure this is going to a single-line bug somewhere. Sorry I haven't had a chance to look at it. It is something about how we filter the logs to remove earlier stuff.</p>",
+        "id": 438755971,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715763414
+    },
+    {
+        "content": "<p>Indeed, in <code>processCommandsWithInfoTrees</code> when retrieving the messages and the trees from the returned state, we have the opportunity to deduplicate it with the initial command state.</p>",
+        "id": 438761396,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1715765216
+    },
+    {
+        "content": "<p>I think this already happens later in the code: it's a bug, with the code that exists to do this already not working, rather than an oversight (I think! Certainly for log messages the code tries to remove old messages.)</p>",
+        "id": 438764807,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715766425
+    },
+    {
+        "content": "<p>I fixed it in <code>processCommandsWithInfoTrees</code> and tests show the fix works, will submit a PR for reference after I tidy it up.</p>\n<p>Code after that only has a chance to do so in <code>runCommand</code>, it's the last place where the code has access to the initial command state, but all those code (just &lt;20 lines) didn't try to do it. Even later would be <code>repl</code> and <code>main</code> which contain much less code and clearly serves other purposes.</p>\n<p>Probably there was once some code that did this, but there seem to be no such non-working code left in the codebase.</p>",
+        "id": 438769880,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1715768308
+    },
+    {
+        "content": "<p>Okay, thanks! I will try make time to review it.</p>",
+        "id": 438769972,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715768354
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/repl/pull/41\">leanprover-community/repl#41</a> , PRed with 2 new tests, 1 updated test. Will polish the code later. <span aria-label=\"swim\" class=\"emoji emoji-1f3ca\" role=\"img\" title=\"swim\">:swim:</span></p>",
+        "id": 438784924,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1715774127
+    },
+    {
+        "content": "<p>I have simplified the code, it's now only ~3 lines, and ready for review.</p>",
+        "id": 439040998,
+        "sender_full_name": "Utensil Song",
+        "timestamp": 1715871629
+    }
+]

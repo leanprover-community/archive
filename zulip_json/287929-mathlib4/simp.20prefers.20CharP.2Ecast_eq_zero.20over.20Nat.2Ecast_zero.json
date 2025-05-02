@@ -1,0 +1,254 @@
+[
+    {
+        "content": "<p>Is there a particular reason why simp uses <code>CharP.cast_eq_zero</code> instead of <code>Nat.cast_zero</code> to change casted zeros to actual zeros (when we happen to work in something of characteristic zero)? I find this mildly annoying...</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">((</span><span class=\"mi\">0</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">simp</span><span class=\"bp\">?</span> <span class=\"n\">says</span> <span class=\"n\">simp</span> <span class=\"n\">only</span> <span class=\"o\">[</span><span class=\"n\">CharP.cast_eq_zero</span><span class=\"o\">]</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">((</span><span class=\"mi\">0</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">ZMod</span> <span class=\"mi\">37</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">simp</span><span class=\"bp\">?</span> <span class=\"n\">says</span> <span class=\"n\">simp</span> <span class=\"n\">only</span> <span class=\"o\">[</span><span class=\"n\">Nat.cast_zero</span><span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 430264361,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1711722593
+    },
+    {
+        "content": "<p>I don't think there's much reason besides \"That depends on the order in which the two lemmas were declared in a way that is not supposed to be relied upon\".</p>",
+        "id": 430264937,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1711722824
+    },
+    {
+        "content": "<p>I think this is because the <code>eq_zero</code> version matches a larger subexpression, so is tried first</p>",
+        "id": 430324158,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1711750107
+    },
+    {
+        "content": "<p>Coming back to this: There is also a performance problem. Consider:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"n\">count_heartbeats</span> <span class=\"k\">in</span>\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">((</span><span class=\"mi\">0</span> <span class=\"o\">:)</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">simp</span> <span class=\"n\">only</span> <span class=\"o\">[</span><span class=\"n\">CharP.cast_eq_zero</span><span class=\"o\">]</span> <span class=\"c1\">-- suggested by `simp?`</span>\n  <span class=\"c1\">-- slow: 1703 heartbeats</span>\n\n<span class=\"n\">count_heartbeats</span> <span class=\"k\">in</span>\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">((</span><span class=\"mi\">0</span> <span class=\"o\">:)</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">simp</span> <span class=\"n\">only</span> <span class=\"o\">[</span><span class=\"n\">Nat.cast_zero</span><span class=\"o\">]</span> <span class=\"c1\">-- fast (59 heartbeats)</span>\n\n<span class=\"n\">count_heartbeats</span> <span class=\"k\">in</span>\n<span class=\"c1\">-- shortcut instance suggested by `#synth`, 68 heartbeats</span>\n<span class=\"kd\">instance</span> <span class=\"o\">:</span> <span class=\"n\">CharZero</span> <span class=\"n\">ℤ</span> <span class=\"o\">:=</span> <span class=\"n\">StrictOrderedSemiring.to_charZero</span>\n\n<span class=\"n\">count_heartbeats</span> <span class=\"k\">in</span>\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"o\">((</span><span class=\"mi\">0</span> <span class=\"o\">:)</span> <span class=\"o\">:</span> <span class=\"n\">ℤ</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"mi\">0</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">simp</span> <span class=\"n\">only</span> <span class=\"o\">[</span><span class=\"n\">CharP.cast_eq_zero</span><span class=\"o\">]</span> <span class=\"c1\">-- now fast (66 heartbeats)</span>\n</code></pre></div>\n<p>This is related to the general problem that typeclass inference is often a peerformance bottleneck. Compare <a href=\"https://github.com/leanprover-community/mathlib4/pull/11824\">#11824</a> and the recent discussion <a href=\"#narrow/stream/287929-mathlib4/topic/very.20slow.20instance.20synthesis/near/431682092\">here</a>.</p>\n<ul>\n<li>Why is there no shortcut instance for <code>CharZero ℤ</code> (and similarly for <code>ℚ</code> and <code>ℝ</code>, but there is <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Complex.charZero#doc\">docs#Complex.charZero</a>)?</li>\n</ul>\n<p>The same question can be asked for many other cases. In my attempt to speed up <a href=\"https://github.com/leanprover-community/mathlib4/pull/11824\">#11824</a>, I was looking for situations where type class synthesis takes more than 20ms (on my fairly fast laptop) and replaced them by shortcut instances (28 of them in the end, including for <code>CharZero ℤ</code> and <code>CharZero ℝ</code>, but there were still a few left). Some examples I would expect to be fast, but which I had to add explicitly:</p>\n<ul>\n<li><code>SMul ℝ ℂ</code>, <code>SMul ℂ ℂ</code></li>\n<li><code>Module ℂ ℂ</code>, <code>Module ℝ ℂ</code>, <code>Module ℂ (ℂ × ℂ)</code></li>\n<li><code>AddCommMonoid ℂ</code>, <code>AddCommMonoid (ℂ × ℂ)</code></li>\n<li><code>TopologicalSpace ℂ</code>, <code>TopologicalSpace (ℂ × ℂ)</code></li>\n<li><code>SMulCommClass ℂ ℂ ℂ</code>, <code>SMulCommClass ℂ ℝ ℂ</code></li>\n<li><code>ContinuousConstSMul ℂ ℂ</code>, <code>ContinuousConstSMul ℝ ℂ</code></li>\n<li><code>IsScalarTower ℂ ℂ ℂ</code>, <code>IsScalarTower ℝ ℂ ℂ</code></li>\n</ul>\n<p>(Adding these and a few more on <code>ℂ × ℂ →L[ℂ] ℂ</code> reduces the time for typeclass inference from about 8 seconds to well below 4 seconds on my machine in <code>TwoVariable.lean</code> from <a href=\"https://github.com/leanprover-community/mathlib4/pull/11824\">#11824</a>.)</p>\n<p>See also <a href=\"#narrow/stream/287929-mathlib4/topic/.22.23synth.20T2Space.20.E2.84.82.22.20fails/near/425076696\">this thread</a>, which resulted in the addition of a shortcut instance for <code>T2Space ℂ</code>.</p>\n<p>Then there are the instances like the one that <span class=\"user-mention\" data-user-id=\"481963\">@David Loeffler</span> mentioned:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"n\">count_heartbeats</span> <span class=\"k\">in</span> <span class=\"c1\">-- 32817</span>\n<span class=\"bp\">#</span><span class=\"n\">synth</span> <span class=\"n\">FiniteDimensional</span> <span class=\"n\">ℝ</span> <span class=\"o\">(</span><span class=\"n\">ℂ</span> <span class=\"bp\">×</span> <span class=\"n\">ℂ</span> <span class=\"bp\">→</span><span class=\"n\">L</span><span class=\"o\">[</span><span class=\"n\">ℂ</span><span class=\"o\">]</span> <span class=\"n\">ℂ</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>As Mathlib grows, I expect this to only get worse, unless there is a way to make typeclass synthesis reliably fast.</p>\n<p>One idea (that may be naïve and/or complete nonsense):<br>\nUsually such a slow instance is needed several times in a file (think <code>TopologicalSpace ℂ</code>, say). Would it make sense to cache successful instance searches cumulatively while compiling a file? My understanding is that currently, results are cached only per search query (but I may be wrong). So this would at least speed up things when instances are needed a second, third etc. time.</p>",
+        "id": 431783744,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712503768
+    },
+    {
+        "content": "<p>The <code>SMulCommClass</code> instances were discovered to be a bottleneck in a recent example of David Loeffler's, and Sebastien Gouezel sped them up by changing instance priorities.</p>",
+        "id": 431785096,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1712504614
+    },
+    {
+        "content": "<p>I know. Quoting David from a comment on <a href=\"https://github.com/leanprover-community/mathlib4/pull/11824\">#11824</a>:</p>\n<blockquote>\n<p>On my system, compilation of <code>JacobiTheta/TwoVariable.lean</code> (at the current version, commit <code>bf62a22</code>) takes about 30 seconds. Merging <a href=\"https://github.com/leanprover-community/mathlib4/pull/11980\">#11980</a> brings this down to 26 seconds. This is not quite as much of a speedup as adding Michael's list of explicit custom instances (23 sec on my machine), but it's not too far off.</p>\n</blockquote>\n<p>It helps, but it does not really solve the problem.</p>",
+        "id": 431785835,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712505029
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479359\">Michael Stoll</span> <a href=\"#narrow/stream/287929-mathlib4/topic/simp.20prefers.20CharP.2Ecast_eq_zero.20over.20Nat.2Ecast_zero/near/431783744\">said</a>:</p>\n<blockquote>\n<ul>\n<li>Why is there no shortcut instance for <code>CharZero ℤ</code> (and similarly for <code>ℚ</code> and <code>ℝ</code>, but there is <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Complex.charZero#doc\">docs#Complex.charZero</a>)?</li>\n</ul>\n</blockquote>\n<p>It should exist, so feel free to add it</p>",
+        "id": 431786815,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1712505504
+    },
+    {
+        "content": "<p>OK, but where do I stop? (Looking at the list in my message above...)</p>",
+        "id": 431786949,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712505576
+    },
+    {
+        "content": "<p>Would it be possible to somewhat automatically generate some of these shortcut instances? Just looking at the synthesis of <code>SMul ℝ ℝ</code> is somewhat surprising. It seems to be using <code>@Algebra.toSMul ℝ ℝ Real.instCommSemiringReal Real.semiring Bialgebra.toAlgebra</code>, which is constructing a <code>HopfAlgebra ℝ ℝ</code>. As <code>ℕ</code>, <code>ℚ</code>, <code>ℝ</code>, and <code>ℂ</code> are so heavily used, it would seem to make sense to automatically generate their instances in certain cases. For example, when <code>Algebra.id</code> is defined. (and similarly for other structures defined over semirings, rings, fields, etc...).</p>",
+        "id": 431790967,
+        "sender_full_name": "Richard Osborn",
+        "timestamp": 1712507225
+    },
+    {
+        "content": "<p>Another potential solution is to have some sort of test file that makes sure common instances use a \"canonical\" path through the instance search and throws errors if later definitions cause unnecessary detours.</p>",
+        "id": 431791421,
+        "sender_full_name": "Richard Osborn",
+        "timestamp": 1712507442
+    },
+    {
+        "content": "<blockquote>\n<p>Just looking at the synthesis of <code>SMul ℝ ℝ</code> is somewhat surprising.</p>\n</blockquote>\n<p>Right. If you import all of mathlib then it finds a silly route:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.Meta.synthInstance</span> <span class=\"n\">true</span>\n<span class=\"bp\">#</span><span class=\"n\">synth</span> <span class=\"n\">SMul</span> <span class=\"n\">ℝ</span> <span class=\"n\">ℝ</span>\n<span class=\"c\">/-</span>\n<span class=\"cm\">[Meta.synthInstance] ✅ SMul ℝ ℝ ▼</span>\n<span class=\"cm\">  [] new goal SMul ℝ ℝ ▶</span>\n<span class=\"cm\">  [] ❌ apply @GradedMonoid.GradeZero.smul to SMul ℝ ℝ ▶</span>\n<span class=\"cm\">  [] ✅ apply @Algebra.toSMul to SMul ℝ ℝ ▼</span>\n<span class=\"cm\">    [tryResolve] ✅ SMul ℝ ℝ ≟ SMul ℝ ℝ</span>\n<span class=\"cm\">    [] new goal CommSemiring ℝ ▼</span>\n<span class=\"cm\">      [instances] #[@CommRing.toCommSemiring, @OrderedCommSemiring.toCommSemiring, @StrictOrderedCommSemiring.toCommSemiring, @CanonicallyOrderedCommSemiring.toCommSemiring, @Semifield.toCommSemiring, @IdemCommSemiring.toCommSemiring, @DirectSum.GradeZero.commSemiring, Real.instCommSemiringReal]</span>\n<span class=\"cm\">  [] ✅ apply Real.instCommSemiringReal to CommSemiring ℝ ▼</span>\n<span class=\"cm\">    [tryResolve] ✅ CommSemiring ℝ ≟ CommSemiring ℝ</span>\n<span class=\"cm\">  [resume] propagating CommSemiring ℝ to subgoal CommSemiring ℝ of SMul ℝ ℝ ▼</span>\n<span class=\"cm\">    [] size: 1</span>\n<span class=\"cm\">    [] new goal Semiring ℝ ▶</span>\n<span class=\"cm\">  [] ✅ apply Real.semiring to Semiring ℝ ▼</span>\n<span class=\"cm\">    [tryResolve] ✅ Semiring ℝ ≟ Semiring ℝ</span>\n<span class=\"cm\">  [resume] propagating Semiring ℝ to subgoal Semiring ℝ of SMul ℝ ℝ ▼</span>\n<span class=\"cm\">    [] size: 2</span>\n<span class=\"cm\">    [] new goal Algebra ℝ ℝ ▼</span>\n<span class=\"cm\">      [instances] #[@Algebra.complexToReal, Algebra.id, @NormedAlgebra.toAlgebra, @Bialgebra.toAlgebra]</span>\n<span class=\"cm\">  [] ✅ apply @Bialgebra.toAlgebra to Algebra ℝ ℝ ▶</span>\n<span class=\"cm\">  [] ✅ apply @HopfAlgebra.toBialgebra to Bialgebra ℝ ℝ ▶</span>\n<span class=\"cm\">  [] ✅ apply CommSemiring.toHopfAlgebra to HopfAlgebra ℝ ℝ ▶</span>\n<span class=\"cm\">  [resume] propagating HopfAlgebra ℝ ℝ to subgoal HopfAlgebra ℝ ℝ of Bialgebra ℝ ℝ ▶</span>\n<span class=\"cm\">  [resume] propagating Bialgebra ℝ ℝ to subgoal Bialgebra ℝ ℝ of Algebra ℝ ℝ ▶</span>\n<span class=\"cm\">  [resume] propagating Algebra ℝ ℝ to subgoal Algebra ℝ ℝ of SMul ℝ ℝ ▶</span>\n<span class=\"cm\">  [] result Algebra.toSMul</span>\n<span class=\"cm\">-/</span>\n</code></pre></div>\n<p>The issue (sorry if you know this already!) is that progress on the goal <code>Algebra ℝ ℝ</code> can be made with the instances <code>[@Algebra.complexToReal, Algebra.id, @NormedAlgebra.toAlgebra, @Bialgebra.toAlgebra] </code>, and they are tried in order from last-discovered to first-discovered. But the leaf files in mathlib (the last-discovered stuff) are the ones with the wackiest instances, so right now typeclass inference is doing a lot of goofy stuff. </p>\n<p>My understanding is that the suggestions to fix this so far have been:<br>\n1) persuade the FRO to change the algorithm to try first-discovered instances first<br>\n2) persuade the FRO that certain forgetful inheritance instances should have lower priority (I still don't understand this option properly, but people like <span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> do)<br>\n3) manually fiddle with instance priorities in mathlib a la <a href=\"https://github.com/leanprover-community/mathlib4/pull/11980\">#11980</a> (a hard-to-maintain solution)<br>\n4) Add a bunch of typeclass shortcuts (see the suggestion above)</p>\n<p>Note that the FRO are unlikely to want to start changing the typeclass algorithm, and I <em>suspect</em> that of their major users, mathlib will be the one with by far the largest typeclass instance system.</p>",
+        "id": 431795859,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1712509360
+    },
+    {
+        "content": "<p>Would it make sense to also allow to register non-instances (e.g. telling lean that there is no <code>SMul C R</code> instance) to prevent the inference system from spending time in useless rabbit holes?</p>",
+        "id": 431796401,
+        "sender_full_name": "Vincent Beffara",
+        "timestamp": 1712509591
+    },
+    {
+        "content": "<p>Again, that boils down to asking the FRO to change the way typeclass inference works, which is really unlikely to get anywhere.</p>",
+        "id": 431796500,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1712509638
+    },
+    {
+        "content": "<p>I think your point 2) above is probably not very controversial, and just requires persuading the FRO to allocate time to it; perhaps <span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> can comment on whether it's on their radar, and how many other side-projects they have with which it would be competing for time allocation.</p>",
+        "id": 431799209,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712510820
+    },
+    {
+        "content": "<p>This may be a silly question, but is there a way to generate all the \"paths\" through the instance search (perhaps with some depth limit)? I find that as I get deeper into the mathlib library (especially working with tensors), the instance search becomes cumbersome, and these shortcut instances are almost necessary. If we were able to view the paths in the instance search, we may be able to have meta code suggest the shortcut instances.</p>",
+        "id": 431799464,
+        "sender_full_name": "Richard Osborn",
+        "timestamp": 1712510936
+    },
+    {
+        "content": "<p>I'm trying to figure out where to put a shortcut instance <code>CharZero ℤ</code>.<br>\nIt looks like the minimal imports required are</p>\n<ul>\n<li><code>Mathlib.Algebra.CharZero.Defs</code> (for <code>CharZero</code>) and</li>\n<li><code>Mathlib.Data.Int.Basic</code> (for <code>Int.ofNat.inj</code>).</li>\n</ul>\n<p>There is no immediate common successor of these two. Except for <code>Mathlib.Algebra.CharZero.Infinite</code>, which is a leaf file containing exactly one declaration, all other files importing <code>Mathlib.Algebra.CharZero.Defs</code> involve order. But we don't actually need the order (on the naturals or integers) to obtain a <code>CharZero</code> instance, so it feels a bit unnatural to go via these.</p>",
+        "id": 431803537,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712514099
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> I think for now the typeclass inference algorithm should be considered to be more-or-less frozen, but potentially adjusting the <code>structure</code> command's way of setting instance priorities might be a possibility, or the order in which it defines instances, if it's a well-motivated change.</p>",
+        "id": 431803622,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1712514148
+    },
+    {
+        "content": "<p>It looks like <code>Mathlib.Data.Int.Order.Basic</code> is a file with the right imports (still involving order, but it has some instances for <code>ℤ</code> (and likely to be imported transitively by files that use that <code>ℤ</code> has characteristic zero), so maybe this is a reasonable place.</p>",
+        "id": 431804000,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712514465
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"242586\">@Vincent Beffara</span> Do you know if anyone has explored non-instances in other systems? Without previous research evaluating such an idea, it might or might not make sense. The closest idea that I personally know about is the cut operator in Prolog, but I think with that power you lose some desirable properties (Datalog excludes it because of this).</p>",
+        "id": 431804254,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1712514685
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479359\">Michael Stoll</span> <a href=\"#narrow/stream/287929-mathlib4/topic/simp.20prefers.20CharP.2Ecast_eq_zero.20over.20Nat.2Ecast_zero/near/431804000\">said</a>:</p>\n<blockquote>\n<p>It looks like <code>Mathlib.Data.Int.Order.Basic</code> is a file with the right imports (still involving order, but it has some instances for <code>ℤ</code> (and likely to be imported transitively by files that use that <code>ℤ</code> has characteristic zero), so maybe this is a reasonable place.</p>\n</blockquote>\n<p>I've just pulled Mathlib and the file is no longer there? It seems to have moved to <code>Mathlib.Algebra.Order.Ring.Int</code>...</p>",
+        "id": 431804807,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712515179
+    },
+    {
+        "content": "<p>This idea (of \"non-instances\") seems like a significantly more invasive change to the typeclass inference algorithm than either of Kevin's suggestions (1) or (2). So it seems strange to consider it when those other options have been dismissed because \"typeclass inference should be considered more-or-less frozen\".</p>",
+        "id": 431804944,
+        "sender_full_name": "David Loeffler",
+        "timestamp": 1712515230
+    },
+    {
+        "content": "<p>...and this file no longer imports <code>CharZero</code> <span aria-label=\"frown\" class=\"emoji emoji-1f641\" role=\"img\" title=\"frown\">:frown:</span></p>",
+        "id": 431804976,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712515265
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"387244\">@Yaël Dillies</span> if you are still around: any suggestion where to put this instance?</p>",
+        "id": 431805098,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712515399
+    },
+    {
+        "content": "<p>(<span class=\"user-mention\" data-user-id=\"481963\">@David Loeffler</span> I don't mean to suggest that it's being considered, but rather to say \"even if changes to the typeclass algorithm were being considered, this is unexplored territory.\" I'm personally curious to know if anyone's tried it before though.)</p>",
+        "id": 431810544,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1712518923
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/287929-mathlib4/topic/simp.20prefers.20CharP.2Ecast_eq_zero.20over.20Nat.2Ecast_zero/near/431804254\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"242586\">Vincent Beffara</span> Do you know if anyone has explored non-instances in other systems? Without previous research evaluating such an idea, it might or might not make sense. The closest idea that I personally know about is the cut operator in Prolog, but I think with that power you lose some desirable properties (Datalog excludes it because of this).</p>\n</blockquote>\n<p>I have no idea if it makes sense or if it has been tried, it just felt from the discussion that it would be a plausible thing to do.</p>",
+        "id": 431810602,
+        "sender_full_name": "Vincent Beffara",
+        "timestamp": 1712518998
+    },
+    {
+        "content": "<p>Non-instances sound like a reasonably thing to try, but they don't sound particularly scalable; they'd really just be a mechanism to prune out-of-control TC search on an ad-hoc basis</p>",
+        "id": 431812071,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712520326
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"479359\">@Michael Stoll</span> <a href=\"#narrow/stream/287929-mathlib4/topic/simp.20prefers.20CharP.2Ecast_eq_zero.20over.20Nat.2Ecast_zero/near/431805098\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"387244\">Yaël Dillies</span> if you are still around: any suggestion where to put this instance?</p>\n</blockquote>\n<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=CharZero#doc\">docs#CharZero</a> relies on <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=AddMonoidWithOne#doc\">docs#AddMonoidWithOne</a>, which is a ring-like concept. Hence it does not belong in <code>Algebra.Group.Int</code>/<code>Algebra.Order.Group.Int</code>. It has pretty low imports apart from that, so <code>Algebra.Ring.Int</code> is a good place.</p>",
+        "id": 432343430,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1712697930
+    },
+    {
+        "content": "<p>You will probably get errors about <code>assert_not_exists NeZero</code> around <code>Algebra.GroupPower</code>. The very existence of those files is bogus, so I would simply delete the <code>assert_not_exists</code> (but please ping me on Github if you do so, just so that I can assess)</p>",
+        "id": 432343593,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1712697996
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"387244\">@Yaël Dillies</span> Right now, <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=CharZero#doc\">docs#CharZero</a> is unknown in <code>Algebra.Ring.Int</code> (and <code>Algebra.Ring.Nat</code>). Do I understand you correctly that it is OK to add <code>import Mathlib.Algebra.CharZero.Defs</code>to this file?</p>",
+        "id": 432665872,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712828556
+    },
+    {
+        "content": "<p>Yes, that's how I read the comment</p>",
+        "id": 432668218,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1712829308
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/12060\">#12060</a></p>",
+        "id": 432695582,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712838845
+    },
+    {
+        "content": "<p><code>SMul ℂ ℂ</code> still takes about 11000 heartbeats. This is caused by the algorithm trying <code>Complex.instSMulRealComplex</code> first, leading it to trying to establish <code>SMul ℂ ℝ</code>, which takes a <em>very</em> long time to fail. The correct thing to try is <code>Algebra.toSMul</code>,  but increasing its priority to 1000 does not seem to have any effect (I wonder why). <em>However</em>, setting the priority of <code>Complex.instSMulRealComplex</code> to 90 brings it down to about 30 heartbeats(!).</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"n\">count_heartbeats</span> <span class=\"k\">in</span> <span class=\"c1\">-- 10881 heartbeats</span>\n<span class=\"bp\">#</span><span class=\"n\">synth</span> <span class=\"n\">SMul</span> <span class=\"n\">ℂ</span> <span class=\"n\">ℂ</span>\n\n<span class=\"kn\">attribute</span> <span class=\"o\">[</span><span class=\"kd\">instance</span> <span class=\"mi\">90</span><span class=\"o\">]</span> <span class=\"n\">Complex.instSMulRealComplex</span>\n\n<span class=\"n\">count_heartbeats</span> <span class=\"k\">in</span> <span class=\"c1\">-- 31 heartbeats</span>\n<span class=\"bp\">#</span><span class=\"n\">synth</span> <span class=\"n\">SMul</span> <span class=\"n\">ℂ</span> <span class=\"n\">ℂ</span>\n</code></pre></div>\n<p>I think I will make a PR reducing this priority and see what the effect is.</p>",
+        "id": 432760180,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712858573
+    },
+    {
+        "content": "<p>Independently, maybe also add the shortcut instance?</p>",
+        "id": 432766216,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1712860823
+    },
+    {
+        "content": "<p>This shouldn't save much in addition, I would think.</p>",
+        "id": 432766339,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712860876
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/12070\">#12070</a><br>\nIt saves a few tens of (american) billions of instructions, mostly in files related to modular forms (total build instructions -67.551*10^9).</p>\n<p>BTW, how can I sort the speedcenter output according to relative (or absolute) gain/loss? I can sort according to the numbers in the first or second run by clicking on the column heads, but I don't see how to do something similar with the comparison column.</p>",
+        "id": 432775717,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712864682
+    },
+    {
+        "content": "<p><code>NumberTheory.LSeries.Basic</code> and <code>...Linearity</code> also profit.<br>\n<span class=\"user-mention\" data-user-id=\"481963\">@David Loeffler</span> <span class=\"user-mention\" data-user-id=\"389019\">@Chris Birkbeck</span></p>",
+        "id": 432782006,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712867203
+    },
+    {
+        "content": "<p>... and <code>NumberTheory.NumberField.Embeddings</code>...</p>",
+        "id": 432782333,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712867327
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479359\">Michael Stoll</span> <a href=\"#narrow/stream/287929-mathlib4/topic/simp.20prefers.20CharP.2Ecast_eq_zero.20over.20Nat.2Ecast_zero/near/432775717\">said</a>:</p>\n<blockquote>\n<p>BTW, how can I sort the speedcenter output according to relative (or absolute) gain/loss? I can sort according to the numbers in the first or second run by clicking on the column heads, but I don't see how to do something similar with the comparison column.</p>\n</blockquote>\n<p>Not sure who to ping about this. Perhaps <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> ?</p>",
+        "id": 432855313,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712910048
+    },
+    {
+        "content": "<p>I am now wondering whether we need <code>instSMulRealComplex</code> as an instance at all.<br>\nDoes anybody have a use case where we have <code>SMul R ℝ</code> and not also (e.g.) <code>Algebra R ℂ</code>?</p>",
+        "id": 432855625,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712910146
+    },
+    {
+        "content": "<p>I'll make a PR demoting it to a <code>def</code>,  to see if anything breaks.</p>",
+        "id": 432855735,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712910187
+    },
+    {
+        "content": "<p>It seems to be needed at least locally in <code>Data.Complex.Basic</code>, to get stuff like <code>nsmul</code> and <code>zsmul</code> on <code>ℂ</code>.<br>\nI'm making the instance local to the file; let's see...</p>",
+        "id": 432857862,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712910951
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/12080\">#12080</a> <br>\nI ended up scoping it, because it is also needed in <code>Data.Complex.Module</code>.<br>\nNothing breaks, and there is a positive speed effect on these two files.</p>",
+        "id": 432887872,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1712922956
+    }
+]

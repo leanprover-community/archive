@@ -1,0 +1,170 @@
+[
+    {
+        "content": "<p>When I'm doing a tactic proof like:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">cases</span> <span class=\"n\">foo</span> <span class=\"k\">with</span>\n<span class=\"bp\">|</span> <span class=\"n\">a</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">tac1</span><span class=\"bp\">;</span> <span class=\"n\">BigTacBlob</span>\n<span class=\"bp\">|</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">tc2</span><span class=\"bp\">;</span> <span class=\"n\">BigTacBlob</span>\n</code></pre></div>\n<p>So a case split followed by some preparator argument followed both times by the same large tactic blob to close the remaining goal. Do we have a tactic that makes me not copy paste the big tactic blob?</p>",
+        "id": 422414519,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1708434805
+    },
+    {
+        "content": "<p>I think you can do [a; b] &lt;;&gt; BigTacBlob</p>",
+        "id": 422415300,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1708435043
+    },
+    {
+        "content": "<p>How do those <code>[]</code> work?</p>",
+        "id": 422415559,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1708435117
+    },
+    {
+        "content": "<p>According to the docs:</p>\n<blockquote>\n<p><code>t &lt;;&gt; [t1; t2; ...; tn]</code> focuses on the first goal and applies <code>t</code>, which should result in n subgoals. It then applies each <code>ti</code> to the corresponding goal and collects the resulting subgoals.</p>\n</blockquote>",
+        "id": 422417469,
+        "sender_full_name": "Arthur Adjedj",
+        "timestamp": 1708435733
+    },
+    {
+        "content": "<p>Aha I see it doesn't work just like that it needs a leading &lt;;&gt; <span aria-label=\"thumbs up\" class=\"emoji emoji-1f44d\" role=\"img\" title=\"thumbs up\">:thumbs_up:</span></p>",
+        "id": 422417876,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1708435881
+    },
+    {
+        "content": "<p>I think there's also <code>case'</code> which doesn't require that you solve the case</p>",
+        "id": 422418164,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1708435978
+    },
+    {
+        "content": "<p>Ruben's suggestion would be</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">cases</span> <span class=\"n\">foo</span>\n<span class=\"n\">case'</span> <span class=\"n\">a</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">tac1</span>\n<span class=\"n\">case'</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">tac2</span>\n<span class=\"n\">all_goals</span> <span class=\"n\">BigTacBlob</span>\n</code></pre></div>",
+        "id": 422475094,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1708452916
+    },
+    {
+        "content": "<p>I think <code>cases</code> (and <code>induction</code>) has syntax for running tactics at the start of each case, like</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">cases</span> <span class=\"n\">foo</span> <span class=\"k\">with</span> <span class=\"n\">PreTacBlob</span>\n<span class=\"bp\">|</span> <span class=\"n\">a</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">tac1</span>\n<span class=\"bp\">|</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">tac2</span>\n</code></pre></div>\n<p>I wonder if there could be some nice syntax for tactics and the end of each case? This question of how to run some tactics at the end of each remaining case has come up before.</p>",
+        "id": 422475520,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1708453057
+    },
+    {
+        "content": "<p>The syntax I have been hoping for here is to allow <code>?_</code> at the end of a tactic block to \"escape\" it and send the subgoal out into the parent context. Currently <code>cases</code> and <code>induction</code> already support this but only if <code>?_</code> is the only thing in the tactic block, <code>cases foo with | a =&gt; tac; ?_</code> doesn't work</p>",
+        "id": 422582342,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1708509850
+    },
+    {
+        "content": "<p>I think it would be useful to have that as a general mechanism in tactics though, including combinators like <code>. tac</code></p>",
+        "id": 422582446,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1708509885
+    },
+    {
+        "content": "<p>I have been wanting this too!</p>",
+        "id": 422597733,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1708515392
+    },
+    {
+        "content": "<p>Here's a small proposal for this:</p>\n<p>The <code>defer</code> or <code>defer foo</code> tactic discards the main goal and defers solving for it to an outer context. The first preserves the goal tag, and the second changes the goal tag to <code>foo</code>.</p>\n<p>Implementation idea 1: this ensures the goal is a synthetic opaque metavariable and then simply drops it off the goal list. Each tactic that can handle this situation (like <code>refine</code> and <code>have</code>) is responsible for looking through the proof term at the end of the block, collecting unsolved such variables, and adding them to the goal list.</p>\n<p>Implementation idea 1.5: add a table of deferred goals to the elaborator state (like other tables of synthetic metavariables) to register which goals have been deferred. This way, at the end of elaboration, nicer error messages can be created than a generic \"expression contains metavariables\".</p>\n<p>Implementation idea 2: have the tactic framework manage a list of pending deferred metavariables, and having scoping constructs similar to <code>withSynthesize</code> to collect newly created ones. Make all <code>?foo</code> variables register themselves as deferred metavariables, and have <code>refine</code> work with this, rather than scouring the expression for new synthetic opaque metavariables.</p>",
+        "id": 422677603,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1708538975
+    },
+    {
+        "content": "<p>Kyle, is this related to the discussion at <a href=\"#narrow/stream/217875-Is-there-code-for-X.3F/topic/An.20.60exists_intro.60.20tactic.3F/near/411262030\">https://leanprover.zulipchat.com/#narrow/stream/217875-Is-there-code-for-X.3F/topic/An.20.60exists_intro.60.20tactic.3F/near/411262030</a>?</p>",
+        "id": 422684762,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1708541761
+    },
+    {
+        "content": "<p>It looks like I should read the <a href=\"https://armael.github.io/coq-procrastination/manual/manual.pdf\">Procrastination manual</a></p>",
+        "id": 422685570,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1708542027
+    },
+    {
+        "content": "<p>Note that the <code>?_</code> idea is not the same as procrastination / <code>defer</code>, it is less powerful and in particular structurally cannot drop goals, it only transfers goals from a block to its direct parent. I think you can use it for defer-like behavior but you may need to pull a goal out of several nested blocks for that, and you wouldn't be able to move a goal out of a nested <code>by</code> block at all. That all means that <code>?_</code> has a much more local behavior than <code>defer</code>, but also makes it less suitable for the procrastination use-cases</p>",
+        "id": 422713916,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1708553971
+    },
+    {
+        "content": "<p>The <code>defer</code> I was proposing was just for deferring to direct parents too, as a sort of generalization of how <code>refine</code> collects goals \"deferred\" by using <code>?foo</code> notation, but it could also work for deferring out of a nested <code>by</code>.</p>",
+        "id": 422715237,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1708554605
+    },
+    {
+        "content": "<p>I'm guessing the implementation of your suggestion that you had in mind would be that tacticSeq could end with a <code>?_</code>, and tactics could be aware of this?</p>",
+        "id": 422715278,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1708554629
+    },
+    {
+        "content": "<p>yes, basically <code>runTacticSeq</code> would be aware of it and any tactics using it would change to accomodate it</p>",
+        "id": 422715758,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1708554875
+    },
+    {
+        "content": "<p><code>refine</code> doesn't collect <code>?foo</code> from direct subterms only though, it will pull them anywhere in the term</p>",
+        "id": 422715997,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1708555026
+    },
+    {
+        "content": "<p>procrastination seems to have a much more goto-like behavior where you can just make goals disappear wherever you want and rescue them at any later point before the end of the proof</p>",
+        "id": 422716132,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1708555100
+    },
+    {
+        "content": "<p>I'm not sure what you're correcting about <code>refine</code></p>",
+        "id": 422716144,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1708555108
+    },
+    {
+        "content": "<p>what I mean is that the \"analogue of refine\" would be able to defer goals like this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">defer</span>\n  <span class=\"bp\">.</span> <span class=\"n\">bla</span>\n    <span class=\"n\">case</span> <span class=\"n\">a</span> <span class=\"bp\">=&gt;</span>\n      <span class=\"n\">cases</span> <span class=\"n\">b</span> <span class=\"k\">with</span>\n      <span class=\"bp\">|</span> <span class=\"n\">foo</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">bar</span><span class=\"bp\">;</span> <span class=\"bp\">?</span><span class=\"n\">jump</span>\n<span class=\"k\">with</span>\n  <span class=\"n\">jump</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">...</span>\n</code></pre></div>",
+        "id": 422716248,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1708555192
+    },
+    {
+        "content": "<p>The variation using <code>?_</code> goals would look like this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">.</span> <span class=\"n\">bla</span>\n  <span class=\"n\">case</span> <span class=\"n\">a</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">cases</span> <span class=\"n\">b</span> <span class=\"k\">with</span>\n    <span class=\"bp\">|</span> <span class=\"n\">foo</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">bar</span><span class=\"bp\">;</span> <span class=\"bp\">?</span><span class=\"n\">_</span>\n    <span class=\"bp\">?</span><span class=\"n\">_</span>\n  <span class=\"bp\">?</span><span class=\"n\">jump</span>\n<span class=\"n\">case</span> <span class=\"n\">jump</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">...</span>\n</code></pre></div>",
+        "id": 422716376,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1708555268
+    },
+    {
+        "content": "<p>which is to say, popping several layers of parents is cumbersome and really visible</p>",
+        "id": 422716444,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1708555313
+    },
+    {
+        "content": "<p>What I was suggesting is that tactics like <code>cases</code> could evaluate their tactic blocks then use the <code>refine</code>-like algorithm for collecting metavariables from the resulting proof term, so it would look like your second example</p>",
+        "id": 422716600,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1708555392
+    },
+    {
+        "content": "<p>but of course there could be some sort of scoping tactic that could do <code>refine</code> for a whole tactic block, and have a mechanism to drop goals that will definitely be recovered by that scoping tactic (let's assume there's a flag that the dropping-a-goal tactic could check to see if inside such a scoping tactic). It could create new goals you handle with <code>case</code>, rather than needing a <code>with</code> clause.</p>",
+        "id": 422716707,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1708555451
+    },
+    {
+        "content": "<p>sure, I was making up syntax</p>",
+        "id": 422716757,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1708555488
+    },
+    {
+        "content": "<p>and option number 3 is full procrastination, what I called \"goto-like\":</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">.</span> <span class=\"n\">bla</span>\n  <span class=\"n\">case</span> <span class=\"n\">a</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">cases</span> <span class=\"n\">b</span> <span class=\"k\">with</span>\n    <span class=\"bp\">|</span> <span class=\"n\">foo</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">bar</span><span class=\"bp\">;</span> <span class=\"n\">shelve</span> <span class=\"bp\">?</span><span class=\"n\">jump</span>\n<span class=\"n\">unshelve</span> <span class=\"n\">jump</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">...</span>\n</code></pre></div>\n<p>with the difference being that the <code>unshelve</code> command can occur anywhere in the proof after <code>shelve</code>, even inside a subproof</p>",
+        "id": 422716980,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1708555607
+    }
+]

@@ -1,0 +1,344 @@
+[
+    {
+        "content": "<p>In metaprogramming, sometimes you'd like to refer to a state while executing simprocs—either to collect things the simproc sees and return them at the end of the procedure, or to refer to a cache the simproc is building up (or which has been built up prior to the simproc, in other actions, to avoid repeating work). </p>\n<p>Crucially, you still want to wind up with a proof that the transformed expression is equal to the initial one via proofs of equality for subexpressions, so something like <code>transform</code> is inadequate.</p>\n<p>I don't need the full power of <code>simp</code>; persisting state through a simproc-like procedure is enough. (So, it doesn't actually need to be <code>simp</code>-based per se; something like <code>transformWithEqM</code> would even be adequate.)</p>\n<p>Is there something shaped like this somewhere already?</p>\n<p>(My current approach hinges on managing an <code>IO.Ref</code> during a <code>simproc</code>, which I'd rather avoid! :) )</p>",
+        "id": 450630959,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720679702
+    },
+    {
+        "content": "<p>I ran into the same issue and unfortunately also settled on using <code>IO.Ref</code>. Also <code>pattern</code> conv tactic uses simp internally for this exact purpose, so I doubt there is a better solution right now.</p>\n<p>It would be interesting to try to turn <code>SimpM</code> monad to a monad transformer <code>SimpT</code>. I was thinking about it a bit but I have no idea how to manage different simprocs living in different monads or lifting them to different ones.</p>",
+        "id": 450684233,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1720697489
+    },
+    {
+        "content": "<p>But hey simp itself is using <code>StateRefT</code> to manage the state so using <code>IO.Ref</code> is not too bad.</p>",
+        "id": 450685783,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1720698023
+    },
+    {
+        "content": "<p>Hmm, did you run into any sharing issues? Currently my <code>IO.Ref</code> contains an <code>Option A</code>, and within the <code>simproc</code> I do the following dance to prevent the state from being shared:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">some</span><span class=\"w\"> </span><span class=\"n\">s</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">stateRef</span><span class=\"bp\">.</span><span class=\"n\">modifyGet</span><span class=\"w\"> </span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">s?</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">s?</span><span class=\"o\">,</span><span class=\"n\">none</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">throwError</span><span class=\"w\"> </span><span class=\"s2\">\"no state\"</span>\n<span class=\"k\">let</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">r</span><span class=\"o\">,</span><span class=\"n\">s</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">k</span><span class=\"bp\">.</span><span class=\"n\">run</span><span class=\"w\"> </span><span class=\"n\">s</span>\n<span class=\"n\">stateRef</span><span class=\"bp\">.</span><span class=\"n\">set</span><span class=\"w\"> </span><span class=\"n\">s</span>\n<span class=\"n\">return</span><span class=\"w\"> </span><span class=\"bp\">.</span><span class=\"n\">done</span><span class=\"w\"> </span><span class=\"n\">r</span>\n</code></pre></div>\n<p>where <code>k</code> is the monad action performing the real work in my stateful monad, and caches things in <code>s</code>.</p>\n<p>I can't help but wonder if this shuffling is suboptimal...! :)</p>",
+        "id": 450836179,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720741826
+    },
+    {
+        "content": "<p>Oh—maybe I could feed the <code>ref</code> directly to <code>StateRefT'</code> instead of using <code>StateRefT'.run</code>? (Which I realized right after sending the above message, as is always the way... :) )</p>",
+        "id": 450836276,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720741911
+    },
+    {
+        "content": "<p>I don't understand your setup. You can just call <code>IO.mkRef</code> to create a ref, then modify it in the simproc</p>",
+        "id": 450836496,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720742048
+    },
+    {
+        "content": "<p>any monad extending <code>IO</code> has this capability</p>",
+        "id": 450836507,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720742066
+    },
+    {
+        "content": "<p>Not if I'm relying on the state of other monads, like <code>AtomM</code>, right?</p>",
+        "id": 450836539,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720742107
+    },
+    {
+        "content": "<p>you would have to save/restore that state as well</p>",
+        "id": 450836712,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720742217
+    },
+    {
+        "content": "<p>That is, this is in a setup where you have monads with state that you'd like to run the simproc in (and definitions written in those monads), so going through and duplicating the definitions to have a version which modifies the ref directly is a whole lot of extra code</p>",
+        "id": 450836747,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720742246
+    },
+    {
+        "content": "<p>I don't see why any duplication is necessary</p>",
+        "id": 450836773,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720742270
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/simp.28rocs.29.20with.20state/near/450836712\">said</a>:</p>\n<blockquote>\n<p>you would have to save/restore that state as well</p>\n</blockquote>\n<p>Right, which is what I'm doing with <code>s</code>, no? Am I misinterpreting?</p>",
+        "id": 450836774,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720742270
+    },
+    {
+        "content": "<p>note that there is a general mechanism for saving and restoring state to pass it through another monad, namely <code>MonadControlT</code></p>",
+        "id": 450836861,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720742313
+    },
+    {
+        "content": "<p>Let's say I have a preexisting definition <code>foo : Expr -&gt; AtomM Expr</code> and I want to run this in a simproc. What are you saying is the more obvious way to do this?</p>",
+        "id": 450836911,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720742355
+    },
+    {
+        "content": "<p>(Specifically, with <code>AtomM</code> state persisting through the simproc)</p>",
+        "id": 450837045,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720742416
+    },
+    {
+        "content": "<p>you probably need to implement <code>MonadControl</code> for <code>AtomM</code>, but the basic idea is to get the state from the ref, run the function, then store the resulting state back in the ref</p>",
+        "id": 450837187,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720742495
+    },
+    {
+        "content": "<p>i.e. exactly what you are doing already, just packaged into a function</p>",
+        "id": 450837328,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720742580
+    },
+    {
+        "content": "<p>Gotcha, ok :)</p>",
+        "id": 450837342,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720742599
+    },
+    {
+        "content": "<p>Re: performance concerns: currently my setup involves <code>initializ</code>ing this special persisting ref, since I can't see a way to <code>mkRef</code> then feed it to a simproc. I figure anything <code>initialized</code> ought to be small, so I'm considering either</p>\n<ul>\n<li>having <code>IO.Ref (Option A)</code>, and unpacking the data each time as shown above</li>\n<li>having an <code>IO.Ref A</code> and initializing it with some opaque value? (Not sure if this would do what I hope)</li>\n<li>just initializing <code>IO.Ref A</code> with some basic value if this is overkill</li>\n</ul>\n<p>and likewise I'm not sure if I should have separate refs storing the read-only context and the state, or bundle them in one ref and unpack them each time it's run. How expensive is reading from a ref vs. unpacking things, I wonder?</p>",
+        "id": 450838921,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720743492
+    },
+    {
+        "content": "<p>I don't think the size of <code>initialize</code>d objects is a concern, it's just a pointer regardless</p>",
+        "id": 450840522,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720744113
+    },
+    {
+        "content": "<p>the bigger issue is the semantics (this is a global variable shared with any concurrent calls in the same process) and the locking overhead associated with atomically writing to a shared variable</p>",
+        "id": 450840753,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720744201
+    },
+    {
+        "content": "<p>Hmm, does that suggest that taking the state out of the ref as I initially planned is better than feeding the ref directly to <code>StateRefT'</code>? Because then the global ref is only locked during the writes at the beginning and end?</p>",
+        "id": 450841217,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720744358
+    },
+    {
+        "content": "<p>what do you mean by that?</p>",
+        "id": 450841271,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720744381
+    },
+    {
+        "content": "<p>you can't easily lock an IO ref for a long time, the main way is to use <code>modify</code> with a pure function that takes a while</p>",
+        "id": 450841358,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720744421
+    },
+    {
+        "content": "<p>in particular it's not really deadlock prone IIUC</p>",
+        "id": 450841391,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720744439
+    },
+    {
+        "content": "<p>So, as an example of \"feeding <code>StateRefT'</code> the ref\", if I have <code>k : StateRefT' ...</code>, then evaluate <code>k myGlobalRef</code>, what happens? (Without <code>run'</code>)</p>",
+        "id": 450841522,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720744494
+    },
+    {
+        "content": "<p>If you can feed the ref via StateRefT' then this is definitely preferred, because then it won't be a global variable</p>",
+        "id": 450841545,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720744500
+    },
+    {
+        "content": "<p>...oh, well that doesn't do much, that's just a complicated way of using the ref directly</p>",
+        "id": 450841677,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720744543
+    },
+    {
+        "content": "<p><code>run'</code> is just syntax around application</p>",
+        "id": 450841765,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720744564
+    },
+    {
+        "content": "<p>and <code>StateRefT'</code> is just the reader monad over an <code>IO.Ref</code></p>",
+        "id": 450841804,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720744577
+    },
+    {
+        "content": "<p>Well, <code>run'</code> makes a fresh ref with <code>mkRef</code>, right? I was wondering if something different would happen if I didn't use a fresh ref, but used a global one (i.e. the one I initialized)!</p>",
+        "id": 450841863,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720744611
+    },
+    {
+        "content": "<p>oh you are right, <code>run'</code> creates the ref</p>",
+        "id": 450842034,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720744673
+    },
+    {
+        "content": "<p>if you just apply it to a global then it is a reader monad like I said</p>",
+        "id": 450842109,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720744695
+    },
+    {
+        "content": "<p>Gotcha, ok—and just so I don't get my wires crossed this (:= applying it to a global ref) is better than extracting the data from the global ref, <code>run</code>ning StateRefT', then putting the resulting state back in the global ref (as in my initial message)?</p>",
+        "id": 450842304,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720744780
+    },
+    {
+        "content": "<p>(It's a bit weird for me to think of <code>StateRefT'</code> applied to a global ref as a reader monad; I'm kind of imagining the <code>StateRefT'</code> as doing all sorts of writes to that global ref as it executes, and this makes me worry about the concurrency you mentioned)</p>",
+        "id": 450842661,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720744913
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> <a href=\"#narrow/stream/270676-lean4/topic/simp.28rocs.29.20with.20state/near/450842304\">said</a>:</p>\n<blockquote>\n<p>Gotcha, ok—and just so I don't get my wires crossed this (:= applying it to a global ref) is better than extracting the data from the global ref, <code>run</code>ning StateRefT', then putting the resulting state back in the global ref (as in my initial message)?</p>\n</blockquote>\n<p>No, they are the same</p>",
+        "id": 450843014,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720745067
+    },
+    {
+        "content": "<p>It's a reader monad because all it does is give the code access to this IO.Ref variable, which it can use to call things like get and set</p>",
+        "id": 450843085,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720745120
+    },
+    {
+        "content": "<p>the data isn't \"in\" the <code>IO.Ref</code>, you should just think of that as a pointer to the actual mutable memory location</p>",
+        "id": 450843139,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720745144
+    },
+    {
+        "content": "<p>and if it's a global variable then there is no need to thread access around because you can just get the value directly</p>",
+        "id": 450843250,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720745209
+    },
+    {
+        "content": "<p>Hmm, ok! That’s useful!</p>",
+        "id": 450843522,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720745429
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/simp.28rocs.29.20with.20state/near/450841545\">said</a>:</p>\n<blockquote>\n<p>If you can feed the ref via StateRefT' then this is definitely preferred, because then it won't be a global variable</p>\n</blockquote>\n<p>What were you referring to here, though?</p>",
+        "id": 450843537,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720745450
+    },
+    {
+        "content": "<p>if you have control over the call to <code>Simp.main</code> then you can create the ref outside the scope of the call</p>",
+        "id": 450843746,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720745617
+    },
+    {
+        "content": "<p>It's still possible to keep your state segregated without this but it's more complicated</p>",
+        "id": 450843824,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720745653
+    },
+    {
+        "content": "<p><code>squeeze_simp</code> implements this by using a global ref with a map from syntax locations to data</p>",
+        "id": 450843853,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720745698
+    },
+    {
+        "content": "<p>so that even if two simps run at the same time they can access the right state</p>",
+        "id": 450843897,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720745734
+    },
+    {
+        "content": "<p>if it's just a cache then you might be able to just have it global and not worry about it, but you have to ensure that e.g. contexts line up</p>",
+        "id": 450844003,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720745797
+    },
+    {
+        "content": "<p>Here is a basic setup I would use, but I'm not sure if it addresses all your concerns especially about running this in parallel</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Lean</span>\n<span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Qq</span>\n\n<span class=\"kn\">open</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"w\"> </span><span class=\"n\">Meta</span><span class=\"w\"> </span><span class=\"n\">Qq</span>\n\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">mySimproc</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">counter</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">IO</span><span class=\"bp\">.</span><span class=\"n\">Ref</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">pre</span><span class=\"o\">:=</span><span class=\"n\">true</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Simp</span><span class=\"bp\">.</span><span class=\"n\">Simproc</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">e</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"n\">counter</span><span class=\"bp\">.</span><span class=\"n\">modify</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"n\">pre</span><span class=\"w\"> </span><span class=\"k\">then</span>\n<span class=\"w\">    </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"bp\">.</span><span class=\"n\">continue</span>\n<span class=\"w\">  </span><span class=\"k\">else</span>\n<span class=\"w\">    </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"bp\">.</span><span class=\"n\">done</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"w\"> </span><span class=\"n\">expr</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">mkAppM</span><span class=\"w\"> </span><span class=\"ss\">``id</span><span class=\"w\"> </span><span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">e</span><span class=\"o\">]</span><span class=\"w\">  </span><span class=\"o\">}</span>\n\n<span class=\"bp\">#</span><span class=\"n\">eval</span><span class=\"w\"> </span><span class=\"k\">show</span><span class=\"w\"> </span><span class=\"n\">MetaM</span><span class=\"w\"> </span><span class=\"n\">Unit</span><span class=\"w\"> </span><span class=\"k\">from</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">e</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">q</span><span class=\"o\">(</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"bp\">+</span><span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"bp\">*</span><span class=\"n\">x</span><span class=\"bp\">;</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"bp\">+</span><span class=\"n\">y</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">preCounter</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">IO</span><span class=\"bp\">.</span><span class=\"n\">mkRef</span><span class=\"w\"> </span><span class=\"mi\">0</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">postCounter</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">IO</span><span class=\"bp\">.</span><span class=\"n\">mkRef</span><span class=\"w\"> </span><span class=\"mi\">0</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">r</span><span class=\"o\">,</span><span class=\"bp\">_</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">Simp</span><span class=\"bp\">.</span><span class=\"n\">main</span><span class=\"w\"> </span><span class=\"n\">e</span><span class=\"w\"> </span><span class=\"o\">{}</span><span class=\"w\"> </span><span class=\"o\">{}</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">pre</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">mySimproc</span><span class=\"w\"> </span><span class=\"n\">preCounter</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">post</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">mySimproc</span><span class=\"w\"> </span><span class=\"n\">postCounter</span><span class=\"w\"> </span><span class=\"n\">false</span><span class=\"o\">}</span>\n<span class=\"w\">  </span><span class=\"n\">IO</span><span class=\"bp\">.</span><span class=\"n\">println</span><span class=\"w\"> </span><span class=\"n\">s!</span><span class=\"s2\">\"result {← ppExpr r.expr}\"</span>\n<span class=\"w\">  </span><span class=\"n\">IO</span><span class=\"bp\">.</span><span class=\"n\">println</span><span class=\"w\"> </span><span class=\"n\">s!</span><span class=\"s2\">\"number of pre steps: {← preCounter.get}\"</span>\n<span class=\"w\">  </span><span class=\"n\">IO</span><span class=\"bp\">.</span><span class=\"n\">println</span><span class=\"w\"> </span><span class=\"n\">s!</span><span class=\"s2\">\"number of post steps: {← postCounter.get}\"</span>\n</code></pre></div>",
+        "id": 450844802,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1720746426
+    },
+    {
+        "content": "<p>Running it like this solves the concerns about running in parallel</p>",
+        "id": 450844948,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720746519
+    },
+    {
+        "content": "<p>the trouble arises when you use <code>initialize</code> to store the ref(s)</p>",
+        "id": 450845003,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720746540
+    },
+    {
+        "content": "<p>here \"in parallel\" is referring to either independent <code>simp</code> calls from the same or different proofs in the same file, or the same <code>simp</code> call in different elaborations of the same file (e.g. after an edit) before the old elaboration has been cancelled</p>",
+        "id": 450845266,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720746635
+    },
+    {
+        "content": "<p>Ah, ok! I don’t need <code>initialize</code> if I can feed in <code>Simproc</code>s directly like this (as opposed to feeding in their names, like in <code>Meta.simpGoal</code>); I can use <code>Simp.main</code> in my use case!</p>",
+        "id": 450845325,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720746700
+    },
+    {
+        "content": "<p>Right that is what you were saying with <code>squeeze_simp</code> that instead of having <code>IO.Ref State</code> for each call you have one global <code>IO.Mutex (HashMap Location State)</code> or something like that.</p>",
+        "id": 450845338,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1720746710
+    },
+    {
+        "content": "<p>right, that's the workaround for a kind of crappy situation</p>",
+        "id": 450845437,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720746766
+    },
+    {
+        "content": "<p>and it's still not good enough since you can have multiple elaborations of the same file with the same <code>Location</code></p>",
+        "id": 450845474,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720746796
+    },
+    {
+        "content": "<p>in short: avoid global mutable state <span aria-label=\"upside down\" class=\"emoji emoji-1f643\" role=\"img\" title=\"upside down\">:upside_down:</span></p>",
+        "id": 450845747,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1720746916
+    },
+    {
+        "content": "<p>(Hmm, I guess one downside to using \"manual\" simprocs in <code>pre</code>/<code>post</code> like this is the lack of DiscrTree matching that comes with simprocs. But that's not too hard to bundle into the <code>def</code>. For posterity, if you want to match <code>simp</code> behavior: <code>simp</code> uses <code>getMatchWithExtra</code> when matching against simproc <code>DiscrTree</code>s, and <code>elabSimprocKeys</code> to get the <code>DiscrTree</code> keys.)</p>",
+        "id": 450847808,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1720747819
+    },
+    {
+        "content": "<p>A message was moved from this topic to <a class=\"stream-topic\" data-stream-id=\"113489\" href=\"/#narrow/stream/113489-new-members/topic/Set.20theory.20game\">#new members &gt; Set theory game</a> by <span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span>.</p>",
+        "id": 451026463,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1720802613
+    }
+]

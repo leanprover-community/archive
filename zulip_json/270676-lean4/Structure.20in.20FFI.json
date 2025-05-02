@@ -1,0 +1,170 @@
+[
+    {
+        "content": "<p>How does one access the fields of a Lean structure in C? For example, I have the following setup:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">A</span> <span class=\"n\">where</span>\n  <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Bool</span>\n  <span class=\"n\">s</span> <span class=\"o\">:</span> <span class=\"n\">String</span>\n  <span class=\"n\">deriving</span> <span class=\"n\">Inhabited</span>\n\n<span class=\"kd\">@[</span><span class=\"n\">extern</span> <span class=\"s2\">\"test\"</span><span class=\"kd\">]</span>\n<span class=\"n\">opaque</span> <span class=\"n\">test</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">A</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">main</span> <span class=\"o\">:</span> <span class=\"n\">IO</span> <span class=\"n\">Unit</span> <span class=\"o\">:=</span>\n  <span class=\"k\">let</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">b</span> <span class=\"o\">:=</span> <span class=\"n\">false</span><span class=\"o\">,</span> <span class=\"n\">s</span> <span class=\"o\">:=</span> <span class=\"s2\">\"\"</span> <span class=\"o\">}</span>\n  <span class=\"k\">let</span> <span class=\"n\">a'</span> <span class=\"o\">:=</span> <span class=\"n\">test</span> <span class=\"n\">a</span>\n  <span class=\"n\">IO.println</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"⟨{a'.b}, {a'.s}⟩\"</span>\n</code></pre></div>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"cp\">#include</span><span class=\"w\"> </span><span class=\"cpf\">&lt;lean/lean.h&gt;</span>\n<span class=\"cp\">#include</span><span class=\"w\"> </span><span class=\"cpf\">&lt;stdio.h&gt;</span>\n\n<span class=\"n\">lean_obj_res</span><span class=\"w\"> </span><span class=\"nf\">test</span><span class=\"p\">(</span><span class=\"n\">lean_obj_arg</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"o\">!</span><span class=\"n\">lean_is_ctor</span><span class=\"p\">(</span><span class=\"n\">a</span><span class=\"p\">))</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">        </span><span class=\"n\">printf</span><span class=\"p\">(</span><span class=\"s\">\"a is not a ctor</span><span class=\"se\">\\n</span><span class=\"s\">\"</span><span class=\"p\">);</span>\n<span class=\"w\">        </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"p\">}</span>\n\n<span class=\"w\">    </span><span class=\"kt\">unsigned</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">lean_ctor_num_objs</span><span class=\"p\">(</span><span class=\"n\">a</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"n\">printf</span><span class=\"p\">(</span><span class=\"s\">\"num objs: %d</span><span class=\"se\">\\n</span><span class=\"s\">\"</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"p\">);</span>\n\n<span class=\"w\">    </span><span class=\"n\">lean_obj_res</span><span class=\"w\"> </span><span class=\"n\">field_0</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">lean_ctor_get</span><span class=\"p\">(</span><span class=\"n\">a</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"n\">lean_obj_res</span><span class=\"w\"> </span><span class=\"n\">field_1</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">lean_ctor_get</span><span class=\"p\">(</span><span class=\"n\">a</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"p\">);</span><span class=\"w\"> </span><span class=\"c1\">// fails</span>\n\n<span class=\"w\">    </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"p\">;</span>\n<span class=\"p\">}</span>\n</code></pre></div>\n<p>Running this fails with the following output:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>num objs: 1\nLEAN ASSERTION VIOLATION\nFile: /Users/marcus/.elan/toolchains/stable/include/lean/lean.h\nLine: 549\ni &lt; lean_ctor_num_objs(o)\n</code></pre></div>\n<p>So I guess <code>lean_ctor_get</code> isn't the correct function for accessing structures' fields.<br>\nHow are structures/inductive types represented in the FFI then?</p>",
+        "id": 431980571,
+        "sender_full_name": "Marcus Rossel",
+        "timestamp": 1712585624
+    },
+    {
+        "content": "<p>inductives are represented as two parts:</p>\n<ul>\n<li>the <code>lean_object*</code> fields</li>\n<li>the scalar part (a byte buffer)</li>\n</ul>\n<p>To offset into the first part, use <code>lean_ctor_get</code>. To get the second part use <code>lean_ctor_set_uint32</code> or similar functions, depending on the scalar type</p>",
+        "id": 431981577,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712585895
+    },
+    {
+        "content": "<p>offsets in the second part are represented in bytes, so if there are two uint32s then one will have offset 0 and the next offset 4</p>",
+        "id": 431981690,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712585926
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Structure.20in.20FFI/near/431981577\">said</a>:</p>\n<blockquote>\n<p>inductives are represented as two parts:</p>\n<ul>\n<li>the <code>lean_object*</code> fields</li>\n<li>the scalar part (a byte buffer)</li>\n</ul>\n</blockquote>\n<p>Is that somehow related to this?</p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"k\">typedef</span><span class=\"w\"> </span><span class=\"k\">struct</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"n\">lean_object</span><span class=\"w\">   </span><span class=\"n\">m_header</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"n\">lean_object</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"w\"> </span><span class=\"n\">m_objs</span><span class=\"p\">[</span><span class=\"mi\">0</span><span class=\"p\">];</span>\n<span class=\"p\">}</span><span class=\"w\"> </span><span class=\"n\">lean_ctor_object</span><span class=\"p\">;</span>\n</code></pre></div>",
+        "id": 431981850,
+        "sender_full_name": "Marcus Rossel",
+        "timestamp": 1712585968
+    },
+    {
+        "content": "<p>Your structure <code>A</code> has a single pointer field, namely <code>b : String</code>, and one byte of scalar data, namely <code>a : Bool</code> as a uint8 at offset 0</p>",
+        "id": 431981869,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712585974
+    },
+    {
+        "content": "<p>The struct doesn't actually say too much about this. Both parts I mentioned are actually indexed from <code>m_objs</code> as far as the C code is concerned, but some metadata about the number of fields of each kind is given in <code>m_header</code> so that it can do the necessary indexing</p>",
+        "id": 431982625,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712586158
+    },
+    {
+        "content": "<p>Hmm, so from your explanation I thought this would work:</p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"n\">lean_obj_res</span><span class=\"w\"> </span><span class=\"nf\">test</span><span class=\"p\">(</span><span class=\"n\">lean_obj_arg</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"o\">!</span><span class=\"n\">lean_is_ctor</span><span class=\"p\">(</span><span class=\"n\">a</span><span class=\"p\">))</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">        </span><span class=\"n\">printf</span><span class=\"p\">(</span><span class=\"s\">\"a is not a ctor</span><span class=\"se\">\\n</span><span class=\"s\">\"</span><span class=\"p\">);</span>\n<span class=\"w\">        </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"p\">}</span>\n\n<span class=\"w\">    </span><span class=\"kt\">unsigned</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">lean_ctor_num_objs</span><span class=\"p\">(</span><span class=\"n\">a</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"n\">printf</span><span class=\"p\">(</span><span class=\"s\">\"num objs: %d</span><span class=\"se\">\\n</span><span class=\"s\">\"</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"p\">);</span>\n\n<span class=\"w\">    </span><span class=\"kt\">uint8_t</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">lean_ctor_get_uint8</span><span class=\"p\">(</span><span class=\"n\">a</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"n\">printf</span><span class=\"p\">(</span><span class=\"s\">\"b: %d</span><span class=\"se\">\\n</span><span class=\"s\">\"</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"p\">);</span>\n\n<span class=\"w\">    </span><span class=\"n\">lean_obj_res</span><span class=\"w\"> </span><span class=\"n\">s</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">lean_ctor_get</span><span class=\"p\">(</span><span class=\"n\">a</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"kt\">char</span><span class=\"o\">*</span><span class=\"w\"> </span><span class=\"n\">s_cstr</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">lean_string_cstr</span><span class=\"p\">(</span><span class=\"n\">s</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"n\">printf</span><span class=\"p\">(</span><span class=\"s\">\"s: %s</span><span class=\"se\">\\n</span><span class=\"s\">\"</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"n\">s_cstr</span><span class=\"p\">);</span>\n\n<span class=\"w\">    </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"p\">;</span>\n<span class=\"p\">}</span>\n</code></pre></div>\n<p>But that still fails with:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>num objs: 1\nLEAN ASSERTION VIOLATION\nFile: /Users/marcus/.elan/toolchains/stable/include/lean/lean.h\nLine: 576\noffset &gt;= lean_ctor_num_objs(o) * sizeof(void*)\n</code></pre></div>",
+        "id": 431983886,
+        "sender_full_name": "Marcus Rossel",
+        "timestamp": 1712586499
+    },
+    {
+        "content": "<p>Ahhh, so the byte buffer starts after the pointer fields, so the offset always has to be <code>desired_offset + lean_ctor_num_objs(a)</code>?</p>",
+        "id": 431984236,
+        "sender_full_name": "Marcus Rossel",
+        "timestamp": 1712586603
+    },
+    {
+        "content": "<p>it does, but <code>lean_ctor_get_uint8</code> should handle that</p>",
+        "id": 431984321,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712586626
+    },
+    {
+        "content": "<p>oh no, you are right</p>",
+        "id": 431984408,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712586657
+    },
+    {
+        "content": "<p>Hmm, can you think of cases where one would use that function without the <code>+ lean_ctor_num_objs(_)</code>? Seems like something that could be built in to the function.</p>",
+        "id": 431984607,
+        "sender_full_name": "Marcus Rossel",
+        "timestamp": 1712586719
+    },
+    {
+        "content": "<p>lean code does it like this</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">lean_ctor_set_uint8</span><span class=\"o\">(</span><span class=\"n\">x_3</span><span class=\"o\">,</span> <span class=\"n\">sizeof</span><span class=\"o\">(</span><span class=\"n\">void</span><span class=\"bp\">*</span><span class=\"o\">)</span><span class=\"bp\">*</span><span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">x_2</span><span class=\"o\">)</span><span class=\"bp\">;</span>\n</code></pre></div>",
+        "id": 431984912,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712586804
+    },
+    {
+        "content": "<p>I agree it's a bit messy to be letting this implementation detail leak. The intent is that this will be constant folded by the C compiler, but lean code generating the C is trying to be agnostic about pointer size</p>",
+        "id": 431985389,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712586943
+    },
+    {
+        "content": "<p>Cool, thanks for the help! Do you think adding some doc comments on some of the <code>lean.h</code> functions would be welcome? I personally found it quite difficult to understand anything non-trivial in there so far.</p>",
+        "id": 431985775,
+        "sender_full_name": "Marcus Rossel",
+        "timestamp": 1712587050
+    },
+    {
+        "content": "<p>Docs on everything is missing and important and welcome</p>",
+        "id": 431985838,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712587066
+    },
+    {
+        "content": "<p>Note also that <code>USize</code> fields are ordered at the beginning of the scalar section, so you also have to skip them in the <code>sizeof(void*)</code> part of the count</p>",
+        "id": 431986139,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712587138
+    },
+    {
+        "content": "<p>besides that, I believe scalars are just placed in declaration order (with padding, I think?)</p>",
+        "id": 431986333,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712587188
+    },
+    {
+        "content": "<p>My real-world application only has bools, so I'll stay blissfully ignorant about that for now <span aria-label=\"sweat smile\" class=\"emoji emoji-1f605\" role=\"img\" title=\"sweat smile\">:sweat_smile:</span></p>",
+        "id": 431986514,
+        "sender_full_name": "Marcus Rossel",
+        "timestamp": 1712587225
+    },
+    {
+        "content": "<p>Doc comment PR: <a href=\"https://github.com/leanprover/lean4/pull/3846\">https://github.com/leanprover/lean4/pull/3846</a></p>",
+        "id": 432046493,
+        "sender_full_name": "Marcus Rossel",
+        "timestamp": 1712602489
+    },
+    {
+        "content": "<p>Just a tip, I usually write a Lean function that does the structure manipulation, like accessing fields, compile it and inspecting the generated C code to see how the access is done exactly.</p>\n<p>Maybe you can also add(not tested as I'm on mobile)</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">attribute</span> <span class=\"o\">[</span><span class=\"kn\">export</span> <span class=\"n\">A_get_s</span><span class=\"o\">]</span> <span class=\"n\">A.s</span>\n<span class=\"kn\">attribute</span> <span class=\"o\">[</span><span class=\"kn\">export</span> <span class=\"n\">A_get_b</span><span class=\"o\">]</span> <span class=\"n\">A.b</span>\n</code></pre></div>\n<p>Compile it and copy paste the generated functions <code>A_get_s</code> and <code>A_get_b</code> to your C code.</p>",
+        "id": 432074965,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1712613835
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 432075065,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1712613894
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 432075295,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1712614011
+    },
+    {
+        "content": "<p>As far as I can tell, <code>attribute [export foo_bar] Foo.bar</code> doesn't actually do anything on projections</p>",
+        "id": 432727481,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712847938
+    },
+    {
+        "content": "<p>I see, then you can just define a new function that calls the projection and export that and inspect.</p>",
+        "id": 432727777,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1712848020
+    },
+    {
+        "content": "<p>Probably it should raise an error since it doesn't work?</p>",
+        "id": 432727899,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712848056
+    },
+    {
+        "content": "<p>export on structures is currently broken (<a href=\"https://github.com/leanprover/lean4/pull/2292\">lean4#2292</a>), I don't recommend it</p>",
+        "id": 432738172,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712850901
+    },
+    {
+        "content": "<p>That's only for single-field structures, right?</p>",
+        "id": 432742747,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712852185
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"372804\">Marcus Rossel</span> <a href=\"#narrow/stream/270676-lean4/topic/Structure.20in.20FFI/near/431985775\">said</a>:</p>\n<blockquote>\n<p>Cool, thanks for the help! Do you think adding some doc comments on some of the <code>lean.h</code> functions would be welcome? I personally found it quite difficult to understand anything non-trivial in there so far.</p>\n</blockquote>\n<p>I think it helps to find the relevant symbol in the Lean source code (<code>.lean</code>) since these tend to be better documented</p>",
+        "id": 433567839,
+        "sender_full_name": "Leni Aniva",
+        "timestamp": 1713286486
+    }
+]

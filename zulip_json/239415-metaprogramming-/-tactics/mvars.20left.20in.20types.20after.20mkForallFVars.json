@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>If I have an expression <code>e</code> that contains metavariables ?a, ?b, and ?c, where <code>?c : f ?a ?b</code>, and I call <code>mkForallFVars #[?a, ?b] ?c</code>,  ?a and ?b are handled fine, but I end up with an error that <code>?c</code> is of type <code>f ?a ?b</code> instead of <code>f a b</code>.</p>\n<p>Is there a good way of handling this situation where the type of a metavariable in the expression we're closing around may reference one of the mvars being bound? I wasn't able to figure out how elimMVarDeps works in practice.</p>",
+        "id": 514588404,
+        "sender_full_name": "Chris Bailey",
+        "timestamp": 1745712225
+    },
+    {
+        "content": "<p>I think in this case you would want to revert <code>?c</code></p>",
+        "id": 514589118,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1745712797
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"816344\">Aaron Liu</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/mvars.20left.20in.20types.20after.20mkForallFVars/near/514589118\">said</a>:</p>\n<blockquote>\n<p>I think in this case you would want to revert <code>?c</code></p>\n</blockquote>\n<p>I should have mentioned I'm in TermElab and not Tactic, but I'll take a closer look at the implementation of revert to see if there's anything that would be applicable.</p>",
+        "id": 514591757,
+        "sender_full_name": "Chris Bailey",
+        "timestamp": 1745715074
+    },
+    {
+        "content": "<p>\"revert\" meaning \"abstract it out along with <code>?a</code> and <code>?b</code> as well\", not in the sense of <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.MVarId.revert#doc\">docs#Lean.MVarId.revert</a></p>",
+        "id": 514592503,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1745715706
+    },
+    {
+        "content": "<p>I see. I looked at the docs and saw the tactic namespace and \"goal\", but it's in MetaM. I'm not sure this will work as it only accepts FVarIds. I can potentially take the forall apart, keep track off the mapping from what were the mvarIds to a set of opened fvarIds manually and visit the whole thing looking for ?c, but I feel like I'm messily recreating something that probably already exists.</p>",
+        "id": 514601360,
+        "sender_full_name": "Chris Bailey",
+        "timestamp": 1745723031
+    },
+    {
+        "content": "<p>The local context for the mvars taken from <code>getMVars (mkForallFVars ..)</code> don't seem to have any changes/additions to their local context.</p>",
+        "id": 514601518,
+        "sender_full_name": "Chris Bailey",
+        "timestamp": 1745723143
+    },
+    {
+        "content": "<p>What are you trying to do?</p>",
+        "id": 514649292,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1745762692
+    },
+    {
+        "content": "<p>I think <code>mkForallFVars #[?a, ?b] ?c</code> where <code>?c : f ?a ?b</code> isn't allowed. It's like doing <code>mkForallFVars #[x, y] z</code> where <code>z : f x y</code> is a free variable. When you do <code>mkForallFVars fvars e</code>, the <code>fvars</code> list has to have the property that each fvar that appears in <code>e</code>, if it depends transitively on a variable in <code>fvars</code>, then appears in <code>fvars</code>.</p>\n<p>With metavariables the situation is more complicated since you need to worry about dependencies both from fvars and from mvars.</p>\n<p>Something that is also tricky here is that <code>mkForallFVars #[?a, ?b] ?c</code> needs to <em>assign</em> to <code>?c</code> in some way to do the abstraction. If it's a synthetic opaque metavariable, that will be a delayed assignment, but otherwise it will be a true assignment with a freshly created metavariable. It's worth thinking about what you expect here.</p>",
+        "id": 514652673,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1745765135
+    },
+    {
+        "content": "<p>Example if assigning <code>c</code> is ok:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"w\"> </span><span class=\"n\">Meta</span><span class=\"w\"> </span><span class=\"n\">Elab</span><span class=\"w\"> </span><span class=\"n\">Command</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">Given metavariables `a`, `b`, and `c`, does \"mkForallFVars #[?a, ?b] ?c\" correctly.</span>\n<span class=\"sd\">The type of `b` can depend on `a`.</span>\n<span class=\"sd\">The type of `c` can depend on `a` and `b`.</span>\n\n<span class=\"sd\">Returns this type and a new metavariable `c2`.</span>\n<span class=\"sd\">If `a : A`, `b : B a`, and `c : C a b` then `c2 : (x : A) → (y : B x) → C x y`.</span>\n<span class=\"sd\">The metavariable `c` is assigned during this process.</span>\n<span class=\"sd\">-/</span>\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">doIt</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Expr</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">MetaM</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Expr</span><span class=\"w\"> </span><span class=\"bp\">×</span><span class=\"w\"> </span><span class=\"n\">Expr</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">cty</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">inferType</span><span class=\"w\"> </span><span class=\"n\">c</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">c2ty</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">mkForallFVars</span><span class=\"w\"> </span><span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">a</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">cty</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">c2</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">mkFreshExprMVar</span><span class=\"w\"> </span><span class=\"n\">c2ty</span>\n<span class=\"w\">  </span><span class=\"n\">c</span><span class=\"bp\">.</span><span class=\"n\">mvarId!</span><span class=\"bp\">.</span><span class=\"n\">assign</span><span class=\"w\"> </span><span class=\"bp\">&lt;|</span><span class=\"w\"> </span><span class=\"n\">mkApp2</span><span class=\"w\"> </span><span class=\"n\">c2</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">res</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">mkForallFVars</span><span class=\"w\"> </span><span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">a</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">c</span>\n<span class=\"w\">  </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">res</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">c2</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>(I say it's \"correct\" but I didn't test it :-))</p>",
+        "id": 514654416,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1745766462
+    },
+    {
+        "content": "<p>I think even in the synthetic opaque case (e.g. if <code>c</code> is a goal metavariable) you'll have to be ok with assigning some of these metavariables, or otherwise forgetting the relationship between <code>c</code> and the new <code>c</code> in the forall.</p>\n<p>Thinking of <code>c</code> as a goal, whose target is <code>C ?a ?b</code>, then for things to continue to make sense <code>?a</code> and <code>?b</code> can't remain as metavariables, since implicitly <code>mkForallFVars</code> is declaring that <code>?a</code> and <code>?b</code> have been abstracted. The new goal would be a version of <code>c</code> with new local variables <code>a</code> and <code>b</code>. That is, the result of the <code>doIt</code> function and then doing <code>intro</code>.</p>",
+        "id": 514655386,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1745767114
+    },
+    {
+        "content": "<p>Thanks. A mwe for what I'm trying to do boils down to elaborating</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Fin</span><span class=\"bp\">.</span><span class=\"n\">mk</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">?</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">?</span><span class=\"n\">h</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">?</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">&lt;</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">r</span>\n</code></pre></div>\n<p>into this, where the proofs are left as synthetic mvars to be filled in as one would do with refine, but data mvars are forall bound during term elaboration:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">),</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Fin</span><span class=\"bp\">.</span><span class=\"n\">mk</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">?</span><span class=\"n\">h</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">&lt;</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">r</span>\n</code></pre></div>\n<p>The complications that prevent just using refine directly (and that are the source of my current problem) are that (1) I want to forall bind the non-prop mvars and only leave the prop mvars as goals, and (2) I have some extra steps that need to be done in the constructor application so I had to write that term elaborator. I'm instantiating the expected types of the arguments with the prior arguments, which I think is doing something wrong because <code>refine</code> basically handles this correctly. I'll try to figure out what's going on differently in refine or the built-in constructor elaborator.</p>",
+        "id": 514800006,
+        "sender_full_name": "Chris Bailey",
+        "timestamp": 1745843073
+    }
+]

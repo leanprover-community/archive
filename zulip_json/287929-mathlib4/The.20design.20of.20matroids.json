@@ -1,0 +1,320 @@
+[
+    {
+        "content": "<p>I've just finished with a PR (<a href=\"https://github.com/leanprover-community/mathlib4/pull/14197\">#14197</a>) that defines the closure of a set in a matroid. At <span class=\"user-mention\" data-user-id=\"112680\">@Johan Commelin</span> 's suggestion, I'm recording here for posterity some nontrivial design issues that came up during review. The PR itself has just been merged, so this isn't a request for help or advice as such, but the issues themselves and where we ended up are possibly interesting to some. The docstrings of <code>Data.Matroid.Closure</code> and <code>Data.Matroid.Basic</code> also record this a bit more tersely. </p>\n<p>I'm also using this opportunity to discuss how matroids are defined in mathlib in the first place, since they use a pattern that is unlike many other things in mathlib, and this fact is quite relevant to the issues that come up with closure. So this is a bit long, and is really half for my own benefit. Anyone that reads all the way to the end has my gratitude <span aria-label=\"smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"smile\">:smile:</span> . <br>\n(The wider context of all this is I have a <a href=\"https://github.com/apnelson1/Matroid\">repo of matroid theory</a> consisting of around 20k LOC, which I'm trying quite hard to write in a versatile, mathlib-compatible way, and to PR as I'm doing it. It's going a bit slowly, but it's going). </p>\n<p><strong>The mathematics</strong></p>\n<p>In pen-and-paper maths, a matroid is usually defined as a pair <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mo stretchy=\"false\">(</mo><mi>E</mi><mo separator=\"true\">,</mo><mi mathvariant=\"script\">I</mi><mo stretchy=\"false\">)</mo></mrow><annotation encoding=\"application/x-tex\">(E,\\mathcal{I})</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mopen\">(</span><span class=\"mord mathnormal\" style=\"margin-right:0.05764em;\">E</span><span class=\"mpunct\">,</span><span class=\"mspace\" style=\"margin-right:0.1667em;\"></span><span class=\"mord mathcal\" style=\"margin-right:0.07382em;\">I</span><span class=\"mclose\">)</span></span></span></span>, where <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>E</mi></mrow><annotation encoding=\"application/x-tex\">E</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.05764em;\">E</span></span></span></span> is a set, and <br>\n<span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi mathvariant=\"script\">I</mi><mo>⊆</mo><msup><mn>2</mn><mi>E</mi></msup></mrow><annotation encoding=\"application/x-tex\">\\mathcal{I} \\subseteq 2^E</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.8193em;vertical-align:-0.136em;\"></span><span class=\"mord mathcal\" style=\"margin-right:0.07382em;\">I</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">⊆</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.8413em;\"></span><span class=\"mord\"><span class=\"mord\">2</span><span class=\"msupsub\"><span class=\"vlist-t\"><span class=\"vlist-r\"><span class=\"vlist\" style=\"height:0.8413em;\"><span style=\"top:-3.063em;margin-right:0.05em;\"><span class=\"pstrut\" style=\"height:2.7em;\"></span><span class=\"sizing reset-size6 size3 mtight\"><span class=\"mord mathnormal mtight\" style=\"margin-right:0.05764em;\">E</span></span></span></span></span></span></span></span></span></span></span> is a nonempty collection of 'independent' subsets of <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>E</mi></mrow><annotation encoding=\"application/x-tex\">E</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.05764em;\">E</span></span></span></span> satisfying certain axioms: for example, any subset of an independent set must be independent. The prototypical model of a matroid is a 'linear matroid', where <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>E</mi></mrow><annotation encoding=\"application/x-tex\">E</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.05764em;\">E</span></span></span></span> is some set of vectors in a vector space, and the independent sets of <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>M</mi></mrow><annotation encoding=\"application/x-tex\">M</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.10903em;\">M</span></span></span></span> are precisely the linearly independent subsets of <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>E</mi></mrow><annotation encoding=\"application/x-tex\">E</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.05764em;\">E</span></span></span></span>. The <em>closure</em> function of a matroid is a certain function <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>c</mi><mi>l</mi><mo>:</mo><msup><mn>2</mn><mi>E</mi></msup><mo>→</mo><msup><mn>2</mn><mi>E</mi></msup></mrow><annotation encoding=\"application/x-tex\">cl : 2^E \\to 2^E</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6944em;\"></span><span class=\"mord mathnormal\">c</span><span class=\"mord mathnormal\" style=\"margin-right:0.01968em;\">l</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">:</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.8413em;\"></span><span class=\"mord\"><span class=\"mord\">2</span><span class=\"msupsub\"><span class=\"vlist-t\"><span class=\"vlist-r\"><span class=\"vlist\" style=\"height:0.8413em;\"><span style=\"top:-3.063em;margin-right:0.05em;\"><span class=\"pstrut\" style=\"height:2.7em;\"></span><span class=\"sizing reset-size6 size3 mtight\"><span class=\"mord mathnormal mtight\" style=\"margin-right:0.05764em;\">E</span></span></span></span></span></span></span></span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">→</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.8413em;\"></span><span class=\"mord\"><span class=\"mord\">2</span><span class=\"msupsub\"><span class=\"vlist-t\"><span class=\"vlist-r\"><span class=\"vlist\" style=\"height:0.8413em;\"><span style=\"top:-3.063em;margin-right:0.05em;\"><span class=\"pstrut\" style=\"height:2.7em;\"></span><span class=\"sizing reset-size6 size3 mtight\"><span class=\"mord mathnormal mtight\" style=\"margin-right:0.05764em;\">E</span></span></span></span></span></span></span></span></span></span></span> satisfying properties such as <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>c</mi><mi>l</mi><mo stretchy=\"false\">(</mo><mi>c</mi><mi>l</mi><mo stretchy=\"false\">(</mo><mi>X</mi><mo stretchy=\"false\">)</mo><mo stretchy=\"false\">)</mo><mo>=</mo><mi>c</mi><mi>l</mi><mo stretchy=\"false\">(</mo><mi>X</mi><mo stretchy=\"false\">)</mo></mrow><annotation encoding=\"application/x-tex\">cl(cl(X)) = cl(X)</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mord mathnormal\">c</span><span class=\"mord mathnormal\" style=\"margin-right:0.01968em;\">l</span><span class=\"mopen\">(</span><span class=\"mord mathnormal\">c</span><span class=\"mord mathnormal\" style=\"margin-right:0.01968em;\">l</span><span class=\"mopen\">(</span><span class=\"mord mathnormal\" style=\"margin-right:0.07847em;\">X</span><span class=\"mclose\">))</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">=</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mord mathnormal\">c</span><span class=\"mord mathnormal\" style=\"margin-right:0.01968em;\">l</span><span class=\"mopen\">(</span><span class=\"mord mathnormal\" style=\"margin-right:0.07847em;\">X</span><span class=\"mclose\">)</span></span></span></span> and <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>X</mi><mo>⊆</mo><mi>c</mi><mi>l</mi><mo stretchy=\"false\">(</mo><mi>X</mi><mo stretchy=\"false\">)</mo><mo>⊆</mo><mi>c</mi><mi>l</mi><mo stretchy=\"false\">(</mo><mi>Y</mi><mo stretchy=\"false\">)</mo></mrow><annotation encoding=\"application/x-tex\">X \\subseteq cl(X) \\subseteq cl(Y)</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.8193em;vertical-align:-0.136em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.07847em;\">X</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">⊆</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mord mathnormal\">c</span><span class=\"mord mathnormal\" style=\"margin-right:0.01968em;\">l</span><span class=\"mopen\">(</span><span class=\"mord mathnormal\" style=\"margin-right:0.07847em;\">X</span><span class=\"mclose\">)</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">⊆</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mord mathnormal\">c</span><span class=\"mord mathnormal\" style=\"margin-right:0.01968em;\">l</span><span class=\"mopen\">(</span><span class=\"mord mathnormal\" style=\"margin-right:0.22222em;\">Y</span><span class=\"mclose\">)</span></span></span></span> for all <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>X</mi><mo>⊆</mo><mi>Y</mi></mrow><annotation encoding=\"application/x-tex\">X \\subseteq Y</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.8193em;vertical-align:-0.136em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.07847em;\">X</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">⊆</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.22222em;\">Y</span></span></span></span>. In the case where <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>M</mi></mrow><annotation encoding=\"application/x-tex\">M</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.10903em;\">M</span></span></span></span> is linear, this corresponds to a linear span, in the sense that <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>c</mi><mi>l</mi><mo stretchy=\"false\">(</mo><mi>X</mi><mo stretchy=\"false\">)</mo><mo>=</mo><mi>s</mi><mi>p</mi><mi>a</mi><mi>n</mi><mo stretchy=\"false\">(</mo><mi>X</mi><mo stretchy=\"false\">)</mo><mo>∩</mo><mi>E</mi></mrow><annotation encoding=\"application/x-tex\">cl(X) = span(X) \\cap E</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mord mathnormal\">c</span><span class=\"mord mathnormal\" style=\"margin-right:0.01968em;\">l</span><span class=\"mopen\">(</span><span class=\"mord mathnormal\" style=\"margin-right:0.07847em;\">X</span><span class=\"mclose\">)</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">=</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mord mathnormal\">s</span><span class=\"mord mathnormal\">p</span><span class=\"mord mathnormal\">an</span><span class=\"mopen\">(</span><span class=\"mord mathnormal\" style=\"margin-right:0.07847em;\">X</span><span class=\"mclose\">)</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span><span class=\"mbin\">∩</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.05764em;\">E</span></span></span></span>. </p>\n<p><strong>Matroid Design</strong></p>\n<p>In formalizing matroids, one's first instinct is probably to define a matroid as a structure (or class) <code>Matroid α</code> consisting of a predicate <code>Indep : Set α → Prop</code>, with appropriate rules constraining the behaviour of <code>Indep</code>. This mimics the design of objects in the algebraic hierarchy. Doing this would make <code>Matroid.closure</code> an example of a <code>ClosureOperator (Set α)</code>, and give access to a lot of nice API for these objects, such as Galois insertions. </p>\n<p>Unfortunately, this design has huge drawbacks to do with the way matroids are used. Unlike algebraic objects, the ground set <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>E</mi></mrow><annotation encoding=\"application/x-tex\">E</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.05764em;\">E</span></span></span></span> of a matroid is really treated like a set. A matroid on a set <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>E</mi></mrow><annotation encoding=\"application/x-tex\">E</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.05764em;\">E</span></span></span></span> gives rise to many related matroids (minors) on subsets of <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>E</mi></mrow><annotation encoding=\"application/x-tex\">E</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.05764em;\">E</span></span></span></span> in different and nonisomorphic ways, and it is not unusual to consider multiple matroids on the same set <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>E</mi></mrow><annotation encoding=\"application/x-tex\">E</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.05764em;\">E</span></span></span></span>, or to make assertions about, say, the interection of the ground sets of two different matroids.  Modelling the ground set of a matroid with a type (let alone using typeclasses) is a complete non-starter for this - even very basic theorems about minors of matroids having statements that include an <code>=</code> sign become horrible piles of canonical isomorphisms, which are paralyzing in practice. </p>\n<p>I know this because I tried doing things this way for a long time, before <span class=\"user-mention\" data-user-id=\"112680\">@Johan Commelin</span> suggested the current design to me. It works as follows: For <code>α : Type*</code>,  a <code>Matroid α</code> consists of a set <code>E : Set α</code>, and a predicate <code>Indep : Set α → Prop</code>, satisfying certain axioms that define a matroid, together with an extra rule <code>h_support : ∀ I, Indep I → I ⊆ E</code>. In other words, the ground set of a matroid is not a type, but a set within a type, and the independence predicate is defined on all sets in the type, and happens to only hold for subsets of <code>E</code>. </p>\n<p>This may seem unwieldy. The real disadvantage is that it sometimes requires unmathematical bookkeeping to make sure that sets are contained in the ground set. The hypothesis <code>X ⊆ M.E</code> appears all over the API, where it would have been simply true by definition if the ground set were a type. The advantage is that it allows meaningful assertions that two matroids are <code>Eq</code>. </p>\n<p>It's not that the disadvantage isn't bad (it is certainly quite annoying to constantly have to care about sets being 'supported'), but it's that one can't do basic matroid theory in any other way that I know. The 1000 or so lines of API in <a href=\"https://github.com/apnelson1/Matroid/blob/main/Matroid/Minor/Basic.lean\">the basic file on minors in my matroid repo</a> would be complete DTT hell if ground sets were types, and it's only the very beginning of the theory. </p>\n<p>So as far as I know, there is no other option than to suck it up, to keep track of sets being contained in the ground set, and to devote mental energy to the junk elements outside the ground set when stating lemmas. One thing that helps is the tactic <code>aesop_mat</code>, which works pretty well to automatically discharge goals of the form <code>X ⊆ M.E</code> when this follows from things in the context. </p>\n<p><strong>Closure</strong></p>\n<p>There are many other natural predicates on sets in a matroid; a set <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>X</mi><mo>⊆</mo><mi>E</mi></mrow><annotation encoding=\"application/x-tex\">X \\subseteq E</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.8193em;vertical-align:-0.136em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.07847em;\">X</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">⊆</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.05764em;\">E</span></span></span></span> may be a 'circuit', 'base', 'basis', 'flat', 'cocircuit', ... of <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>M</mi></mrow><annotation encoding=\"application/x-tex\">M</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.10903em;\">M</span></span></span></span>, and mostly they follow a similar design to <code>Indep</code>. For instance, we have a predicate <code>Base : Set α → Prop</code> which is defined in such a way that <code>Base B → B ⊆ M.E</code> is a theorem; bases of a matroid only exist as subsets of its ground set. Formalizing closure is different, though. Since <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>c</mi><mi>l</mi><mo>:</mo><msup><mn>2</mn><mi>E</mi></msup><mo>→</mo><msup><mn>2</mn><mi>E</mi></msup></mrow><annotation encoding=\"application/x-tex\">cl : 2^E \\to 2^E</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6944em;\"></span><span class=\"mord mathnormal\">c</span><span class=\"mord mathnormal\" style=\"margin-right:0.01968em;\">l</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">:</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.8413em;\"></span><span class=\"mord\"><span class=\"mord\">2</span><span class=\"msupsub\"><span class=\"vlist-t\"><span class=\"vlist-r\"><span class=\"vlist\" style=\"height:0.8413em;\"><span style=\"top:-3.063em;margin-right:0.05em;\"><span class=\"pstrut\" style=\"height:2.7em;\"></span><span class=\"sizing reset-size6 size3 mtight\"><span class=\"mord mathnormal mtight\" style=\"margin-right:0.05764em;\">E</span></span></span></span></span></span></span></span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">→</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.8413em;\"></span><span class=\"mord\"><span class=\"mord\">2</span><span class=\"msupsub\"><span class=\"vlist-t\"><span class=\"vlist-r\"><span class=\"vlist\" style=\"height:0.8413em;\"><span style=\"top:-3.063em;margin-right:0.05em;\"><span class=\"pstrut\" style=\"height:2.7em;\"></span><span class=\"sizing reset-size6 size3 mtight\"><span class=\"mord mathnormal mtight\" style=\"margin-right:0.05764em;\">E</span></span></span></span></span></span></span></span></span></span></span>, we need to formalize it s <code>Matroid.closure : Set α → Set α</code>, so we are forced to say where the junk goes. That is, if <code>X</code> is not a subset of <code>M.E</code>, then how should <code>M.closure X</code> be defined? </p>\n<p>There are quite a few potential choices. For instance, we could declare that <code>M.closure X = ∅</code> whenever <code>X</code> isn't a subset of <code>M.E</code>. This choice would be bad, though, since it necessitates adding a lot of support assumption to theorems about closure; we would need to know that <code>Y ⊆ M.E</code> for <code>X ⊆ Y</code> to imply <code>M.closure X ⊆ M.closure Y</code>, so <code>M.closure</code> would fail to be monotone. </p>\n<p>After discarding the chaff like the above, there are two reasonable choices that remain. Suppose that <code>M.closure X</code> has been defined as the mathematics dictates for every subset <code>X</code> of <code>M.E</code>.  When <code>X</code> is not a subset of <code>M.E</code>, we can either</p>\n<p>(1) : Define <code>M.closure X</code> so that <code>M.closure X = M.closure (X ∩ M.E)</code>, or <br>\n(2) : Define <code>M.closure X = M.closure (X ∩ M.E) ∪ X</code>. </p>\n<p>And this choice is why I'm making this post. Originally my repo used (1), and the PR initially did. But Johan suggested (2) for the PR, giving some quite good arguments for it, and I spend several days work experimenting with (2) in my repo.  <br>\nI eventually settled on (1), but not without reservations. </p>\n<p>It's a hard choice! Both (1) and (2) are good and bad for different reasons, and it felt very annoying to be forced to settle on one or the other. I'll summarize the points here. </p>\n<p>(1) is nice for two reasons. First, it guarantees that <code>M.closure X ⊆ M.E</code> for all <code>X</code>, even when <code>X</code> contains junk outside the ground set. This is great for <code>aesop_mat</code>; in general knowing that things are contained in the ground set is very useful, since it's needed so often as an assumption. The second reason is that when proving something about <code>M.closure X</code> with no assumptions on <code>X</code>, one can quickly <code>rw</code> the term to <code>M.closure (X ∩ M.E)</code>, and obtain a statement that is only about subsets of ground set (i.e. sets which are mathematically meaningful in the context of this matroid). This reduces cognitive load; thinking about junk elements is unmathematical and annoying. </p>\n<p>(2) is nice for reasons that probably appear more attractive. The statement that <code>M.closure X ⊆ M.E</code> is no longer unconditionally true (it needs <code>X ⊆ M.E</code>), but the statement that <code>X ⊆ M.closure X</code> <em>is</em> unconditionally true.<br>\nThis turns out to imply that <code>Matroid.closure</code> is actually an example of <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=ClosureOperator#doc\">docs#ClosureOperator</a>. This opens up access to a lot of nice API, giving a <code>GaloisInsertion</code>, for example. A side benefit is that a function satisfying (2) is actually the closure function of a different matroid with ground set <code>univ</code>, which can simplify proofs in a few places. </p>\n<p>So I made a branch of my repo, and refactored the whole thing so that <code>closure</code> was defined as <code>ClosureOperator</code>, satisfying (2). This affected countless lemmas across dozens of files, and it was a few days work adding/removing 'non-junk' assumptions before I had (2) working almost everywhere.</p>\n<p>It was a close thing, but the slightly less mathematically principled and more hacky solution won out: I decided that (1) was better. The nice API was tempting, reduced duplication a little and was in some places useful, but having access to <code>M.closure X ⊆ M.E</code> and being able to easily <code>rw</code> away junk elements was too much to give up. A common idiom with (2) was having a term <code>M.closure X</code> with no assumptions on <code>X</code>, then rewriting it to <code>M.closure (X ∩ M.E) ∪ (X \\ M.E)</code> to separate the non-junk and junk parts of the term. But this expression still contains the unmathematical junk <code>X \\ M.E</code>; any time and keystrokes spent dealing with those elements is a waste and arguably a failure of the design. And of course the term <code>M.closure (X ∩ M.E) ∪ (X \\ M.E)</code> itself is horrible, especially if <code>X</code> itself is a complicated expression. Losing the API was difficult, but in fact it was still available in a different guise. With (1), we do still get a <code>ClosureOperator</code> on the subtype <code>{X // X ⊆ M.E}</code>, through which the API lemmas can be (a little clunkily) transferred from the subtype to the type.</p>",
+        "id": 452697958,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721440987
+    },
+    {
+        "content": "<p><strong>Conclusion</strong> </p>\n<p>I don't know what the lesson is here, but it is clear that the 'embedded ground set' design was consequential. It forced me to decide between (1) and (2), and it would have been really nice to have the advantages of both. If the ground set were a type, we could have had both (1) and (2), but we would then be unable to assert that two different-looking matroids are <code>Eq</code>, which is central enough to the combinatorial theory that it is a deal-breaker. </p>\n<p>This isn't the only time that embedded ground sets have caused me pain. Whenever functions in and out of matroids crop up, they make things a little more difficult. The material in <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Data.Matroid.Map#doc\">docs#Data.Matroid.Map</a> is forced to consider many different flavours of maps between matroids involving subtypes of subsets, and this is because ground sets are not types. When formalizing the heavily studied subject of linear representations of a matroid, you need to consider functions <code>f : M.E → W</code> for a vector space <code>W</code>; this would be much easier if the domain were a plain type rather than a coerced set. </p>\n<p>But none of this pain is as bad as the alternative: being unable to consider different matroids on related ground sets as terms in a common type.</p>\n<p>So going forward, I'm putting up with the pain, using subtypes once functions get involved, and using automation tactics like <code>aesop_mat</code> with autoparams to minimize manually keeping track of <code>X ⊆ M.E</code> proofs. (by the way, I hacked <code>aesop_mat</code> together a year ago and it's doing something quite simple not particularly quickly; anyone that knows how to speed up specialized <code>aesop</code>-like tactics that would be willing to have a look with me would have my gratitude!) Maybe there is a good design I'm unaware of that would make my life much easier, and maybe HOTT has something to offer. But in the meantime I think this is what matroid theory looks like in lean.</p>",
+        "id": 452701736,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721443380
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"329425\">@Peter Nelson</span> Thank you so much for writing up this detailed \"post-mortem\". I think it will be a valuable piece of writing to point to now and then.</p>",
+        "id": 452797562,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1721463102
+    },
+    {
+        "content": "<p>It would probably be easier to find as a blog post.</p>",
+        "id": 452802198,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1721464429
+    },
+    {
+        "content": "<p>Is there an appropriate venue? I'm happy to turn this into a guest post somewhere, but have no blog setup myself.</p>",
+        "id": 452863583,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721494454
+    },
+    {
+        "content": "<p>The lean prover community blog?</p>",
+        "id": 452864113,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1721494830
+    },
+    {
+        "content": "<p>Anyone relevant should feel free to DM me</p>",
+        "id": 452864245,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721494899
+    },
+    {
+        "content": "<p>Apologising ahead of time that I haven't read everything, but could you not have a field <code>E : Set \\a</code> and then <code>Indep : Set E -&gt; Prop</code>? (i.e. bundling independence and support together, using the coercion from sets back to types).</p>\n<p>Naively it seems like this might avoid having to worry about support side conditions when working with a fixed E, but still allow having many matroids on the same <code>\\a</code>.</p>",
+        "id": 452868448,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1721496954
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"329425\">@Peter Nelson</span> instructions for submitting a blog post are at <a href=\"https://leanprover-community.github.io/blog/about/\">https://leanprover-community.github.io/blog/about/</a>. I'd encourage you to send this write up there!</p>",
+        "id": 452868772,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1721497097
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Kim Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/The.20design.20of.20matroids/near/452868448\">said</a>:</p>\n<blockquote>\n<p>Apologising ahead of time that I haven't read everything, but could you not have a field <code>E : Set \\a</code> and then <code>Indep : Set E -&gt; Prop</code>? (i.e. bundling independence and support together, using the coercion from sets back to types).</p>\n<p>Naively it seems like this might avoid having to worry about support side conditions when working with a fixed E, but still allow having many matroids on the same <code>\\a</code>.</p>\n</blockquote>\n<p>Yes, that was an option I looked into. The problem is that it will cause <code>heq</code> hell when you have pairs of matroids with equal but not defeq ground sets, which is a common occurence. For instance <a href=\"https://github.com/apnelson1/Matroid/blob/8e1b498774dfbf1ea6a537f4d988b3f72992bb89/Matroid/Minor/Basic.lean#L381C7-L381C37\">this lemma</a> would be quite hard to state.</p>",
+        "id": 452869272,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721497364
+    },
+    {
+        "content": "<p>There can always be a <code>Matroid.Indep' : Set E -&gt; Prop</code> defined in terms of <code>Indep</code> and <code>h_support</code> in case it's useful. There's no need to bake DTT hell into the definition itself. I think 'making the ext theorem nice' is a good design principle.</p>",
+        "id": 452869516,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1721497475
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Kim Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/The.20design.20of.20matroids/near/452868772\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"329425\">Peter Nelson</span> instructions for submitting a blog post are at <a href=\"https://leanprover-community.github.io/blog/about/\">https://leanprover-community.github.io/blog/about/</a>. I'd encourage you to send this write up there!</p>\n</blockquote>\n<p>I'll do this early next week!</p>",
+        "id": 452869517,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721497478
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/287929-mathlib4/topic/The.20design.20of.20matroids/near/452869516\">said</a>:</p>\n<blockquote>\n<p>There can always be a <code>Matroid.Indep' : Set E -&gt; Prop</code> defined in terms of <code>Indep</code> and <code>h_support</code> in case it's useful. There's no need to bake DTT hell into the definition itself.</p>\n</blockquote>\n<p>yes, and it barely needs a definition, because of the coercion from <code>Set X</code> to <code>Set a</code>  in <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Data.Set.Notation#doc\">docs#Data.Set.Notation</a>. For <code>X : Set E</code>, we have<code>M.Indep' X := M.Indep ↑X</code></p>",
+        "id": 452869759,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721497603
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/287929-mathlib4/topic/The.20design.20of.20matroids/near/452869516\">said</a>:</p>\n<blockquote>\n<p>I think 'making the ext theorem nice' is a good design principle.</p>\n</blockquote>\n<p>Given you can write the ext theorem by hand, I don't think this design principle really influences how you build the type itself. Certainly, the ext theorem for <code>Equiv</code> is different to the one that would be autogenerated, and this is a good thing.</p>",
+        "id": 452870685,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1721498043
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"329425\">Peter Nelson</span> <a href=\"#narrow/stream/287929-mathlib4/topic/The.20design.20of.20matroids/near/452869272\">said</a>:</p>\n<blockquote>\n<p>The problem is that it will cause <code>heq</code> hell when you have pairs of matroids with equal but not defeq ground sets</p>\n</blockquote>\n<p>The confusion for me has always been a lack of knowledge about what makes ground sets of matroids fundamentally different from carrier sets of submodules (which is on me for not having the matroid background). It would be great if you could make this comparison explicit in the potential blog post!</p>",
+        "id": 452871134,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1721498251
+    },
+    {
+        "content": "<p>The relevant ext theorem for matroids is the following; note the <code>I ⊆ M₁.E</code> in the statement. I should really rename it <code>Matroid.ext_indep</code> or something. </p>\n<p><code>Matroid.eq_of_indep_iff_indep_forall.{u_1} {α : Type u_1} {M₁ M₂ : Matroid α} (hE : M₁.E = M₂.E)\n  (h : ∀ I ⊆ M₁.E, M₁.Indep I ↔ M₂.Indep I) : M₁ = M₂ </code></p>",
+        "id": 452871151,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721498265
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/287929-mathlib4/topic/The.20design.20of.20matroids/near/452871134\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"329425\">Peter Nelson</span> <a href=\"#narrow/stream/287929-mathlib4/topic/The.20design.20of.20matroids/near/452869272\">said</a>:</p>\n<blockquote>\n<p>The problem is that it will cause <code>heq</code> hell when you have pairs of matroids with equal but not defeq ground sets</p>\n</blockquote>\n<p>The confusion for me has always been a lack of knowledge about what makes ground sets of matroids fundamentally different from carrier sets of submodules (which is on me for not having the matroid background). It would be great if you could make this comparison explicit in the potential blog post!</p>\n</blockquote>\n<p>Maybe the shortest answer there is that, given a fixed module, a submodule is determined by its carrier set.</p>",
+        "id": 452871290,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721498327
+    },
+    {
+        "content": "<blockquote>\n<p>Given you can write the ext theorem by hand</p>\n</blockquote>\n<p>Certainly. However, I still mean what I'm saying: it's a good design principle to design your types to have a straightforward ext lemma without needing to wrangle dependent types. I find that this is a quick test to see if you're going to down a road of trouble. It's nothing to do with autogeneration. (For that reason, <code>Equiv.ext</code> is not an example of this — it's funext composed with what would be the generated ext lemma, but in a defeq form.)</p>",
+        "id": 452876656,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1721501077
+    },
+    {
+        "content": "<p>Apologies for asking this without having given this much thought, but will we run into similar issues with formalizing graphs?</p>",
+        "id": 453010448,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1721581031
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/287929-mathlib4/topic/The.20design.20of.20matroids/near/452876656\">said</a>:</p>\n<blockquote>\n<p><code>Equiv.ext</code> [is] funext composed with what would be the generated ext lemma, but in a defeq form.)</p>\n</blockquote>\n<p><code>Equiv.ext</code> doesn't mention <code>Equiv.invFun</code>, while the generated ext lemma would</p>",
+        "id": 453010570,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1721581170
+    },
+    {
+        "content": "<p>Bryan's comment is a good one; comparing to the <code>SimpleGraph</code>/<code>Subgraph</code> approach sounds much more relevant than my bad suggestion of comparing to <code>Submodule</code>.</p>",
+        "id": 453010687,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1721581226
+    },
+    {
+        "content": "<p>If you start thinking about minors of graphs rather than subgraphs, all the same problems will arise, and they will likely be worse because both vertices and edges will have to be separate types.</p>",
+        "id": 453011492,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721581555
+    },
+    {
+        "content": "<p>Again, a minor of a graph is not determined by its edge set.</p>",
+        "id": 453011693,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721581617
+    },
+    {
+        "content": "<p>(I missed the missing <code>invFun</code> field, but <code>Equiv.ext</code> is still not an example of dependent type madness <span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span>. The <code>Equiv</code> type clearly passes the design principle I'm talking about, even if in practice there's a better one, though one that's an optimized version of the autogenerated one.)</p>",
+        "id": 453012450,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1721581828
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"123965\">@Bryan Gin-ge Chen</span> In an earlier version of <code>SimpleGraph.Subgraph</code>, I was experimenting with using subtypes for the <code>Adj</code> relation, but it became clear that writing out a \"first-order\" version worked out much better: <a href=\"https://github.com/leanprover-community/mathlib4/blob/82e01e3c5f7f05515affcee83152fb573c4097b3/Mathlib/Combinatorics/SimpleGraph/Subgraph.lean#L59-L64\">https://github.com/leanprover-community/mathlib4/blob/82e01e3c5f7f05515affcee83152fb573c4097b3/Mathlib/Combinatorics/SimpleGraph/Subgraph.lean#L59-L64</a></p>",
+        "id": 453012739,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1721581917
+    },
+    {
+        "content": "<p>Regarding minors on graphs, <a href=\"#narrow/stream/252551-graph-theory/topic/Graph.20minors.20and.20contractions/near/268583273\">this thread</a> and <a href=\"#narrow/stream/252551-graph-theory/topic/Definition.20of.20minors.20using.20minor.20maps/near/409351620\">this thread</a> are relevant. I assume one obvious difference here is that minors are essential to matroids, but you can do a lot of graph theory without them?</p>",
+        "id": 453013092,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1721582066
+    },
+    {
+        "content": "<p>Sure, but there is a lot of graph theory that involves them, both classically and at the cutting edge.</p>\n<p>Arguably the deepest single theorem in graph theory is about the minor order: <a href=\"https://en.m.wikipedia.org/wiki/Graph_structure_theorem\">https://en.m.wikipedia.org/wiki/Graph_structure_theorem</a></p>",
+        "id": 453013339,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721582165
+    },
+    {
+        "content": "<p>It turns out a minor is the same thing as an interval of subgraphs, so minors aren't so bad, though there's pain in treating a minor like a graph itself, since the vertex set is a quotient.</p>",
+        "id": 453013435,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1721582217
+    },
+    {
+        "content": "<p>‘The vertex set is a quotient’ is a matter for debate.</p>",
+        "id": 453013550,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721582266
+    },
+    {
+        "content": "<p>What do you mean?</p>",
+        "id": 453013605,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1721582288
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/287929-mathlib4/topic/The.20design.20of.20matroids/near/453013435\">said</a>:</p>\n<blockquote>\n<p>It turns out a minor is the same thing as an interval of subgraphs, so minors aren't so bad, though there's pain in treating a minor like a graph itself, since the vertex set is a quotient.</p>\n</blockquote>\n<p>Indeed, I just found <a href=\"#narrow/stream/252551-graph-theory/topic/minors.20of.20simple.20graphs/near/261159547\">your thread here</a>.</p>",
+        "id": 453013658,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1721582318
+    },
+    {
+        "content": "<p>If you mean \"circumvent using <code>Quot</code> by using choice\", then you're still working with a quotient (it has the correct universal property)</p>",
+        "id": 453013661,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1721582319
+    },
+    {
+        "content": "<p>It’s certainly not a useful perspective if you’re contracting a single edge e, and applying the inductive hypothesis. It’s much more convenient to think of getting another graph which shares most of its vertices with the original one.</p>",
+        "id": 453013746,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721582354
+    },
+    {
+        "content": "<p>You have to pick a name for the identified vertex, sure. But i think such a ‘labelled contraction’ is more the way a lot of people think about minors.</p>",
+        "id": 453013916,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721582417
+    },
+    {
+        "content": "<p>Formalizing a proof of Kuratowski’s theorem where a minor is an interval of subgraphs doesn’t sound fun.</p>",
+        "id": 453014025,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721582469
+    },
+    {
+        "content": "<p>The point here is to make it so that minors have a good extensionality theorem, so that deletion-contraction relations can be written with equality.</p>\n<p>It might be that there need to be auxiliary definitions to \"represent\" this point of view, maybe similar to how matroids have multiple definitions.</p>",
+        "id": 453014185,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1721582549
+    },
+    {
+        "content": "<p>I think I'm not so excited at the idea of <code>Minor G</code> for <code>G : Graph V E</code>. It feels very constraining; what if <code>H</code> is a minor of <code>G</code> and I want to consider some other graph that has <code>H</code> as a minor? </p>\n<p>I would rather that a minor be a <code>Graph</code> itself. I think this can be done using a design similar to what I am doing for matroids (with the same tradeoffs).</p>\n<p>Given a choice between a minor/subgraph having a 'canonical' vertex type, i.e. a coerced <code>Set</code> or a quotient, and a notion of minor/subgraph where the vertices/edges of the subobject can be <code>Eq</code> to vertices/edges of the host, I'd go for the latter every time.</p>",
+        "id": 453016143,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721583546
+    },
+    {
+        "content": "<p>At the moment, I'm working with grad students who know combinatorics but are new to formalization. If I have a <code>Walk</code> in <code>H : Subgraph (G : SimpleGraph V)</code> and they want to consider the 'corresponding' walk in <code>G</code> itself, I have to explain to them about maps between graphs, the canonical map from a subgraph to a graph, transferring the walk along said map, issues to do with defeq of coerced vertices, etc etc. All this is cognitive load, and it's simply not there in informal mathematics (i.e. set theory). </p>\n<p>In the way most graph theorists think about graphs and subgraphs, there is no 'corresponding' walk. If <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>W</mi></mrow><annotation encoding=\"application/x-tex\">W</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.13889em;\">W</span></span></span></span> is a walk of a subgraph <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>H</mi></mrow><annotation encoding=\"application/x-tex\">H</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.08125em;\">H</span></span></span></span> of <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>G</mi></mrow><annotation encoding=\"application/x-tex\">G</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\">G</span></span></span></span>, then <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>W</mi></mrow><annotation encoding=\"application/x-tex\">W</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.13889em;\">W</span></span></span></span> <em>is</em> a walk of <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>G</mi></mrow><annotation encoding=\"application/x-tex\">G</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\">G</span></span></span></span>, because its vertices and edges are vertices and edges of <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>G</mi></mrow><annotation encoding=\"application/x-tex\">G</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.6833em;\"></span><span class=\"mord mathnormal\">G</span></span></span></span>. There are no maps. </p>\n<p>And this isn't just a matter of getting used to a new and better perspective. Even once you learn it, it's annoying, departs from the mathematical idiom, and comes up everywhere. If subgraphs/minors aren't <code>Graph</code>s with the same vertex and edge type, this is unavoidable. But I don't think it needs to be that way.</p>",
+        "id": 453017380,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721584166
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"329425\">Peter Nelson</span> <a href=\"#narrow/stream/287929-mathlib4/topic/The.20design.20of.20matroids/near/453013916\">said</a>:</p>\n<blockquote>\n<p>the canonical map from [X] to [Y], transferring [P] along said map, [...]. All this is cognitive load, and it's simply not there in informal mathematics (i.e. set theory).</p>\n</blockquote>\n<p>I think this is a fairly ubiquitous design decision in mathlib; we have this for <code>(X, Y, P) = (ℕ, ℤ, ≤ )</code>, subsets vs sets vs types, submonoids vs monoids, etc. I think the general design you are hoping for is much more closely followed by systems like Isabelle which are using something much closer to set theory.</p>",
+        "id": 453018254,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1721584633
+    },
+    {
+        "content": "<p>In those examples, there is a good reason for doing things that way. What's the good reason here?</p>",
+        "id": 453018516,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721584775
+    },
+    {
+        "content": "<p>In the maths I'm doing, graphs come up pretty frequently, but it's always as a fixed graph. In this case, it's definitely simpler if the graph is a type, not a set in a type.</p>",
+        "id": 453019408,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1721585150
+    },
+    {
+        "content": "<p>This is the case in matroid theory for many things too - when minors aren't involved, I generally want them to be a type. But it becomes so much more difficult to work with minors if they are a type, that it isn't an option. </p>\n<p>And there is room for API for the special case where <code>M.E = univ</code> (or <code>G.V = univ</code> for a graph). It amounts to duplication, but I'd rather have that than be unable to work with minors. </p>\n<p>For subgraphs and simple graphs, I think that the discussion is more nuanced, because subgraphs are essentially set-like. But there are pros and cons there as well.</p>",
+        "id": 453020703,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721585756
+    },
+    {
+        "content": "<p>It's also worth noting that there are tons of interelated partial orders on graphs, including subgraphs, minors, topological minors, induced subgraphs, homomorphic images, minors, induced minors, vertex minors and pivot minors. Do they all get their own <code>Subgraph</code>-like type?</p>",
+        "id": 453021346,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721586039
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Kim Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/The.20design.20of.20matroids/near/452868772\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"329425\">Peter Nelson</span> instructions for submitting a blog post are at <a href=\"https://leanprover-community.github.io/blog/about/\">https://leanprover-community.github.io/blog/about/</a>. I'd encourage you to send this write up there!</p>\n</blockquote>\n<p>I just tried to PR but it looks like I need permission to create a branch.</p>",
+        "id": 453452136,
+        "sender_full_name": "Peter Nelson",
+        "timestamp": 1721750203
+    },
+    {
+        "content": "<p>You can always PR from a <span aria-label=\"fork and knife\" class=\"emoji emoji-1f374\" role=\"img\" title=\"fork and knife\">:fork_and_knife:</span></p>",
+        "id": 453452417,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1721750269
+    },
+    {
+        "content": "<p>Yes, the whole story of not PRing from a fork is only for Mathlib.</p>",
+        "id": 453460210,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1721751693
+    },
+    {
+        "content": "<p>Thank you so much <span class=\"user-mention\" data-user-id=\"329425\">@Peter Nelson</span> for the detailed post!</p>\n<p>Following on the design decisions, when we now work with matroids (which heavily use sets as opposed to types), there is a rising need for a good interface between \"type theory\" and \"set theory\" (by which I don't mean axiomatic set theory but rather working with sets expressed in Lean).</p>\n<p>One of the things touching the interface are binary matroids. Since the Seymour project (<span class=\"user-mention\" data-user-id=\"709805\">@Ivan S.</span> et al) is all about binary matroids, I hacked together an ad-hoc API for translation between set unions and sum types, starting here:<br>\n<a href=\"https://github.com/Ivan-Sergeyev/seymour/blob/45a9ff84d86c95af8b3d09fbddd7e2b9754f3275/Seymour/Basic.lean#L18\">https://github.com/Ivan-Sergeyev/seymour/blob/45a9ff84d86c95af8b3d09fbddd7e2b9754f3275/Seymour/Basic.lean#L18</a></p>\n<p>Do you think it would make sense to develop this API more systematically and integrate it into Mathlib? Should I start submitting PRs to Mathlib for the API as an independent contribution, or only when another contribution needs a part of it?</p>",
+        "id": 485827980,
+        "sender_full_name": "Martin Dvořák",
+        "timestamp": 1733226250
+    },
+    {
+        "content": "<p>I think that function is <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Set.inclusion#doc\">docs#Set.inclusion</a> ?</p>",
+        "id": 485839494,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1733229413
+    },
+    {
+        "content": "<p>And the next one is <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Equiv.Set.union#doc\">docs#Equiv.Set.union</a></p>",
+        "id": 485839644,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1733229456
+    },
+    {
+        "content": "<p>Thanks for pointing them out! I didn't know we had them.</p>\n<p>Should the mathlib's version of <code>Matrix.toMatrixUnionUnion</code> be built from <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Matrix.reindex#doc\">docs#Matrix.reindex</a> and <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Equiv.Set.union#doc\">docs#Equiv.Set.union</a> then?</p>",
+        "id": 485880299,
+        "sender_full_name": "Martin Dvořák",
+        "timestamp": 1733239249
+    },
+    {
+        "content": "<p>I don't it should exist at all, we can't afford to have a def for every possible reindex</p>",
+        "id": 485883118,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1733239900
+    },
+    {
+        "content": "<p>We probably could have <code>abbrev reindex\\_2</code> for reindexing square matrices</p>",
+        "id": 485889512,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1733241466
+    },
+    {
+        "content": "<p>Could you provide guidance on how I can check the current state of matroid theory implementation in lean? I need to work on implementing some matroid models and would like to understand the recent progress. Additionally, I would greatly appreciate information about areas of matroid theory that still need to be implemented or explored further.</p>",
+        "id": 486062017,
+        "sender_full_name": "Mahdi Khaleghi",
+        "timestamp": 1733308997
+    }
+]

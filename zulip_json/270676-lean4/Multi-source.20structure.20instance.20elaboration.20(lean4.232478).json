@@ -1,0 +1,950 @@
+[
+    {
+        "content": "<p>(This is a continuation of discussion in the <a href=\"#narrow/stream/287929-mathlib4/topic/.60example.20.28p.20.3A.20P.29.20.3A.20Q.20.3A.3D.20p.60.20takes.200.2E25s.20to.20fail!/near/413215892\"><code>example (p : P) : Q := p</code> takes 0.25s to fail!</a> thread, but there's a broader discussion so I'll bring it up here.)</p>\n<p>Re <a href=\"https://github.com/leanprover/lean4/pull/2478\">lean4#2478</a>, I'm busy with the beginning of the quarter teaching a large class and getting seminar talk together for the CS department, but I'll have time soon-ish (the end of next week?) to get things moving. It's an important PR for optimization structure instance elaboration, which has large performance impacts on mathlib.</p>\n<p>In case anyone can help me with some research, here are some questions:</p>\n<ol>\n<li>What is the expected elaboration of a multi-source structure instance? I personally would have thought that <code>({s, t with} : C)</code> would be as if the fields of <code>s</code> and then the fields of <code>t</code> were consulted in order. However, as <a href=\"#narrow/stream/287929-mathlib4/topic/.60example.20.28p.20.3A.20P.29.20.3A.20Q.20.3A.3D.20p.60.20takes.200.2E25s.20to.20fail!/near/413005319\">Matt's examples</a> show, this is not currently the case. Is that intentional, or an oversight with a previous eta optimization? Or maybe at some point these were generalized from single-source to multi-source?</li>\n<li>How <em>should</em> elaboration of multi-source structure instances work? There are a few options:<br>\n  A. Fill fields using the sources in left-to-right order (and try to do this ~optimally, by fusing fields into compatible subobject projections when possible).<br>\n  B. Fill fields from any of the sources, by looking at all fields of <code>C</code> (including subobject fields) in a depth-first manner and using the first source that provides it (note: this means that earlier sources might not be consulted for a field they provide!).<br>\n  C. Declare that which field comes from which source is unspecified behavior, or, probably better, an error.<br>\n  In A and B, note that it only makes sense to use a subobject projection from a source if the destination structure has that subobject. Just to note a small complexity, when there are items in the <code>with</code> clause, this can inhibit using certain subobjects due to overlap.</li>\n</ol>\n<p>My intent is that as part of merging <a href=\"https://github.com/leanprover/lean4/pull/2478\">lean4#2478</a> we have specified how this part of the language is supposed to work. It's an important part of the language for mathlib because it's how <code>__ := ...</code> spread notation is implemented. It's also important because I'd prefer that, if we change how elaboration works, we do it in one clean and well-justified break.</p>",
+        "id": 413220183,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705431572
+    },
+    {
+        "content": "<p>I think A (left-to-right), or erroring on ambiguity, are the two options that allow the user to have the simplest mental model.</p>",
+        "id": 415394549,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705452412
+    },
+    {
+        "content": "<p>What does \"ambiguity\" mean here? If two fields are defeq, presumably this doesn't count as ambiguous; but which one is used?</p>",
+        "id": 415397761,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705453728
+    },
+    {
+        "content": "<p>I think the problem is that there are two ways of talking about the fields of:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">A</span> <span class=\"n\">where</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n<span class=\"kd\">structure</span> <span class=\"n\">B</span> <span class=\"kd\">extends</span> <span class=\"n\">A</span> <span class=\"n\">where</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n</code></pre></div>\n<p>Either the fields of <code>B</code> are <code>[toA, b]</code> (how <code>.mk</code> presents them) or <code>[a, b]</code> (the mental model we inherited from Lean 3), and the interpretation of left-to-right changes depending on which outlook you use.</p>",
+        "id": 415398043,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705453890
+    },
+    {
+        "content": "<p>I think this is just a thorn we have to deal with when using nested structures; just like we have to deal with the weird signature of <code>.mk</code></p>",
+        "id": 415398193,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705453959
+    },
+    {
+        "content": "<p>Let's say \"field\" means <code>[a, b]</code>, but with the understanding that there's actually a tree here with all of the subobject fields being remembered.</p>\n<p>With your <code>A</code> and <code>B</code>, Lean allows</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">C</span> <span class=\"n\">where</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n\n<span class=\"kd\">variable</span> <span class=\"o\">(</span><span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">C</span><span class=\"o\">)</span>\n<span class=\"k\">#check</span> <span class=\"o\">({</span><span class=\"n\">c</span> <span class=\"k\">with</span> <span class=\"n\">b</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>That is, the fields of <code>B</code> can't just be <code>[toA, b]</code>. The illusion Lean aims to maintain is that <code>B</code> really does have two fields <code>a</code> and <code>b</code>.</p>",
+        "id": 415930535,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705454511
+    },
+    {
+        "content": "<p>With multi-source structure instances, this is allowed, following the mental model of drawing from sources left-to-right:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">D</span> <span class=\"n\">where</span>\n  <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span>\n\n<span class=\"kd\">variable</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span>\n<span class=\"k\">#check</span> <span class=\"o\">({</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">b</span> <span class=\"k\">with</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">D</span><span class=\"o\">)</span> <span class=\"c1\">-- { a := a.a, b := b.b } : D</span>\n</code></pre></div>\n<p>It currently does something completely different though if a subobject field matches:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#check</span> <span class=\"o\">({</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">b</span> <span class=\"k\">with</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"c1\">-- { toA := b.toA, b := b.b } : B</span>\n</code></pre></div>\n<p>I don't see why it couldn't give <code>{ toA := a, b := b.b }</code> here, which is what I'd expect in the A option (left-to-right), or, if it can't figure out the optimization, at least <code>{ a := a.a, b := b.b } : B</code>.</p>",
+        "id": 415930929,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705454707
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Multi-source.20structure.20instance.20elaboration.20.28lean4.232478.29/near/415930535\">said</a>:</p>\n<blockquote>\n<p>The illusion Lean aims to maintain is that <code>B</code> really does have two fields <code>a</code> and <code>b</code>.</p>\n</blockquote>\n<p>This illusion is broken around:</p>\n<ul>\n<li><code>B.a</code> hiding  a <code>B.toA.a</code> term which will match lemmas about <code>A.a</code></li>\n<li>the shape of<code>B.mk</code></li>\n<li><code>⟨⟨a⟩, b⟩</code> notation</li>\n<li><a href=\"https://github.com/leanprover/lean4/pull/2905\">lean4#2905</a></li>\n</ul>\n<p>I'm not sure attempting to maintain it is helpful, since it somewhat amounts to pretending these traps don't exist.</p>",
+        "id": 415931419,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705454959
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Multi-source.20structure.20instance.20elaboration.20.28lean4.232478.29/near/415930929\">said</a>:</p>\n<blockquote>\n<p>I don't see why it couldn't give <code>{ toA := a, b := b.b }</code> here,</p>\n</blockquote>\n<p>Yes, and this is an easy fix; right now the PR does two passes searching for fields, but I think mixing them in a single pass would have this effect</p>",
+        "id": 415932352,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705455440
+    },
+    {
+        "content": "<p>I think we should properly handle these fields as a tree, and the structure eta reduction trick should be a mere optimization. Here's a concrete algorithm that has the right specification and also avoids superfluous eta expansion where possible:</p>\n<ul>\n<li>The target struct <code>S</code> has fields arranged in a tree; our goal is to provide a \"covering\" of the tree by values. We don't actually look at the types here, only the field names are significant.</li>\n<li>First, use all the directly provided fields to fill the specified nodes. (Duplicates here are an error.)</li>\n<li>Then, go through the sources from left to right:<ul>\n<li>Loop over the fields / subfields in preorder. (The left-to-right order doesn't matter but we want to visit roots before leaves.)</li>\n<li>For each field <code>a</code> of the source <code>A</code>, if <code>a</code> is completely uncovered (meaning <code>a</code> and all of its children are unassigned), cover it with a value from this source.</li>\n</ul>\n</li>\n<li>If not all fields are covered, error.</li>\n</ul>",
+        "id": 415966991,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705476431
+    },
+    {
+        "content": "<p>In the example above, this yields:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">A</span> <span class=\"n\">where</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n<span class=\"kd\">structure</span> <span class=\"n\">B</span> <span class=\"kd\">extends</span> <span class=\"n\">A</span> <span class=\"n\">where</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n<span class=\"kd\">variable</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span>\n<span class=\"k\">#check</span> <span class=\"o\">({</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">b</span> <span class=\"k\">with</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"c1\">-- { toA := a, b := b.b } : B</span>\n</code></pre></div>",
+        "id": 415967183,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705476537
+    },
+    {
+        "content": "<p>other examples:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">A</span> <span class=\"n\">where</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n<span class=\"kd\">structure</span> <span class=\"n\">B</span> <span class=\"n\">where</span> <span class=\"o\">(</span><span class=\"n\">toA</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"c1\">-- `a` is not a field of `B`</span>\n<span class=\"kd\">variable</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">a'</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span>\n<span class=\"k\">#check</span> <span class=\"o\">({</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">b</span> <span class=\"k\">with</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"c1\">-- b : B</span>\n<span class=\"k\">#check</span> <span class=\"o\">({</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">b</span> <span class=\"k\">with</span> <span class=\"n\">toA</span> <span class=\"o\">:=</span> <span class=\"n\">a'</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"c1\">-- { toA := a', b := b.b } : B</span>\n<span class=\"k\">#check</span> <span class=\"o\">({</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">b</span> <span class=\"k\">with</span> <span class=\"n\">toA.a</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"c1\">-- { toA := { a := 1 }, b := b.b } : B</span>\n</code></pre></div>",
+        "id": 415967874,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705476886
+    },
+    {
+        "content": "<p>Just to clarify, you're agreeing that option A (left-to-right) is the correct behavior, and you're giving a suggested algorithm, correct? (And \"left-to-right\" in your sub-bullet is referring about details of the preorder, and not the sources)</p>",
+        "id": 415968091,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705477000
+    },
+    {
+        "content": "<p>yes</p>",
+        "id": 415968107,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705477009
+    },
+    {
+        "content": "<p>It's also not really necessarily the real algorithm, it's for specification purposes. I think the real algorithm goes one field at a time instead of one source at a time (then again, this may be exactly the cause of the bug!)</p>",
+        "id": 415968261,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705477085
+    },
+    {
+        "content": "<p><del>One oddity of this algorithm is that a parent field with no subfields is always considered covered, so it will never draw from any explicit sources, e.g</del></p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">A</span>\n<span class=\"kd\">structure</span> <span class=\"n\">B</span> <span class=\"kd\">extends</span> <span class=\"n\">A</span>\n<span class=\"kd\">structure</span> <span class=\"n\">C</span> <span class=\"kd\">extends</span> <span class=\"n\">B</span> <span class=\"k\">with</span> <span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n<span class=\"kd\">variable</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">C</span><span class=\"o\">)</span>\n<span class=\"k\">#check</span> <span class=\"o\">{</span><span class=\"n\">b</span> <span class=\"k\">with</span><span class=\"o\">}</span> <span class=\"c1\">-- { toA := {} } : B</span>\n<span class=\"k\">#check</span> <span class=\"o\">{</span><span class=\"n\">c</span> <span class=\"k\">with</span><span class=\"o\">}</span> <span class=\"c1\">-- c : C</span>\n<span class=\"k\">#check</span> <span class=\"o\">{</span><span class=\"n\">c</span> <span class=\"k\">with</span> <span class=\"n\">c</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span><span class=\"o\">}</span> <span class=\"c1\">-- { toB := { toA := {} }, c := 1 } : C</span>\n</code></pre></div>",
+        "id": 415968523,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705477219
+    },
+    {
+        "content": "<p>Actually I take it back, a field with no subfields would be completely <em>uncovered</em> by the rules above, so the first source to provide the field will be used</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">#check</span> <span class=\"o\">{</span><span class=\"n\">b</span> <span class=\"k\">with</span><span class=\"o\">}</span> <span class=\"c1\">-- b : B</span>\n<span class=\"k\">#check</span> <span class=\"o\">{</span><span class=\"n\">c</span> <span class=\"k\">with</span><span class=\"o\">}</span> <span class=\"c1\">-- c : C</span>\n<span class=\"k\">#check</span> <span class=\"o\">{</span><span class=\"n\">c</span> <span class=\"k\">with</span> <span class=\"n\">c</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span><span class=\"o\">}</span> <span class=\"c1\">-- { toB := c.toB, c := 1 } : C</span>\n<span class=\"k\">#check</span> <span class=\"o\">({</span><span class=\"n\">c</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">C</span><span class=\"o\">)</span> <span class=\"c1\">-- { toB := { toA := {} }, c := 1 } : C</span>\n</code></pre></div>\n<p>which looks like sensible behavior to me</p>",
+        "id": 415969730,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705477855
+    },
+    {
+        "content": "<p>Thanks Kyle for this. I know you are busy with more important things. </p>\n<p>I agree that \"left-to-right\" is the simplest mental model. </p>\n<p>But I don't think that should be driving factor in this specification. I base my opinion off a couple things:</p>\n<ol>\n<li>If the left-to-right model was at the top of users minds when building instances, I would expect a good deal more breakage in <a href=\"https://github.com/leanprover-community/mathlib4/pull/9007\">#9007</a> since the extra eta expansion of the source instances allows for more likelihood of overlap being exposed. I found exactly one such case in <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=sigmaCurryEquiv#doc\">docs#sigmaCurryEquiv</a> <a href=\"https://github.com/leanprover-community/mathlib4/blob/2df52bcb91088d908cbfdbba65383103601d45d5/Mathlib/Algebra/DirectSum/Basic.lean#L354\">here</a>. From looking at how users construct instances with multiple sources, my belief is that the vast majority of the time the thought process is \"All of these cover all the fields I need. Lean put them together.\" </li>\n<li>Ordering choices can seriously impact performance for structures in Lean 4. We basically have no concrete sense right now of the optimal way to order the parent classes across the library. Allowing ordering of the sources to play a large role invites problems like these. </li>\n<li>There is another mechanism for users to specify fields, after the <code>with</code>. I understand the convenience if there are many fields you want to take from one particular source. But if you need to do this, it might be an indication to revisit the inheritance pattern for the structures are working with. </li>\n</ol>\n<p>Taking these together, I think the sources before the <code>with</code> should be put together maximizing performance in unification and in a way that is robust to refactorings of ordering of parents. The user should only worry that they have covered all fields with their sources when reasoning. If they want a particular term for a field it should be supplied explicitly after the <code>with</code>.</p>",
+        "id": 416027551,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705498271
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/270676-lean4/topic/Multi-source.20structure.20instance.20elaboration.20.28lean4.232478.29/near/415932352\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Multi-source.20structure.20instance.20elaboration.20.28lean4.232478.29/near/415930929\">said</a>:</p>\n<blockquote>\n<p>I don't see why it couldn't give <code>{ toA := a, b := b.b }</code> here,</p>\n</blockquote>\n<p>Yes, and this is an easy fix; right now the PR does two passes searching for fields, but I think mixing them in a single pass would have this effect</p>\n</blockquote>\n<p>Yes this is a good idea. The fundamental issue with the current design is that <code>toA</code> is not a field of <code>A</code>.</p>",
+        "id": 416027698,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705498310
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Multi-source.20structure.20instance.20elaboration.20.28lean4.232478.29/near/415968107\">said</a>:</p>\n<blockquote>\n<p>yes</p>\n</blockquote>\n<p>I am confused because this sounds very similar to what the current implementation is</p>",
+        "id": 416027812,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705498333
+    },
+    {
+        "content": "<p>The model I described is not intended to diverge from what was proposed above it so much as to make it precise and answer all the edge case questions</p>",
+        "id": 416028597,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705498551
+    },
+    {
+        "content": "<p>In particular it has the property that for any field or subfield, if multiple sources provide it then the left-most source is always the one that supplies the value</p>",
+        "id": 416028845,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705498614
+    },
+    {
+        "content": "<p>I am probably being dense. But \"what was proposed\" to me is left-to-right and \"current implementation\" is top-down.</p>",
+        "id": 416028866,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705498620
+    },
+    {
+        "content": "<p>there are aspects of both left to right and top down in both algorithms, I guess it's a matter of which loop you do first</p>",
+        "id": 416029010,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705498662
+    },
+    {
+        "content": "<p>Yes, agree.</p>",
+        "id": 416029062,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705498671
+    },
+    {
+        "content": "<p>but I think I would describe my algorithm as \"left to right\" in the sense you mean</p>",
+        "id": 416029264,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705498700
+    },
+    {
+        "content": "<p>Right now we loop over the fields of the instance we want to construct and eta-expand if we cannot fill with projections from the sources.</p>",
+        "id": 416029394,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705498714
+    },
+    {
+        "content": "<p>If multiple projections work, then the left-most is used via <code>findSome?</code></p>",
+        "id": 416029654,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705498767
+    },
+    {
+        "content": "<p>right, I agree that gives the wrong result when the second source provides a parent of some field from the first source</p>",
+        "id": 416029822,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705498812
+    },
+    {
+        "content": "<p>Wrong in what way?</p>",
+        "id": 416029937,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705498850
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Multi-source.20structure.20instance.20elaboration.20.28lean4.232478.29/near/416028845\">said</a>:</p>\n<blockquote>\n<p>In particular it has the property that for any field or subfield, if multiple sources provide it then the left-most source is always the one that supplies the value</p>\n</blockquote>",
+        "id": 416029963,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705498862
+    },
+    {
+        "content": "<p>this property is violated with that algorithm</p>",
+        "id": 416030000,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705498874
+    },
+    {
+        "content": "<p>Perhaps I should re-read more carefully. But stepping back, I worry about the trade-offs of such a property in practice.</p>",
+        "id": 416030339,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705498979
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">A</span> <span class=\"n\">where</span> <span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n<span class=\"kd\">structure</span> <span class=\"n\">B</span> <span class=\"kd\">extends</span> <span class=\"n\">A</span> <span class=\"n\">where</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n<span class=\"kd\">variable</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span>\n<span class=\"k\">#check</span> <span class=\"o\">({</span> <span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">b</span> <span class=\"k\">with</span> <span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span>\n<span class=\"c1\">-- currently: { toA := b.toA, b := b.b } : B</span>\n<span class=\"c1\">-- should be: { toA := a, b := b.b } : B</span>\n</code></pre></div>",
+        "id": 416030371,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705498986
+    },
+    {
+        "content": "<p>Ok yes. I <del>agree</del> understand</p>",
+        "id": 416030548,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499042
+    },
+    {
+        "content": "<p>This is an easy mental model, it means you don't have to worry about subfields and can easily deduce where each thing comes from</p>",
+        "id": 416030739,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499092
+    },
+    {
+        "content": "<p>(It's also what I thought we implemented, and in lean 3 I think this is what you get)</p>",
+        "id": 416030934,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499147
+    },
+    {
+        "content": "<p>I agree that it is an easy mental model for those who make such considerations. But, in practice, I don't see that happening.</p>",
+        "id": 416030964,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499157
+    },
+    {
+        "content": "<p>Yeah, I am curious about Lean 3.</p>",
+        "id": 416031060,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499173
+    },
+    {
+        "content": "<p>For those who don't take the consideration you get option (C) - it is unspecified, don't do it unless all the fields are defeq and you don't care which is picked</p>",
+        "id": 416031116,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499190
+    },
+    {
+        "content": "<p>but when you do care it's good if the algorithm is predictable</p>",
+        "id": 416031235,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499227
+    },
+    {
+        "content": "<p>I think they would be fine with any choice</p>",
+        "id": 416031240,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499229
+    },
+    {
+        "content": "<p>or that</p>",
+        "id": 416031277,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499240
+    },
+    {
+        "content": "<p>I don't think C is good for the reason you just said</p>",
+        "id": 416031324,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499254
+    },
+    {
+        "content": "<p>I mean (C) is the \"effective model\" as understood by someone who doesn't learn the algorithm</p>",
+        "id": 416031434,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499282
+    },
+    {
+        "content": "<p>But there is a problem with attaching importance to the ordering when most people don't care in practice</p>",
+        "id": 416031635,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499326
+    },
+    {
+        "content": "<p>and the next level of understanding is that everything is treated like flat structures and the first one to supply each field wins</p>",
+        "id": 416031684,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499342
+    },
+    {
+        "content": "<p>which is the lean 3 algorithm, and also coincides with the algorithm I described (and Kyle's option A) up to structure eta applications</p>",
+        "id": 416031808,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499389
+    },
+    {
+        "content": "<p>I would argue the performance penalties in Lean 4 that we pay for mis-orderings by those who don't care outweigh this benefit. Especially when there is another mechanism to specify fields.</p>",
+        "id": 416031948,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499423
+    },
+    {
+        "content": "<p>If you supply fields, those take priority of course</p>",
+        "id": 416032071,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499458
+    },
+    {
+        "content": "<p>so it gives you a way to additionally control the behavior</p>",
+        "id": 416032124,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499471
+    },
+    {
+        "content": "<p>Right, why do we need two?</p>",
+        "id": 416032185,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499491
+    },
+    {
+        "content": "<p>but I think correct semantics is more important than performance, it's no good to get the wrong answer quickly</p>",
+        "id": 416032333,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499526
+    },
+    {
+        "content": "<p>but we can optimize under those constraints</p>",
+        "id": 416032402,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499553
+    },
+    {
+        "content": "<p>Did the semantics for structure inheritance change between the Lean 3 version you are referring to and Lean 4?</p>",
+        "id": 416032470,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499573
+    },
+    {
+        "content": "<p>it did, the example I just gave is a counterexample</p>",
+        "id": 416032547,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499596
+    },
+    {
+        "content": "<p>This looks very much like a bug</p>",
+        "id": 416032589,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499610
+    },
+    {
+        "content": "<p>Are we talking old style structures vs now?</p>",
+        "id": 416032808,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499667
+    },
+    {
+        "content": "<p>with new style structures in lean 3, we do get the same behavior as current lean 4</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">A</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">nat</span><span class=\"o\">)</span>\n<span class=\"kd\">structure</span> <span class=\"n\">B</span> <span class=\"kd\">extends</span> <span class=\"n\">A</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">nat</span><span class=\"o\">)</span>\n<span class=\"kd\">variables</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span>\n<span class=\"k\">#check</span> <span class=\"o\">({</span> <span class=\"bp\">..</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"bp\">..</span><span class=\"n\">b</span> <span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"c1\">-- {to_A := b.to_A, b := b.b} : B</span>\n</code></pre></div>",
+        "id": 416032951,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499706
+    },
+    {
+        "content": "<p>with old style structures we get the sensible behavior</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">set_option</span> <span class=\"n\">old_structure_cmd</span> <span class=\"n\">true</span>\n<span class=\"kd\">structure</span> <span class=\"n\">A</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">nat</span><span class=\"o\">)</span>\n<span class=\"kd\">structure</span> <span class=\"n\">B</span> <span class=\"kd\">extends</span> <span class=\"n\">A</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">nat</span><span class=\"o\">)</span>\n<span class=\"kd\">variables</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span>\n<span class=\"k\">#check</span> <span class=\"o\">({</span> <span class=\"bp\">..</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"bp\">..</span><span class=\"n\">b</span> <span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"c1\">-- {a := a.a, b := b.b} : B</span>\n</code></pre></div>",
+        "id": 416033074,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499739
+    },
+    {
+        "content": "<p>So it would be a bug in Lean 3 then?</p>",
+        "id": 416033097,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499745
+    },
+    {
+        "content": "<p>(that propagated)</p>",
+        "id": 416033266,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499780
+    },
+    {
+        "content": "<p>more or less</p>",
+        "id": 416033289,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499785
+    },
+    {
+        "content": "<p>I'm pretty sure the code was completely rewritten, but the abstract algorithm is the one at fault here</p>",
+        "id": 416033365,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499811
+    },
+    {
+        "content": "<p>I think that we need to see the performance impact of enforcing this invariant</p>",
+        "id": 416033499,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499857
+    },
+    {
+        "content": "<p>My experience mucking around timeouts makes me very concerned</p>",
+        "id": 416033655,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499892
+    },
+    {
+        "content": "<p>relative to your eta reduced version of the original algorithm, or relative to the current version?</p>",
+        "id": 416033668,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499898
+    },
+    {
+        "content": "<p>(note that you can use <code>lean3</code> to mark things as lean3 code, and <a href=\"#narrow/stream/236604-Zulip-meta/topic/Lean3.20codeblocks.20open.20the.20lean4.20web.20editor/near/408498905\">in a few weeks</a> they will lead to the lean3 playground)</p>",
+        "id": 416033707,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705499912
+    },
+    {
+        "content": "<p>I think the eta reductions will cause the most obvious performance differences</p>",
+        "id": 416033758,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705499927
+    },
+    {
+        "content": "<p>The current version. A more substantial rewrite is necessary to enforce this invariant. The PR in question perpetuates top-down as in current code.</p>",
+        "id": 416033946,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705499981
+    },
+    {
+        "content": "<p>The scope of the PR is to avoid the eta expansion</p>",
+        "id": 416034103,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705500014
+    },
+    {
+        "content": "<p>This algorithm is also eta reduced, it will have slightly fewer eta reductions than the original algorithm though</p>",
+        "id": 416034323,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705500079
+    },
+    {
+        "content": "<p>Assuming that all users have intentionally ordered their sources</p>",
+        "id": 416034427,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705500112
+    },
+    {
+        "content": "<p>Let me name the algorithms:</p>\n<ul>\n<li>A: Original algorithm</li>\n<li>AR: Your rewrite, with eta reduction</li>\n<li>BR: My algorithm / kyle's option A</li>\n</ul>\n<p>AFAICT, A &lt; BR &lt; AR in terms of number of successful eta reductions, because AR prioritizes eta reduction over selecting from the right sources. So we would expect the performance numbers to look similar</p>",
+        "id": 416035225,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705500329
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Multi-source.20structure.20instance.20elaboration.20.28lean4.232478.29/near/413220183\">said</a>:</p>\n<blockquote>\n<p>My intent is that as part of merging <a href=\"https://github.com/leanprover/lean4/pull/2478\">lean4#2478</a> we have specified how this part of the language is supposed to work. It's an important part of the language for mathlib because it's how <code>__ := ...</code> spread notation is implemented. It's also important because I'd prefer that, if we change how elaboration works, we do it in one clean and well-justified break.</p>\n</blockquote>\n<p>Given the performance benefits are so great for mathlib, from the perspective of user + CI time (and CO₂), I'd perhaps argue that preferring to merge a poorly-specified fix with refinement in a follow-up is preferable to waiting for a fully specified fix</p>",
+        "id": 416035226,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705500329
+    },
+    {
+        "content": "<p>I'm pretty sure that sources are intentionally ordered in mathlib whenever they result in different defeqs</p>",
+        "id": 416035444,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705500379
+    },
+    {
+        "content": "<p>I think usually in mathlib when we're unsure of the defeq, we just override the field again, which breaks all the eta optimizations anyway</p>",
+        "id": 416035524,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705500402
+    },
+    {
+        "content": "<p>not necessarily, you can override a parent field</p>",
+        "id": 416035577,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705500418
+    },
+    {
+        "content": "<p>I think people tend to dump everything before the <code>with</code></p>",
+        "id": 416035620,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705500433
+    },
+    {
+        "content": "<p>I mean that we currently do <code>{ a, b with a := a.a }</code> if we're not sure whether <code>a</code> will be taken from <code>a</code> or <code>b</code>, and the difference matters</p>",
+        "id": 416035694,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705500458
+    },
+    {
+        "content": "<p>Also note that as long as A and B have a common parent C which is the reason why they have common fields, it is C itself that will be selected so there is no performance cost to using BR over AR</p>",
+        "id": 416035864,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705500502
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/270676-lean4/topic/Multi-source.20structure.20instance.20elaboration.20.28lean4.232478.29/near/416035226\">said</a>:</p>\n<blockquote>\n<p>Given the performance benefits are so great for mathlib, from the perspective of user + CI time (and CO2), I'd perhaps argue that preferring to merge a poorly-specified fix with refinement in a follow-up is preferable to waiting for a fully specified fix</p>\n</blockquote>\n<p>I agree with this. A &gt; AR is a performance optimization, AR &gt; BR is a bugfix</p>",
+        "id": 416036377,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705500635
+    },
+    {
+        "content": "<p>Color me skeptical about performance impacts. I am happy to be proven wrong. Good sematics + good performance would be the best of all worlds</p>",
+        "id": 416036463,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705500663
+    },
+    {
+        "content": "<p>The only cases where AR and BR even have different answers is when A / AR is picking the \"wrong\" result. Do we have any examples of this in the wild?</p>",
+        "id": 416036622,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705500715
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/270676-lean4/topic/Multi-source.20structure.20instance.20elaboration.20.28lean4.232478.29/near/416035226\">said</a>:</p>\n<blockquote>\n<p>from the perspective of user + CI time (and CO2)</p>\n</blockquote>\n<p>another consideration is preventing <a href=\"https://github.com/leanprover-community/mathlib4/pull/8386\">#8386</a> from rotting, which I believe depends on one of AR or BR being merged quickly</p>",
+        "id": 416036789,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705500750
+    },
+    {
+        "content": "<p>For reference, here's the Lean 3 implementation of structure instance elaboration: <a href=\"https://github.com/leanprover-community/lean/blob/f91b574c40ad862c5134d48995ad083fe48e4cd4/src/frontends/lean/elaborator.cpp#L2871\">https://github.com/leanprover-community/lean/blob/f91b574c40ad862c5134d48995ad083fe48e4cd4/src/frontends/lean/elaborator.cpp#L2871</a></p>\n<p>It looks like the loop is in <code>create_field_mvars</code></p>",
+        "id": 416092741,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705515691
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306577\">@Matthew Ballard</span> Could you remind me what the state of <a href=\"https://github.com/leanprover/lean4/pull/2478\">lean4#2478</a> is with respect to changing semantics? Are there still examples where it elaborates structure instance with different fields from the current algorithm?</p>\n<p>If so, my large reservation with merging as-is is that for core, we don't change elaboration without it being well tested and carefully justified. There are plenty of programming uses of structure instances, and if there are any downstream projects that use multi-source structure instances, we might be silently causing the programs to evaluate differently. If the semantics are changing, I believe this warrants doing it just once.</p>\n<p>On the other hand, if the semantics are the same, and if this is just an optimization, then it might be OK proceeding since at worst a proof might need to be fixed up.</p>",
+        "id": 416094542,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705516330
+    },
+    {
+        "content": "<p>Here's a short summary of the discussion so far as I'm understanding it:</p>\n<ol>\n<li>Treating structures as flat records and filling fields from sources left-to-right is generally accepted as the \"right\" conceptual model. (Though Eric appears to disagree)</li>\n<li>There are reservations that this might not necessarily give the optimal representation, and for mathlib getting the optimal representation may be more important than the \"right\" one.</li>\n<li>There are no reservations about the need for representing structure instances more efficiently.</li>\n</ol>\n<p>What if there were an option you could set where the structure instance elaborator would warn you if you have the sources in a non-optimal order? Or if it's non-optimal, suggest fields to include? With that sort of setting, maybe we could get nice semantics of 1 while perhaps satisfying <span class=\"user-mention\" data-user-id=\"306577\">@Matthew Ballard</span>'s concerns about 2?</p>",
+        "id": 416095518,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705516666
+    },
+    {
+        "content": "<p>The PR follows the existing semantics as much as I understand them. Fill the structure instance top-down with the first occurrence that works (by name). </p>\n<p>Currently, the algorithm only uses projections from the supplied source instances when it tries to match a missing field with something from the source. For example, if you have <code>a:A</code> in your source list and we are trying to fill <code>toA</code> then it will not use <code>a</code>because it is not a projection of <code>A</code>.  </p>\n<p>The change, which is one-line, is to first run a search to see if the name of the field we are filling is the same as one of the supplied sources. If so, slot that in.</p>",
+        "id": 416096787,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705517067
+    },
+    {
+        "content": "<p>Given the delicacy of elaboration, I made this as targeted as possible to allow <code>a:A</code> to fill <code>toA</code> and avoid the extra eta expansion coming from no match.</p>",
+        "id": 416097142,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705517184
+    },
+    {
+        "content": "<p>In particular, are there any concrete examples that you know of where the semantics differ? I shared an example that gave non-equal results for some recent-ish version of the PR, but you've change it in the meantime. (And just to make sure we're using words in the same way, and while I might be misusing the term, by \"preserve semantics\" in this context I mean \"yields a result that's Eq to the previous algorithm's result\". Defeq is even better, and with structure eta these should be the same.)</p>",
+        "id": 416098815,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705517812
+    },
+    {
+        "content": "<p>Sorry. I thought you meant semantics in terms of initial discussion. The current PR version which takes the first that fits out of all sources and projections will in principle break some defeq’s (though I only found one such instance in mathlib). </p>\n<p>I have a version in a branch which only fills with source if there is no overlap in a source. It is not tested for performance and would in principle still break defeq since we could have filled with something after it. One could make a version which fills only if there is no overlap with any other source. I am not sure of the utility of this. </p>\n<p>It might be useful to consult someone else who was around when the behavior changed to understand the intention. </p>\n<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> what motivated the change in behavior in Lean 3 for structure instance elaboration?</p>",
+        "id": 416335741,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705525489
+    },
+    {
+        "content": "<p>Which change specifically?</p>",
+        "id": 416336155,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1705525669
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Multi-source.20structure.20instance.20elaboration.20.28lean4.232478.29/near/416033074\">said</a>:</p>\n<blockquote>\n<p>with old style structures we get the sensible behavior</p>\n<p><div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">set_option</span> <span class=\"n\">old_structure_cmd</span> <span class=\"n\">true</span>\n<span class=\"kd\">structure</span> <span class=\"n\">A</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">nat</span><span class=\"o\">)</span>\n<span class=\"kd\">structure</span> <span class=\"n\">B</span> <span class=\"kd\">extends</span> <span class=\"n\">A</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">nat</span><span class=\"o\">)</span>\n<span class=\"kd\">variables</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span>\n<span class=\"k\">#check</span> <span class=\"o\">({</span> <span class=\"bp\">..</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"bp\">..</span><span class=\"n\">b</span> <span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"c1\">-- {a := a.a, b := b.b} : B</span>\n</code></pre></div><br>\n</p>\n</blockquote>\n<p>vs</p>",
+        "id": 416336397,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705525766
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/Multi-source.20structure.20instance.20elaboration.20.28lean4.232478.29/near/416032951\">said</a>:</p>\n<blockquote>\n<p>with new style structures in lean 3, we do get the same behavior as current lean 4</p>\n<p><div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">A</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">nat</span><span class=\"o\">)</span>\n<span class=\"kd\">structure</span> <span class=\"n\">B</span> <span class=\"kd\">extends</span> <span class=\"n\">A</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">nat</span><span class=\"o\">)</span>\n<span class=\"kd\">variables</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span>\n<span class=\"k\">#check</span> <span class=\"o\">({</span> <span class=\"bp\">..</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"bp\">..</span><span class=\"n\">b</span> <span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"c1\">-- {to_A := b.to_A, b := b.b} : B</span>\n</code></pre></div><br>\n</p>\n</blockquote>",
+        "id": 416336416,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705525774
+    },
+    {
+        "content": "<p>First source listed (left to right) with a field will fill it in elaboration of the instance.</p>",
+        "id": 416336793,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705525936
+    },
+    {
+        "content": "<p>I doubt it was an intentional change. The code was basically rewritten.</p>",
+        "id": 416337106,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1705526124
+    },
+    {
+        "content": "<p>You would expect the left to right invariant to hold then?</p>",
+        "id": 416337245,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705526190
+    },
+    {
+        "content": "<blockquote>\n<p>Treating structures as flat records and filling fields from sources left-to-right is generally accepted as the \"right\" conceptual model. (Though Eric appears to disagree)</p>\n</blockquote>\n<p>I think my claim is that while this model is perhaps \"right\" in the <em>ideal</em> sense, it's certainly not \"right\" in the sense of consistency with many other properties of new structures, and I think when the choices are \"ideal but inconsistent and unperformant\" vs \"non-ideal but consistent and performant\", the latter wins. Even with performance out of the picture, I think global consistency is better than local idealness.</p>",
+        "id": 416337538,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705526319
+    },
+    {
+        "content": "<p>That sounds like my concerns but better stated.</p>",
+        "id": 416338036,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705526551
+    },
+    {
+        "content": "<p>(Aside: I’m heading to Berkeley now so might not be able to engage much until later tomorrow)</p>",
+        "id": 416338162,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705526616
+    },
+    {
+        "content": "<p>If having the ideal \"flat\" semantics is really important to the user, then the most reliable way to get them consistently would be to let that user truly use flat structures; something like <a href=\"https://github.com/leanprover/lean4/pull/2940\">lean4#2940</a>, though I don't claim that we are at the point where we should seriously consider merging it.</p>",
+        "id": 416338270,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705526656
+    },
+    {
+        "content": "<p>What do you think about my suggestion to have an option that can warn about ill-performing structure instances? (That wouldn't be for the initial PR, but it could be a later extension.)</p>",
+        "id": 416339243,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705527076
+    },
+    {
+        "content": "<p>That sounds great, though I'm not sure we have enough data for certain to tell if a structure is ill-performing by construction</p>",
+        "id": 416339568,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705527239
+    },
+    {
+        "content": "<p>This might make sense as a (Std-style) linter; or maybe as motivation for refactoring linters upstream so that they can inspect the elaborated declaration</p>",
+        "id": 416339758,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705527312
+    },
+    {
+        "content": "<p>\"ill-performing\" might just mean \"the any-source greedy subobject algorithm would give a different result\" (I don't know what to call it -- it's the one that you and Matt have been suggesting).</p>",
+        "id": 416340123,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705527457
+    },
+    {
+        "content": "<p>I'd like to say that I don't think it's fair to characterize this in terms of consistent vs inconsistent. The main interface to structures are the fields, and every structure also comes with projections to everything it extends. It's supposed to be an implementation detail how it packs the fields into nested objects. Sure, the <code>.mk</code> constructor exposes this detail, as does anonymous constructor notation, but the interface for constructing structures is structure instance notation. We could hide <code>x.toA.a</code> by having the structure command define projections for each field, if that's something we really wanted. There's also a leak where structure instances can't set parent projection fields that aren't true fields, but that could be fixed.</p>\n<p>I'm having a hard time seeing how drawing fields from sources in a complicated order depending on the exact details of the orderings of all the <code>extends</code> clauses in a hierarchy of structures (and depending on the exact algorithm that is used to process these) could be characterized as \"consistent\", other than the mere fact that it's consistent with how the implementation details of new structures sometimes leak.</p>\n<p>If we don't do the \"ideal\" left-to-right algorithm, then that limits our ability to have features that adjust how structures are laid out. Let's say we have an extension for flat structures -- wouldn't you want to be able to switch a particular <code>structure</code> over without worrying whether all the structure instances in your codebase now might mean something different?</p>",
+        "id": 416452177,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705528618
+    },
+    {
+        "content": "<p>Put another way, structure instance notation should be invariant to the actual structure layout. You should be able to refactor your structures all you want (factor out a common sub-structure with <code>extends</code>, reorder the <code>extends</code> clauses, switch the <code>structure</code> layout algorithm) and you shouldn't have to worry about whether structure instances will evaluate to something different -- may it be because the algorithm is the \"idea\" one or because the changes signal an error that needs to be corrected.</p>\n<p>Something that just occurred to me is that potentially computationally irrelevant fields (proofs and types) could be allowed to come from any source. That's an optimization though.</p>",
+        "id": 416453510,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705529162
+    },
+    {
+        "content": "<blockquote>\n<p>Something that just occurred to me is that potentially computationally irrelevant fields (proofs and types) could be allowed to come from any source.</p>\n</blockquote>\n<p>I think this is risky for <code>Type</code>s; computational irrelevance (<code>Subsingleton</code>?) isn't enough to ensure definitional equality</p>",
+        "id": 416454219,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705529491
+    },
+    {
+        "content": "<p>Oh right, I was thinking proofs first and then generalized too far without thinking.</p>",
+        "id": 416455865,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705530290
+    },
+    {
+        "content": "<p><a href=\"http://speed.lean-fro.org/mathlib4/compare/c832fa4d-1238-4360-afef-a65d35dedb89/to/cb685acb-18ea-4ddd-93c0-13c66a17e561\">Looks like</a> I’ll have to take back my reservations</p>",
+        "id": 416699669,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705634451
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/9843\">#9843</a> has the changes to mathlib for left to right</p>",
+        "id": 416702180,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705636205
+    },
+    {
+        "content": "<p><a href=\"https://github.com/mattrobball/lean4/commit/08ba654d5b0d2971680e9bc0b5abd960f4c12551\">Here</a> are the changes to get full left to right elaboration on all structure instances giving the benchmark results above. You can use the existing loop over fields of the target structure but enforce that you are only allowed to choose a projection of a supplied instance if its fields don’t overlap with any fields of a supplied instance listed before it. </p>\n<p>The code can probably cleaned up a little. Suggestions are welcome. </p>\n<p>A more subtle issue is: what counts as a field. For example</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">A</span> <span class=\"n\">where</span>\n    <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n    <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">B</span> <span class=\"n\">where</span>\n    <span class=\"n\">toA</span> <span class=\"o\">:</span> <span class=\"n\">A</span>\n    <span class=\"n\">z</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">C</span> <span class=\"kd\">extends</span> <span class=\"n\">A</span> <span class=\"n\">where</span>\n    <span class=\"n\">z</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n</code></pre></div>\n<p>What are the fields of <code>B</code> here? Are they the same as <code>C</code>?</p>",
+        "id": 416889415,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705706233
+    },
+    {
+        "content": "<p>If the fields of <code>B</code> are accidentally the same as <code>C</code> right now, that might be an OK bug for now. I don't think they're meant to have the same fields. Subobject projections ought to only be subobject projections if they are declared so.</p>",
+        "id": 416893245,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705707153
+    },
+    {
+        "content": "<p>You can probably guess the results of <code>getStructureFieldsFlattened</code> on each</p>",
+        "id": 416893577,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705707229
+    },
+    {
+        "content": "<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[</span><span class=\"bp\">`</span><span class=\"n\">toA</span><span class=\"o\">,</span> <span class=\"bp\">`</span><span class=\"n\">z</span><span class=\"o\">]</span> <span class=\"bp\">—</span> <span class=\"n\">B</span>\n<span class=\"o\">[</span><span class=\"bp\">`</span><span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"bp\">`</span><span class=\"n\">y</span><span class=\"o\">,</span> <span class=\"bp\">`</span><span class=\"n\">z</span><span class=\"o\">]</span> <span class=\"bp\">—</span> <span class=\"n\">C</span>\n</code></pre></div>\n</div></div>",
+        "id": 416895027,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705707524
+    },
+    {
+        "content": "<p>Should the following work? </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">bar</span> <span class=\"o\">(</span><span class=\"n\">s</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">C</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">s</span> <span class=\"k\">with</span><span class=\"o\">}</span>\n</code></pre></div>",
+        "id": 416900873,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705708610
+    },
+    {
+        "content": "<p>That's a good boundary case. I think it's ok if it works, but it doesn't need to, and maybe it shouldn't.</p>",
+        "id": 416948641,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705720641
+    },
+    {
+        "content": "<p>Amusingly this is an explicit test in the test suite. :) </p>\n<p>Long update incoming.</p>",
+        "id": 417266369,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705940382
+    },
+    {
+        "content": "<p>There are 5 different toolchains now</p>\n<ol start=\"0\">\n<li>Status quo </li>\n<li>Current content of <a href=\"https://github.com/leanprover/lean4/pull/2478\">lean4#2478</a></li>\n<li>Implement left-to-right semantics with the previous test failing</li>\n<li>Implement left-to-right semantics with the previous test working </li>\n<li>3 + reduce even more etas (explained below)</li>\n</ol>",
+        "id": 417266998,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705940552
+    },
+    {
+        "content": "<p>If you want to play with them, here are the toolchains labels </p>\n<ol>\n<li><code>leanprover/lean4:lean-pr-testing-2478</code></li>\n<li><code>mattrobball/lean4:leftRight-24-01-18</code></li>\n<li><code>mattrobball/lean4:leftRightDeep-24-01-20</code></li>\n<li><code>mattrobball/lean4:leftRightDeepExtra-24-01-22-2</code></li>\n</ol>",
+        "id": 417267830,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705940792
+    },
+    {
+        "content": "<p>We have working copies of mathlib for each </p>\n<ol>\n<li><a href=\"https://github.com/leanprover-community/mathlib4/pull/9007\">#9007</a>  </li>\n<li><a href=\"https://github.com/leanprover-community/mathlib4/pull/9843\">#9843</a></li>\n<li><a href=\"https://github.com/leanprover-community/mathlib4/pull/9868\">#9868</a> </li>\n<li><a href=\"https://github.com/leanprover-community/mathlib4/pull/9895\">#9895</a></li>\n</ol>",
+        "id": 417268473,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705940993
+    },
+    {
+        "content": "<p>To illustrate the difference in behavior, here is a test in 3 and 4 </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">A</span> <span class=\"n\">where</span>\n  <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">B</span> <span class=\"n\">where</span>\n  <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n  <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">B</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">b</span> <span class=\"k\">with</span><span class=\"o\">}</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">boo</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">B</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">b</span><span class=\"o\">,</span> <span class=\"n\">a</span> <span class=\"k\">with</span><span class=\"o\">}</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">C</span> <span class=\"kd\">extends</span> <span class=\"n\">B</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">baz</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">C</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">b</span> <span class=\"k\">with</span><span class=\"o\">}</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">biz</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">B</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">C</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">b</span><span class=\"o\">,</span> <span class=\"n\">a</span> <span class=\"k\">with</span><span class=\"o\">}</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">faz</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">C</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">C</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">c</span> <span class=\"k\">with</span><span class=\"o\">}</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">fiz</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">A</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">C</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">C</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">c</span><span class=\"o\">,</span> <span class=\"n\">a</span> <span class=\"k\">with</span><span class=\"o\">}</span>\n</code></pre></div>",
+        "id": 417269001,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705941135
+    },
+    {
+        "content": "<p>For status quo, we have </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">a.x</span><span class=\"o\">,</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">b.y</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">boo</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">b.x</span><span class=\"o\">,</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">b.y</span><span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">baz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">toB</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">a.x</span><span class=\"o\">,</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">b.y</span> <span class=\"o\">}</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">biz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">toB</span> <span class=\"o\">:=</span>  <span class=\"o\">{</span><span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">b.x</span><span class=\"o\">,</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">b.y</span><span class=\"o\">}</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">faz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">c</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">toB</span> <span class=\"o\">:=</span> <span class=\"n\">c.toB</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">fiz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">c</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span><span class=\"n\">toB</span> <span class=\"o\">:=</span> <span class=\"n\">c.toB</span> <span class=\"o\">}</span>\n</code></pre></div>",
+        "id": 417270363,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705941480
+    },
+    {
+        "content": "<p>Things to note: </p>\n<ul>\n<li><code>biz</code> has one extra eta expansion </li>\n<li><code>boo</code> has two extra eta expansions </li>\n<li><code>fiz</code> has one extra one </li>\n<li><code>foo</code> satisfies the left to right semantics but only because of the eta expansion. <code>faz</code> doesn’t have the extra eta expansion and does not satisfy it</li>\n</ul>",
+        "id": 417270963,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705941670
+    },
+    {
+        "content": "<p>For <a href=\"https://github.com/leanprover/lean4/pull/2478\">lean4#2478</a>, we have </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">a.x</span><span class=\"o\">,</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">b.y</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">boo</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">b.x</span><span class=\"o\">,</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">b.y</span><span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">baz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">toB</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">b</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">biz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">toB</span> <span class=\"o\">:=</span>  <span class=\"n\">b</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">faz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">c</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">toB</span> <span class=\"o\">:=</span> <span class=\"n\">c.toB</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">fiz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">c</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">toB</span> <span class=\"o\">:=</span> <span class=\"n\">c.toB</span> <span class=\"o\">}</span>\n</code></pre></div>",
+        "id": 417271347,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705941800
+    },
+    {
+        "content": "<p>We eliminate one source of eta expansion. When populating the structure fields, currently only fields of the supplied instances are used, not the instances itself. Left to right semantics are now completely broken.</p>",
+        "id": 417271605,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705941866
+    },
+    {
+        "content": "<p>For 2, we have </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">a.x</span><span class=\"o\">,</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">b.y</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">boo</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">b.x</span><span class=\"o\">,</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">b.y</span><span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">baz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">toB</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">a.x</span><span class=\"o\">,</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">b.y</span> <span class=\"o\">}</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">biz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">toB</span> <span class=\"o\">:=</span>  <span class=\"n\">b</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">faz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">c</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">toB</span> <span class=\"o\">:=</span> <span class=\"n\">c.toB</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">fiz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">c</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span><span class=\"n\">toB</span> <span class=\"o\">:=</span> <span class=\"n\">c.toB</span> <span class=\"o\">}</span>\n</code></pre></div>",
+        "id": 417271867,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705941948
+    },
+    {
+        "content": "<p>We have full left to right semantics and eliminate the same source of eta expansion when possible</p>",
+        "id": 417272042,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705941993
+    },
+    {
+        "content": "<p>3 is the same as 2. except the following works </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">A</span> <span class=\"n\">where</span>\n  <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">B</span> <span class=\"kd\">extends</span> <span class=\"n\">A</span> <span class=\"n\">where</span>\n  <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">C</span> <span class=\"n\">where</span>\n  <span class=\"n\">toA</span> <span class=\"o\">:</span> <span class=\"n\">A</span>\n  <span class=\"n\">y</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">c</span> <span class=\"o\">:</span> <span class=\"n\">C</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">B</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">c</span> <span class=\"k\">with</span><span class=\"o\">}</span>\n</code></pre></div>",
+        "id": 417272427,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705942102
+    },
+    {
+        "content": "<p>4 gives </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">a.x</span><span class=\"o\">,</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">b.y</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">boo</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">b</span>\n<span class=\"kd\">def</span> <span class=\"n\">baz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">toB</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">a.x</span><span class=\"o\">,</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">b.y</span> <span class=\"o\">}</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">biz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">B</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">toB</span> <span class=\"o\">:=</span> <span class=\"n\">b</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">faz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">c</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">{</span> <span class=\"n\">toB</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">a.x</span><span class=\"o\">,</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"n\">c.toB.y</span> <span class=\"o\">}</span> <span class=\"o\">}</span>\n<span class=\"kd\">def</span> <span class=\"n\">fiz</span> <span class=\"o\">:</span> <span class=\"n\">A</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"bp\">→</span> <span class=\"n\">C</span> <span class=\"o\">:=</span>\n<span class=\"k\">fun</span> <span class=\"n\">a</span> <span class=\"n\">c</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">c</span>\n</code></pre></div>",
+        "id": 417272602,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705942160
+    },
+    {
+        "content": "<p>This eliminates the second source of eta expansions in <code>boo</code> and <code>fiz</code> Currently the algorithm is unable to correctly account for the case where a projection of a supplied instance (or a source instance itself) is a term whose type is the desired structure</p>",
+        "id": 417273277,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705942336
+    },
+    {
+        "content": "<p>We could of course use the change from 3-&gt;4 with 1 or 2 also.</p>",
+        "id": 417273619,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705942453
+    },
+    {
+        "content": "<p>The main (only?) concern about left to right semantics was the performance impact. Here are the changes in instructions over all of mathlib (you can find fuller reports from the bot on the PRs)</p>\n<ol>\n<li>-4.3T </li>\n<li>-3.8T</li>\n<li>-3.8T </li>\n<li>-3.9T</li>\n</ol>",
+        "id": 417274500,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705942739
+    },
+    {
+        "content": "<p>1 indeed offers the greatest speed up while 3-&gt;4 is an improvement but not of the same magnitude.</p>",
+        "id": 417274760,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705942806
+    },
+    {
+        "content": "<p><del>Some tests in the test suite need bumps to their heartbeat limit for 2-4.</del> Sorry, I got things mixed up here. Bumps aren’t needed at all assuming the instances are ordered correctly.</p>",
+        "id": 417274878,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705942842
+    },
+    {
+        "content": "<p>Another important difference is the diff size from the status quo for the 4 options.</p>",
+        "id": 417275216,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705942935
+    },
+    {
+        "content": "<p>The relevant portion of the diff is <code>src/Lean/Elab/StructInst.lean</code></p>",
+        "id": 417275370,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705942989
+    },
+    {
+        "content": "<ol>\n<li><a href=\"https://github.com/leanprover/lean4/compare/master...mattrobball:lean4:reduce_etas\">Diff</a> this is effectively a one line change</li>\n</ol>",
+        "id": 417276202,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705943207
+    },
+    {
+        "content": "<ol start=\"2\">\n<li><a href=\"https://github.com/leanprover/lean4/compare/master...mattrobball:lean4:new\">Diff</a> We still try to fill the fields in a top down manner but we only allow us to use the first the list whose fields overlap with the field we are trying to fill.</li>\n</ol>",
+        "id": 417276965,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705943442
+    },
+    {
+        "content": "<ol start=\"3\">\n<li><a href=\"https://github.com/leanprover/lean4/compare/master...mattrobball:lean4:deep\">Diff</a> In addition to 2, we need to consider fields of fields that are not subobjects. So we write a function that returns those and use that to compare fields instead</li>\n</ol>",
+        "id": 417277524,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705943614
+    },
+    {
+        "content": "<ol start=\"4\">\n<li><a href=\"https://github.com/leanprover/lean4/compare/master...mattrobball:lean4:extra\">Diff</a> To remove the extra eta at the top of the desired structure, we add an argument to <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.Struct#doc\">docs#Lean.Elab.Struct</a> which we fill when one of the sources has a projection (or itself) that has the correct type and </li>\n</ol>\n<ul>\n<li>no instance before it overlaps in fields </li>\n<li>the user has not supplied any values for the fields after the <code>with</code> (eg <code>x := 1</code>)</li>\n</ul>",
+        "id": 417278224,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705943825
+    },
+    {
+        "content": "<p>So these are progressively less surgical</p>",
+        "id": 417278360,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705943871
+    },
+    {
+        "content": "<p>You can check the diffs for the mathlib PRs but 1 has the largest number of files touched by a decent margin. The change in 4 breaks some anti-patterns like </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">one</span> <span class=\"o\">:</span> <span class=\"n\">One</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">one</span> <span class=\"o\">:=</span> <span class=\"mi\">1</span> <span class=\"o\">}</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">one</span><span class=\"bp\">’</span> <span class=\"o\">:</span> <span class=\"n\">One</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">Option</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"o\">{</span> <span class=\"n\">one</span> <span class=\"k\">with</span> <span class=\"o\">}</span>\n</code></pre></div>",
+        "id": 417278850,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705944030
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> what do we want to pursue here?</p>",
+        "id": 417279406,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705944213
+    },
+    {
+        "content": "<p>Thanks so much for this very thorough examination of this subtle issue!</p>",
+        "id": 417292521,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1705948735
+    },
+    {
+        "content": "<p>Thanks! I should say I would like to hear perspectives from anyone who wants to share.</p>",
+        "id": 417293103,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705948955
+    },
+    {
+        "content": "<p>One thought I forgot to state regarding performance. It is not that the concerns of orderings are un-warranted. Take a look at <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=NormedDivisionRing.induced#doc\">docs#NormedDivisionRing.induced</a> </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">class</span> <span class=\"n\">NormedDivisionRing</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"kd\">extends</span> <span class=\"n\">Norm</span> <span class=\"n\">α</span><span class=\"o\">,</span> <span class=\"n\">DivisionRing</span> <span class=\"n\">α</span><span class=\"o\">,</span> <span class=\"n\">MetricSpace</span> <span class=\"n\">α</span> <span class=\"n\">where</span>\n  <span class=\"sd\">/-- The distance is induced by the norm. -/</span>\n  <span class=\"n\">dist_eq</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"n\">x</span> <span class=\"n\">y</span><span class=\"o\">,</span> <span class=\"n\">dist</span> <span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"bp\">=</span> <span class=\"n\">norm</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"bp\">-</span> <span class=\"n\">y</span><span class=\"o\">)</span>\n  <span class=\"sd\">/-- The norm is multiplicative. -/</span>\n  <span class=\"n\">norm_mul'</span> <span class=\"o\">:</span> <span class=\"bp\">∀</span> <span class=\"n\">a</span> <span class=\"n\">b</span><span class=\"o\">,</span> <span class=\"n\">norm</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"bp\">*</span> <span class=\"n\">b</span><span class=\"o\">)</span> <span class=\"bp\">=</span> <span class=\"n\">norm</span> <span class=\"n\">a</span> <span class=\"bp\">*</span> <span class=\"n\">norm</span> <span class=\"n\">b</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">NormedDivisionRing.induced</span> <span class=\"o\">[</span><span class=\"n\">DivisionRing</span> <span class=\"n\">R</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">NormedDivisionRing</span> <span class=\"n\">S</span><span class=\"o\">]</span> <span class=\"o\">[</span><span class=\"n\">NonUnitalRingHomClass</span> <span class=\"n\">F</span> <span class=\"n\">R</span> <span class=\"n\">S</span><span class=\"o\">]</span>\n    <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">F</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">hf</span> <span class=\"o\">:</span> <span class=\"n\">Function.Injective</span> <span class=\"n\">f</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">NormedDivisionRing</span> <span class=\"n\">R</span> <span class=\"o\">:=</span>\n  <span class=\"o\">{</span> <span class=\"n\">NormedAddCommGroup.induced</span> <span class=\"n\">R</span> <span class=\"n\">S</span> <span class=\"n\">f</span> <span class=\"n\">hf</span><span class=\"o\">,</span> <span class=\"o\">‹</span><span class=\"n\">DivisionRing</span> <span class=\"n\">R</span><span class=\"o\">›</span> <span class=\"k\">with</span>\n    <span class=\"n\">norm_mul'</span> <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">x</span> <span class=\"n\">y</span> <span class=\"bp\">=&gt;</span> <span class=\"kd\">by</span>\n      <span class=\"k\">show</span> <span class=\"bp\">‖</span><span class=\"n\">f</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"bp\">*</span> <span class=\"n\">y</span><span class=\"o\">)</span><span class=\"bp\">‖</span> <span class=\"bp\">=</span> <span class=\"bp\">‖</span><span class=\"n\">f</span> <span class=\"n\">x</span><span class=\"bp\">‖</span> <span class=\"bp\">*</span> <span class=\"bp\">‖</span><span class=\"n\">f</span> <span class=\"n\">y</span><span class=\"bp\">‖</span>\n      <span class=\"n\">exact</span> <span class=\"o\">(</span><span class=\"n\">map_mul</span> <span class=\"n\">f</span> <span class=\"n\">x</span> <span class=\"n\">y</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">symm</span> <span class=\"bp\">▸</span> <span class=\"n\">norm_mul</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">x</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"n\">y</span><span class=\"o\">)</span> <span class=\"o\">}</span>\n</code></pre></div>\n<p>Here the fields of the first provided instance <code>NormedAddCommGroup.induced</code> go deep in the constructor for <code>DivisionRing</code> using the left to right semantics. </p>\n<p>It seems that mathlib just doesn’t have as many such examples as one (I) might think. You can find more by looking for regressions in instructions in the benchmark results in the PRs for 2-4.</p>",
+        "id": 417305586,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705953702
+    },
+    {
+        "content": "<p>I have a refactor PR in progress that changes the definition of <code>Normed*</code> so as not to repeat <code>dist_eq</code> everywhere, which might make your comment above moot</p>",
+        "id": 417320059,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705959524
+    },
+    {
+        "content": "<p>Maybe. Here it is taking the <code>NormedAddCommGroup.toAddMonoid</code> and using it to build a <code>DivisionRing R</code>  instead of just using the <code>DivisionRing R</code> instance as it does now. Since <code>AddMonoid</code> is pretty deeply nested in <code>DivisionRing</code> this creates a much larger term.</p>",
+        "id": 417330057,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1705963832
+    },
+    {
+        "content": "<p>This seems like an argument for a <code>with_optimal_order</code> or something instead of <code>with</code></p>",
+        "id": 417339650,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705968264
+    },
+    {
+        "content": "<p>...which in mathlib is probably the order we always want anyway</p>",
+        "id": 417339682,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705968278
+    },
+    {
+        "content": "<p>If core goes for 2 or 3 or 4, will it be possible to implement a linter that would warn us of a suboptimal ordering in instance declaration?</p>",
+        "id": 417378774,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1705990884
+    },
+    {
+        "content": "<p>Update: version 2 <a href=\"#narrow/stream/116290-rss/topic/Recent.20Commits.20to.20lean4.3Amaster/near/419173263\">was just merged</a> and should appear in the next Lean release. (Thanks <span class=\"user-mention\" data-user-id=\"306577\">@Matthew Ballard</span>!)</p>",
+        "id": 419175090,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1706763532
+    },
+    {
+        "content": "<p>One thing we're considering for a next step is to make structure instances better at trying to synthesize instances to fill in the remaining fields. Right now it only tries this for parent structures that end up with an actual subobject field, but we could try other parents too. Maybe this accounts for many uses of <code>__ :=</code> in mathlib? If so, since typeclass instances are supposed to be canonical, this might be like some form of \"<code>with_optimal_order</code>\".</p>",
+        "id": 419175091,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1706763533
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110050\">Sébastien Gouëzel</span> <a href=\"#narrow/stream/270676-lean4/topic/Multi-source.20structure.20instance.20elaboration.20.28lean4.232478.29/near/417378774\">said</a>:</p>\n<blockquote>\n<p>If core goes for 2 or 3 or 4, will it be possible to implement a linter that would warn us of a suboptimal ordering in instance declaration?</p>\n</blockquote>\n<p>This seems like a key point: in practice order matters, right?</p>",
+        "id": 422510247,
+        "sender_full_name": "Riccardo Brasca",
+        "timestamp": 1708467190
+    },
+    {
+        "content": "<p>The desire for a such a linter came up again (somewhere...search is failing me) recently. I am happy to write one but the main mental hurdle is that it is near trivial for me to tweak the core files and run a modified toolchain over the library to identify where things are \"out of order\". But I have little idea of how to plug this into the existing linter frameworks and not much time to figure it out.</p>",
+        "id": 427662981,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1710844880
+    },
+    {
+        "content": "<p>Here is one place it came up: <a href=\"https://github.com/leanprover-community/mathlib4/pull/11485#discussion_r1529867450\">https://github.com/leanprover-community/mathlib4/pull/11485#discussion_r1529867450</a></p>",
+        "id": 427663751,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1710845104
+    }
+]

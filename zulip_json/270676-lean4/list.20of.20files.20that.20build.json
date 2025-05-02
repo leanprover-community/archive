@@ -1,0 +1,236 @@
+[
+    {
+        "content": "<p>How can I ask lean (or lake) for a list of files that build without errors?<br>\nI'm refactoring mathlib, and would like to benchmark the part that builds against the corresponding part on master</p>",
+        "id": 426827916,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710539584
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"315577\">@Mac Malone</span>? As far as I'm aware this isn't currently possible.</p>",
+        "id": 426828003,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1710539631
+    },
+    {
+        "content": "<p>Unfortunately, this is not information available from the Lake CLI. <span aria-label=\"sad\" class=\"emoji emoji-2639\" role=\"img\" title=\"sad\">:sad:</span>  Lake can get this information, so if you are comfortable wriritng a Lean program that uses the API you could get it. But that may be more hassle than it is worth.</p>",
+        "id": 426828407,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1710539838
+    },
+    {
+        "content": "<p>Could you just do some shell scripting to run lake build on each file in turn and print the list of those with 0 exit code (maybe chatgpt could write this in an instant?)</p>",
+        "id": 426845679,
+        "sender_full_name": "Alex J. Best",
+        "timestamp": 1710550587
+    },
+    {
+        "content": "<p>That will re-build every broken file with n dependents n times right?</p>",
+        "id": 426847490,
+        "sender_full_name": "Julian Berman",
+        "timestamp": 1710551966
+    },
+    {
+        "content": "<p>Also, you could potentially deduce which files failed from the output of <code>lake build</code> and then subtract those from a list of all files in mathlib to get the set of files which build.</p>",
+        "id": 426850378,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1710554449
+    },
+    {
+        "content": "<p>Together with copilot I came up with the following script</p>\n<div class=\"codehilite\" data-code-language=\"Python\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"nn\">os</span>\n<span class=\"kn\">import</span> <span class=\"nn\">sys</span>\n<span class=\"kn\">import</span> <span class=\"nn\">subprocess</span>\n<span class=\"kn\">import</span> <span class=\"nn\">networkx</span> <span class=\"k\">as</span> <span class=\"nn\">nx</span>\n<span class=\"kn\">from</span> <span class=\"nn\">collections</span> <span class=\"kn\">import</span> <span class=\"n\">defaultdict</span>\n<span class=\"kn\">import</span> <span class=\"nn\">time</span>\n\n<span class=\"c1\"># Traverse the repository to find all .lean files and parse their import statements</span>\n<span class=\"n\">dependencies</span> <span class=\"o\">=</span> <span class=\"n\">defaultdict</span><span class=\"p\">(</span><span class=\"nb\">list</span><span class=\"p\">)</span>\n<span class=\"k\">for</span> <span class=\"n\">root</span><span class=\"p\">,</span> <span class=\"n\">dirs</span><span class=\"p\">,</span> <span class=\"n\">files</span> <span class=\"ow\">in</span> <span class=\"n\">os</span><span class=\"o\">.</span><span class=\"n\">walk</span><span class=\"p\">(</span><span class=\"s1\">'./Mathlib'</span><span class=\"p\">):</span>\n    <span class=\"k\">for</span> <span class=\"n\">file</span> <span class=\"ow\">in</span> <span class=\"n\">files</span><span class=\"p\">:</span>\n        <span class=\"k\">if</span> <span class=\"n\">file</span><span class=\"o\">.</span><span class=\"n\">endswith</span><span class=\"p\">(</span><span class=\"s1\">'.lean'</span><span class=\"p\">):</span>\n            <span class=\"n\">filepath</span> <span class=\"o\">=</span> <span class=\"n\">os</span><span class=\"o\">.</span><span class=\"n\">path</span><span class=\"o\">.</span><span class=\"n\">join</span><span class=\"p\">(</span><span class=\"n\">root</span><span class=\"p\">,</span> <span class=\"n\">file</span><span class=\"p\">)</span>\n            <span class=\"n\">index</span> <span class=\"o\">=</span> <span class=\"n\">filepath</span><span class=\"p\">[</span><span class=\"mi\">2</span><span class=\"p\">:]</span><span class=\"o\">.</span><span class=\"n\">replace</span><span class=\"p\">(</span><span class=\"s1\">'/'</span><span class=\"p\">,</span> <span class=\"s1\">'.'</span><span class=\"p\">)</span><span class=\"o\">.</span><span class=\"n\">replace</span><span class=\"p\">(</span><span class=\"s1\">'.lean'</span><span class=\"p\">,</span> <span class=\"s1\">''</span><span class=\"p\">)</span>\n            <span class=\"k\">with</span> <span class=\"nb\">open</span><span class=\"p\">(</span><span class=\"n\">filepath</span><span class=\"p\">,</span> <span class=\"s1\">'r'</span><span class=\"p\">)</span> <span class=\"k\">as</span> <span class=\"n\">f</span><span class=\"p\">:</span>\n                <span class=\"k\">for</span> <span class=\"n\">line</span> <span class=\"ow\">in</span> <span class=\"n\">f</span><span class=\"p\">:</span>\n                    <span class=\"k\">if</span> <span class=\"n\">line</span><span class=\"o\">.</span><span class=\"n\">startswith</span><span class=\"p\">(</span><span class=\"s1\">'import '</span><span class=\"p\">):</span>\n                        <span class=\"n\">dependencies</span><span class=\"p\">[</span><span class=\"n\">index</span><span class=\"p\">]</span><span class=\"o\">.</span><span class=\"n\">append</span><span class=\"p\">(</span><span class=\"n\">line</span><span class=\"o\">.</span><span class=\"n\">split</span><span class=\"p\">(</span><span class=\"s1\">' '</span><span class=\"p\">)[</span><span class=\"mi\">1</span><span class=\"p\">]</span><span class=\"o\">.</span><span class=\"n\">strip</span><span class=\"p\">())</span>\n                    <span class=\"k\">elif</span> <span class=\"n\">line</span><span class=\"o\">.</span><span class=\"n\">startswith</span><span class=\"p\">(</span><span class=\"s1\">'/-!'</span><span class=\"p\">):</span>\n                        <span class=\"k\">break</span>\n\n<span class=\"c1\"># Create a graph from the dependencies</span>\n<span class=\"n\">G</span> <span class=\"o\">=</span> <span class=\"n\">nx</span><span class=\"o\">.</span><span class=\"n\">DiGraph</span><span class=\"p\">(</span><span class=\"n\">dependencies</span><span class=\"p\">)</span>\n\n<span class=\"c1\"># Perform a topological sort on the graph</span>\n<span class=\"k\">try</span><span class=\"p\">:</span>\n    <span class=\"n\">sorted_files</span> <span class=\"o\">=</span> <span class=\"p\">[</span><span class=\"n\">file</span> <span class=\"k\">for</span> <span class=\"n\">file</span> <span class=\"ow\">in</span> <span class=\"n\">nx</span><span class=\"o\">.</span><span class=\"n\">topological_sort</span><span class=\"p\">(</span><span class=\"n\">G</span><span class=\"p\">)</span> <span class=\"k\">if</span> <span class=\"n\">file</span><span class=\"o\">.</span><span class=\"n\">startswith</span><span class=\"p\">(</span><span class=\"s1\">'Mathlib'</span><span class=\"p\">)]</span>\n    <span class=\"c1\"># sorted_files.reverse()</span>\n<span class=\"k\">except</span> <span class=\"n\">nx</span><span class=\"o\">.</span><span class=\"n\">NetworkXUnfeasible</span><span class=\"p\">:</span>\n    <span class=\"nb\">print</span><span class=\"p\">(</span><span class=\"s2\">\"Graph contains a cycle:\"</span><span class=\"p\">,</span> <span class=\"n\">file</span><span class=\"o\">=</span><span class=\"n\">sys</span><span class=\"o\">.</span><span class=\"n\">stderr</span><span class=\"p\">)</span>\n    <span class=\"n\">cycle</span> <span class=\"o\">=</span> <span class=\"n\">nx</span><span class=\"o\">.</span><span class=\"n\">simple_cycles</span><span class=\"p\">(</span><span class=\"n\">G</span><span class=\"p\">)</span>\n    <span class=\"nb\">print</span><span class=\"p\">(</span><span class=\"nb\">next</span><span class=\"p\">(</span><span class=\"n\">cycle</span><span class=\"p\">))</span>\n    <span class=\"n\">exit</span><span class=\"p\">()</span>\n\n<span class=\"c1\"># Attempt to build each file in the sorted order</span>\n<span class=\"n\">successful_files</span> <span class=\"o\">=</span> <span class=\"p\">[]</span>\n<span class=\"k\">for</span> <span class=\"n\">file</span> <span class=\"ow\">in</span> <span class=\"n\">sorted_files</span><span class=\"p\">:</span>\n  <span class=\"c1\"># Skip building the file if any of its dependencies weren't successfully built</span>\n  <span class=\"k\">if</span> <span class=\"nb\">any</span><span class=\"p\">(</span><span class=\"n\">dependency</span> <span class=\"ow\">not</span> <span class=\"ow\">in</span> <span class=\"n\">successful_files</span> <span class=\"k\">for</span> <span class=\"n\">dependency</span> <span class=\"ow\">in</span> <span class=\"n\">G</span><span class=\"o\">.</span><span class=\"n\">predecessors</span><span class=\"p\">(</span><span class=\"n\">file</span><span class=\"p\">)):</span>\n    <span class=\"k\">continue</span>\n  <span class=\"k\">try</span><span class=\"p\">:</span>\n    <span class=\"nb\">print</span><span class=\"p\">(</span><span class=\"s2\">\"Attempting to build\"</span><span class=\"p\">,</span> <span class=\"n\">file</span><span class=\"p\">,</span> <span class=\"n\">file</span><span class=\"o\">=</span><span class=\"n\">sys</span><span class=\"o\">.</span><span class=\"n\">stderr</span><span class=\"p\">)</span>\n    <span class=\"n\">subprocess</span><span class=\"o\">.</span><span class=\"n\">check_call</span><span class=\"p\">([</span><span class=\"s1\">'lake'</span><span class=\"p\">,</span> <span class=\"s1\">'build'</span><span class=\"p\">,</span> <span class=\"n\">file</span><span class=\"p\">],</span> <span class=\"n\">stdout</span><span class=\"o\">=</span><span class=\"n\">sys</span><span class=\"o\">.</span><span class=\"n\">stderr</span><span class=\"p\">,</span> <span class=\"n\">stderr</span><span class=\"o\">=</span><span class=\"n\">sys</span><span class=\"o\">.</span><span class=\"n\">stderr</span><span class=\"p\">)</span>\n    <span class=\"n\">successful_files</span><span class=\"o\">.</span><span class=\"n\">append</span><span class=\"p\">(</span><span class=\"n\">file</span><span class=\"p\">)</span>\n    <span class=\"nb\">print</span><span class=\"p\">(</span><span class=\"n\">file</span><span class=\"p\">)</span>\n  <span class=\"k\">except</span> <span class=\"n\">subprocess</span><span class=\"o\">.</span><span class=\"n\">CalledProcessError</span><span class=\"p\">:</span>\n    <span class=\"k\">pass</span>\n</code></pre></div>",
+        "id": 426866714,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710570959
+    },
+    {
+        "content": "<p>It doesn't seem to work. It still starts building all of Mathlib, after iterating through the first ~10 items of <code>sorted_files</code>.</p>",
+        "id": 426866766,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710570987
+    },
+    {
+        "content": "<p>It's almost as if that topological sort didn't really work</p>",
+        "id": 426866774,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710570999
+    },
+    {
+        "content": "<p>Is the idea that you want to build Mathlib and then find this out, or you would like to do this with the data of the oleans?</p>",
+        "id": 426866811,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1710571062
+    },
+    {
+        "content": "<p>You could see what <code>lake exe cache get</code> downloads and the missing oleans (or the leaves that you download that are not actual leaves) would be the broken files, right?</p>",
+        "id": 426866891,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1710571131
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"321459\">@Damiano Testa</span> I don't really care about the method. I have a copy of mathlib in which ~500 files build without error. I would like to get the explicit list of those filenames.</p>",
+        "id": 426867285,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710571568
+    },
+    {
+        "content": "<p>If this can be done in &lt; 1 minute, that would be really cool.</p>",
+        "id": 426867294,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710571595
+    },
+    {
+        "content": "<p>if you are willing to rebuild from scratch you can just clear the build files and then see what files exist when lake is done</p>",
+        "id": 426867302,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710571620
+    },
+    {
+        "content": "<p>But I can of course resort to \"throw away all <code>.olean</code>s, attempt a build, check which oleans have been succesfully written\"</p>",
+        "id": 426867308,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710571622
+    },
+    {
+        "content": "<p>Yes, I'm starting to consider that. But it feels wasteful. And it means I can't iterate often.</p>",
+        "id": 426867330,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710571649
+    },
+    {
+        "content": "<p>well as long as it only grows monotonically you can reuse the results</p>",
+        "id": 426867341,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710571674
+    },
+    {
+        "content": "<p>what order do you get when running the above script?</p>",
+        "id": 426867497,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710571886
+    },
+    {
+        "content": "<p>This is the first 20 files:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"o\">[</span><span class=\"bp\">'</span><span class=\"n\">Mathlib.Util.Superscript'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Util.Time'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Util.AssertNoSorry'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Util.SleepHeartbeats'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Util.LongNames'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Util.AddRelatedDecl'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Util.IncludeStr'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Util.Export'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Util.TermBeta'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Data.List.Func'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Data.List.ProdSigma'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Data.List.ToFinsupp'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Data.List.Intervals'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Data.List.AList'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Data.List.Sections'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Data.List.Lemmas'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Data.List.DropRight'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Data.List.Card'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Data.List.Sym'</span><span class=\"o\">,</span> <span class=\"bp\">'</span><span class=\"n\">Mathlib.Data.List.Destutter'</span><span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 426867871,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710572354
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/list.20of.20files.20that.20build/near/426867341\">said</a>:</p>\n<blockquote>\n<p>well as long as it only grows monotonically you can reuse the results</p>\n</blockquote>\n<p>Right, but as is often the case with refactors, I regularly jump back to fix things lower in the hierarchy.</p>",
+        "id": 426867883,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710572379
+    },
+    {
+        "content": "<p>it was looking good until <code>Mathlib.Data.List.Func</code></p>",
+        "id": 426868554,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710573133
+    },
+    {
+        "content": "<p>I suspect that all of the ones that came before it have no mathlib imports at all</p>",
+        "id": 426868574,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710573170
+    },
+    {
+        "content": "<p>so it could also be an issue in the import parsing</p>",
+        "id": 426868579,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710573179
+    },
+    {
+        "content": "<p>Yeah, but I don't see the bug</p>",
+        "id": 426869332,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710573991
+    },
+    {
+        "content": "<p>Also:</p>\n<div class=\"codehilite\" data-code-language=\"Python\"><pre><span></span><code><span class=\"o\">&gt;&gt;&gt;</span> <span class=\"nb\">print</span><span class=\"p\">(</span><span class=\"n\">dependencies</span><span class=\"p\">[</span><span class=\"s1\">'Mathlib.Data.List.Func'</span><span class=\"p\">])</span>\n<span class=\"p\">[</span><span class=\"s1\">'Mathlib.Data.Nat.Order.Basic'</span><span class=\"p\">]</span>\n</code></pre></div>",
+        "id": 426869388,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710574065
+    },
+    {
+        "content": "<p>and <code>print(dependencies['Mathlib.Data.Nat.Order.Basic'])</code> is also something?</p>",
+        "id": 426869803,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710574542
+    },
+    {
+        "content": "<p>Yes</p>\n<div class=\"codehilite\" data-code-language=\"Python\"><pre><span></span><code><span class=\"p\">[</span><span class=\"s1\">'Mathlib.Algebra.Order.Ring.Canonical'</span><span class=\"p\">,</span> <span class=\"s1\">'Mathlib.Data.Nat.Basic'</span><span class=\"p\">,</span> <span class=\"s1\">'Mathlib.Init.Data.Nat.Bitwise'</span><span class=\"p\">]</span>\n</code></pre></div>",
+        "id": 426870133,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710574875
+    },
+    {
+        "content": "<p>Oh I think I see the issue</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">if</span> <span class=\"n\">any</span><span class=\"o\">(</span><span class=\"n\">dependency</span> <span class=\"n\">not</span> <span class=\"k\">in</span> <span class=\"n\">successful_files</span> <span class=\"n\">for</span> <span class=\"n\">dependency</span> <span class=\"k\">in</span> <span class=\"n\">G.predecessors</span><span class=\"o\">(</span><span class=\"n\">file</span><span class=\"o\">)):</span>\n</code></pre></div>\n<p>this will return true for any file which has a non-mathlib dependency (recall that non-mathlib files are in the graph <code>G</code>)</p>",
+        "id": 426870657,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710575437
+    },
+    {
+        "content": "<p>Ooh, good catch!</p>",
+        "id": 426870708,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710575519
+    },
+    {
+        "content": "<p>This is the version of the script that I'm currently using:</p>\n<div class=\"codehilite\" data-code-language=\"Python\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"nn\">os</span>\n<span class=\"kn\">import</span> <span class=\"nn\">sys</span>\n<span class=\"kn\">import</span> <span class=\"nn\">subprocess</span>\n<span class=\"kn\">import</span> <span class=\"nn\">networkx</span> <span class=\"k\">as</span> <span class=\"nn\">nx</span>\n<span class=\"kn\">from</span> <span class=\"nn\">collections</span> <span class=\"kn\">import</span> <span class=\"n\">defaultdict</span>\n<span class=\"kn\">import</span> <span class=\"nn\">time</span>\n\n<span class=\"c1\"># Traverse the repository to find all .lean files and parse their import statements</span>\n<span class=\"n\">dependencies</span> <span class=\"o\">=</span> <span class=\"n\">defaultdict</span><span class=\"p\">(</span><span class=\"nb\">list</span><span class=\"p\">)</span>\n<span class=\"k\">for</span> <span class=\"n\">root</span><span class=\"p\">,</span> <span class=\"n\">dirs</span><span class=\"p\">,</span> <span class=\"n\">files</span> <span class=\"ow\">in</span> <span class=\"n\">os</span><span class=\"o\">.</span><span class=\"n\">walk</span><span class=\"p\">(</span><span class=\"s1\">'./Mathlib'</span><span class=\"p\">):</span>\n    <span class=\"k\">for</span> <span class=\"n\">file</span> <span class=\"ow\">in</span> <span class=\"n\">files</span><span class=\"p\">:</span>\n        <span class=\"k\">if</span> <span class=\"n\">file</span><span class=\"o\">.</span><span class=\"n\">endswith</span><span class=\"p\">(</span><span class=\"s1\">'.lean'</span><span class=\"p\">):</span>\n            <span class=\"n\">filepath</span> <span class=\"o\">=</span> <span class=\"n\">os</span><span class=\"o\">.</span><span class=\"n\">path</span><span class=\"o\">.</span><span class=\"n\">join</span><span class=\"p\">(</span><span class=\"n\">root</span><span class=\"p\">,</span> <span class=\"n\">file</span><span class=\"p\">)</span>\n            <span class=\"n\">index</span> <span class=\"o\">=</span> <span class=\"n\">filepath</span><span class=\"p\">[</span><span class=\"mi\">2</span><span class=\"p\">:]</span><span class=\"o\">.</span><span class=\"n\">replace</span><span class=\"p\">(</span><span class=\"s1\">'/'</span><span class=\"p\">,</span> <span class=\"s1\">'.'</span><span class=\"p\">)</span><span class=\"o\">.</span><span class=\"n\">replace</span><span class=\"p\">(</span><span class=\"s1\">'.lean'</span><span class=\"p\">,</span> <span class=\"s1\">''</span><span class=\"p\">)</span>\n            <span class=\"k\">with</span> <span class=\"nb\">open</span><span class=\"p\">(</span><span class=\"n\">filepath</span><span class=\"p\">,</span> <span class=\"s1\">'r'</span><span class=\"p\">)</span> <span class=\"k\">as</span> <span class=\"n\">f</span><span class=\"p\">:</span>\n                <span class=\"k\">for</span> <span class=\"n\">line</span> <span class=\"ow\">in</span> <span class=\"n\">f</span><span class=\"p\">:</span>\n                    <span class=\"k\">if</span> <span class=\"n\">line</span><span class=\"o\">.</span><span class=\"n\">startswith</span><span class=\"p\">(</span><span class=\"s1\">'import '</span><span class=\"p\">):</span>\n                        <span class=\"n\">dep</span> <span class=\"o\">=</span> <span class=\"n\">line</span><span class=\"o\">.</span><span class=\"n\">split</span><span class=\"p\">(</span><span class=\"s1\">' '</span><span class=\"p\">)[</span><span class=\"mi\">1</span><span class=\"p\">]</span><span class=\"o\">.</span><span class=\"n\">strip</span><span class=\"p\">()</span>\n                        <span class=\"k\">if</span> <span class=\"n\">dep</span><span class=\"o\">.</span><span class=\"n\">startswith</span><span class=\"p\">(</span><span class=\"s1\">'Mathlib'</span><span class=\"p\">):</span>\n                            <span class=\"n\">dependencies</span><span class=\"p\">[</span><span class=\"n\">index</span><span class=\"p\">]</span><span class=\"o\">.</span><span class=\"n\">append</span><span class=\"p\">(</span><span class=\"n\">dep</span><span class=\"p\">)</span>\n                    <span class=\"k\">elif</span> <span class=\"n\">line</span><span class=\"o\">.</span><span class=\"n\">startswith</span><span class=\"p\">(</span><span class=\"s1\">'/-!'</span><span class=\"p\">):</span>\n                        <span class=\"k\">break</span>\n\n<span class=\"c1\"># Create a graph from the dependencies</span>\n<span class=\"n\">G</span> <span class=\"o\">=</span> <span class=\"n\">nx</span><span class=\"o\">.</span><span class=\"n\">DiGraph</span><span class=\"p\">(</span><span class=\"n\">dependencies</span><span class=\"p\">)</span>\n\n<span class=\"c1\"># Perform a topological sort on the graph</span>\n<span class=\"k\">try</span><span class=\"p\">:</span>\n    <span class=\"n\">sorted_files</span> <span class=\"o\">=</span> <span class=\"p\">[</span><span class=\"n\">file</span> <span class=\"k\">for</span> <span class=\"n\">file</span> <span class=\"ow\">in</span> <span class=\"n\">nx</span><span class=\"o\">.</span><span class=\"n\">topological_sort</span><span class=\"p\">(</span><span class=\"n\">G</span><span class=\"p\">)</span> <span class=\"k\">if</span> <span class=\"n\">file</span><span class=\"o\">.</span><span class=\"n\">startswith</span><span class=\"p\">(</span><span class=\"s1\">'Mathlib'</span><span class=\"p\">)]</span>\n    <span class=\"n\">sorted_files</span><span class=\"o\">.</span><span class=\"n\">reverse</span><span class=\"p\">()</span>\n<span class=\"k\">except</span> <span class=\"n\">nx</span><span class=\"o\">.</span><span class=\"n\">NetworkXUnfeasible</span><span class=\"p\">:</span>\n    <span class=\"nb\">print</span><span class=\"p\">(</span><span class=\"s2\">\"Graph contains a cycle:\"</span><span class=\"p\">,</span> <span class=\"n\">file</span><span class=\"o\">=</span><span class=\"n\">sys</span><span class=\"o\">.</span><span class=\"n\">stderr</span><span class=\"p\">)</span>\n    <span class=\"n\">cycle</span> <span class=\"o\">=</span> <span class=\"n\">nx</span><span class=\"o\">.</span><span class=\"n\">simple_cycles</span><span class=\"p\">(</span><span class=\"n\">G</span><span class=\"p\">)</span>\n    <span class=\"nb\">print</span><span class=\"p\">(</span><span class=\"nb\">next</span><span class=\"p\">(</span><span class=\"n\">cycle</span><span class=\"p\">))</span>\n    <span class=\"n\">exit</span><span class=\"p\">()</span>\n\n<span class=\"c1\"># Attempt to build each file in the sorted order</span>\n<span class=\"n\">successful_files</span> <span class=\"o\">=</span> <span class=\"p\">[]</span>\n<span class=\"k\">for</span> <span class=\"n\">i</span><span class=\"p\">,</span> <span class=\"n\">file</span> <span class=\"ow\">in</span> <span class=\"nb\">enumerate</span><span class=\"p\">(</span><span class=\"n\">sorted_files</span><span class=\"p\">):</span>\n  <span class=\"c1\"># Skip building the file if any of its dependencies weren't successfully built</span>\n  <span class=\"k\">if</span> <span class=\"nb\">any</span><span class=\"p\">(</span><span class=\"n\">dependency</span> <span class=\"ow\">not</span> <span class=\"ow\">in</span> <span class=\"n\">successful_files</span> <span class=\"k\">for</span> <span class=\"n\">dependency</span> <span class=\"ow\">in</span> <span class=\"n\">dependencies</span><span class=\"p\">[</span><span class=\"n\">file</span><span class=\"p\">]):</span>\n    <span class=\"k\">continue</span>\n  <span class=\"k\">try</span><span class=\"p\">:</span>\n    <span class=\"c1\"># print(\"Attempting to build\", file, file=sys.stderr)</span>\n    <span class=\"n\">subprocess</span><span class=\"o\">.</span><span class=\"n\">check_call</span><span class=\"p\">([</span><span class=\"s1\">'lake'</span><span class=\"p\">,</span> <span class=\"s1\">'build'</span><span class=\"p\">,</span> <span class=\"n\">file</span><span class=\"p\">],</span> <span class=\"n\">stdout</span><span class=\"o\">=</span><span class=\"n\">subprocess</span><span class=\"o\">.</span><span class=\"n\">DEVNULL</span><span class=\"p\">,</span> <span class=\"n\">stderr</span><span class=\"o\">=</span><span class=\"n\">subprocess</span><span class=\"o\">.</span><span class=\"n\">DEVNULL</span><span class=\"p\">)</span>\n    <span class=\"n\">successful_files</span><span class=\"o\">.</span><span class=\"n\">append</span><span class=\"p\">(</span><span class=\"n\">file</span><span class=\"p\">)</span>\n    <span class=\"nb\">print</span><span class=\"p\">(</span><span class=\"n\">file</span><span class=\"p\">)</span>\n  <span class=\"k\">except</span> <span class=\"n\">subprocess</span><span class=\"o\">.</span><span class=\"n\">CalledProcessError</span><span class=\"p\">:</span>\n    <span class=\"k\">pass</span>\n</code></pre></div>",
+        "id": 426873282,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1710578071
+    },
+    {
+        "content": "<p>More generally, I have often wanted some tooling for finding out <em>future</em> dependencies of current declarations.</p>\n<p>Even just something as simple as scanning <code>ilean</code>s, looking for usages of a specific declaration would be beneficial for refactors and also for giving better automation for breaking changes.</p>",
+        "id": 426876122,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1710580974
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"321459\">Damiano Testa</span> <a href=\"#narrow/stream/270676-lean4/topic/list.20of.20files.20that.20build/near/426876122\">said</a>:</p>\n<blockquote>\n<p>More generally, I have often wanted some tooling for finding out <em>future</em> dependencies of current declarations.</p>\n<p>Even just something as simple as scanning <code>ilean</code>s, looking for usages of a specific declaration would be beneficial for refactors and also for giving better automation for breaking changes.</p>\n</blockquote>\n<p>Does the call hierarchy do some of what you want? (Right click on an identifier and select \"Show call hierarchy\")</p>",
+        "id": 427385728,
+        "sender_full_name": "Marc Huisinga",
+        "timestamp": 1710750532
+    },
+    {
+        "content": "<p>you can also use the \"go to definition\" action on a definition, where it means \"find references\" instead</p>",
+        "id": 427523636,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710778680
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"221921\">@Marc Huisinga</span> and <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> I knew of neither of these functionalities and they are both excellent, thanks!</p>",
+        "id": 427640070,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1710836500
+    },
+    {
+        "content": "<p>That's what the .ilean files were added for originally :-)</p>",
+        "id": 427642650,
+        "sender_full_name": "Marc Huisinga",
+        "timestamp": 1710837602
+    },
+    {
+        "content": "<p>Thanks for the further information!  Btw, is there a description of what the <code>ilean</code>s encode now?  A few weeks ago, they simply had info like (roughly) \"<code>c:decl_name:usages{[coordinates of begin end usages],definition[coordinates of definition, if available]]}</code>\".</p>\n<p>What do they contain now?</p>",
+        "id": 427643358,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1710837868
+    },
+    {
+        "content": "<p>The corresponding Lean type for .ilean files is at <code>Lean.Server.Ilean</code> in <code>Lean/Server/References.lean</code>.<br>\nIt's still a map from an identifier (on master this is a combination of a module name and an identifier name to disambiguate conflicting identifier names from separate modules) to its definition / usages, where both definition and usages now also store information about the parent declaration of each reference.</p>\n<p>The JSON format has changed a bit, though.</p>",
+        "id": 427644148,
+        "sender_full_name": "Marc Huisinga",
+        "timestamp": 1710838182
+    },
+    {
+        "content": "<p>Ok, when I'll try to use it, I will try to avoid looking at the <code>ilean</code> explicitly!</p>\n<p>Btw, I often would like to have information about where each declaration begins/ends.  For instance, something that would also take into account doc-strings and attributes for lemmas.  Is this available as well?</p>",
+        "id": 427644496,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1710838314
+    },
+    {
+        "content": "<p>E.g. for</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"sd\">/-- I am a docstring.</span>\n<span class=\"sd\">Spread over several lines -/</span>\n<span class=\"kd\">@[</span><span class=\"n\">simp</span><span class=\"kd\">]</span>\n<span class=\"kd\">lemma</span> <span class=\"n\">name</span> <span class=\"o\">{</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">}</span> <span class=\"o\">:</span> <span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">0</span> <span class=\"bp\">=</span> <span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"k\">have</span> <span class=\"o\">:=</span> <span class=\"mi\">0</span>\n  <span class=\"n\">simp</span>\n</code></pre></div>\n<p>it would begin at the <code>/--</code> and end at <code>simp</code>.</p>",
+        "id": 427645613,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1710838785
+    }
+]

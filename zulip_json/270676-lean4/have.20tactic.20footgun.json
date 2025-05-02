@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>The <code>have</code> tactic is an enormous footgun for new users, since if you write <code>have : &lt;some type&gt; := ...</code> (i.e. not a proposition but data), then the value of the data is forgotten. This is especially problematic if the type is a class, since it can then be used without the user realizing.</p>\n<p>Typical example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"n\">m</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">True</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"k\">have</span> <span class=\"n\">h1</span> <span class=\"o\">:</span> <span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"n\">m</span> <span class=\"bp\">=</span> <span class=\"n\">m</span> <span class=\"bp\">+</span> <span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"n\">Nat.add_comm</span> <span class=\"n\">n</span> <span class=\"n\">m</span>\n  <span class=\"k\">have</span> <span class=\"o\">:</span> <span class=\"n\">Add</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"n\">inferInstance</span>\n  <span class=\"c1\">-- many other steps</span>\n  <span class=\"k\">have</span> <span class=\"o\">:</span> <span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"n\">m</span> <span class=\"bp\">=</span> <span class=\"n\">m</span> <span class=\"bp\">+</span> <span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"n\">h1</span> <span class=\"c1\">-- error</span>\n</code></pre></div>\n<p>This is treacherous, since the offending have can occur many lines before the error.</p>\n<p>Suggestion: <code>have x? : T := _</code> will emit a warning if <code>T</code> is a type . We add <code>have!</code> which has the current behavior of <code>have</code>. The warning suggests switching to either <code>let</code> or <code>have!</code>.</p>\n<p>Alternative suggestion: only emit the warning when <code>T</code> is a type and a class.</p>",
+        "id": 424258837,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1709305511
+    },
+    {
+        "content": "<p>I think it should warn on any type, not just classes.</p>",
+        "id": 424278905,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1709309689
+    },
+    {
+        "content": "<p>I think if we're going to make <code>have!</code> the only way to silence the warning, we may as well be aggressive about when we warn</p>",
+        "id": 424287972,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1709312094
+    },
+    {
+        "content": "<p>(we probably would need <code>haveI!</code> and <code>haveI'!</code> to match)</p>",
+        "id": 424288021,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1709312110
+    },
+    {
+        "content": "<p>I see this problem year after year with my undergraduates (the most recent being this week).</p>",
+        "id": 424292016,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1709313274
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/pull/3559\">lean4#3559</a></p>",
+        "id": 424306359,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1709318716
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/270676-lean4/topic/have.20tactic.20footgun/near/424288021\">said</a>:</p>\n<blockquote>\n<p>(we probably would need <code>haveI!</code> and <code>haveI'!</code> to match)</p>\n</blockquote>\n<p>What is <code>haveI'</code>?</p>",
+        "id": 424306626,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1709318817
+    },
+    {
+        "content": "<p>Oh, I see that <code>have'</code> is like <code>have</code> but turns all remaining metavariables into subgoals? That sounds useful!</p>",
+        "id": 424308608,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1709319577
+    },
+    {
+        "content": "<p>Some technical considerations for figuring out how to implement this:</p>\n<p>The <code>have h : T := v</code> tactic is a macro that expands out to essentially <code>refine let_fun h : T := v; ?_</code>. To implement this, I suppose we need to somehow tell <code>let_fun</code> that <code>T</code> is a <code>Prop</code>.</p>\n<p>One way to handle this, which probably wouldn't yield great error messages, is to have it use <code>let_fun h : (T : Prop) := v; ?_</code>. That makes it be an error rather than a warning though, and it doesn't give a way to suggest <code>have!</code>.</p>\n<p>Another is to create some a new construct that can surface a warning if some condition on a metavariable isn't met, once there's enough information to make a judgment.</p>\n<p>Like, maybe it would look like</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">assert_is_a_prop</span><span class=\"bp\">%</span> <span class=\"bp\">?</span><span class=\"n\">m</span> <span class=\"o\">:=</span> <span class=\"n\">T</span>\n  <span class=\"bp\">|</span> <span class=\"s2\">\"The `have` tactic does not preserve the value of the new local hypothesis. </span><span class=\"err\">\\</span>\n<span class=\"s2\">     You likely want to use `let` instead. </span><span class=\"err\">\\</span>\n<span class=\"s2\">     Otherwise, if this is your intent, you can use `have!`.\"</span><span class=\"bp\">;</span>\n<span class=\"n\">let_fun</span> <span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"bp\">%</span><span class=\"n\">m</span> <span class=\"o\">:=</span> <span class=\"n\">v</span><span class=\"bp\">;</span> <span class=\"bp\">?</span><span class=\"n\">_</span>\n</code></pre></div>\n<p>Then, once the body of <code>assert_is_a_prop%</code> is complete, it does the check and emits the warning if needed.</p>",
+        "id": 424328528,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1709328526
+    },
+    {
+        "content": "<p>Incidentally, I wonder if we should have a parser that handles <code>!</code>/<code>?</code> variants of tactics (and now, potentially, terms), so that we can avoid needing macros for both variants. Maybe we could make it so that <code>simp!</code> parses so that the resulting Syntax is the same as <code>simp !</code>?</p>",
+        "id": 424328815,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1709328671
+    },
+    {
+        "content": "<p>Can't you just implement <code>have</code> as an <code>elab</code> and do the <code>Prop</code> check there? (I generally find macros that expand into a bunch of magic suspect.)</p>",
+        "id": 424407560,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1709382549
+    }
+]

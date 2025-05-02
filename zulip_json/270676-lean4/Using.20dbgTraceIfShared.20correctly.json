@@ -1,0 +1,134 @@
+[
+    {
+        "content": "<p>My current understanding is that you can wrap <code>dbgTraceIfShared</code> around an expression, and a message will be logged if the expression is shared. (And that for arrays, sharing implies copying.) However:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">x</span> <span class=\"o\">(</span><span class=\"n\">d</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">dbgTraceIfShared</span> <span class=\"s2\">\"💥\"</span> <span class=\"n\">d</span><span class=\"o\">)</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">x</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">2</span><span class=\"o\">]</span> <span class=\"c1\">-- shared RC 💥</span>\n</code></pre></div>\n<p>I noticed that some messages on zulip using <code>dbgTraceIfShared</code> employ the following incantation, which makes the sharing message disappear:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">set_option</span> <span class=\"n\">compiler.extract_closed</span> <span class=\"n\">false</span> <span class=\"k\">in</span>\n<span class=\"k\">#eval</span> <span class=\"n\">x</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">2</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>What does this mean? What are the implications re: whether you can expect the relevant code to induce sharing when run in other contexts?</p>",
+        "id": 426850417,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710554500
+    },
+    {
+        "content": "<p>What's happening is that <code>#[2]</code> is a closed expression, so lean hoists it out to a global variable and initializes it at startup. Then at <code>#eval</code> time it passes this global variable to the <code>x</code> function, meaning that <code>d</code> is not the only reference - the global is also holding on to a copy, and if you modify it then it will copy the global to give you a local copy. This is mostly fine, but it can be inefficient if you made a large array with <code>mkArray</code> and lean has decided to hoist it since now you have replaced a large allocation with a large copy</p>",
+        "id": 426850779,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710554852
+    },
+    {
+        "content": "<p>and if the array is <em>really</em> large you also have the overhead of needing to have two of them in your program memory</p>",
+        "id": 426850825,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710554883
+    },
+    {
+        "content": "<p>Oh, ok—what counts as a closed expression in this context?</p>",
+        "id": 426850999,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710555059
+    },
+    {
+        "content": "<p>any subexpression with no free variables</p>",
+        "id": 426851010,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710555073
+    },
+    {
+        "content": "<p>in fact in this example even <code>x #[2]</code> is subject to hoisting</p>",
+        "id": 426851128,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710555175
+    },
+    {
+        "content": "<p>Ah, ok. So can hoisting happen from within any expression? Even, say, <code>def x := fun _ : Nat =&gt; mkArray 5 0</code>? (I wouldn't expect to make an array in this context before <code>x</code> was called on something.)</p>",
+        "id": 426851359,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710555394
+    },
+    {
+        "content": "<p>yes</p>",
+        "id": 426851400,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710555434
+    },
+    {
+        "content": "<p>In fact, it will even hoist the <code>#[][0]!</code> subexpression in</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">Bool</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">_</span><span class=\"o\">:</span> <span class=\"n\">b</span> <span class=\"bp\">=</span> <span class=\"n\">true</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">if</span> <span class=\"n\">b</span> <span class=\"k\">then</span> <span class=\"mi\">0</span> <span class=\"k\">else</span> <span class=\"bp\">#</span><span class=\"o\">[][</span><span class=\"mi\">0</span><span class=\"o\">]</span><span class=\"bp\">!</span>\n</code></pre></div>\n<p>which leads to a <a href=\"https://github.com/leanprover/lean4/issues/467\">panic</a> at initialization time</p>",
+        "id": 426851520,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710555582
+    },
+    {
+        "content": "<p>Whoa. So just to be clear: does this mean that in the <code>def x := fun _ : Nat =&gt; mkArray 5 0</code> case, there's actually a size-5 array in a global variable after this? If so, is a <code>set_option</code> really the only way to prevent that?</p>",
+        "id": 426851657,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710555715
+    },
+    {
+        "content": "<p>yes</p>",
+        "id": 426851721,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710555743
+    },
+    {
+        "content": "<p>Huh. That definitely changes how I imagine my code working in certain cases!</p>",
+        "id": 426851840,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710555853
+    },
+    {
+        "content": "<p>yes, it's a pretty severe issue with the current compiler, but things aren't likely to improve until the new compiler is finished</p>",
+        "id": 426851868,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710555887
+    },
+    {
+        "content": "<p>it does make me wonder what the perf effect of just setting <code>set_option compiler.extract_closed false</code> globally (in lean + lake) is</p>",
+        "id": 426851975,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710555968
+    },
+    {
+        "content": "<p>Hmm, here's another question about interpreting the result of <code>dbgTraceIfShared</code>: consider</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">macro</span> <span class=\"s2\">\"s?\"</span> <span class=\"n\">n</span><span class=\"o\">:</span><span class=\"n\">num</span> <span class=\"n\">t</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">term</span><span class=\"bp\">|</span><span class=\"n\">dbgTraceIfShared</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">quote</span> <span class=\"n\">s</span><span class=\"bp\">!</span><span class=\"s2\">\"{n.getNat}\"</span><span class=\"o\">)</span> <span class=\"bp\">$</span><span class=\"n\">t</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"o\">)</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.compiler.ir.result</span> <span class=\"n\">true</span> <span class=\"k\">in</span>\n<span class=\"kd\">def</span> <span class=\"n\">r</span> <span class=\"o\">(</span><span class=\"n\">d</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"k\">if</span> <span class=\"o\">(</span><span class=\"n\">s</span><span class=\"bp\">?</span> <span class=\"mi\">1</span> <span class=\"n\">d</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">size</span> <span class=\"bp\">==</span> <span class=\"mi\">3</span> <span class=\"k\">then</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">0</span><span class=\"o\">]</span> <span class=\"k\">else</span> <span class=\"o\">(</span><span class=\"n\">s</span><span class=\"bp\">?</span> <span class=\"mi\">2</span> <span class=\"n\">d</span><span class=\"o\">)</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">compiler.extract_closed</span> <span class=\"n\">false</span> <span class=\"k\">in</span> <span class=\"c1\">-- shared RC 1</span>\n<span class=\"k\">#eval</span> <span class=\"n\">r</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"mi\">2</span><span class=\"o\">,</span><span class=\"mi\">3</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>But if you remove the trace, the IR looks a little different (besides the obvious). E.g. in the false case we see <code>inc x_1</code>.</p>\n<p>Does checking an array's size count as a copy-inducing use here? Does RC &gt; 1 <em>always</em> imply copying for an array?</p>\n<p>This is a smaller version of the real-life example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">add</span> <span class=\"o\">{</span><span class=\"n\">α</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">BEq</span> <span class=\"n\">α</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">d</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">e</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:=</span>\n  <span class=\"k\">if</span> <span class=\"o\">(</span><span class=\"n\">s</span><span class=\"bp\">?</span> <span class=\"mi\">1</span> <span class=\"n\">d</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">contains</span> <span class=\"n\">e</span> <span class=\"k\">then</span> <span class=\"o\">(</span><span class=\"n\">s</span><span class=\"bp\">?</span> <span class=\"mi\">2</span> <span class=\"n\">d</span><span class=\"o\">)</span> <span class=\"k\">else</span> <span class=\"o\">(</span><span class=\"n\">s</span><span class=\"bp\">?</span> <span class=\"mi\">3</span> <span class=\"n\">d</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">push</span> <span class=\"n\">e</span>\n</code></pre></div>\n<p>which yields <code>shared RC 1</code>. Intuitively, you'd think that merely inspecting elements wouldn't induce copying—but I guess a reference is a reference.</p>",
+        "id": 426857948,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710561693
+    },
+    {
+        "content": "<p>In addition to the option there is also the <code>@[never_extract]</code> attribute (<a href=\"https://github.com/leanprover/lean4/blob/0ec8862103e397715854a7a6962ce542bba4884d/src/Lean/Compiler/NeverExtractAttr.lean#L13\">def</a>).</p>",
+        "id": 426858432,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1710562194
+    },
+    {
+        "content": "<blockquote>\n<p>Does checking an array's size count as a copy-inducing use here? Does RC &gt; 1 always imply copying for an array?</p>\n</blockquote>\n<p>What you are seeing is that RC &gt; 1 in the first call, and this correctly reflects that the array is still live while running <code>contains</code>. This is not a copy-inducing use though, because you didn't call a mutating operation like <code>push</code> while it was copied. Note that in your test the <code>s? 3 d</code> call did not trigger, meaning that when you called the only potentially copy-inducing function here, it was not shared and therefore no copy happened.</p>",
+        "id": 426862111,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710565996
+    },
+    {
+        "content": "<p>Ah, ok, so only operations which mutate the array induce copies—all is right with the world. </p>\n<p>Btw, is there a way to tell if operations (other than the obvious ones) mutate the array? What if, say, <code>contains</code> were implemented in a way that mutated the array during evaluation despite its functionality?</p>",
+        "id": 426901299,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710604068
+    },
+    {
+        "content": "<p>(With the goal of being able to say confidently that <code>d</code> is never actually copied during <code>x</code>, ofc.)</p>",
+        "id": 426901650,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710604362
+    },
+    {
+        "content": "<p>(And just to put it explicitly in this thread for posterity, what I'm gathering is that the condition for copying an array <code>a</code> is exactly \"<code>a</code> is shared (RC(<code>a</code>) &gt; 1) while a mutating operation is called on <code>a</code>\".)</p>",
+        "id": 426912936,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710614706
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> <a href=\"#narrow/stream/270676-lean4/topic/Using.20dbgTraceIfShared.20correctly/near/426901299\">said</a>:</p>\n<blockquote>\n<p>Btw, is there a way to tell if operations (other than the obvious ones) mutate the array? What if, say, <code>contains</code> were implemented in a way that mutated the array during evaluation despite its functionality?</p>\n</blockquote>\n<p>Not really, you just have to know and/or check the docs. That said, in most cases it's pretty obvious, functions that mutate usually return a mutated copy. But there is nothing from stopping you from defining some <code>contains'</code> which calls <code>(arr.push a).contains a'</code> or something and that would mutate the array even though it doesn't have anything in its type signature saying it does.</p>",
+        "id": 426974769,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1710642222
+    },
+    {
+        "content": "<p>Feature request: some way to indicate to the RTS that an object should never be shared, and then an option for the RTS to check this dynamically at runtime. E.g. if I have an array in some monadic state, I want to ensure that the array is always accessed linearly (not shared).</p>",
+        "id": 427434536,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1710759632
+    }
+]

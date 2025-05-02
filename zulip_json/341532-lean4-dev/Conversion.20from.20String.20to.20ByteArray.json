@@ -1,0 +1,158 @@
+[
+    {
+        "content": "<p>Suppose I have a <code>String</code> that I know is fully ASCII. Then reading any position in the string is the same as accessing its underlying byte index through <a href=\"https://github.com/leanprover/lean4/blob/21d71de481e3d497a3ceeac85e50b50338b5636d/src/Init/Data/String/Extra.lean#L128\"><code>getUtf8Byte</code></a>, which is implemented by <a href=\"https://github.com/leanprover/lean4/blob/21d71de481e3d497a3ceeac85e50b50338b5636d/src/include/lean/lean.h#L1019\">a C function</a> in O(1).</p>\n<p>However, it may be more convenient (and performant?) to treat the <code>String</code> as a Lean <code>ByteArray</code> instead. The <a href=\"https://github.com/leanprover/lean4/blob/21d71de481e3d497a3ceeac85e50b50338b5636d/src/Init/Data/String/Extra.lean#L119\"><code>toUTF8</code> function</a> looks promising, but its C implementation, <a href=\"https://github.com/leanprover/lean4/blob/21d71de481e3d497a3ceeac85e50b50338b5636d/src/runtime/object.cpp#L1685\"><code>lean_string_to_utf8</code></a> copies the entire array, which is O(n).</p>\n<p>Ideally, the string could just be re-cast as a <code>ByteArray</code>, but in order for Lean to act in a functional way, the copy seems like a sunk cost. But a friend (James Gallicchio) suggested to me that if the string's reference counter was 0 (or 1?), then the header could be discarded, and an array could be returned in O(1).</p>\n<p>Thoughts? This seems like a quick PR, but I've not touched Lean's C++ internals before, and I haven't made a PR to a Lean project before, so I don't know the process/next steps.</p>",
+        "id": 471064319,
+        "sender_full_name": "Cayden Codel",
+        "timestamp": 1726598899
+    },
+    {
+        "content": "<p>I'm afraid the two types are not actually compatible at the C-level. The issue is the <code>lean_string_object</code>'s <code>m_length</code> field which is stored where <code>lean_sarray_object</code> expects <code>m_data</code> to start. So if you coerce a <code>lean_string_object</code> into a <code>lean_sarray_object</code>, you need to add <code>sizeof(size_t)</code> bytes to <code>m_size</code> and <code>m_capacity</code>, then remember that the first <code>sizeof(size_t)</code> bytes of the <code>m_data</code> are the string length rather than string contents. </p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"cm\">/* Scalar arrays */</span>\n<span class=\"k\">typedef</span><span class=\"w\"> </span><span class=\"k\">struct</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"n\">lean_object</span><span class=\"w\">   </span><span class=\"n\">m_header</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"kt\">size_t</span><span class=\"w\">        </span><span class=\"n\">m_size</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"kt\">size_t</span><span class=\"w\">        </span><span class=\"n\">m_capacity</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"kt\">uint8_t</span><span class=\"w\">       </span><span class=\"n\">m_data</span><span class=\"p\">[</span><span class=\"mi\">0</span><span class=\"p\">];</span>\n<span class=\"p\">}</span><span class=\"w\"> </span><span class=\"n\">lean_sarray_object</span><span class=\"p\">;</span>\n\n<span class=\"k\">typedef</span><span class=\"w\"> </span><span class=\"k\">struct</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"n\">lean_object</span><span class=\"w\"> </span><span class=\"n\">m_header</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"kt\">size_t</span><span class=\"w\">      </span><span class=\"n\">m_size</span><span class=\"p\">;</span><span class=\"w\">     </span><span class=\"cm\">/* byte length including '\\0' terminator */</span>\n<span class=\"w\">    </span><span class=\"kt\">size_t</span><span class=\"w\">      </span><span class=\"n\">m_capacity</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"kt\">size_t</span><span class=\"w\">      </span><span class=\"n\">m_length</span><span class=\"p\">;</span><span class=\"w\">   </span><span class=\"cm\">/* UTF8 length */</span>\n<span class=\"w\">    </span><span class=\"kt\">char</span><span class=\"w\">        </span><span class=\"n\">m_data</span><span class=\"p\">[</span><span class=\"mi\">0</span><span class=\"p\">];</span>\n<span class=\"p\">}</span><span class=\"w\"> </span><span class=\"n\">lean_string_object</span><span class=\"p\">;</span>\n</code></pre></div>",
+        "id": 471068278,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1726599839
+    },
+    {
+        "content": "<p>For example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span><span class=\"w\"> </span><span class=\"n\">myString</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"s2\">\"My string\"</span>\n\n<span class=\"n\">unsafe</span><span class=\"w\"> </span><span class=\"kd\">def</span><span class=\"w\"> </span><span class=\"n\">myBytes</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ByteArray</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">unsafeCast</span><span class=\"w\"> </span><span class=\"n\">myString</span>\n\n<span class=\"k\">#eval</span><span class=\"w\"> </span><span class=\"n\">myBytes</span><span class=\"w\"> </span><span class=\"c1\">-- [9, 0, 0, 0, 0, 0, 0, 0, 77, 121]</span>\n</code></pre></div>",
+        "id": 471079936,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1726603092
+    },
+    {
+        "content": "<p>Yes, I have already experimented with <code>unsafeCast</code>, and found that the underlying data models are incompatible. So the next question is whether a string <code>s</code> can be made into a <code>ByteArray</code> <code>arr</code> in O(1), given that <code>s</code> is not referred to after the call to a modified <code>toUTF8</code> function.</p>",
+        "id": 471080621,
+        "sender_full_name": "Cayden Codel",
+        "timestamp": 1726603254
+    },
+    {
+        "content": "<p>I think what Cayden is saying, though, is not that <code>unsafeCast</code> between the two types should work, but rather that the C++ implementation of <code>toUtf8</code> could do a zero-copy operation if RC = 1.</p>\n<p>EDIT: I got frontrun.</p>",
+        "id": 471080717,
+        "sender_full_name": "𝚠𝚘𝚓𝚌𝚒𝚎𝚌𝚑 𝚗𝚊𝚠𝚛𝚘𝚌𝚔𝚒",
+        "timestamp": 1726603276
+    },
+    {
+        "content": "<p>it can't, because the data models are not compatible</p>",
+        "id": 471080865,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1726603311
+    },
+    {
+        "content": "<p>it could do a <code>memmove</code> to shift the data back by 8 bytes when going string -&gt; bytes, but vice versa needs 8 extra bytes that may not be allocated, and it still needs a <code>memmove</code> to bring the data forward by 8 bytes which is O(n)</p>",
+        "id": 471081288,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1726603414
+    },
+    {
+        "content": "<p>plus, it needs to calculate the char count, so that means either an unsafe method or a linear pass</p>",
+        "id": 471081629,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1726603495
+    },
+    {
+        "content": "<p>Well, the conversion I'm looking for only needs to be done one way, but I understand the problem now. Ah, the joys of variable-length structs in C</p>",
+        "id": 471081695,
+        "sender_full_name": "Cayden Codel",
+        "timestamp": 1726603515
+    },
+    {
+        "content": "<p>yeah, if the data was stored in a separate allocation this would not be a problem</p>",
+        "id": 471081760,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1726603535
+    },
+    {
+        "content": "<p>What happens if a misaligned struct with <code>lean_sarray_object* p = &amp;str.m_header + sizeof(size_t)</code> is produced, and fields other than <code>m_data</code> rewritten to have the correct values? Perhaps some deallocation would fail later.</p>",
+        "id": 471082284,
+        "sender_full_name": "𝚠𝚘𝚓𝚌𝚒𝚎𝚌𝚑 𝚗𝚊𝚠𝚛𝚘𝚌𝚔𝚒",
+        "timestamp": 1726603656
+    },
+    {
+        "content": "<p>I sense some very careful bookkeeping would need to be kept, and that way lies madness</p>",
+        "id": 471082801,
+        "sender_full_name": "Cayden Codel",
+        "timestamp": 1726603779
+    },
+    {
+        "content": "<p>yes, that would most likely cause a later <code>free</code> to segfault</p>",
+        "id": 471083926,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1726604056
+    },
+    {
+        "content": "<p>A better, though heavy handed approach, would be to make these (and all other?) types more compatible by adding some padding before <code>m_data</code> so that the offset of <code>m_data</code> is always the same.</p>",
+        "id": 471085884,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1726604766
+    },
+    {
+        "content": "<p>or deleting the char count field...</p>",
+        "id": 471086077,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1726604851
+    },
+    {
+        "content": "<p>That would make <code>String.length</code> O(n). Perhaps getting rid of <code>lean_string_object</code> altogether and defining <code>String</code> as an extension of <code>ByteArray</code> with some support to cache <code>String.length</code> somehow.</p>",
+        "id": 471087778,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1726605382
+    },
+    {
+        "content": "<p>Wait: did you mean deleting <code>m_size</code> or <code>m_length</code>? Once you know <code>m_length</code>, <code>m_capacity</code> is enough for most operations, I think.</p>",
+        "id": 471088242,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1726605541
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"119741\">François G. Dorais</span> <a href=\"#narrow/stream/341532-lean4-dev/topic/Conversion.20from.20String.20to.20ByteArray/near/471087778\">said</a>:</p>\n<blockquote>\n<p>That would make <code>String.length</code> O(n).</p>\n</blockquote>\n<p>So? <code>List.length</code> is O(n) too. And String char count isn't even the right measurement for most activities you want to do with a string. (What would rust do?)</p>",
+        "id": 471088450,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1726605605
+    },
+    {
+        "content": "<p>I don't like the term \"string length\" because it's ambiguous. Even worse if it's next to \"string size\"</p>",
+        "id": 471088607,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1726605661
+    },
+    {
+        "content": "<p>I don't think anyone can reliably guess which one is which</p>",
+        "id": 471088638,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1726605674
+    },
+    {
+        "content": "<p>Agreed. Might be worth making an RFC?</p>",
+        "id": 471088785,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1726605722
+    },
+    {
+        "content": "<p>for which part?</p>",
+        "id": 471088832,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1726605736
+    },
+    {
+        "content": "<p>Deleting <code>m_length</code> (equivalently implementing <code>String</code> as a <code>lean_sarray_object</code> and removing <code>lean_string_object</code>).</p>",
+        "id": 471089060,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1726605835
+    },
+    {
+        "content": "<p>The RFC would mostly exist to record the idea. It's fairly obvious that it would get the lowest possible priority, at best.</p>",
+        "id": 471090594,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1726606220
+    },
+    {
+        "content": "<p>We have floated this idea internally at the FRO before. I think an RFC that tries to address this would at least be of interested, can't make any guarantees on whether it will be accepted of course.</p>",
+        "id": 471094604,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1726607269
+    },
+    {
+        "content": "<p>I'll put that RFC on my todo list. It's low priority to me as well so if someone gets around to it before me then I will be happy with that.</p>",
+        "id": 471126984,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1726618192
+    }
+]

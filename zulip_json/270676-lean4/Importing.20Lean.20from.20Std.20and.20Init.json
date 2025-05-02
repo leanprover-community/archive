@@ -1,0 +1,116 @@
+[
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/channel/270676-lean4/topic/upstreaming.20Mathlib.2ELean.2EJson/near/494463185\">said</a>:</p>\n<blockquote>\n<p>I think at one point <code>Init</code> was not allowed to import <code>Lean</code>, and so it would be impossible to write the <code>json%</code> elaborator solely within <code>Init</code>. Maybe that rule has been relaxed now.</p>\n</blockquote>\n<p>This is not about being allowed this is about technical impossibilities as it would import the Lean of a previous stage since the Lean of its current stage would not be compiled yet.</p>",
+        "id": 494495765,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1737189178
+    },
+    {
+        "content": "<p>I don't follow, isn't the requirement just that the individual imports don't form a cycle? The bootstrapping surely doesn't care what the first component of the module names are?</p>",
+        "id": 494501198,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1737193281
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/channel/270676-lean4/topic/upstreaming.20Mathlib.2ELean.2EJson/near/494501198\">said</a>:</p>\n<blockquote>\n<p>I don't follow, isn't the requirement just that the individual imports don't form a cycle? The bootstrapping surely doesn't care what the first component of the module names are?</p>\n</blockquote>\n<p>If you are in <code>stageN</code> compiling <code>Init</code> the <code>Lean</code> of <code>stageN</code> does not exist yet, it is yet to be compiled as <code>stageN</code> <code>Lean</code> depends on importing <code>stageN</code> <code>Init</code>. So the only way to pull in a Lean at this point would be to import <code>Lean</code> from <code>stageN-1</code>, you should not do that (and in fact as <code>stage0</code> does not have <code>.olean</code> but only <code>.c</code> artefacts can't even do it for <code>stage1</code> though technically for <code>stage2</code>)</p>",
+        "id": 494508837,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1737199348
+    },
+    {
+        "content": "<p>In general the dependency chain goes <code>Lean -&gt; Std -&gt; Init</code> so not only can <code>Init</code> not import <code>Lean</code> but <code>Std</code> can also not do it. This is one of the reasons that the compiler has funky meta programming things like <code>builtin_</code> for building features that can be used in <code>Init</code>/<code>Std</code> after rebootstrapping.</p>",
+        "id": 494509215,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1737199659
+    },
+    {
+        "content": "<p>I still don't understand the bootstrapping argument; why can't I consider a pseudolibrary <code>core = Init + Std + Lean</code>, and bootstrap <code>core</code> incrementally as one large unit?</p>",
+        "id": 494700805,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1737336303
+    },
+    {
+        "content": "<p>My hunch would be that if <code>lake</code> is now in stage0 and used to build stage1 (replacing the old makefile), you get this behavior for free</p>",
+        "id": 494701117,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1737336517
+    },
+    {
+        "content": "<p><a href=\"#narrow/channel/270676-lean4/topic/Importing.20Lean.20from.20Std.20and.20Init/near/494495765\">A message</a> was moved here from <a class=\"stream-topic\" data-stream-id=\"270676\" href=\"/#narrow/channel/270676-lean4/topic/upstreaming.20Mathlib.2ELean.2EJson\">#lean4 &gt; upstreaming Mathlib.Lean.Json</a> by <span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span>.</p>",
+        "id": 494701206,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1737336595
+    },
+    {
+        "content": "<p>No this would be incredibly inconvenient:</p>\n<ol>\n<li>You would have to carry <code>.olean</code> files for everything around in <code>stage0</code> to be able to compile properly which is not only going to enlarge stage0 but also has potential cross platform issues so you might even need to store multiple <code>.olean</code> files.</li>\n<li>Literally every PR would need to <code>update-stage0</code> as the <code>import</code> statements in <code>stage1</code> would refer to <code>.olean</code> from <code>stage0</code> but you want to have the changes that you made be effective in <code>stage1</code> already not only <code>stage2</code></li>\n</ol>\n<p>The workflow as it exists in core right now is simple, you get the import chain I described, you can develop just normally, you don't need to <code>update-stage0</code> often. If you actually need to add some meta feature that is used in <code>Init</code> and can't be programmed with the macro system that is already set up there you can use <code>builtin_</code> stuff + rebootstrap to get it into there.</p>",
+        "id": 494744613,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1737361115
+    },
+    {
+        "content": "<p>I'm not suggesting that stage 1 import lean files from stage 0</p>",
+        "id": 494754686,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1737364252
+    },
+    {
+        "content": "<p>But that's what has to happen if you want to be able to access <code>import Lean</code> from <code>Init</code>? Where else would the <code>.olean</code> you get when running <code>import Lean</code> in an <code>Init</code> file be coming from?</p>",
+        "id": 494755803,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1737364595
+    },
+    {
+        "content": "<p>Or are you suggesting that we build all of these as a big dependency graph? In that case: Why should <code>Lean</code> not be able to enjoy the freedom to just import everything from <code>Init</code> (which is very common, after all the majority of <code>Init</code> is imported in <code>Lean</code>) in favor of having the ability to import <code>Lean</code> in some files of <code>Init</code> that don't cause a cycle, just to implement an elaborator there (a very rare use case). After all we already have the ability to get custom elaborators usable in <code>Init</code> through the <code>builtin_</code> mechanism.</p>",
+        "id": 494756938,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1737364923
+    },
+    {
+        "content": "<p>Yes, I'm suggesting the big dependency graph option</p>",
+        "id": 494758504,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1737365348
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"395550\">Henrik Böving</span> <a href=\"#narrow/stream/270676-lean4/topic/Importing.20Lean.20from.20Std.20and.20Init/near/494756938\">said</a>:</p>\n<blockquote>\n<p>After all we already have the ability to get custom elaborators usable in <code>Init</code> through the <code>builtin_</code> mechanism.</p>\n</blockquote>\n<p>Not if if you need access to the <code>Lean.</code> API to implement those elaborators.</p>",
+        "id": 494758723,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1737365405
+    },
+    {
+        "content": "<p>Of course we do</p>",
+        "id": 494758783,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1737365417
+    },
+    {
+        "content": "<p>You implement the elaborator within <code>Lean</code>, mark it as <code>builtin_</code>, <code>update-stage0</code> and you can use it in <code>Init</code>.</p>",
+        "id": 494758838,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1737365435
+    },
+    {
+        "content": "<p>That's how every tactic that we have ends up being usable in <code>Init</code>.</p>",
+        "id": 494758883,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1737365449
+    },
+    {
+        "content": "<p>But the consequence here is:</p>\n<ul>\n<li>Things like Json end up in the Lean rather than Std imports</li>\n<li>You have to rebootstrap after each new elaborator you want in Init/Std</li>\n</ul>\n<p>The big dependency graph is indeed more of a mental burden to manage,  but has neither of these shortcomings</p>",
+        "id": 494759309,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1737365551
+    },
+    {
+        "content": "<p>I can see a purity argument over leaving Init be, but letting Std and Lean co-import each other in one graph would be quite convenient</p>",
+        "id": 494759735,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1737365649
+    },
+    {
+        "content": "<blockquote>\n<ul>\n<li>Things like Json end up in the Lean rather than Std imports</li>\n</ul>\n</blockquote>\n<p>Sure, that's how things already are, <code>bv_decide</code> is almost fully implemented in <code>Std</code> but I don't see the issue with this? After all the meta part is part of the <code>Lean</code> code.</p>\n<blockquote>\n<ul>\n<li>You have to rebootstrap after each new elaborator you want in Init</li>\n</ul>\n</blockquote>\n<p>Yes but that is only a very rare occurence, as I explained above this potentially has the issue of making live painful when you want to import something from <code>Init</code> in <code>Lean</code>. As someone that has fixed a non trivially long dependency cycle in <code>Init</code> alone because of the limited meta capability that already exists there I can tell you that this is not fun :P</p>",
+        "id": 494760195,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1737365762
+    }
+]

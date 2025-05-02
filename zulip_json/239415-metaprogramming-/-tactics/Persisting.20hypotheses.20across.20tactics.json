@@ -1,0 +1,128 @@
+[
+    {
+        "content": "<p>This is not a well-defined question, but I hope that it is specific enough that maybe it can receive some useful comments.</p>\n<p>For the purpose of this question, you can limit the set of existing tactics to just <code>simp</code>, <code>rw</code> and <code>have</code>.</p>\n<p>When looking at a proof in the infoview, you get the impression that (most) tactics preserve almost all the context and typically modify one location (or an explicit subset of locations in the case of <code>tac at loc1 ... locn</code>).</p>\n<p>From this perspective, it seems straightforward to \"track\" locations, e.g. persisting the ones on which <code>simp</code> acted at some point during the proof.</p>\n<p>While this heuristic idea is \"visually\" correct, there are several issues with it:</p>\n<ul>\n<li>the name of the location can become inaccessible (e.g. <code>have h : ...</code> makes a previous <code>h</code> change its username);</li>\n<li>the fvarid of a local declaraction can change (e.g. <code>rw at h</code> substitutes <code>h</code> with a new local declaration with the same username, but different fvarid);</li>\n<li>in the presence of several concurrent goals, the actual metavariables change name after most tactics act on them.</li>\n</ul>\n<p>Thus, tracking in practice a location is very tricky.</p>\n<p>My question is: is there some API around this?</p>",
+        "id": 429428187,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1711378492
+    },
+    {
+        "content": "<p>My motivation comes from trying to write a version of the \"non-terminal <code>simp</code>\" linter that would flag non-robust proofs.</p>",
+        "id": 429428550,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1711378543
+    },
+    {
+        "content": "<p>Tracking lctx changes is a very annoying problem for which I haven't found a good solution yet. There are two approaches:</p>\n<ul>\n<li>Identify hyps by user name. But as you say, this is not guaranteed to be unique or stable. However, if you work with a predetermined set of tactics (which you probably don't), then this can be a good option.</li>\n<li>Identify hyps by unique name (<code>FVarId</code>). But as you say, these change all the time:<ul>\n<li>When the type or value of a hyp is changed in a non-defeq way, the <code>FVarId</code> <em>must</em> change, even if the hyp retains the same user name and users would probably view it as \"the same hyp, only modified\".</li>\n<li>Otherwise (even when nothing happens to the hyp), the <code>FVarId</code> <em>may</em> still change. <code>revert</code>-based tactics do this a lot. In cases like these, the <code>MetaM</code> tactic sometimes returns a <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Meta.FVarSubst#doc\">docs#Lean.Meta.FVarSubst</a> which maps old <code>FVarId</code>s to new <code>FVarId</code>s. But not all <code>MetaM</code> tactics report such substitutions, and when you operate at elaborator level and above, you're probably out of luck entirely.</li>\n</ul>\n</li>\n</ul>\n<p>So yeah, it's tricky. :(</p>",
+        "id": 429488296,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1711392996
+    },
+    {
+        "content": "<p>Ok, thank you for confirming that I am not reinventing some tools that already exist.</p>\n<p>I'm going to record both the <code>FVarId</code> and the <code>username</code> and first scan the local contexts for the <code>FVarId</code> and fall back on the <code>username</code> if that fails.</p>",
+        "id": 429517242,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1711403444
+    },
+    {
+        "content": "<p>Tactics are supposed to record a <code>ofFVarAliasInfo</code> in the info trees to connect up fvars</p>",
+        "id": 429518194,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1711403908
+    },
+    {
+        "content": "<p>That tracking is used for the unused variable linter and the \"find references\" editor feature for example.</p>",
+        "id": 429518297,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1711403973
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.Info.ofFVarAliasInfo#doc\">docs#Lean.Elab.Info.ofFVarAliasInfo</a><br>\n<a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.FVarAliasInfo#doc\">docs#Lean.Elab.FVarAliasInfo</a></p>",
+        "id": 429519045,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1711404297
+    },
+    {
+        "content": "<p>Thanks, Kyle!  I'll experiment with this!</p>",
+        "id": 429519078,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1711404311
+    },
+    {
+        "content": "<p>Kyle, I tried your suggestion, but trying this on a few \"random\" proofs, I could find <code>Info</code> with the following constructors:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">CommandInfo</span>\n<span class=\"n\">CompletionInfo</span>\n<span class=\"n\">MacroExpansionInfo</span>\n<span class=\"n\">TacticInfo</span>\n<span class=\"n\">TermInfo</span>\n<span class=\"n\">OptionInfo</span>\n<span class=\"n\">FieldInfo</span>\n</code></pre></div>\n<p>This means that </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">UserWidgetInfo</span>\n<span class=\"n\">CustomInfo</span>\n<span class=\"n\">FVarAliasInfo</span>\n<span class=\"n\">FieldRedeclInfo</span>\n<span class=\"n\">OmissionInfo</span>\n</code></pre></div>\n<p>appear very rarely (and actually <em>never</em> in the sample of files that I scanned).</p>",
+        "id": 429603063,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1711441342
+    },
+    {
+        "content": "<p>What proofs did you look at? Obviously the info nodes that appear depend on the proof</p>",
+        "id": 429624168,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711448802
+    },
+    {
+        "content": "<p>I opened a few random files (<code>Data.Int.Lemmas, LinearAlgebra.Determinant, RingTheory.Algebra.Flat</code> according to my VSCode history) and I collected all the <code>Info</code>s that I could see in those proofs.</p>",
+        "id": 429654726,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1711459709
+    },
+    {
+        "content": "<p>In particular, I could find no appearance of <code>FVarAliasInfo</code>, that I hoped would help with \"persisting\" hypotheses, as per Kyle's comment above.</p>",
+        "id": 429654917,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1711459766
+    },
+    {
+        "content": "<p>you should look at proofs that involve fvar changing, of course. That description is a bit generic, it's hard to tell if you actually saw something. For example proofs by induction on List will surely have this behvior</p>",
+        "id": 429741935,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711488054
+    },
+    {
+        "content": "<p>Ok, but the reason for looking for them was to help with persisting hypotheses, so the fact that they did not show up in those files makes me think that <code>FVarAliasInfo</code> will not actually be useful for this purpose.</p>",
+        "id": 429743404,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1711488766
+    },
+    {
+        "content": "<p>Maybe in each of those files, incidentally the fvarId is always preserved across all tactics?</p>",
+        "id": 429744987,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1711489537
+    },
+    {
+        "content": "<p>I doubt it, since I'm pretty sure that there were <code>rw</code>s.</p>",
+        "id": 429747011,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1711490492
+    },
+    {
+        "content": "<p>Indeed, <a href=\"https://github.com/leanprover-community/mathlib4/blob/a492bebc97779a7a3f8a5dddf7b2672296432d75/Mathlib%2FLinearAlgebra%2FMatrix%2FDeterminant.lean#L80\">here</a> is a <code>rw</code> in the determinant file.</p>\n<p>And a <code>rw at</code> <a href=\"http://github.com/leanprover-community/mathlib4/blob/a492bebc97779a7a3f8a5dddf7b2672296432d75/Mathlib%2FLinearAlgebra%2FMatrix%2FDeterminant.lean#L604\">here</a>.</p>",
+        "id": 429747307,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1711490630
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.Tactic.rewriteLocalDecl#doc\">docs#Lean.Elab.Tactic.rewriteLocalDecl</a> uses <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.MVarId.replaceLocalDecl#doc\">docs#Lean.MVarId.replaceLocalDecl</a>, which creates a <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Meta.AssertAfterResult#doc\">docs#Lean.Meta.AssertAfterResult</a> that contains the fvarsubst, but that's never registered as alias info, and, curiously, that never seems to lead to an accidental \"unused variable\" linter error.</p>",
+        "id": 429903015,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1711557562
+    },
+    {
+        "content": "<p>It does keep \"go to definition\" from working on the variable afterwards.</p>\n<p>But... maybe it's not the \"same\" variable after a rewrite, so perhaps it makes no sense to register an alias.</p>",
+        "id": 429903328,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1711557668
+    },
+    {
+        "content": "<p>Ok, thank you for investigating!  For my application, I definitely want to consider the \"new\" local fvar after a <code>rw at</code> or <code>simp at</code> as \"the same\" as the one before the tactic.  Indeed, the idea is precisely to catch uses of a tactic like <code>rw</code> after a tactic like <code>simp</code>, but only when acting on \"the same\" hypothesis.  Thus, I want to flag</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"n\">simp</span> <span class=\"n\">at</span> <span class=\"n\">h</span>\n  <span class=\"n\">rw</span> <span class=\"o\">[]</span> <span class=\"n\">at</span> <span class=\"n\">h</span>\n</code></pre></div>\n<p>but not</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"n\">simp</span> <span class=\"n\">at</span> <span class=\"n\">h</span>\n  <span class=\"n\">rw</span> <span class=\"o\">[]</span> <span class=\"n\">at</span> <span class=\"n\">h'</span>\n</code></pre></div>\n<p>(assuming that the arguments to <code>rw</code> do not involve <code>h</code> and that <code>h</code> and <code>h'</code> are <em>really</em> different!)</p>",
+        "id": 429929745,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1711566755
+    },
+    {
+        "content": "<p>Maybe I can simply record the <code>FVarId</code>s <em>after</em> tactics like <code>simp</code> and match them to the <code>FVarId</code>s <em>before</em> tactics like <code>rw</code> and forget about actually evolving/tracking them.  However, I worry that, when the \"context <code>MVar</code>\" changes, these <code>FVarId</code>s are not preserved.</p>",
+        "id": 429930385,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1711566993
+    }
+]

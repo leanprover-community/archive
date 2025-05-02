@@ -1,0 +1,98 @@
+[
+    {
+        "content": "<p>I'm having a problem with <code>repeat'</code>. Here's the smallest minimisation I have so far:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Std.Tactic.Basic</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Elab</span> <span class=\"n\">Tactic</span> <span class=\"n\">Meta</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">Lean.MVarId.assignFresh</span> <span class=\"o\">(</span><span class=\"n\">mvarId</span> <span class=\"o\">:</span> <span class=\"n\">MVarId</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">MetaM</span> <span class=\"n\">MVarId</span> <span class=\"o\">:=</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">mvarIdNew</span> <span class=\"bp\">←</span> <span class=\"n\">mkFreshExprMVar</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">mvarId.getType</span><span class=\"o\">)</span>\n  <span class=\"n\">mvarId.assign</span> <span class=\"n\">mvarIdNew</span>\n  <span class=\"n\">return</span> <span class=\"n\">mvarIdNew.mvarId</span><span class=\"bp\">!</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"foo\"</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">liftMetaTactic</span> <span class=\"k\">fun</span> <span class=\"n\">g</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span> <span class=\"n\">_</span> <span class=\"bp\">←</span> <span class=\"n\">g.assignFresh</span><span class=\"bp\">;</span> <span class=\"n\">throwError</span> <span class=\"s2\">\"\"</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">False</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"c1\">-- (kernel) declaration has metavariables '_example'</span>\n  <span class=\"n\">repeat'</span> <span class=\"n\">foo</span>\n</code></pre></div>",
+        "id": 397447927,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1697701330
+    },
+    {
+        "content": "<p>This also happens with <code>g.assignFresh</code> replaced by <code>g.exFalso</code>.</p>",
+        "id": 397448069,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1697701390
+    },
+    {
+        "content": "<p>This is minimised from the even shorter:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Tactic.Linarith</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"n\">False</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"c1\">-- (kernel) declaration has metavariables '_example'</span>\n  <span class=\"n\">repeat'</span> <span class=\"n\">linarith</span>\n</code></pre></div>",
+        "id": 397448123,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1697701412
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>, do you see what is wrong here? I think it must be <code>repeat'</code>s fault.</p>",
+        "id": 397448159,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1697701427
+    },
+    {
+        "content": "<p>Your <code>foo</code> is breaking the contract that <code>repeat'</code> expects. Specifically, if you throw an exception, then <code>repeat'</code> will put the original goal back on the goal list, so it should not be assigned. If it is assigned then it will be pruned from the list, so in this example that means that <code>mvarIdNew</code> is dropped on the floor and you have an empty goal list even though there are metavariables remaining</p>",
+        "id": 397449749,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697701955
+    },
+    {
+        "content": "<p>Would it be okay to change <code>repeat'</code> so it rewinds the <code>MetavarContext</code> on an exception?</p>",
+        "id": 397449956,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1697702036
+    },
+    {
+        "content": "<p>This seems like a nasty footgun (as evidenced by the <code>repeat' linarith</code> example).</p>",
+        "id": 397450056,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1697702059
+    },
+    {
+        "content": "<p>is it something that can be fixed in <code>linarith</code>?</p>",
+        "id": 397450088,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697702074
+    },
+    {
+        "content": "<p>But... but... where is the contract that says that failing tactics are responsible for rewinding all of their state? That's not a universal expectation, is it?</p>",
+        "id": 397450159,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1697702104
+    },
+    {
+        "content": "<p>I thought this was unreasonable expectations on the part of <code>repeat'</code>, not bad behaviour on the part of <code>linarith</code>.</p>",
+        "id": 397450284,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1697702150
+    },
+    {
+        "content": "<p><code>repeat'</code> essentially uses a <code>try catch</code> block to catch exceptions in the inner function. This does not rewind the state by default</p>",
+        "id": 397450308,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697702160
+    },
+    {
+        "content": "<p>it is not clear to me if rewinding the state is desirable in general</p>",
+        "id": 397450439,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697702195
+    },
+    {
+        "content": "<p>I'm worried that we have lots of tactics out there that error without rewinding the state, and <code>repeat'</code> is not going to be usable with any othem.</p>",
+        "id": 397450800,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1697702315
+    },
+    {
+        "content": "<p>fixed (I had to change <code>observing</code> to <code>observing?</code>... it is not good that such similarly sounding functions have this different behavior)</p>",
+        "id": 397451030,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697702398
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/std4/pull/305\">std#305</a></p>",
+        "id": 397452612,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1697702888
+    },
+    {
+        "content": "<p>Okay, and <a href=\"https://github.com/leanprover-community/mathlib4/pull/7769\">#7769</a> is the matching mathlib PR that makes sure <code>linarith</code> rolls back the state as well. Defence in depth!</p>",
+        "id": 397453709,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1697703248
+    }
+]

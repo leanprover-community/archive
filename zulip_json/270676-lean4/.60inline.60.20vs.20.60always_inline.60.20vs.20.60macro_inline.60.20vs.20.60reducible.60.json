@@ -1,0 +1,80 @@
+[
+    {
+        "content": "<p>So, as I've started putting in random combinations of the above superstitiously in the vague hopes of getting a <code>def</code> to have the transparency level I want -- what exactly <code>do</code> all these different inline-ish attributes do? </p>\n<p>The definition I'm used to from, say, F#, says \"this function will have its parameters pre-substituted into its body and copy-pasted into place whenever it is called, instead of being compiled separately and linked into\". This allows the function to make full use of local typing information, control the evaluation of its parameters, and generally act as seamlessly as it's possible for a function to act. From the notes on, say, <code>dite</code>, I <em>think</em> this definition corresponds to <code>macro_inline</code>? </p>\n<p>In general, the definition I was expecting from <code>inline</code> was, essentially, \"the program will behave as if the function is so copied into place, even if it may not be so under the hood\"; but it's easy to see from the info view that this is not really the case. Certainly, it seems like it is _less_ transparent than, say, <code>reducible</code>, though <code>reducible</code> doesn't reduce in the infoview either. </p>\n<p>(In fact, now that I write all this out, I think the thing I actually want is <code>notation</code>! Though I would want to actively disable the auto-delaborator.)</p>\n<p>And then there's the fact, noted elsewhere and observable from the mathlib codebase, that <code>always_inline</code> is not in fact a strict superset of <code>inline</code> and isn't even a proper superset, it has some weird functionality that I don't see documented anywhere, nor implemented anywhere I can inspect for myself.</p>\n<p>Anyone up for trying to distinguish these for me?</p>",
+        "id": 426215071,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1710278657
+    },
+    {
+        "content": "<p><code>inline</code>, <code>always_inline</code>, <code>macro_inline</code> have nothing to do with the proving part of Lean and are only inspected by the code generator, the only thing that does change reducibility is <code>reducible</code>. It's main effect is that you get to reuse type class instances that are defined on the body of your definition. So for example if you have <code>def Foo := Nat</code> vs <code>abbrev Foo := Nat</code> (<code>abbrev</code> is a shortcut for putting <code>reducible</code> on a <code>def</code>) one will have things like an <code>Add</code> instance while the other will not.</p>\n<p>With respect to the various inlining behaviors described by you, none of these related <em>at all</em> to what the Lean logic thinks about your functions, they <em>exclusively</em> influence what happens in the generated code.</p>",
+        "id": 426231578,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1710287503
+    },
+    {
+        "content": "<p>... I see. So basically the only way to write an <code>inline</code>-type function that means anything in proof mode is <code>notation</code>, huh. Or actually, maybe <code>syntax</code>, if I don't want a delaborator. </p>\n<p>Well, unfortunate, but good to know, thanks.</p>",
+        "id": 426236930,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1710290711
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"359992\">@Robert Maxton</span>, are you just looking for <code>@[reducible] def</code> or <code>abbrev</code>?</p>",
+        "id": 426239553,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1710292471
+    },
+    {
+        "content": "<p>Neither, I think. I want to have the convenience of writing <code>fancy_notation foo</code> as an abbreviation, but then never actually have to engage with <code>fancy_notation foo</code> when doing proofs, as while sometimes doing so just a matter of using <code>unfold</code>, it's not always.</p>\n<p>For example, in my current attempt at implementing <code>Type</code>/not-necessarily-<code>Lawful</code> comonads in Lean, I found it convenient when writing down theorems to have both <code>extend x f</code> and also <code>def extend' f x: extend x f</code>. However, I pretty much immediately regretted doing this when I started doing proofs, because half my axioms were written with one kind of <code>extend</code> over another, and while I could always <code>unfold</code> my hypotheses or goal, it's much more annoying to use an external theorem that uses the 'wrong' kind -- I have to insert a few lines to rewrite it into a form that Lean will accept as equivalent to the theorem.. <code>@[reducible]</code> helps, but seems like it mostly interfaces with, say, <code>simp</code>, and not necessarily <code>rw</code> or <code>apply</code>. </p>\n<p>An alternative solution might be a way of saying, somehow, \"simp-normalize the theorem before trying to rewrite/apply/etc it\", or alternatively something like <code>auto_unfold def</code>.</p>",
+        "id": 426240263,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1710292883
+    },
+    {
+        "content": "<p>There's an RFC for an <code>@[elab_inline]</code> attribute, which is for definitions inlined after elaboration: <a href=\"https://github.com/leanprover/lean4/issues/2248\">https://github.com/leanprover/lean4/issues/2248</a></p>\n<p>If that seems useful to you, it would be helpful if you could add a comment with your use case</p>",
+        "id": 426243687,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710294804
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span>  That is <em>exactly</em> what I want and I will add my use case immediately. Thanks!</p>",
+        "id": 426243793,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1710294854
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span>  So, either I'm misusing your code, or <code>elab_inline</code> doesn't seem to work anymore. </p>\n<p>I've wrapped the code block from the RFC in <code>section elab_unfold</code>/<code>end elab_unfold</code> and put it in my existing general <code>Utils.lean</code>, and imported it into my main lean file.  I can write e.g.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[</span><span class=\"n\">simp</span><span class=\"o\">,</span> <span class=\"n\">reducible</span><span class=\"o\">,</span> <span class=\"n\">elab_inline</span><span class=\"kd\">]</span>\n  <span class=\"kd\">def</span> <span class=\"n\">Extend.extend'</span> <span class=\"o\">[</span><span class=\"n\">Extend</span> <span class=\"n\">w</span><span class=\"o\">]</span> <span class=\"o\">(</span><span class=\"n\">f</span><span class=\"o\">:</span> <span class=\"n\">w</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">β</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">wα</span> <span class=\"o\">:</span> <span class=\"n\">w</span> <span class=\"n\">α</span><span class=\"o\">):</span> <span class=\"n\">w</span> <span class=\"n\">β</span> <span class=\"o\">:=</span>\n    <span class=\"n\">Extend.extend</span> <span class=\"n\">wα</span> <span class=\"n\">f</span>\n</code></pre></div>\n<p>without the compiler complaining that <code>elab_inline</code> doesn't exist, but</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"kd\">variable</span> <span class=\"o\">{</span><span class=\"n\">w</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">v</span><span class=\"o\">}</span> <span class=\"o\">[</span><span class=\"n\">Extend</span> <span class=\"n\">w</span><span class=\"o\">]</span>\n<span class=\"c1\">-- Works as expected</span>\n  <span class=\"k\">#check</span> <span class=\"n\">unfold</span><span class=\"bp\">%</span> <span class=\"n\">Extend.extend'</span> <span class=\"c1\">-- fun f wα =&gt; Extend.extend wα f : (?m.302 ?m.303 → ?m.304) → ?m.302 ?m.303 → ?m.302 ?m.304</span>\n<span class=\"c1\">-- Does not auto-unfold</span>\n  <span class=\"k\">#check</span> <span class=\"n\">Extend.extend'</span> <span class=\"o\">(</span><span class=\"bp\">·</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span>  <span class=\"c1\">-- Extend.extend' (fun x =&gt; x + 1) : ?m.330 ?m.331 → ?m.330 ?m.332</span>\n</code></pre></div>\n<p>Do you have any suggestions or insight?</p>",
+        "id": 426465577,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1710388496
+    },
+    {
+        "content": "<p>(In the name of simplifying things I also tried putting the code block directly into my main file, with and without the isolating section, but that actually resulted in <em>less</em> functionality -- the compiler started complaining that <code>elab_inline</code> wasn't a known attribute)</p>",
+        "id": 426465623,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1710388556
+    },
+    {
+        "content": "<p>I'm not sure what the problem is at the moment, but you can skip the <code>elab_inline</code> attribute and define the macro yourself, like</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">macro_rules</span>\n<span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">Extend.extend'</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">unfold</span><span class=\"bp\">%</span> <span class=\"n\">Extend.extend'</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">Extend.extend'</span> <span class=\"bp\">$</span><span class=\"n\">args</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">unfold</span><span class=\"bp\">%</span> <span class=\"n\">Extend.extend'</span> <span class=\"bp\">$</span><span class=\"n\">args</span><span class=\"bp\">*</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>(untested)</p>\n<p>It's possible that <code>unfoldDefinition</code> doesn't want to unfold <code>Extend.extend'</code> if it's partially applied.</p>",
+        "id": 426465828,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710388734
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/.60inline.60.20vs.20.60always_inline.60.20vs.20.60macro_inline.60.20vs.20.60reducible.60/near/426465828\">said</a>:</p>\n<blockquote>\n<p>I'm not sure what the problem is at the moment, but you can skip the <code>elab_inline</code> attribute and define the macro yourself, like</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">macro_rules</span>\n<span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">Extend.extend'</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">unfold</span><span class=\"bp\">%</span> <span class=\"n\">Extend.extend'</span><span class=\"o\">)</span>\n<span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">Extend.extend'</span> <span class=\"bp\">$</span><span class=\"n\">args</span><span class=\"bp\">*</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">unfold</span><span class=\"bp\">%</span> <span class=\"n\">Extend.extend'</span> <span class=\"bp\">$</span><span class=\"n\">args</span><span class=\"bp\">*</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>(untested)</p>\n<p>It's possible that <code>unfoldDefinition</code> doesn't want to unfold <code>Extend.extend'</code> if it's partially applied.</p>\n</blockquote>\n<p>That worked. Thanks!</p>",
+        "id": 426470876,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1710392875
+    },
+    {
+        "content": "<p>Big caveat with this macro solution: it's limited in that it's matching for <code>Extend.extend'</code> syntactically, and if you refer to this function in any other way it won't work. For example, even using a fully qualified name.</p>",
+        "id": 426471686,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710393495
+    },
+    {
+        "content": "<p>That's probably fine; I've defined</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"n\">syntax</span><span class=\"o\">:</span><span class=\"n\">max</span> <span class=\"s2\">\"&lt;⇑&gt;\"</span> <span class=\"n\">term</span><span class=\"o\">:</span><span class=\"n\">max</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n  <span class=\"c1\">--Manual syntax so as to not create a delaborator</span>\n  <span class=\"n\">macro_rules</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">&lt;⇑&gt;</span> <span class=\"bp\">$</span><span class=\"n\">f</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">``</span><span class=\"o\">(</span><span class=\"n\">Extend.extend'</span> <span class=\"bp\">$</span><span class=\"n\">f</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>and pretty much use <code>&lt;⇑&gt;</code> exclusively, so at least in theory it shouldn't come up. We'll see as I finish this file!</p>",
+        "id": 426475557,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1710396524
+    }
+]

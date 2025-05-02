@@ -1,0 +1,2678 @@
+[
+    {
+        "content": "<p>The fact that we don't have a type <code>{arr : Array A // arr.size = n}</code> is a consistent source of pain when doing monadic verification of code containing arrays. The <code>set</code> function can potentially change <code>arr.size</code>, so any time you are using <code>set</code> you need to carry around something saying actually the size is still what it was before so that you can still index into it with <code>Fin n</code> indices. This code is often not just in the verification theorems but also in the code itself, either because it wants to use the non-panicking array indexing function <code>Array.get</code> or because some property is needed about the contents of the array (necessarily stated only over the elements actually in the array) in order to prove termination. Examples of this include <code>UnionFind</code> and <code>HashMap</code> from Std, as well as some larger software verification projects I've been working on, or most recently <a href=\"#narrow/stream/270676-lean4/topic/Checking.20the.20Goldbach.20conjecture/near/429974832\">this example</a> of doing proofs about do notation, which was supposed to be exemplary but ended up being something kind of embarrassing to show.</p>\n<p>Defining the type and operations should be relatively straightforward: I mean it to be exactly that subtype (or possibly a structure), and all operations are just filtered through. Code performance should be the same as Array, except that some functions pass <code>n</code> unnecessarily. Inlining should hopefully mitigate this issue.</p>\n<p>Another possible improvement is to use a representation that avoids duplicate information by not storing the length. However:</p>\n<ul>\n<li>This would require changes to the runtime and compiler, and my sense is that this is a way to ensure it won't happen for 1+ year</li>\n<li>Although the title says \"Arrays with fixed length\", the length here isn't really \"fixed\", it's only counted externally; one can still have a <code>push</code> method and we do not want to lose the dynamic array doubling behavior, so keeping the capacity and length separate is desirable.</li>\n<li>The runtime does not have type information, so we need to store both capacity and length in the runtime value regardless, so that the right objects are destroyed when an array object is freed.</li>\n</ul>\n<p>Regarding the name, I don't have any good ideas. <code>CArray A n</code> was used in the previous discussion on <a href=\"#narrow/stream/348111-std4/topic/Fin.20basics/near/369966462\">dependent arrays</a> (which is a separate thing). In any case I'd like to get this in std soonish. Thoughts? <span class=\"user-mention\" data-user-id=\"110994\">@Joe Hendrix</span> <span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span></p>",
+        "id": 430163070,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711660371
+    },
+    {
+        "content": "<p>Yes, please.</p>\n<p>Although I found that where I wanted such arrays, I quickly also wanted a variant where the element type can depend on their position, when nesting them. But I guess that digresses the thread…</p>",
+        "id": 430165578,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1711661680
+    },
+    {
+        "content": "<p>yes, that would be the \"dependent array\" case</p>",
+        "id": 430165659,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711661729
+    },
+    {
+        "content": "<p>that one has some additional runtime implications though (you can't get inline layout if all the types in the array are different)</p>",
+        "id": 430165793,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711661783
+    },
+    {
+        "content": "<p>my current way of handling such cases with regular arrays (when the \"underlying type\" is actually the same, i.e. no storing a <code>Nat</code> next to a <code>String</code>) is to have a hypothesis on the side saying the property that holds of every element of the array</p>",
+        "id": 430165876,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711661827
+    },
+    {
+        "content": "<p>I think this is common enough that it could go in Lean itself.  I discussed the homogenous case with Scott yesterday since it was useful for a formalization of AES.  Here's a link to that <a href=\"https://github.com/joehendrix/lean-aes/blob/main/AES/Vec.lean\">implementation</a> if folks are interested and AES using it is <a href=\"https://github.com/joehendrix/lean-aes/blob/main/AES/Spec.lean\">here</a>.</p>",
+        "id": 430166031,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1711661911
+    },
+    {
+        "content": "<p>Is it going to be used in lean?</p>",
+        "id": 430166096,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711661953
+    },
+    {
+        "content": "<p>Potentially, but that's just at the discussion stage.</p>\n<p>I've had some discussions (including with you) where we upstream more data structures to reduce duplication and improve consistency (e.g., unify <code>Std.HashMap</code> and <code>Lean.HashMap</code>).</p>\n<p>Another factor is that <code>Vector</code> and <code>BitVec</code> should use consistent names and lemmas and it may be easier if they are in the same package.</p>",
+        "id": 430166697,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1711662290
+    },
+    {
+        "content": "<p>I think that if we upstream it at all we should do so later after the API is settled</p>",
+        "id": 430166788,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711662340
+    },
+    {
+        "content": "<p>This is definitely needed. However, <code>Subarray</code> already has most of the required features and some extra (and some bugs). So why not just overhaul <code>Subarray</code>?</p>\n<p>I've often thought that maybe <code>Subarray</code> should be the main array type and <code>Array</code> should be a low-level array-storage type.</p>",
+        "id": 430166913,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1711662402
+    },
+    {
+        "content": "<blockquote>\n<p>Another factor is that Vector and BitVec should use consistent names and lemmas and it may be easier if they are in the same package.</p>\n</blockquote>\n<p>This is completely unrelated, we can name them whatever in whatever repo they end up in. Besides this, I would say that <code>BitVec</code> is the outlier here, all of the array like types are called <code>Array</code> except for <code>BitVec</code></p>",
+        "id": 430167326,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711662624
+    },
+    {
+        "content": "<p>I'm not against the name <code>Vector</code>, but it may be problematic for mathlib which has actual vector spaces and may not like us taking the name for something else</p>",
+        "id": 430167535,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711662725
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"119741\">@François G. Dorais</span> <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Subarray#doc\">docs#Subarray</a> has the complexity that it contains elements outside the range, so it doesn't have the right extensionality lemma. I think it's necessary that <code>Subarray</code> work like this, because it's supposed to be an inexpensive view into an <code>Array</code>.</p>\n<p>There's a way around this by using a <code>Quot</code>, but that adds a lot of complexity.</p>\n<p>There are also the issue that <code>Subarray</code> doesn't expose the length of the subarray as a parameter, which I don't think you'd want to have exposed that way.</p>",
+        "id": 430168216,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1711663108
+    },
+    {
+        "content": "<p>Mathlib has made do with <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Vector#doc\">docs#Vector</a> referring to <code>List</code>s of fixed length forever, so I don't think that's a concern</p>",
+        "id": 430168236,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1711663123
+    },
+    {
+        "content": "<p>you also can't <code>push</code> to a <code>Subarray</code></p>",
+        "id": 430168251,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711663134
+    },
+    {
+        "content": "<p>let's move the discussion about movement from Std to Init to another topic</p>",
+        "id": 430168305,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711663169
+    },
+    {
+        "content": "<p>I noticed was that once one has arrays with external lengths, one often needs matrices quickly afterwards.  Matrices seem like an addition that should be deferred though.</p>",
+        "id": 430168788,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1711663406
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/348111-std4/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/430165793\">said</a>:</p>\n<blockquote>\n<p>that one has some additional runtime implications though (you can't get inline layout if all the types in the array are different)</p>\n</blockquote>\n<p>With inline layout, do you mean a packed non-pointer representation? Do we have that in lean arrays now?</p>",
+        "id": 430172650,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1711665696
+    },
+    {
+        "content": "<p>No, only <code>ByteArray</code> and <code>FloatArray</code> have this power right now afaik</p>",
+        "id": 430175449,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1711667284
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/348111-std4/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/430168216\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"119741\">François G. Dorais</span> <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Subarray#doc\">docs#Subarray</a> has the complexity that it contains elements outside the range, so it doesn't have the right extensionality lemma. I think it's necessary that <code>Subarray</code> work like this, because it's supposed to be an inexpensive view into an <code>Array</code>.</p>\n</blockquote>\n<p>Indeed, I didn't flesh out my thoughts here. You're right that <code>Subarray</code> is not a perfect alternative to fixed-length arrays. They do need an overhaul because they are currently not \"an inexpensive view into an <code>Array</code>\" because of bugs like <a href=\"https://github.com/leanprover/lean4/pull/2360\">lean4#2360</a>.</p>\n<p>My second sentence is the one I should have fleshed out more. The idea is to move the current <code>Array</code> to a more bare-bones type, probably unsafe, not for direct public consumption, that just handles memory storage operations. And then have the actual public <code>Array</code> be implemented more like <code>Subarray</code>, with more transparent operations where it is visible when a copy can or cannot happen and where operations like <code>set</code> transparently don't modify <code>size</code>.</p>\n<p>That said, this is along the same lines as Mario's \"Another possible improvement\" from above, so not for immediate consideration.</p>\n<blockquote>\n<p>There are also the issue that <code>Subarray</code> doesn't expose the length of the subarray as a parameter, which I don't think you'd want to have exposed that way.</p>\n</blockquote>\n<p>I believe this is what computed fields are for.</p>",
+        "id": 430177037,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1711668296
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"395550\">Henrik Böving</span> <a href=\"#narrow/stream/348111-std4/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/430175449\">said</a>:</p>\n<blockquote>\n<p>No, only <code>ByteArray</code> and <code>FloatArray</code> have this power right now afaik</p>\n</blockquote>\n<p>But the infrastructure for more scalar arrays is already there. I once played with implementing different scalar arrays (e.g. native <code>UInt*</code> arrays). It is possible but tricky to do well from outside core.</p>",
+        "id": 430177379,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1711668498
+    },
+    {
+        "content": "<p>/poll What should the name be for arrays of fixed size?<br>\nCArray<br>\nArray'<br>\nArray (and change the core type to something else)<br>\nDArray<br>\nVec<br>\nVector</p>",
+        "id": 430188516,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711676530
+    },
+    {
+        "content": "<p>What's the <code>D</code> in <code>DArray</code>?</p>",
+        "id": 430190230,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1711677948
+    },
+    {
+        "content": "<p>dependent, as in \"dependent type over length\"</p>",
+        "id": 430190302,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711677982
+    },
+    {
+        "content": "<p>It's a dependent type the same way <code>Fin n</code> is</p>",
+        "id": 430190323,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711678005
+    },
+    {
+        "content": "<p>but it has an unfortunate collision with the other way that arrays could be dependent, i.e. storing different types in each slot of the array</p>",
+        "id": 430190354,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711678040
+    },
+    {
+        "content": "<p>Note that the lean 3 name of this type is <code>array</code>; the type now called <code>Array</code> was called <code>buffer</code> and they were defined in the opposite order, with <code>buffer α := Σ n, array α n</code></p>",
+        "id": 430190451,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711678136
+    },
+    {
+        "content": "<p>Interesting historical note. Thank you! I think I would prefer it the old way but that would mean a major runtime overhaul, so not anytime soon.</p>",
+        "id": 430191637,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1711679195
+    },
+    {
+        "content": "<p>I’d reserve <code>DArray</code> for the index-dependent version</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">DArray</span> <span class=\"o\">(</span><span class=\"n\">size</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span>  <span class=\"o\">(</span><span class=\"n\">i</span> <span class=\"o\">:</span> <span class=\"n\">Fin</span> <span class=\"n\">size</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">_</span>\n</code></pre></div>\n<p>(Or <code>DVector</code> if the above becomes <code>Vector</code>)</p>",
+        "id": 430236741,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1711708850
+    },
+    {
+        "content": "<p>At the risk of even more bike-shedding: Do we want to think about what the name should be for <code>List</code>s of fixed length as well? These are currently called <code>Vector</code> in mathlib, which conflicts with the most popular option of the poll.</p>",
+        "id": 430263994,
+        "sender_full_name": "Alex Keizer",
+        "timestamp": 1711722457
+    },
+    {
+        "content": "<p>If we want to copy C++, then Vector  (or Vec to match rust) should be the variable-length array and Array should be the fixed length one</p>",
+        "id": 430323344,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1711749632
+    },
+    {
+        "content": "<p>well, even the fixed length one isn't really an Array in the C++ sense</p>",
+        "id": 430323396,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711749670
+    },
+    {
+        "content": "<p>because it's not actually fixed length, it has all the same dynamic array behaviors as the other type</p>",
+        "id": 430323442,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711749695
+    },
+    {
+        "content": "<p>there is still potentially some space for an actual fixed size Array type like the haskell type</p>",
+        "id": 430323525,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1711749727
+    },
+    {
+        "content": "<p>That distinction is mostly about whether the data lives on the stack vs the heap, which is not a thing at all for us. As Mario points out, mathlibs <code>Vector</code> is not fixed-length, it is statically-known length. I'd say in this case we shouldn't worry too much about mirroring C++'s Array vs Vector distinction</p>",
+        "id": 430580477,
+        "sender_full_name": "Alex Keizer",
+        "timestamp": 1711971489
+    },
+    {
+        "content": "<p>I don't agree that C++'s array vs vector is stack vs heap; <code>unique_ptr&lt;array&lt;T,n&gt;&gt;</code> lives on the heap, and <code>std::vector&lt;T,customalloc&gt;</code> can (probably) live on the stack.</p>",
+        "id": 430581475,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1711972125
+    },
+    {
+        "content": "<p>Ah, I guess my understanding of C++ was flawed</p>",
+        "id": 430590789,
+        "sender_full_name": "Alex Keizer",
+        "timestamp": 1711977158
+    },
+    {
+        "content": "<p>I propose we go forward with the name <code>Vector</code>, unless others object, cc: <span class=\"user-mention\" data-user-id=\"110994\">@Joe Hendrix</span> <span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> . I'll try to open a PR based on Joe's code today or tomorrow and add some lemmas.</p>\n<p>As for the mathlib type of the same name, I think it won't be too bad to rename it since mathlib also has \"vector2\" and \"vector3\" (I think vector2 got deleted at some point though). We can open a topic on <a class=\"stream\" data-stream-id=\"287929\" href=\"/#narrow/stream/287929-mathlib4\">#mathlib4</a> to discuss it</p>",
+        "id": 430678545,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712012742
+    },
+    {
+        "content": "<p>What's the origin of the \"vector\" terminology for fixed length? Rust, C++, Go, and Haskell all seem to use <code>Vector</code> for dynamic-length objects.</p>",
+        "id": 430679330,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712013161
+    },
+    {
+        "content": "<p><code>vector2</code> never existed as a type; <code>data/vector2.lean</code> was a file about <code>Vector</code> that couldn't call itself <code>data.vector</code> because this clashed with a file of the same name in core.</p>",
+        "id": 430679515,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712013303
+    },
+    {
+        "content": "<p>this is a dynamic length object though, that's what my point was above</p>",
+        "id": 430679634,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712013399
+    },
+    {
+        "content": "<p>I'm not even sure I would call it a type with \"statically-known length\", because in dependent type theory everything is a bit wishy washy regarding the static/dynamic dichotomy (one of the reasons compiling DTT to something other than a uniform object model is hard)</p>",
+        "id": 430679696,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712013463
+    },
+    {
+        "content": "<p>I guess my question is really then \"is there any precedent for using the combination of the names <code>Array</code> and <code>Vector</code> in this way\"?</p>",
+        "id": 430679703,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712013468
+    },
+    {
+        "content": "<p>Another point in favor of using <code>Vector</code> for the fixed length array type instead of the dynamic length one is that arrays of length n actually form a vector space (assuming the elements of the array are a ring or module), unlike dynamic length arrays (you have to do something funny with truncating or extending to fit if you want to add arrays of different sizes, and this process means that the space of <em>all</em> <code>Array A</code> is not a vector space without either subtyping it or quotienting it first).</p>",
+        "id": 430680354,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712013931
+    },
+    {
+        "content": "<p>In fact, I believe the obvious vector space structure on <code>Vector A n</code> is exactly how the word \"vector\" first came to be associated with these long lists of numbers in computing (I'm thinking of examples like vector registers). Things like <code>std::vector&lt;T&gt;</code> are then so named because they \"generalize\" the concept of these fixed length lists, in the process losing the \"vector space\" part</p>",
+        "id": 430680614,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712014121
+    },
+    {
+        "content": "<p>Apparently in C++</p>\n<blockquote>\n<p>It's called a vector because Alex Stepanov, the designer of the Standard Template Library, was looking for a name to distinguish it from built-in arrays. He admits now that he made a mistake, because mathematics already uses the term 'vector' for a fixed-length sequence of numbers. C++11 compounds this mistake by introducing a class 'array' that behaves similarly to a mathematical vector.</p>\n</blockquote>",
+        "id": 430680748,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712014238
+    },
+    {
+        "content": "<p>Should the titular object be called <code>Array.Vector</code> to leave room for <code>List.Vector</code>? Perhaps the former could be exported to allow <code>Vector</code> to refer to it?</p>",
+        "id": 430680949,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712014390
+    },
+    {
+        "content": "<p>yeah I was hoping we would get a name that generalizes more clearly to the list case</p>",
+        "id": 430680998,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712014432
+    },
+    {
+        "content": "<p>I was thinking of proposing something like <code>LVector</code> for the mathlib type</p>",
+        "id": 430681064,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712014460
+    },
+    {
+        "content": "<p>We don't have much precedent for putting types in the namespace of other types when they are both top level data structures like this</p>",
+        "id": 430681125,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712014517
+    },
+    {
+        "content": "<p>String.Pos comes to mind, but \"top level\" is somewhat subjective</p>",
+        "id": 430681425,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712014690
+    },
+    {
+        "content": "<p>There are examples which are like preconditions or properties on their parent (e.g. <code>HashMap.WF</code>), but in such cases there is usually a clear hierarchy between the notions</p>",
+        "id": 430681503,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712014757
+    },
+    {
+        "content": "<p>same thing with <code>String.Pos</code>, which although it does not itself have a type dependent over <code>String</code>, is only usable via methods in the <code>String</code> namespace and really only carries semantics with respect to a string (not even the type <code>String</code> but a particular string. Unfortunately the type doesn't really help with getting this association right).</p>",
+        "id": 430681742,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712014912
+    },
+    {
+        "content": "<p>with <code>Vector</code> the idea is really that you can use the API without ever having to have or refer to an <code>Array</code></p>",
+        "id": 430681852,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712014978
+    },
+    {
+        "content": "<p>But more than anything else, I'm most interested in getting all the comments about the name out now so that we aren't blocked on it for too long. Having the type itself in some form is more important than getting the name right, and while I would prefer not to think about what a pain renaming it would be there are already name changes of similar impact in the pipeline, waiting for that time when core gets a naming czar or otherwise finds a way around the current stalemate.</p>",
+        "id": 430682361,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712015353
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/348111-std4/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/430679330\">said</a>:</p>\n<blockquote>\n<p>What's the origin of the \"vector\" terminology for fixed length? Rust, C++, Go, and Haskell all seem to use <code>Vector</code> for dynamic-length objects.</p>\n</blockquote>\n<p>I've seen Idris also use \"Vector\" for this type. <a href=\"http://A%20standard%20example%20of%20a%20dependent%20data%20type%20is%20the%20type%20of%20“lists%20with%20length”,%20conventionally%20called%20vectors%20in%20the%20dependent%20type%20literature\">Their docs</a> say:</p>\n<blockquote>\n<p>A standard example of a dependent data type is the type of “lists with length”, conventionally called vectors in the dependent type literature.</p>\n</blockquote>",
+        "id": 430754971,
+        "sender_full_name": "Alex Keizer",
+        "timestamp": 1712052253
+    },
+    {
+        "content": "<p>So there is precedent for the use of Vector, at least. Not sure about the Array part</p>",
+        "id": 430755067,
+        "sender_full_name": "Alex Keizer",
+        "timestamp": 1712052289
+    },
+    {
+        "content": "<p>I would have preferred we use the name <code>Array</code> for non-dynamic arrays (we don't have these in lean right now, but the API would be something like Haskell's <code>Array</code> type)</p>",
+        "id": 430755256,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712052360
+    },
+    {
+        "content": "<p>In my library, I use <code>ArrayN</code>, <code>ListN</code> and <code>DataArrayN</code> which are all variants with the size specified in the type. I personally prefer suffix from prefix as it helps with discoveribility together with autocomplete. (<code>DataArray</code> is an array that stores only types with fixed byte size and uses one contiguous block of memory)</p>",
+        "id": 430800310,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1712067315
+    },
+    {
+        "content": "<p>Also I do not index them by <code>Fin n</code> but by a generic type <code>I</code> which has an instance of <code>IndexType I</code>(class from LeanColls)</p>",
+        "id": 430801123,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1712067556
+    },
+    {
+        "content": "<p>you can add your suggestion to the list, but I guess it's probably past the initial rush at this point</p>",
+        "id": 430803847,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712068377
+    },
+    {
+        "content": "<p>also keep in mind that if we did use those names then you'd have to change the name of your structures, since this one definitely won't be using <code>IndexType</code></p>",
+        "id": 430804021,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712068440
+    },
+    {
+        "content": "<p>Using <code>Vector</code> for this in lean, will that set precedence for “We are happy to use names in their common non-mathematical, possibly CS inspired sense, even if it overlaps with a common mathematics terms”? I might expect some beginners approach lean and mathlib from the math side might be a bit surprised that there is a <code>Vector</code> that has very little to do with the mathematical notion with that name. (Probably not a big deal, but I’d like to highlight it here.)</p>",
+        "id": 430862636,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1712087605
+    },
+    {
+        "content": "<p>I think the discussion just above indicates the opposite? C++ is the one that \"got it wrong\", as the quote from Stepanov above indicates, and although we clearly arrived at the opposite naming by some different path-dependence, that seems better on the whole for us</p>",
+        "id": 430862952,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712087724
+    },
+    {
+        "content": "<p>Granted, <code>Vector</code> is still only loosely related to vector spaces and still has a significant CS bent, but it seems reasonable for a language straddling the verified software / theorem proving boundary like Lean</p>",
+        "id": 430863273,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712087842
+    },
+    {
+        "content": "<p>I don't expect us to actually have a <code>VectorSpace R (Vector R n)</code> instance, although I suppose it's conceivable</p>",
+        "id": 430863359,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712087878
+    },
+    {
+        "content": "<p>But if we view this as a diff from current lean/std/mathlib, it's actually not that big: <code>Vector A n</code> from mathlib got upstreamed along with an implementation-detail data structure swap of <code>List</code> to <code>Array</code> for better performance</p>",
+        "id": 430863912,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712088084
+    },
+    {
+        "content": "<p>and another type <code>Vector2 A n</code> (name TBD) was added to mathlib with the old implementation for backward compatibility</p>",
+        "id": 430863995,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712088111
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"481133\">Alex Keizer</span> <a href=\"#narrow/stream/348111-std4/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/430263994\">said</a>:</p>\n<blockquote>\n<p>Do we want to think about what the name should be for <code>List</code>s of fixed length as well?</p>\n</blockquote>\n<p>i personally quite like having a single <a href=\"https://gallicch.io/LeanColls/docs/LeanColls/Data/Transformer/FixSize.html#LeanColls.FixSize\">FixSize</a> transformer that works for any collection that has a <a href=\"https://gallicch.io/LeanColls/docs/LeanColls/Classes/Ops.html#LeanColls.Size\"><code>size</code></a>, but this is all part of the LeanColls abstraction brainrot...</p>",
+        "id": 430898089,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1712105169
+    },
+    {
+        "content": "<p>I am a little surprised how much discussion there is on this.  <code>Vector</code> is used <a href=\"https://coq.inria.fr/doc/V8.17.1/stdlib/Coq.Vectors.VectorDef.html\">in Coq</a>.  I used <code>Vec</code> in the code linked above since AES (and other crypto) tends to need that type a lot and a concise name was useful.  The AES specification came from Cryptol which uses <code>[n]tp</code> to denote a vector of length <code>n</code> with elements of type <code>tp</code>, but that notation doesn't work in Lean.</p>\n<p>My personal preference is <code>Vector</code> or <code>Vec</code> since that terminology is fairly widely and teven if there is no explicit vector space, they are closely related to vectors in a mathematical sense.</p>",
+        "id": 430919341,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1712120258
+    },
+    {
+        "content": "<p>I'm happy with Vector.</p>",
+        "id": 430924491,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1712123978
+    },
+    {
+        "content": "<p>The usage of Vector in Mathlib is fairly incidental and if there are any collisions Mathlib can move.</p>",
+        "id": 430924513,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1712123999
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110994\">@Joe Hendrix</span> The <code>Vector</code> used in Coq is not the same. It is actually a type we use frequently as an example of an inductive family, but we don't actually define it in mathlib (IIRC), this is what one of the vector2 vector3 types was about. It has some aspects that make it less desirable than mathlib's <code>Vector</code> type, but it has approximately the same layout: a linked list, but with length stored in each node in addition. This is isomorphic to the fixed-length array type being proposed here but quite different in its implementation. The Coq type is:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">inductive</span> <span class=\"n\">Vector</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"bp\">→</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span>\n  <span class=\"bp\">|</span> <span class=\"n\">nil</span> <span class=\"o\">:</span> <span class=\"n\">Vector</span> <span class=\"n\">α</span> <span class=\"mi\">0</span>\n  <span class=\"bp\">|</span> <span class=\"n\">cons</span> <span class=\"o\">:</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">Vector</span> <span class=\"n\">α</span> <span class=\"n\">n</span> <span class=\"bp\">→</span> <span class=\"n\">Vector</span> <span class=\"n\">α</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"bp\">+</span> <span class=\"mi\">1</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 430939564,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712130843
+    },
+    {
+        "content": "<p>The type <code>[n]tp</code> in Cryptol, IIUC, is most similar to C++ <code>std::array&lt;T, N&gt;</code> or rust <code>[T; N]</code>, which is to say a non-dynamic array with a statically known size. quoting from \"Programming Cryptol\":</p>\n<blockquote>\n<p>This is probably obvious, but there is no way to get a value variable to appear in a type context. Types must be<br>\nknown at “compile time,” and (non-literal) values are not, so there is no way to use them in that way.</p>\n</blockquote>\n<p>In other words, although you can use \"constexpr\" style evaluation inside the size of an array, it's not truly a dependent type, and it is fixed at compile time.</p>",
+        "id": 430940679,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712131223
+    },
+    {
+        "content": "<p>Now I'm not <em>too</em> fussed about this difference in semantics between Lean and other languages with compile-time const generics that look vaguely DTT-like at first glance, because Lean does not really have \"constexpr\" (although maybe it might get it someday when the compiler gets good <span aria-label=\"tm\" class=\"emoji emoji-2122\" role=\"img\" title=\"tm\">:tm:</span> ), but I would say it is at least a concern worth registering that we are potentially blocking a future type that will want this \"Vector\" name which is closer to the vector type in the aforementioned languages.</p>",
+        "id": 430941223,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712131385
+    },
+    {
+        "content": "<p>What's the latest news on this? Is there a decision to include  arrays with static length?</p>",
+        "id": 438122568,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715448099
+    },
+    {
+        "content": "<p>awaiting implementation</p>",
+        "id": 438122610,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715448125
+    },
+    {
+        "content": "<p>In what ways should this be different from the <code>Vector a n</code> type in Mathlib?</p>",
+        "id": 438122662,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715448225
+    },
+    {
+        "content": "<p>isomorphic, but based on arrays instead of lists</p>",
+        "id": 438122711,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715448249
+    },
+    {
+        "content": "<p>Okay. I can get cracking on this. It will be useful for fair division problems. I need a faster vector type to manipulate allocations</p>",
+        "id": 438122760,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715448346
+    },
+    {
+        "content": "<p>And also for some circuit reasoning</p>",
+        "id": 438123204,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715448938
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>  : Should I pick the name Vector?</p>",
+        "id": 438123758,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715449635
+    },
+    {
+        "content": "<p>I have started a PR at <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span></p>",
+        "id": 438140470,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715469128
+    },
+    {
+        "content": "<p>It is by no means complete, but it attempts to be a \"port\" of Mathlib.Data.Vector as much as possible. Most (all?) remaining errors are due to Mathlib dependencies</p>",
+        "id": 438140492,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715469186
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 438140558,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715469287
+    },
+    {
+        "content": "<p>The only remaining errors are in <code>Section Accum</code>. I am guessing it might make sense to add <code>toArray</code> versions of the <code>toList</code> theorems.</p>",
+        "id": 438141347,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715470445
+    },
+    {
+        "content": "<p>I would also like to move everything under <code>### Basic Theorems</code> to the corresponding Lemmas.lean file. Additionally there is the question of whether the list based definitions of functions should be changed to use Array functions where possible.</p>",
+        "id": 438141442,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715470568
+    },
+    {
+        "content": "<p>I want to ask first whether all this is fine, before making any further changes.</p>",
+        "id": 438141452,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715470587
+    },
+    {
+        "content": "<p>Make sure to looks at Joe's existing code <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/430166031\">https://leanprover.zulipchat.com/#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/430166031</a> above.</p>",
+        "id": 438161285,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715494422
+    },
+    {
+        "content": "<p>The name decision seems to be have been (in favour of Vector) at <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/430188516\">https://leanprover.zulipchat.com/#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/430188516</a>.</p>",
+        "id": 438161338,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715494449
+    },
+    {
+        "content": "<p>Does it make sense to upstream Vector as-is first, so that it can be replaced in-place (producing a clearer diff)?</p>",
+        "id": 438167333,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1715501343
+    },
+    {
+        "content": "<p>It's annoying when upstreaming causes my code to break, and there is no diff to look at that suggests why (beyond the file being completely deleted)</p>",
+        "id": 438167431,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1715501440
+    },
+    {
+        "content": "<p>I wasn't really thinking of this being an upstreaming of mathlib's <code>Vector</code> type. I think the natural operations are a bit different when using lists vs arrays</p>",
+        "id": 438167887,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715501983
+    },
+    {
+        "content": "<p>I am trying to salvage as much as possible since you mentioned that you wanted them isomorphic</p>",
+        "id": 438167953,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502020
+    },
+    {
+        "content": "<p>In this case it most certainly is not such an upstreaming because the underlying type and defeqs are changing. The mathlib <code>Vector</code> type will stay as it is, except for a rename</p>",
+        "id": 438167974,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502048
+    },
+    {
+        "content": "<p>Is anybody actually using the mathlib <code>Vector</code>?</p>",
+        "id": 438167990,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715502082
+    },
+    {
+        "content": "<p>not really</p>",
+        "id": 438167995,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502087
+    },
+    {
+        "content": "<p>sources of inspiration for the API include mathlib's <code>Vector</code>, the <code>Array</code> API, and Joe's <code>Vec</code></p>",
+        "id": 438168053,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502129
+    },
+    {
+        "content": "<p>My next goal is to change existing operations from list to array operations where there are complexity speedups for doing so or where proofs can be repaired to work easily</p>",
+        "id": 438168077,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502168
+    },
+    {
+        "content": "<p>I don't know if it makes sense to array-fy List.replicate for example.</p>",
+        "id": 438168102,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502191
+    },
+    {
+        "content": "<p>I'm confused, what is the definition of <code>Vector</code> in your PR?</p>",
+        "id": 438168109,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502208
+    },
+    {
+        "content": "<p>Array whose size is equal to n</p>",
+        "id": 438168119,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502225
+    },
+    {
+        "content": "<p>So in that case all the ops should be array ops, no?</p>",
+        "id": 438168126,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502241
+    },
+    {
+        "content": "<p>I initially made everything work with the underlying list to check what works. Then I replaced a few operations with array. Doing the same for the remaining ones next</p>",
+        "id": 438168201,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502294
+    },
+    {
+        "content": "<p>The actual implementation should not be using <code>Array.mk</code> and <code>Array.toList</code> in most cases</p>",
+        "id": 438168229,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502317
+    },
+    {
+        "content": "<p>these are expensive operations</p>",
+        "id": 438168245,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502341
+    },
+    {
+        "content": "<p>Yeah, hence replacing them one by one</p>",
+        "id": 438168305,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502366
+    },
+    {
+        "content": "<p>And then going around fixing all the proofs that break</p>",
+        "id": 438168315,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502382
+    },
+    {
+        "content": "<p>I think it would be easier to just take array operations and tuple them with theorems about what they do to the size</p>",
+        "id": 438168324,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502392
+    },
+    {
+        "content": "<p>Before I go further, there is a part of the file adapted from Mathlib's vector that won't work because of mathlib dependencies. Should I comment those out for now, or should their upstreaming also happen in this PR?</p>",
+        "id": 438168409,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502483
+    },
+    {
+        "content": "<p>What part?</p>",
+        "id": 438168445,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502497
+    },
+    {
+        "content": "<p>The part under <code>section Accum</code></p>",
+        "id": 438168458,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502518
+    },
+    {
+        "content": "<p>There are a couple of lemmas from linear orders</p>",
+        "id": 438168487,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502558
+    },
+    {
+        "content": "<p>And the definition of mapAccumr</p>",
+        "id": 438168492,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502571
+    },
+    {
+        "content": "<p>Why does mapAccumr need theorems?</p>",
+        "id": 438168513,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502600
+    },
+    {
+        "content": "<p>Not sure it does.</p>",
+        "id": 438168572,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502620
+    },
+    {
+        "content": "<p>All the theorems should be removed from <code>Batteries.Data.Vector.Basic</code> and moved to <code>Batteries.Data.Vector.Lemmas</code></p>",
+        "id": 438168606,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502672
+    },
+    {
+        "content": "<p>Okay. Got it. That was another of my questions</p>",
+        "id": 438168616,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502691
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"387244\">@Yaël Dillies</span> : I tried using it, but it is API-wise not as good as Array</p>",
+        "id": 438168677,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502746
+    },
+    {
+        "content": "<p>make sure you don't copy the bad API decisions too...</p>",
+        "id": 438168711,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502807
+    },
+    {
+        "content": "<p>Okay, maybe I read too much into the word isomorphic up there</p>",
+        "id": 438168758,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502844
+    },
+    {
+        "content": "<p>Should there also be induction theorems based on indices</p>",
+        "id": 438168778,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502858
+    },
+    {
+        "content": "<p>And translations to some for of multiset of items in the array?</p>",
+        "id": 438168786,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502872
+    },
+    {
+        "content": "<p>You mean like an ext lemma? Yes</p>",
+        "id": 438168799,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502887
+    },
+    {
+        "content": "<p>(can we do that at the moment?)</p>",
+        "id": 438168800,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502887
+    },
+    {
+        "content": "<p>Sort of yes. I would also like an induction principle on array length</p>",
+        "id": 438168820,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502916
+    },
+    {
+        "content": "<p>Batteries doesn't have multisets and the vector structure isn't obviously helpful</p>",
+        "id": 438168823,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502924
+    },
+    {
+        "content": "<p>It's useful for algorithms to at least have sets</p>",
+        "id": 438168837,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715502946
+    },
+    {
+        "content": "<p>Ok but that's a separate discussion</p>",
+        "id": 438168886,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715502968
+    },
+    {
+        "content": "<p>There are match pattern functions like head and cons. Does it make sense to create and use array versions of them?</p>",
+        "id": 438168945,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715503048
+    },
+    {
+        "content": "<p>not really</p>",
+        "id": 438168954,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715503065
+    },
+    {
+        "content": "<p>head is fine</p>",
+        "id": 438169013,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715503099
+    },
+    {
+        "content": "<p>There are a couple of API defs in Prelude that seem to be primarily for use inside metaprogramming. Namely : </p>\n<ol>\n<li><code>Array.appendCore {α : Type u}  (as : Array α) (bs : Array α) : Array α</code></li>\n<li><code>Array.extract (as : Array α) (start stop : Nat) : Array α</code></li>\n</ol>\n<p>Do we want these definitions for <code>Vector</code>?</p>",
+        "id": 438180904,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715516124
+    },
+    {
+        "content": "<p>Isn't it better to have a slice structure on top of Array and Vector, and iterators  on top of them?</p>",
+        "id": 438181834,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715517189
+    },
+    {
+        "content": "<p>Another question: Where is the array notation defined?</p>",
+        "id": 438181903,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715517264
+    },
+    {
+        "content": "<p>extract yes, appendCore probably not</p>",
+        "id": 438181914,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715517285
+    },
+    {
+        "content": "<p>Added extract. Next I want to add array notation for vectors. Where is this notation defined?</p>",
+        "id": 438182619,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715518057
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/blob/7db8e6482e1dc46fd1070b3bf549112f02a4c05e/src/Init/Data/Array/Basic.lean#L548-L551\">https://github.com/leanprover/lean4/blob/7db8e6482e1dc46fd1070b3bf549112f02a4c05e/src/Init/Data/Array/Basic.lean#L548-L551</a></p>",
+        "id": 438183151,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715518608
+    },
+    {
+        "content": "<p>I made a quick adaptation of that syntax as below:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Batteries</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">Vector</span>\n<span class=\"kd\">def</span> <span class=\"n\">Vector</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span> <span class=\"bp\">//</span> <span class=\"n\">a.size</span> <span class=\"bp\">=</span> <span class=\"n\">n</span><span class=\"o\">}</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">  `fromArray (a : Array α)` produces a `Vector of the appropriate size</span>\n<span class=\"sd\">-/</span>\n<span class=\"kd\">def</span> <span class=\"n\">fromArray</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Vector</span> <span class=\"n\">α</span> <span class=\"o\">(</span><span class=\"n\">a.size</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"o\">⟨</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"kd\">by</span> <span class=\"n\">simp</span><span class=\"o\">⟩</span>\n\n<span class=\"n\">syntax</span> <span class=\"s2\">\"#v[\"</span> <span class=\"n\">withoutPosition</span><span class=\"o\">(</span><span class=\"n\">sepBy</span><span class=\"o\">(</span><span class=\"n\">term</span><span class=\"o\">,</span> <span class=\"s2\">\", \"</span><span class=\"o\">))</span> <span class=\"s2\">\"]\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n\n<span class=\"n\">macro_rules</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">#</span><span class=\"n\">v</span><span class=\"o\">[</span> <span class=\"bp\">$</span><span class=\"n\">elems</span><span class=\"o\">,</span><span class=\"bp\">*</span> <span class=\"o\">])</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">Vector.fromArray</span> <span class=\"bp\">#</span><span class=\"o\">[</span> <span class=\"bp\">$</span><span class=\"n\">elems</span><span class=\"o\">,</span><span class=\"bp\">*</span> <span class=\"o\">])</span>\n\n<span class=\"k\">#check</span> <span class=\"bp\">#</span><span class=\"n\">v</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span><span class=\"mi\">2</span><span class=\"o\">,</span><span class=\"mi\">3</span><span class=\"o\">,</span><span class=\"mi\">3</span><span class=\"o\">,</span><span class=\"mi\">4</span><span class=\"o\">,</span><span class=\"mi\">4</span><span class=\"o\">]</span>\n\n<span class=\"kd\">end</span> <span class=\"n\">Vector</span>\n</code></pre></div>",
+        "id": 438183997,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715519565
+    },
+    {
+        "content": "<p>That's an mwe. at the check one gets a line like this <code>fromArray #[1, 2, 3, 3, 4, 4] : Vector Nat #[1, 2, 3, 3, 4, 4].size</code></p>",
+        "id": 438184014,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715519605
+    },
+    {
+        "content": "<p>Is there a way to force that <code>size</code> in the type signature to evaluate?</p>",
+        "id": 438184019,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715519617
+    },
+    {
+        "content": "<p>you could expand to <code>Vector.mk (n := $(elems.size)) #[$elems,*] rfl</code></p>",
+        "id": 438184114,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715519720
+    },
+    {
+        "content": "<p>Error : </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">invalid</span> <span class=\"n\">field</span> <span class=\"bp\">'</span><span class=\"n\">size'</span><span class=\"o\">,</span> <span class=\"n\">the</span> <span class=\"n\">environment</span> <span class=\"n\">does</span> <span class=\"n\">not</span> <span class=\"n\">contain</span> <span class=\"bp\">'</span><span class=\"n\">Lean.Syntax.TSepArray.size'</span>\n<span class=\"n\">elems</span>\n<span class=\"n\">has</span> <span class=\"n\">type</span>\n<span class=\"n\">Lean.Syntax.TSepArray</span> <span class=\"bp\">`</span><span class=\"n\">term</span> <span class=\"s2\">\",\"</span><span class=\"n\">Lean</span> <span class=\"mi\">4</span>\n</code></pre></div>",
+        "id": 438184593,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715520218
+    },
+    {
+        "content": "<p>.getElems.size</p>",
+        "id": 438184689,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715520312
+    },
+    {
+        "content": "<p>Doesn't work. <code>size</code> isn't found. Isn't is simply Array.size from Init?</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Batteries.Data.Array</span>\n<span class=\"kn\">import</span> <span class=\"n\">Batteries.Data.List.Basic</span>\n<span class=\"kn\">import</span> <span class=\"n\">Batteries.Data.List.Lemmas</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">Vector</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Array</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">  `Vector α n` is an `Array α` whose size is statically fixed to `n`</span>\n<span class=\"sd\">-/</span>\n<span class=\"kd\">def</span> <span class=\"n\">Vector</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span> <span class=\"bp\">//</span> <span class=\"n\">a.size</span> <span class=\"bp\">=</span> <span class=\"n\">n</span><span class=\"o\">}</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">  `fromArray (a : Array α)` produces a `Vector α n` of the appropriate size</span>\n<span class=\"sd\">-/</span>\n<span class=\"kd\">def</span> <span class=\"n\">fromArray</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span><span class=\"o\">)</span>  <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">n</span> <span class=\"bp\">=</span> <span class=\"n\">a.size</span><span class=\"o\">):</span> <span class=\"n\">Vector</span> <span class=\"n\">α</span> <span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"o\">⟨</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"kd\">by</span> <span class=\"o\">{</span><span class=\"n\">simp</span><span class=\"o\">[</span><span class=\"n\">h</span><span class=\"o\">]}⟩</span>\n\n<span class=\"sd\">/--Syntax for `Vector α n`-/</span>\n<span class=\"n\">syntax</span> <span class=\"s2\">\"#v[\"</span> <span class=\"n\">withoutPosition</span><span class=\"o\">(</span><span class=\"n\">sepBy</span><span class=\"o\">(</span><span class=\"n\">term</span><span class=\"o\">,</span> <span class=\"s2\">\", \"</span><span class=\"o\">))</span> <span class=\"s2\">\"]\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n\n<span class=\"n\">macro_rules</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">#</span><span class=\"n\">v</span><span class=\"o\">[</span> <span class=\"bp\">$</span><span class=\"n\">elems</span><span class=\"o\">,</span><span class=\"bp\">*</span> <span class=\"o\">])</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">Vector.fromArray</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"n\">elems.getElems.size</span><span class=\"o\">)</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"bp\">$</span><span class=\"n\">elems</span><span class=\"o\">,</span><span class=\"bp\">*</span><span class=\"o\">]</span> <span class=\"n\">rfl</span><span class=\"o\">)</span>\n\n<span class=\"k\">#check</span> <span class=\"bp\">#</span><span class=\"n\">v</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span><span class=\"mi\">2</span><span class=\"o\">,</span><span class=\"mi\">3</span><span class=\"o\">,</span><span class=\"mi\">3</span><span class=\"o\">,</span><span class=\"mi\">4</span><span class=\"o\">,</span><span class=\"mi\">4</span><span class=\"o\">]</span> <span class=\"c1\">-- unknown identifier 'elems.getElems.size✝'</span>\n\n<span class=\"kd\">end</span> <span class=\"n\">Vector</span>\n</code></pre></div>",
+        "id": 438185008,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715520696
+    },
+    {
+        "content": "<p>you are missing the antiquotation</p>",
+        "id": 438185062,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715520727
+    },
+    {
+        "content": "<p>Now it works but the size function remains unreduced</p>",
+        "id": 438185265,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715520970
+    },
+    {
+        "content": "<p>?</p>",
+        "id": 438185274,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715520984
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Batteries.Data.Array</span>\n<span class=\"kn\">import</span> <span class=\"n\">Batteries.Data.List.Basic</span>\n<span class=\"kn\">import</span> <span class=\"n\">Batteries.Data.List.Lemmas</span>\n\n<span class=\"kn\">namespace</span> <span class=\"n\">Vector</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Array</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">  `Vector α n` is an `Array α` whose size is statically fixed to `n`</span>\n<span class=\"sd\">-/</span>\n<span class=\"kd\">def</span> <span class=\"n\">Vector</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:=</span> <span class=\"o\">{</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span> <span class=\"bp\">//</span> <span class=\"n\">a.size</span> <span class=\"bp\">=</span> <span class=\"n\">n</span><span class=\"o\">}</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">  `fromArray (a : Array α)` produces a `Vector α n` of the appropriate size</span>\n<span class=\"sd\">-/</span>\n<span class=\"kd\">def</span> <span class=\"n\">fromArray</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span><span class=\"o\">)</span>  <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">n</span> <span class=\"bp\">=</span> <span class=\"n\">a.size</span><span class=\"o\">):</span> <span class=\"n\">Vector</span> <span class=\"n\">α</span> <span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"o\">⟨</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"kd\">by</span> <span class=\"o\">{</span><span class=\"n\">simp</span><span class=\"o\">[</span><span class=\"n\">h</span><span class=\"o\">]}⟩</span>\n\n<span class=\"sd\">/--Syntax for `Vector α n`-/</span>\n<span class=\"n\">syntax</span> <span class=\"s2\">\"#v[\"</span> <span class=\"n\">withoutPosition</span><span class=\"o\">(</span><span class=\"n\">sepBy</span><span class=\"o\">(</span><span class=\"n\">term</span><span class=\"o\">,</span> <span class=\"s2\">\", \"</span><span class=\"o\">))</span> <span class=\"s2\">\"]\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">pp.proofs</span> <span class=\"n\">true</span>\n<span class=\"n\">macro_rules</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">#</span><span class=\"n\">v</span><span class=\"o\">[</span> <span class=\"bp\">$</span><span class=\"n\">elems</span><span class=\"o\">,</span><span class=\"bp\">*</span> <span class=\"o\">])</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">Vector.fromArray</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"bp\">$</span><span class=\"n\">elems</span><span class=\"o\">,</span><span class=\"bp\">*</span><span class=\"o\">]</span><span class=\"bp\">.</span><span class=\"n\">size</span><span class=\"o\">)</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"bp\">$</span><span class=\"n\">elems</span><span class=\"o\">,</span><span class=\"bp\">*</span><span class=\"o\">]</span> <span class=\"n\">rfl</span><span class=\"o\">)</span>\n\n<span class=\"k\">#check</span> <span class=\"bp\">#</span><span class=\"n\">v</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span><span class=\"mi\">2</span><span class=\"o\">,</span><span class=\"mi\">3</span><span class=\"o\">,</span><span class=\"mi\">3</span><span class=\"o\">,</span><span class=\"mi\">4</span><span class=\"o\">,</span><span class=\"mi\">4</span><span class=\"o\">]</span> <span class=\"c1\">-- can't reduce size</span>\n\n<span class=\"kd\">end</span> <span class=\"n\">Vector</span>\n</code></pre></div>",
+        "id": 438185293,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715521019
+    },
+    {
+        "content": "<p>Should I make it an explicit parameter?</p>",
+        "id": 438185310,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715521044
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"sd\">/--</span>\n<span class=\"sd\">  `Vector α n` is an `Array α` whose size is statically fixed to `n`</span>\n<span class=\"sd\">-/</span>\n<span class=\"kd\">structure</span> <span class=\"n\">Vector</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n  <span class=\"n\">toArray</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span>\n  <span class=\"n\">size_eq</span> <span class=\"o\">:</span> <span class=\"n\">toArray.size</span> <span class=\"bp\">=</span> <span class=\"n\">n</span>\n\n<span class=\"sd\">/--Syntax for `Vector α n` -/</span>\n<span class=\"n\">syntax</span> <span class=\"s2\">\"#v[\"</span> <span class=\"n\">withoutPosition</span><span class=\"o\">(</span><span class=\"n\">sepBy</span><span class=\"o\">(</span><span class=\"n\">term</span><span class=\"o\">,</span> <span class=\"s2\">\", \"</span><span class=\"o\">))</span> <span class=\"s2\">\"]\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n\n<span class=\"n\">macro_rules</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">#</span><span class=\"n\">v</span><span class=\"o\">[</span> <span class=\"bp\">$</span><span class=\"n\">elems</span><span class=\"o\">,</span><span class=\"bp\">*</span> <span class=\"o\">])</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">Vector.mk</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"bp\">$</span><span class=\"o\">(</span><span class=\"n\">quote</span> <span class=\"n\">elems.getElems.size</span><span class=\"o\">))</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"bp\">$</span><span class=\"n\">elems</span><span class=\"o\">,</span><span class=\"bp\">*</span><span class=\"o\">]</span> <span class=\"n\">rfl</span><span class=\"o\">)</span>\n\n<span class=\"k\">#check</span> <span class=\"bp\">#</span><span class=\"n\">v</span><span class=\"o\">[</span><span class=\"mi\">1</span><span class=\"o\">,</span><span class=\"mi\">2</span><span class=\"o\">,</span><span class=\"mi\">3</span><span class=\"o\">,</span><span class=\"mi\">3</span><span class=\"o\">,</span><span class=\"mi\">4</span><span class=\"o\">,</span><span class=\"mi\">4</span><span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 438185329,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715521073
+    },
+    {
+        "content": "<p>Thanks. This quotation syntax remains a bit of wizardry for me</p>",
+        "id": 438185407,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715521141
+    },
+    {
+        "content": "<p>I am now adding the <code>def</code>s in <code>Init.Data.Array.Basic</code>. This is a very large file, so I expect this task to take a few days.</p>",
+        "id": 438188184,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715523910
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 438195628,
+        "sender_full_name": "Frédéric Dupuis",
+        "timestamp": 1715531290
+    },
+    {
+        "content": "<p>I think it works be good to PR the deprecated tag to Mathlib's Vector<br>\nsooner rather than later.</p>",
+        "id": 438216068,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715552179
+    },
+    {
+        "content": "<p>I assumed this is going to Batteries, at least at first?</p>",
+        "id": 438216103,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715552232
+    },
+    {
+        "content": "<p>This PR is going to batteries. It is far from done. There is a lot of stuff from Arrays, theorems relating to both Arrays and toList, search, sort etc, that is to be added.</p>",
+        "id": 438216133,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715552272
+    },
+    {
+        "content": "<p>To be on the safer side I'd say this PR won't be done until next weekend, although I might bring it to feature parity with Array and Mathlib.Vector sooner than that</p>",
+        "id": 438216211,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715552323
+    },
+    {
+        "content": "<p>Once all the pieces are in place. There is some serious reorganisation needed. The defs have to be organised better. Array is spread out all over Init and batteries, and many docstrings are missing. For Vector I want to ensure that at least all defs have a docstring.</p>",
+        "id": 438216330,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715552458
+    },
+    {
+        "content": "<p>Also, at least two sections from The Mathlib Vector file depend on defs in Mathlib.</p>",
+        "id": 438216386,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715552524
+    },
+    {
+        "content": "<p>They can't be used as is for the Vector I am designing anyway, but the proofs for the Vector will probably have similar dependencies.</p>",
+        "id": 438216441,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715552601
+    },
+    {
+        "content": "<p>Is the name going to be <code>Batteries.Vector</code> or <code>_root_.Vector</code>?</p>",
+        "id": 438218174,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1715554755
+    },
+    {
+        "content": "<p>I am putting this in Batteries. It is upto maintainers to decide where it gets moved</p>",
+        "id": 438218193,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715554796
+    },
+    {
+        "content": "<p>Good question. I was initially leaning toward <code>_root_.Vector</code>, but then Batteries got booted from leanprover/ so I'm not so sure anymore. Most of the other data structures are in the Batteries namespace</p>",
+        "id": 438218417,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715555028
+    },
+    {
+        "content": "<p>It also solves the name clash issue, although not in a very satisfactory way</p>",
+        "id": 438218499,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715555121
+    },
+    {
+        "content": "<p>On the other hand this file will almost certainly be consumed by core once it matures, so putting it in <code>_root_</code> will mean one less rename later</p>",
+        "id": 438218593,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715555256
+    },
+    {
+        "content": "<p>Array has functions like <code>popWhile</code> and <code>takeWhile</code> for which no reasonable counterpart exists for <code>Vector a n</code>, because one wouldn't know the size of the output in advance</p>",
+        "id": 438218923,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715555656
+    },
+    {
+        "content": "<p>then skip them</p>",
+        "id": 438218930,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715555669
+    },
+    {
+        "content": "<p>Let me consult re: namespacing</p>",
+        "id": 438218944,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715555693
+    },
+    {
+        "content": "<p>There is general enthusiasm in the FRO for working on this as <code>Batteries.Vector</code> rather than <code>_root_.Vector</code>.</p>",
+        "id": 438249818,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715580199
+    },
+    {
+        "content": "<p>Is there a reason to use a subtype? Personally, I would use</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">structure</span> <span class=\"n\">Vector</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"kd\">extends</span> <span class=\"n\">Array</span> <span class=\"n\">α</span> <span class=\"n\">where</span>\n  <span class=\"n\">ofArray</span> <span class=\"o\">::</span>\n  <span class=\"n\">size_eq</span> <span class=\"o\">:</span> <span class=\"n\">toArray.size</span> <span class=\"bp\">=</span> <span class=\"n\">n</span>\n</code></pre></div>\n<p>to avoid indirection.</p>\n<p>Note that this allows to transport many <code>Array</code> ops cleanly and efficiently:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[</span><span class=\"n\">inline</span><span class=\"kd\">]</span> <span class=\"kd\">def</span> <span class=\"n\">Vector.push</span> <span class=\"o\">:</span> <span class=\"n\">Vector</span> <span class=\"n\">α</span> <span class=\"n\">n</span> <span class=\"bp\">→</span> <span class=\"n\">α</span> <span class=\"bp\">→</span> <span class=\"n\">Vector</span> <span class=\"n\">α</span> <span class=\"o\">(</span><span class=\"n\">n</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">)</span>\n  <span class=\"bp\">|</span> <span class=\"o\">⟨</span><span class=\"n\">a</span><span class=\"o\">,</span> <span class=\"n\">h</span><span class=\"o\">⟩,</span> <span class=\"n\">x</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">⟨</span><span class=\"n\">a.push</span> <span class=\"n\">x</span><span class=\"o\">,</span> <span class=\"n\">h</span> <span class=\"bp\">▸</span> <span class=\"n\">Array.size_push</span> <span class=\"bp\">..</span><span class=\"o\">⟩</span>\n</code></pre></div>\n<p>Quick style note: Batteries, like core, loves auto implicit, so <code>{α : Type u}</code> should be avoided.</p>",
+        "id": 438297155,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715586900
+    },
+    {
+        "content": "<p>Yes, should definitely be a structure.</p>",
+        "id": 438297562,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715587042
+    },
+    {
+        "content": "<p>(I should have read the entire thread rather than just the PR. I see that Mario (and now Kim) had a similar suggestion above.)</p>",
+        "id": 438297604,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715587060
+    },
+    {
+        "content": "<p>This is also possible with subtypes</p>",
+        "id": 438298691,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715587375
+    },
+    {
+        "content": "<p>I used it at a few places, but sometimes it is cleaner to write the proof separately</p>",
+        "id": 438298869,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715587427
+    },
+    {
+        "content": "<p>Oh wait, you mean indirection in memory access?</p>",
+        "id": 438299109,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715587509
+    },
+    {
+        "content": "<p>Why would there be more indirection with Subtypes? Subtypes are also structures</p>",
+        "id": 438299726,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715587720
+    },
+    {
+        "content": "<p>There's no difference since Subtype is very thin, but one advantage is that you can extend a structure.</p>",
+        "id": 438301533,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715588324
+    },
+    {
+        "content": "<p>It depends on the situation but I don't see the advantage of using Subtype here.</p>",
+        "id": 438301644,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715588372
+    },
+    {
+        "content": "<p>I used it for brevity and the fact that there will be all sorts of free instances</p>",
+        "id": 438301708,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715588395
+    },
+    {
+        "content": "<p>Coercion for one</p>",
+        "id": 438301722,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715588399
+    },
+    {
+        "content": "<p>Also, I use a subtype theorem in the proof of the <code>extAux</code> theorem</p>",
+        "id": 438302017,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715588488
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/438302017\">said</a>:</p>\n<blockquote>\n<p>Also, I use a subtype theorem in the proof of the <code>extAux</code> theorem</p>\n</blockquote>\n<p>Adding an <code>Equiv</code> with subtypes (in mathlib) makes this still possible</p>",
+        "id": 438302743,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1715588728
+    },
+    {
+        "content": "<p>I think the \"no subtypes\" ship already sailed with <code>Fin</code> no longer being a subtype</p>",
+        "id": 438302794,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1715588746
+    },
+    {
+        "content": "<p>Okay. I will probably refactor in the evening (it's morning where I am)</p>",
+        "id": 438303439,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715588973
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/438302743\">said</a>:</p>\n<blockquote>\n<p>Adding an <code>Equiv</code> with subtypes (in mathlib) makes this still possible</p>\n</blockquote>\n<p>Loogle suggests that <code>Equiv</code> is defined in <code>Mathlib</code> so I can't use it here.</p>",
+        "id": 438315638,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715592546
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"644391\">@loogle</span> Equiv</p>",
+        "id": 438315664,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715592554
+    },
+    {
+        "content": "<p><span aria-label=\"search\" class=\"emoji emoji-1f50d\" role=\"img\" title=\"search\">:search:</span> <a href=\"https://leanprover-community.github.io/mathlib4_docs/Mathlib/Logic/Equiv/Defs.html#Equiv\">Equiv</a>, <a href=\"https://leanprover-community.github.io/mathlib4_docs/Mathlib/Logic/Equiv/Defs.html#Equiv.propEquivBool\">Equiv.propEquivBool</a>, and <a href=\"https://loogle.lean-lang.org/?q=Equiv\">6186 more</a></p>",
+        "id": 438315672,
+        "sender_full_name": "loogle",
+        "timestamp": 1715592556
+    },
+    {
+        "content": "<p>I am guessing equivalent types have a different name (iso?)</p>",
+        "id": 438315759,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715592588
+    },
+    {
+        "content": "<p>I don't understand your question.</p>",
+        "id": 438317027,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1715592972
+    },
+    {
+        "content": "<p>I assumed you were suggesting that I use <code>Equiv</code> like mathlib. So I looked it up and found that it was also defined there, so I couldn't use it.</p>",
+        "id": 438317149,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715593013
+    },
+    {
+        "content": "<p>I meant put those results downstream in mathlib, because that's where <code>Equiv</code> is</p>",
+        "id": 438317220,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1715593036
+    },
+    {
+        "content": "<p>The ext lemma should be in batteries</p>",
+        "id": 438317273,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715593054
+    },
+    {
+        "content": "<p>Sure, but that lemma is trivial anyway</p>",
+        "id": 438317322,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1715593070
+    },
+    {
+        "content": "<p>But the theorem I am using is probably a one-liner, so it doesn't matter</p>",
+        "id": 438317327,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715593072
+    },
+    {
+        "content": "<p>I'd welcome any help with <code>map_cons</code> in <code>Data.Vector.Lemmas</code></p>",
+        "id": 438328611,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715596835
+    },
+    {
+        "content": "<p>It seems to go into monad world with <code>Array.mapM</code> and then I am lost</p>",
+        "id": 438328659,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715596851
+    },
+    {
+        "content": "<p>My best guess is there is some theorem that can rewrite the <code>Array.map</code> based equality with something based on List</p>",
+        "id": 438329273,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715597047
+    },
+    {
+        "content": "<p>You shouldn't need to work with the <code>mapM</code> part of the API, the <code>Array.map</code> API is rich enough to support the vast majority of use cases and if it is not the <code>Array.map</code> API should be extended.</p>\n<p>Additionally your implementation of <code>cons</code> seems to be suboptimal to me. What this function will do is: Take a <code>Vec</code>, turn it into a <code>List</code>, <code>List.cons</code> an element to that list and then turn that <code>List</code> into a <code>Vec</code>.</p>\n<p>I believe it would already be more efficient to just do <code>#[newHead] ++ xs</code>. If you write it like that you will also stay inside of the <code>Array</code> API the whole time instead of switching between <code>Array</code> and <code>List</code> which will make your proofs easier.</p>",
+        "id": 438334337,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1715598835
+    },
+    {
+        "content": "<p>Is that useful proof-wise though?</p>",
+        "id": 438334812,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715598975
+    },
+    {
+        "content": "<p>I don't think cons is meant to be used in code anyway.</p>",
+        "id": 438334876,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715598996
+    },
+    {
+        "content": "<p>In arrays, consing on the end is more efficient (what Haskell calls last iirc)</p>",
+        "id": 438334963,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715599023
+    },
+    {
+        "content": "<p>There is a push function for this purpose</p>",
+        "id": 438335027,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715599043
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/438334876\">said</a>:</p>\n<blockquote>\n<p>I don't think cons is meant to be used in code anyway.</p>\n</blockquote>\n<p>So, delete it, or, if there is reason to keep it, switch to Henrik's suggested implementation.</p>",
+        "id": 438335246,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715599106
+    },
+    {
+        "content": "<p>It was part of the mathlib vector API</p>",
+        "id": 438335305,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715599126
+    },
+    {
+        "content": "<p><span aria-label=\"woman shrugging\" class=\"emoji emoji-1f937-200d-2640\" role=\"img\" title=\"woman shrugging\">:woman_shrugging:</span> You don't need to copy everything. If something is bad, leave it out.</p>",
+        "id": 438335432,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715599171
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/438335305\">said</a>:</p>\n<blockquote>\n<p>It was part of the mathlib vector API</p>\n</blockquote>\n<p>Oh! That's why you keep falling back on lists! You should revise that plan. All of the proofs you need should follow easily from the Array API. If that's not the case then either something is missing in the Array API or it doesn't belong in the Vector API. (Since the Array API is well tested, the latter is much more likely.)</p>",
+        "id": 438336244,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715599435
+    },
+    {
+        "content": "<p>I would start with just the functions for Vector.Basic. Don't waste too much time on lemmas that might be deleted anyway.</p>",
+        "id": 438336493,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715599518
+    },
+    {
+        "content": "<p>I have replaced most list based defs with array functions. The remaining ones will be changed as I port more functions from Init.Data.Array files</p>",
+        "id": 438336886,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715599643
+    },
+    {
+        "content": "<p>The other reason I use lists in one or two proofs is that either they are theorems about toList from Mathlib's Vector</p>",
+        "id": 438337088,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715599705
+    },
+    {
+        "content": "<p>I intend to write toArray versions for those theorems, but it seems sensible to keep the toList versions for backward compatibility</p>",
+        "id": 438337584,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715599877
+    },
+    {
+        "content": "<p>Awesome work <span class=\"user-mention\" data-user-id=\"466334\">@Shreyas Srinivas</span>! You seem to be on a roll. I'll be back later today for more reviews.</p>",
+        "id": 438349288,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715603361
+    },
+    {
+        "content": "<p>I'll add further functions from Init.Data.Array.Basic once I satisfy all existing reviews. There are still all those monadic functions to adapt.</p>",
+        "id": 438360307,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715606284
+    },
+    {
+        "content": "<p>I have removed all the lemmas from Mathlib.Vector which are list based for now. If needed they can be added back.</p>",
+        "id": 438360494,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715606338
+    },
+    {
+        "content": "<p>Excellent! Looks like there needs an import but everything compiles!</p>",
+        "id": 438364504,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715607356
+    },
+    {
+        "content": "<p>I think it makes sense to split this PR. What is added now should be usable outside monadic contexts. Subsequent PRs would be a good way to add :</p>\n<ol>\n<li>Monadic defs : e.g. foldl, foldr, filter etc.</li>\n<li>Theorems</li>\n<li>Stuff from other files like binary search and sort</li>\n</ol>",
+        "id": 438364892,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715607464
+    },
+    {
+        "content": "<p>Looking at the PR page, it looks rather cluttered as it is.</p>",
+        "id": 438364988,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715607484
+    },
+    {
+        "content": "<p>If the consensus is that I continue working on everything in this PR, that's also fine.</p>",
+        "id": 438365277,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715607560
+    },
+    {
+        "content": "<p>Another idea I had but would like to ask first : Monadic functions and the other functions that depend on monadic functions  could go into a separate file. It seems useful both from an organisation perspective and from a parallel build perspective.</p>",
+        "id": 438366381,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715607839
+    },
+    {
+        "content": "<p>There's an <code>Array.size_insertAt</code> missing from the Array API</p>",
+        "id": 438369741,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715608716
+    },
+    {
+        "content": "<p>There's a CI error that Batteries.Data.Vector is not imported into Batteries, so you need to add some imports to Batteries.Data and Batteries.Data.Vector.</p>\n<p>A sweep to check spacing and indentation would be nice but that's not critical.</p>\n<p>I think it's okay to split into smaller PRs. I don't think this file is a compilation bottleneck so monadic functions could be in the same file but I think there is no harm in having separate files. I would say that's up to you.</p>",
+        "id": 438371822,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715609246
+    },
+    {
+        "content": "<p>I think this <a href=\"https://github.com/leanprover-community/batteries/pull/793/commits/41b3d16b5e0b0d0912e767da5d4e3c2590b6e785\">last commit</a> would pass CI minus lints</p>",
+        "id": 438372203,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715609343
+    },
+    {
+        "content": "<p>Ideally, <code>Array.size_insertAt</code> goes in core but it can be parked in Array.Lemmas for the time being.</p>",
+        "id": 438373042,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715609569
+    },
+    {
+        "content": "<p>Lint errors don't look too bad.</p>",
+        "id": 438373604,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715609730
+    },
+    {
+        "content": "<p>I think it makes sense to have a separate PR to modify that file?</p>",
+        "id": 438373987,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715609827
+    },
+    {
+        "content": "<p>If you need to use <code>Array.size_insertAt</code> in this PR, then add it to this PR. If it's only needed for later then another quick PR is fine.</p>",
+        "id": 438374406,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715609930
+    },
+    {
+        "content": "<p>Two of the <code>unused argument</code> lints make no sense. You ideally want an ambient vector whose size you are asking in the <code>size</code> function. Something similar for <code>isEmpty</code> function, even if the information is available statically without them</p>",
+        "id": 438375337,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715610171
+    },
+    {
+        "content": "<p>I'm not sure <code>isEmpty</code> is needed for vectors.</p>",
+        "id": 438376327,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715610448
+    },
+    {
+        "content": "<p>That's a fair point</p>",
+        "id": 438376367,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715610461
+    },
+    {
+        "content": "<p>But for size, one would still want an ambient vector</p>",
+        "id": 438376924,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715610606
+    },
+    {
+        "content": "<p>Just disable the linter for <code>Vector.size</code>, it's a bogus one.</p>",
+        "id": 438376997,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715610624
+    },
+    {
+        "content": "<p>Disabled and pushed.</p>",
+        "id": 438389188,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715613752
+    },
+    {
+        "content": "<p>I think I have now added all the non-monadic functions from Init.Data.Array.Basic to Basic.lean (except zip, but the zip functions belong with <code>unzip</code> which uses <code>foldl</code>). The build workflow needs approval, but I am guessing the linter will have no further issues.</p>",
+        "id": 438397479,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715616193
+    },
+    {
+        "content": "<p>Next question : what attributes need adding? Which functions get <code>@[inline]</code> and <code>@[specialize]</code> etc. What do these attributes do?</p>",
+        "id": 438398139,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715616380
+    },
+    {
+        "content": "<p>I think once this PR builds at this point, it should be closed. I will open another PR for adding monadic functions, and then lemmas</p>",
+        "id": 438399378,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715616739
+    },
+    {
+        "content": "<p>Also, every file with meaningful content seems to have some authorship comments at the top. What's the norm for this?</p>",
+        "id": 438401550,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715617457
+    },
+    {
+        "content": "<p>Sidenote : Found some typos in the <a href=\"https://github.com/leanprover-community/batteries/blob/14f258593e8c261d8834f13c6edc7b970c253ee8/Batteries/Tactic/Lint/Frontend.lean#L47\">Lint comments</a> I believe these linter names are now camelCase.</p>",
+        "id": 438406025,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715618899
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/438398139\">said</a>:</p>\n<blockquote>\n<p>Next question : what attributes need adding? Which functions get <code>@[inline]</code> and <code>@[specialize]</code> etc. What do these attributes do?</p>\n</blockquote>\n<p>The <code>@[inline]</code> attribute should be applied to any def that is a thin wrapper for a lower level function. (Also special cases for performance issues but that's usually not to worry about until there is an actual performance issue.) Lean should probably do automatic inlining for many of those but that is not quite implemented yet as far as I know. (The backend does some of that automatically though.) When your def is a thin wrapper then you might want to make it an <code>abbrev</code>, which makes it both <code>@[inline]</code> and <code>@[reducible]</code> (and some extra kernel stuff). Sometimes <code>@[reducible]</code> is not desirable, then just do <code>@[inline]</code> instead of <code>abbrev</code>.</p>\n<p>The <code>@[specialize]</code> attribute can be used when your def has a \"generic\" parameter. For example, in <code>Array.map</code> the function <code>f</code> is a generic parameter. The <code>@[specialize]</code> attribute instructs the compiler to generate a separate function for each instance of <code>f</code> (when that is possible). This should be used if  the primary use of the def is to be used repeatedly with the same generic parameter. This is not actually as common as you might think.</p>",
+        "id": 438496845,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715659304
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> is up for community review. Francois has conducted a rigorous and thorough review already.</p>",
+        "id": 438791134,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715776344
+    },
+    {
+        "content": "<p>Hi everyone. I need some opinions <a href=\"https://github.com/leanprover-community/batteries/pull/793#discussion_r1601749530\">here</a></p>",
+        "id": 438827264,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715785970
+    },
+    {
+        "content": "<p>It turns out that Init doesn't have Array definitions with safe <code>Nat</code> indices (i.e. the proof of <code>i &lt; n</code> for index <code>i</code> and  Array size <code>n</code> is supplied with  <code>get_elem_tactic</code>  as a default argument). But it would be nice to have such definitions for Vector, piggy-backing on the Array API with <code>Fin</code> indexes ofc.</p>",
+        "id": 438827694,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715786073
+    },
+    {
+        "content": "<p>The question is, what should the naming convention for these functions be</p>",
+        "id": 438827756,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715786087
+    },
+    {
+        "content": "<p>Example of such a function :</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">swapNat</span> <span class=\"o\">(</span><span class=\"n\">v</span> <span class=\"o\">:</span> <span class=\"n\">Vector</span> <span class=\"n\">α</span> <span class=\"n\">n</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">i</span> <span class=\"n\">j</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h_i</span> <span class=\"o\">:</span> <span class=\"n\">i</span> <span class=\"bp\">&lt;</span> <span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">get_elem_tactic</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h_j</span> <span class=\"o\">:</span> <span class=\"n\">j</span> <span class=\"bp\">&lt;</span> <span class=\"n\">n</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">get_elem_tactic</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Vector</span> <span class=\"n\">α</span> <span class=\"n\">n</span> <span class=\"o\">:=</span>\n  <span class=\"o\">⟨</span><span class=\"n\">Array.swap</span> <span class=\"n\">v.toArray</span> <span class=\"o\">(</span><span class=\"n\">v.size_eq.symm</span> <span class=\"bp\">▸</span> <span class=\"o\">⟨</span><span class=\"n\">i</span><span class=\"o\">,</span> <span class=\"n\">h_i</span><span class=\"o\">⟩)</span> <span class=\"o\">(</span><span class=\"n\">v.size_eq.symm</span> <span class=\"bp\">▸</span> <span class=\"o\">⟨</span><span class=\"n\">j</span><span class=\"o\">,</span> <span class=\"n\">h_j</span><span class=\"o\">⟩),</span> <span class=\"n\">proof</span><span class=\"o\">⟩</span>\n  <span class=\"n\">where</span>\n    <span class=\"n\">proof</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n      <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">size_swap</span><span class=\"o\">]</span>\n      <span class=\"n\">exact</span> <span class=\"n\">v.size_eq</span>\n</code></pre></div>\n<p>I don't like the name <code>swapNat</code>.  Maybe <code>swapSafeNatIndex</code> conveys more meaning, but makes names too long.</p>",
+        "id": 438828080,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715786173
+    },
+    {
+        "content": "<p>You could use <code>SafeIdx</code> maybe?</p>",
+        "id": 438828260,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715786216
+    },
+    {
+        "content": "<p>That sounds nice. <span class=\"user-mention\" data-user-id=\"311453\">@Frédéric Dupuis</span> proposed <code>swapN</code></p>",
+        "id": 438828924,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715786401
+    },
+    {
+        "content": "<p>I think we really should go with a short name, I suspect this is actually the most useful version in the long run (i.e. in the middle of a for loop, this is what you'll want to use, etc).</p>",
+        "id": 438830823,
+        "sender_full_name": "Frédéric Dupuis",
+        "timestamp": 1715786917
+    },
+    {
+        "content": "<p>I think the \"main\" swap function should take <code>Fin n</code> indices, but this seems like a reasonable alternative variation</p>",
+        "id": 438833589,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715787747
+    },
+    {
+        "content": "<p><code>swapN</code> seems fine to me</p>",
+        "id": 438833727,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715787790
+    },
+    {
+        "content": "<p>Done. There are now some <code>...N</code> functions for vectors.</p>",
+        "id": 438844728,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715791141
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/Batteries/pull/793\">Batteries#793</a> is ready for review again. I think I have addressed all existing comments</p>",
+        "id": 438853264,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715794057
+    },
+    {
+        "content": "<p>Note : The definitions could also be added for Arrays, but they belong in the core's Array Basic file</p>",
+        "id": 438857765,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715795745
+    },
+    {
+        "content": "<p>There's no problem adding new functions in <code>Batteries.Array.Basic</code>.</p>",
+        "id": 438874991,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715802743
+    },
+    {
+        "content": "<p>Done.</p>",
+        "id": 438903534,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715816361
+    },
+    {
+        "content": "<p>This PR seems ready for merge. Once merged, I will start a PR for adding monadic array API to vectors</p>",
+        "id": 438993201,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715857977
+    },
+    {
+        "content": "<p>Back during the port we had this <a href=\"https://bit.ly/3cKk3ld\">#queue</a> link on zulip for mathlib's PR queue (don't know if it still exists). Is there such a thing for batteries?</p>",
+        "id": 439000100,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715860364
+    },
+    {
+        "content": "<p>No, Batteries is typically much lower traffic, and the github PR tab is sufficient.</p>",
+        "id": 439000182,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715860391
+    },
+    {
+        "content": "<p>okay. Makes sense. Mathlib might have been particularly high traffic during the port. EDIT: Oh wait the link still exists.</p>",
+        "id": 439000414,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715860474
+    },
+    {
+        "content": "<p>It remains extremely high traffic. Look at the <a href=\"https://bit.ly/3cKk3ld\">#queue</a>. :-)</p>",
+        "id": 439000445,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715860492
+    },
+    {
+        "content": "<p>Btw, is there anything I need to do to change labels or something for the PR?</p>",
+        "id": 439002561,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715861164
+    },
+    {
+        "content": "<p>I haven't had time to look at this PR. I just opened it, and immediately see that you are introducing new definitions in the Array namespace, e.g. <code>getN</code> and following. These should be in their own PR, prior to introducing <code>Vector</code>.</p>",
+        "id": 439005071,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715861755
+    },
+    {
+        "content": "<p>I can remove these. The vector definitions of functions like <code>getN</code> use other Array equivalents. I added them in as Francois suggested them here.</p>",
+        "id": 439005467,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715861835
+    },
+    {
+        "content": "<p>The Vector API I have added can happily work with the existing Array API</p>",
+        "id": 439005572,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715861860
+    },
+    {
+        "content": "<p>The shrink lemmas I added are the only ones this PR truly needs.</p>",
+        "id": 439005840,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715861920
+    },
+    {
+        "content": "<p>Creating a separate PR that is added before this PR might be a bit of a headache since I am working on the main branch of my fork, and I am 102 commits ahead on my PR than the main branch of batteries.</p>",
+        "id": 439006522,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715862077
+    },
+    {
+        "content": "<p>Sorry? :-)</p>",
+        "id": 439006642,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715862099
+    },
+    {
+        "content": "<p>I don't understand</p>\n<p><span class=\"user-mention silent\" data-user-id=\"110087\">Kim Morrison</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/439006642\">said</a>:</p>\n<blockquote>\n<p>Sorry? :-)</p>\n</blockquote>",
+        "id": 439006747,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715862119
+    },
+    {
+        "content": "<p>You need to do it anyway, and I'm sorry that it is a lot of work.</p>",
+        "id": 439006871,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715862135
+    },
+    {
+        "content": "<p>To clarify, I mean can't I make a separate PR after?</p>",
+        "id": 439006914,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715862148
+    },
+    {
+        "content": "<p>Mario may feel otherwise, but I wouldn't be happy merging the PR as is because of (at least) this issue. (That said, I haven't had the time, and I won't anytime soon, to look at the rest of the PR, so I'm not going to be the one merging anyway.)</p>",
+        "id": 439007207,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715862219
+    },
+    {
+        "content": "<p>Okay, but it is going to be difficult to anticipate every missing piece of the array API in advance. Although these particular defs are added for completeness sake and can be removed without any trouble, it is going to be a bit of a PR tangle if every array change needs to be a separate PR.</p>",
+        "id": 439008343,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715862485
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>  thoughts?</p>",
+        "id": 439008546,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715862530
+    },
+    {
+        "content": "<p>I am currently at a conference and don't have much time to devote here this week. I'll try to drop in when I can</p>",
+        "id": 439008690,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715862560
+    },
+    {
+        "content": "<p>I agree with Kim, if this is a large PR then it should be split up, and if you contribute to both Array and Vector then that's a natural split point</p>",
+        "id": 439009232,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715862663
+    },
+    {
+        "content": "<p>Do not be afraid to create sequences of dependent PRs</p>",
+        "id": 439009303,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715862681
+    },
+    {
+        "content": "<p>Okay, so here's a plan for this particular instance: I'll create a new PR for the five array defs I added and move the defs there. This should leave <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> with only two small theorems for <code>Array.shrink</code></p>",
+        "id": 439009740,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715862818
+    },
+    {
+        "content": "<p>(It's fine to have multiple in sequences PRs open --- you can point to later ones as justification for the the earlier ones.)</p>",
+        "id": 439009758,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1715862825
+    },
+    {
+        "content": "<p>Everything else (99%) that is new will be in Vector</p>",
+        "id": 439009939,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715862876
+    },
+    {
+        "content": "<p>Would this take the PR closer to merge?</p>",
+        "id": 439009987,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715862897
+    },
+    {
+        "content": "<p>How do I ensure that my new PR is created against an existing PR as opposed to a branch?</p>",
+        "id": 439015994,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715864726
+    },
+    {
+        "content": "<p>The new PR has commits from the old PR of course. It was created by branching off the old PR's branch</p>",
+        "id": 439016176,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715864776
+    },
+    {
+        "content": "<p>Update : <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> does not add <code>N</code> defs anymore. Those are in <a href=\"https://github.com/leanprover-community/batteries/pull/800\">batteries#800</a></p>",
+        "id": 439017362,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715865159
+    },
+    {
+        "content": "<p>The only things <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> adds to Array are two short two-liner theorems about shrink.</p>",
+        "id": 439017887,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715865307
+    },
+    {
+        "content": "<p>I am at the limit of my git magic.</p>",
+        "id": 439018752,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715865585
+    },
+    {
+        "content": "<p>You should mark <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> as depending on <a href=\"https://github.com/leanprover-community/batteries/pull/800\">batteries#800</a>. See eg <a href=\"https://github.com/leanprover-community/mathlib4/pull/12836\">#12836</a> and <a href=\"https://github.com/leanprover-community/mathlib4/pull/12845\">#12845</a> for an example of how to do it</p>",
+        "id": 439034655,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715870049
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> should still contain the <code>N</code> defs. The point is that once <a href=\"https://github.com/leanprover-community/batteries/pull/800\">batteries#800</a> is merged, those defs will disappear from the diff</p>",
+        "id": 439034768,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715870086
+    },
+    {
+        "content": "<p>It does</p>",
+        "id": 439034825,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715870101
+    },
+    {
+        "content": "<p>Sorry, edited my message for clarity</p>",
+        "id": 439034951,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715870142
+    },
+    {
+        "content": "<p>The only difference between the PRs right now is that <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> doesn't contain N defs and <a href=\"https://github.com/leanprover-community/batteries/pull/800\">batteries#800</a> does</p>",
+        "id": 439035079,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715870171
+    },
+    {
+        "content": "<p>Ah sorry, <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> is the dependency and <a href=\"https://github.com/leanprover-community/batteries/pull/800\">batteries#800</a> is the dependent. I thought it was the other way around</p>",
+        "id": 439035205,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715870216
+    },
+    {
+        "content": "<ol>\n<li>Basically i took the branch of <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a>, namely <code>main</code> and  created a new branch <code>Array_enhancements</code>. At this point both these branches contained the <code>N</code> defs.</li>\n<li>Then I deleted the <code>N</code> defs from the <code>main</code> branch in the next commit. So now we have :<p>* <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> which doesn't contains <code>N</code> defs<br>\n  * <a href=\"https://github.com/leanprover-community/batteries/pull/800\">batteries#800</a> which does contain <code>N</code> defs.</p>\n</li>\n</ol>",
+        "id": 439036013,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715870423
+    },
+    {
+        "content": "<p>Okay, that works but I have a better workflow</p>",
+        "id": 439036390,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715870517
+    },
+    {
+        "content": "<p>Maybe what works is if </p>\n<ol>\n<li>I apply the last commit of 793 which removed N defs to 800. This leaves 800 without n defs but makes the merge easy.</li>\n<li>and then add another fix commit which  removes the N defs again from 800.</li>\n</ol>",
+        "id": 439036467,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715870526
+    },
+    {
+        "content": "<p>I can accomplish a rebase of branch <code>Array_enhancements</code> on main. and then explicitly add N defs to 800</p>",
+        "id": 439036686,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715870586
+    },
+    {
+        "content": "<p>You have PR X from branch A. Somebody asks you to split off changes C from it. Go to <code>master</code> and do <code>git merge --squash A</code>. Remove from the staged changes all changes but C. Commit. Create a branch B. Open PR Y. Mark X as depending on Y.</p>",
+        "id": 439036822,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715870623
+    },
+    {
+        "content": "<p>This workflow assumes that PRs are squash-merged to master (which is the case for Batteries, right?)</p>",
+        "id": 439036944,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715870649
+    },
+    {
+        "content": "<p>yes, but it might hurt reviews</p>",
+        "id": 439036994,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715870663
+    },
+    {
+        "content": "<p>there are a 102 commits to squash</p>",
+        "id": 439037030,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715870672
+    },
+    {
+        "content": "<p>And there are loads of review comments</p>",
+        "id": 439037057,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715870681
+    },
+    {
+        "content": "<p>Usually it's fine to discard those if they have already been addressed</p>",
+        "id": 439037121,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715870699
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/439037030\">said</a>:</p>\n<blockquote>\n<p>there are a 102 commits to squash</p>\n</blockquote>\n<p>Is the way the changes are spread across commits relevant to the review?</p>",
+        "id": 439037268,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715870733
+    },
+    {
+        "content": "<p>Mine usually aren't</p>",
+        "id": 439037305,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715870742
+    },
+    {
+        "content": "<p>You might lose the decision history behind the design choices</p>",
+        "id": 439037868,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715870887
+    },
+    {
+        "content": "<p>I don't think this information should be hidden in commits that are going to be squashed to master anyway. If you want it, write it in the PR description</p>",
+        "id": 439038137,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715870951
+    },
+    {
+        "content": "<p>How did you mark the dependency?</p>",
+        "id": 439039297,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715871229
+    },
+    {
+        "content": "<p>In my case the mergify bot just said it had problems with the matching hashes of the head of both PRs or something</p>",
+        "id": 439039420,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715871250
+    },
+    {
+        "content": "<p>Specifically, I am searching the github PR page for a place where I can do this.</p>",
+        "id": 439039580,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715871293
+    },
+    {
+        "content": "<p>I think got <a href=\"https://github.com/leanprover-community/batteries/pull/800\">batteries#800</a> to be a strict extension of <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a></p>",
+        "id": 439040486,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715871510
+    },
+    {
+        "content": "<p>commit history wise</p>",
+        "id": 439040527,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715871517
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/439039297\">said</a>:</p>\n<blockquote>\n<p>How did you mark the dependency?</p>\n</blockquote>\n<p>Look at the source code of the PR description of <a href=\"https://github.com/leanprover-community/mathlib4/pull/12845\">#12845</a></p>",
+        "id": 439040963,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715871624
+    },
+    {
+        "content": "<p>That just adds a checkmark. I did that a few minutes ago.</p>",
+        "id": 439041047,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715871642
+    },
+    {
+        "content": "<p>Uh maybe we don't have the bot adding the <code>blocked-by-other-PR</code> label</p>",
+        "id": 439041181,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715871676
+    },
+    {
+        "content": "<p>I don't think I can add labels to batteries. Permissions issue I guess.</p>",
+        "id": 439041231,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715871690
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>, could we make sure the PR process is as similar as possible between batteries and mathlib4?</p>",
+        "id": 439041501,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715871751
+    },
+    {
+        "content": "<p>I think that's unlikely. Mathlib's PR process is a bit of an outlier because of some cloud cache generating business. Mario explained this to me long ago.</p>",
+        "id": 439041667,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715871791
+    },
+    {
+        "content": "<p>Okay but the bot adding <code>blocked-by-other-PR</code> has nothing to do with caching</p>",
+        "id": 439041762,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715871821
+    },
+    {
+        "content": "<p>That might have something to do with me being a first time contributor to batteries.</p>",
+        "id": 439041828,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715871841
+    },
+    {
+        "content": "<p>No I really don't think it's a you problem</p>",
+        "id": 439041943,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1715871864
+    },
+    {
+        "content": "<p>This sounds like <span class=\"user-mention\" data-user-id=\"110087\">@Kim Morrison</span> 's jurisdiction. There is a bot that will let you apply <code>awaiting-review</code>/<code>awaiting-author</code> labels, and I think there is also a bot that adds/removes <code>merge-conflict</code>. I have not much knowledge about this aspect of the CI setup for mathlib so I am leaving this to others</p>",
+        "id": 439042594,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715872046
+    },
+    {
+        "content": "<p>But Shreyas is correct that Batteries doesn't completely copy Mathlib's github setup specifically because of the permissions issue</p>",
+        "id": 439042867,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715872109
+    },
+    {
+        "content": "<p>In the absence of automation, you can either poke someone with triage perms on Batteries to add the label, or live without it</p>",
+        "id": 439043301,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715872215
+    },
+    {
+        "content": "<p>Currently <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> has <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mo>≤</mo></mrow><annotation encoding=\"application/x-tex\">\\leq</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.7719em;vertical-align:-0.136em;\"></span><span class=\"mrel\">≤</span></span></span></span> 10 lines of Array code in Array.Lemmas. This code (two tiny size theorems basically) was provided by <span class=\"user-mention\" data-user-id=\"119741\">@François G. Dorais</span> during the review process.</p>",
+        "id": 439043809,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715872341
+    },
+    {
+        "content": "<p>I hope this is not a big barrier for getting this PR through.</p>",
+        "id": 439044241,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715872458
+    },
+    {
+        "content": "<p>I have added a separate PR for these two lemmas <a href=\"https://github.com/leanprover-community/batteries/pull/801\">batteries#801</a></p>\n<p>But in order to maintain buildability I haven't removed them from 793 yet. After <a href=\"https://github.com/leanprover-community/batteries/pull/801\">batteries#801</a> is merged, I will do a git pull and merge. </p>\n<p>The PRs need to be accepted in the following order : <a href=\"https://github.com/leanprover-community/batteries/pull/801\">batteries#801</a> -&gt; <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> -&gt; batteries <a href=\"https://github.com/leanprover-community/mathlib4/pull/800\">#800</a><br>\nReviews welcome.</p>",
+        "id": 439047462,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715873401
+    },
+    {
+        "content": "<p>when you have dependent PRs, the dependent should be an end-extension of the dependency, i.e. it should contain all the commits and then some more at the end. If you take the middle commits out then it will generally break the dependent PR, so don't do that. (If it doesn't break the dependent PR then they are not actually dependent and should be separate PRs.)</p>",
+        "id": 439048691,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715873742
+    },
+    {
+        "content": "<p>I think I fixed that issue between 793 and 800. 793's commit history should be a prefix of 800</p>",
+        "id": 439049079,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715873874
+    },
+    {
+        "content": "<p>793 has a ton of commits though, could you squash it if it's not serving any review purpose?</p>",
+        "id": 439049374,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1715873962
+    },
+    {
+        "content": "<p>Okay. Afaik, all comments were addressed though one or two haven't been marked resolved officially</p>",
+        "id": 439049542,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715874009
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/439049374\">said</a>:</p>\n<blockquote>\n<p>793 has a ton of commits though, could you squash it if it's not serving any review purpose?</p>\n</blockquote>\n<p>Squashed it all into one commit.</p>",
+        "id": 439053129,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715875176
+    },
+    {
+        "content": "<p>Both <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> and <a href=\"https://github.com/leanprover-community/batteries/pull/800\">batteries#800</a></p>",
+        "id": 439054753,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715875609
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>  I have rebased 793 (and consequently 800) onto 801. <a href=\"https://github.com/leanprover-community/batteries/pull/801\">batteries#801</a> adds a couple of Array lemmas that <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> (and consequently <a href=\"https://github.com/leanprover-community/batteries/pull/800\">batteries#800</a>) use</p>",
+        "id": 439056772,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715876282
+    },
+    {
+        "content": "<p>This means the PRs should now have no problem getting merged correctly</p>",
+        "id": 439056889,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715876316
+    },
+    {
+        "content": "<p>I need someone to run the CI on 793 but considering the CI automatically and succesfully runs on 800 which is top of this foodchain, I think the CI won't complain about 793 either</p>",
+        "id": 439057212,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715876412
+    },
+    {
+        "content": "<p>Since Shreyas is not a git pro, let's try to give very clear instructions. 793 is a bit of a mess now.</p>",
+        "id": 439058240,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1715876808
+    },
+    {
+        "content": "<p>I think I might have fixed it all. I will make a separate PR for improving the unexpander doc</p>",
+        "id": 439058778,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715877012
+    },
+    {
+        "content": "<p>Currently, adding anything new to 793 might cause issues with 800</p>",
+        "id": 439058916,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715877069
+    },
+    {
+        "content": "<p>For reference the docstring you proposed <span class=\"user-mention\" data-user-id=\"119741\">@François G. Dorais</span> was </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">The</span> <span class=\"n\">definitions</span> <span class=\"bp\">`</span><span class=\"n\">mkVector</span><span class=\"bp\">*`</span> <span class=\"n\">provide</span> <span class=\"n\">convenient</span> <span class=\"n\">ways</span> <span class=\"n\">to</span> <span class=\"n\">write</span> <span class=\"n\">terms</span> <span class=\"n\">for</span> <span class=\"n\">short</span> <span class=\"n\">vectors</span><span class=\"o\">,</span> <span class=\"n\">especially</span> <span class=\"k\">in</span> <span class=\"n\">metaprogramming.</span> <span class=\"n\">Unexpanders</span> <span class=\"n\">are</span> <span class=\"n\">provided</span> <span class=\"n\">make</span> <span class=\"n\">these</span> <span class=\"n\">shortcuts</span> <span class=\"n\">invisible</span> <span class=\"n\">to</span> <span class=\"n\">users.</span>\n</code></pre></div>",
+        "id": 439059029,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715877116
+    },
+    {
+        "content": "<p>All 3 PRs are green</p>",
+        "id": 439061056,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715877837
+    },
+    {
+        "content": "<p>Update : 3 PRs ready for review</p>\n<ol>\n<li><a href=\"https://github.com/leanprover-community/batteries/pull/803\">batteries#803</a></li>\n<li><a href=\"https://github.com/leanprover-community/batteries/pull/801\">batteries#801</a> -&gt; <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a></li>\n</ol>",
+        "id": 439066216,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715879647
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 439070720,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715881364
+    },
+    {
+        "content": "<p>Hi all, <a href=\"https://github.com/leanprover-community/batteries/pull/803\">batteries#803</a> is independent of the other PRs and ready for review</p>",
+        "id": 439259510,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715964641
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/batteries/pull/801\">batteries#801</a> can also be reviewed separately</p>",
+        "id": 439260461,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1715965085
+    },
+    {
+        "content": "<p>Hi, I need a bit of help: I am <del>porting</del> adding the remaining mostly monadic defs from arrays to vectors in a soon-to-be new PR when I came across <a href=\"https://github.com/leanprover/lean4/blob/dcccfb73cb247e9478220375ab7de03f7c67e505/src/Init/Data/Array/Basic.lean#L489\">this function:</a></p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">@[</span><span class=\"n\">inline</span><span class=\"kd\">]</span> <span class=\"kd\">def</span> <span class=\"n\">getEvenElems</span> <span class=\"o\">(</span><span class=\"n\">as</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span> <span class=\"o\">:=</span>\n  <span class=\"o\">(</span><span class=\"bp\">·.</span><span class=\"mi\">2</span><span class=\"o\">)</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">as.foldl</span> <span class=\"o\">(</span><span class=\"n\">init</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">true</span><span class=\"o\">,</span> <span class=\"n\">Array.empty</span><span class=\"o\">))</span> <span class=\"k\">fun</span> <span class=\"o\">(</span><span class=\"n\">even</span><span class=\"o\">,</span> <span class=\"n\">r</span><span class=\"o\">)</span> <span class=\"n\">a</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"k\">if</span> <span class=\"n\">even</span> <span class=\"k\">then</span>\n      <span class=\"o\">(</span><span class=\"n\">false</span><span class=\"o\">,</span> <span class=\"n\">r.push</span> <span class=\"n\">a</span><span class=\"o\">)</span>\n    <span class=\"k\">else</span>\n      <span class=\"o\">(</span><span class=\"n\">true</span><span class=\"o\">,</span> <span class=\"n\">r</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>This seems an oddly specific function to have as opposed to, say, a general <code>filterIdx</code> function which carries the array index and the accumulator, instead of the boolean flag.</p>\n<p>Is there a reason for doing things this way?</p>",
+        "id": 439345225,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716028759
+    },
+    {
+        "content": "<p>Note: I am suggesting <code>filterIdx</code> as opposed to <code>filter</code> because a <code>filter</code> function already exists and doesn't carry the array index paired with the accumulator</p>",
+        "id": 439345328,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716028884
+    },
+    {
+        "content": "<p>Indeed a <code>filterIdx</code> function would be much more useful.</p>",
+        "id": 439345340,
+        "sender_full_name": "Frédéric Dupuis",
+        "timestamp": 1716028913
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/439066216\">said</a>:</p>\n<blockquote>\n<p>Update : 3 PRs ready for review</p>\n<ol>\n<li><a href=\"https://github.com/leanprover-community/batteries/pull/803\">batteries#803</a></li>\n<li><a href=\"https://github.com/leanprover-community/batteries/pull/801\">batteries#801</a> -&gt; <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a></li>\n</ol>\n</blockquote>\n<p><strong>Review request</strong>: <br>\nI am a bit nervous to chain more PRs on top of these. I would like to request reviews of these PRs so that they get merged before I add anymore. Not quite sure whom to ping.</p>",
+        "id": 439810749,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716296132
+    },
+    {
+        "content": "<p>Would it be possible later to change the runtime or have another type to not store size and capacity to make it more lightweight? I think most of the time we do not need to change its size, otherwise we should use <code>Array</code>?</p>",
+        "id": 439868175,
+        "sender_full_name": "Yuyang Zhao",
+        "timestamp": 1716313115
+    },
+    {
+        "content": "<p>Vector is an Array with a static size parameter</p>",
+        "id": 439870943,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716314031
+    },
+    {
+        "content": "<p>The runtime already supports dynamic arrays with some efficient C code</p>",
+        "id": 439871090,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716314069
+    },
+    {
+        "content": "<p>I think <span class=\"user-mention\" data-user-id=\"455791\">@Yuyang Zhao</span> understands this. What they are asking for is the following: The way which your type currently looks:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"sd\">/-- `Vector α n` is an `Array α` whose size is statically fixed to `n` -/</span>\n<span class=\"kd\">structure</span> <span class=\"n\">Vector</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n  <span class=\"sd\">/--Internally, a vector is stored as an array for fast access-/</span>\n  <span class=\"n\">toArray</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span>\n  <span class=\"sd\">/--`size_eq` fixes the size of `toArray` statically-/</span>\n  <span class=\"n\">size_eq</span> <span class=\"o\">:</span> <span class=\"n\">toArray.size</span> <span class=\"bp\">=</span> <span class=\"n\">n</span>\n<span class=\"n\">deriving</span> <span class=\"n\">Repr</span><span class=\"o\">,</span> <span class=\"n\">BEq</span><span class=\"o\">,</span> <span class=\"n\">DecidableEq</span>\n</code></pre></div>\n<p>Means that the <code>Array</code> will store its size and its capacity in a <code>lean_object</code> + you additionally have to carry around the <code>n</code> parameter even though it is already present inside of the <code>Array</code>. The idea would be to have a specialized <code>lean_object</code> type that is basically represented in a way similar to yours in the logic but internally doesn't carry around a capacity and also doesn't carry around its current size twice. That would require changes to the runtime which in turn requires coordination with the FRO.</p>",
+        "id": 439871627,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1716314259
+    },
+    {
+        "content": "<p>Oh I see what you mean</p>",
+        "id": 439871790,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716314306
+    },
+    {
+        "content": "<p>Apologies</p>",
+        "id": 439871810,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716314311
+    },
+    {
+        "content": "<p>This would also require changes to the Vector API</p>",
+        "id": 439871903,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716314346
+    },
+    {
+        "content": "<p>Currently there are a lot of functions which alter the size of the vector</p>",
+        "id": 439871950,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716314364
+    },
+    {
+        "content": "<p>I'm not an expert on the Lean compiler, but my guess is that the performance gain would be minuscule compared to the effort it would require.</p>",
+        "id": 439872645,
+        "sender_full_name": "Frédéric Dupuis",
+        "timestamp": 1716314554
+    },
+    {
+        "content": "<p>I think that's right. The memory footprint is only increased noticeably for very small arrays and the better cache should be miniscule enough for this not to matter.</p>",
+        "id": 439873704,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1716314915
+    },
+    {
+        "content": "<p>To add foolproof (i.e. non panicking) API functions, the Vector structure would effectively have to carry a parameter that serves the same role as capacity does for array and limit modifications that make vector size larger than this capacity, or use some null terminator like character whose position would have to be tracked. So the API would become painful.</p>",
+        "id": 439874373,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716315185
+    },
+    {
+        "content": "<p>So proofs would get hideous</p>",
+        "id": 439874439,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716315213
+    },
+    {
+        "content": "<p>Also, I don't recall the specific optimisations exactly, but C compilers can heavily optimise malloc calls, and pointer fetches.</p>",
+        "id": 439874673,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716315295
+    },
+    {
+        "content": "<p>I see no point in trying to outdo GCC</p>",
+        "id": 439876239,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716315813
+    },
+    {
+        "content": "<p>Lean's output gets compiled with clang btw.</p>",
+        "id": 439876715,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1716315971
+    },
+    {
+        "content": "<p>Ah so we do have a way to get a wasm backend</p>",
+        "id": 439876832,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716316016
+    },
+    {
+        "content": "<p>But my point applies to clang too.</p>",
+        "id": 439876881,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716316030
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/439874673\">said</a>:</p>\n<blockquote>\n<p>Also, I don't recall the specific optimisations exactly, but C compilers can heavily optimise malloc calls, and pointer fetches.</p>\n</blockquote>\n<p>I mean I don't really see how this applies here? Currently you have this layout for Array: <a href=\"https://github.com/leanprover/lean4/blob/master/src/include/lean/lean.h#L155C1-L160C21\">https://github.com/leanprover/lean4/blob/master/src/include/lean/lean.h#L155C1-L160C21</a> and then there is an additional (tagged pointer) integer floating around somewhere as the dimension parameter that's externalized in your structure. There is no way that a C compiler could figure this out at the precision that basically declaring a builtin type:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"sd\">/-- `Vector α n` is an `Array α` whose size is statically fixed to `n` -/</span>\n<span class=\"kd\">structure</span> <span class=\"n\">Vector</span> <span class=\"o\">(</span><span class=\"n\">α</span> <span class=\"o\">:</span> <span class=\"kt\">Type</span> <span class=\"n\">u</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"n\">where</span>\n  <span class=\"sd\">/--Internally, a vector is stored as an array for fast access-/</span>\n  <span class=\"n\">toArray</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">α</span>\n  <span class=\"sd\">/--`size_eq` fixes the size of `toArray` statically-/</span>\n  <span class=\"n\">size_eq</span> <span class=\"o\">:</span> <span class=\"n\">toArray.size</span> <span class=\"bp\">=</span> <span class=\"n\">n</span>\n<span class=\"n\">deriving</span> <span class=\"n\">Repr</span><span class=\"o\">,</span> <span class=\"n\">BEq</span><span class=\"o\">,</span> <span class=\"n\">DecidableEq</span>\n</code></pre></div>\n<p>with a memory representation of:</p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"k\">typedef</span><span class=\"w\"> </span><span class=\"k\">struct</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"n\">lean_object</span><span class=\"w\">   </span><span class=\"n\">m_header</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"kt\">size_t</span><span class=\"w\">        </span><span class=\"n\">m_size</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"n\">lean_object</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"w\"> </span><span class=\"n\">m_data</span><span class=\"p\">[</span><span class=\"mi\">0</span><span class=\"p\">];</span>\n<span class=\"p\">}</span><span class=\"w\"> </span><span class=\"n\">lean_vector_object</span><span class=\"p\">;</span>\n</code></pre></div>\n<p>could have. It's just that doing this optimization is almost meaningless in the first place.</p>",
+        "id": 439877721,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1716316340
+    },
+    {
+        "content": "<p>I'm not sure, because I'll be using small <code>Vector</code>s a lot. But I can just trust you : )</p>",
+        "id": 439879829,
+        "sender_full_name": "Yuyang Zhao",
+        "timestamp": 1716317044
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"455791\">Yuyang Zhao</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/439868175\">said</a>:</p>\n<blockquote>\n<p>Would it be possible later to change the runtime or have another type to not store size and capacity to make it more lightweight? I think most of the time we do not need to change its size, otherwise we should use <code>Array</code>?</p>\n</blockquote>\n<p>I thought about this, and my conclusion was that it's not possible, because the garbage collector (which has no type information and can only see the graph structure of <code>lean_object</code>s because they all have enough tagging to differentiate) needs to know both how large the original allocation is and how many of the cells are initialized to clean up properly after it.</p>",
+        "id": 439881189,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1716317500
+    },
+    {
+        "content": "<p>Henrik : I wasn't looking at the implementation specifics of lean. I see your point.</p>",
+        "id": 439894821,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716322008
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/439810749\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/439066216\">said</a>:</p>\n<blockquote>\n<p>Update : 3 PRs ready for review</p>\n<ol>\n<li><a href=\"https://github.com/leanprover-community/batteries/pull/803\">batteries#803</a></li>\n<li><a href=\"https://github.com/leanprover-community/batteries/pull/801\">batteries#801</a> -&gt; <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a></li>\n</ol>\n</blockquote>\n<p><strong>Review request</strong>: <br>\nI am a bit nervous to chain more PRs on top of these. I would like to request reviews of these PRs so that they get merged before I add anymore. Not quite sure whom to ping.</p>\n</blockquote>\n<p>Making sure this doesn't message doesn't get lost in the discussion.</p>",
+        "id": 439894858,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716322022
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/439066216\">said</a>:</p>\n<blockquote>\n<p><strong>Review request</strong>: <br>\nI am a bit nervous to chain more PRs on top of these. I would like to request reviews of these PRs so that they get merged before I add anymore. Not quite sure whom to ping.</p>\n<p>Making sure this doesn't message doesn't get lost in the discussion.</p>\n</blockquote>\n<p>Currently only <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> and I have merge rights on Batteries, and both of us seem to be pretty busy. This bottleneck needs an solution soon, and we are working on it!</p>\n<p>Further reviews by others are super helpful, in any case (whether asking for more changes or giving approval).</p>",
+        "id": 439923714,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1716332525
+    },
+    {
+        "content": "<p>The smaller related PRs <a href=\"https://github.com/leanprover-community/batteries/pull/801\">batteries#801</a> and <a href=\"https://github.com/leanprover-community/batteries/pull/803\">batteries#803</a> each have two independent approvals. They are ready to merge.</p>",
+        "id": 440098402,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1716386295
+    },
+    {
+        "content": "<p><strong>Mario Carneiro|110049</strong> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/439881189\">said</a>:</p>\n<blockquote>\n<p>I thought about this, and my conclusion was that it's not possible, because the garbage collector (which has no type information and can only see the graph structure of <code>lean_object</code>s because they all have enough tagging to differentiate) needs to know both how large the original allocation is and how many of the cells are initialized to clean up properly after it.</p>\n</blockquote>\n<p>(until we reach the promised land of linear type annotations, at which point it should be possible to have static-length arrays with the length not stored in the object)</p>",
+        "id": 440186999,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1716413308
+    },
+    {
+        "content": "<p>no, I'm saying that's not sufficient without the promised-er land of a compiler that actually makes use of typing information for memory layout and with static garbage collection a la rust</p>",
+        "id": 440187144,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1716413379
+    },
+    {
+        "content": "<p>An array without length information is similar to an unboxed tuple, it can't be passed to anything type-erasing without overhead</p>",
+        "id": 440187400,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1716413474
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"119741\">François G. Dorais</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/440098402\">said</a>:</p>\n<blockquote>\n<p>The smaller related PRs <a href=\"https://github.com/leanprover-community/batteries/pull/801\">batteries#801</a> and <a href=\"https://github.com/leanprover-community/batteries/pull/803\">batteries#803</a> each have two independent approvals. They are ready to merge.</p>\n</blockquote>\n<p>I've hit merge on both of these, without looking. :-(</p>",
+        "id": 440214590,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1716426681
+    },
+    {
+        "content": "<p>Thanks Kim!</p>\n<p><span class=\"user-mention\" data-user-id=\"466334\">@Shreyas Srinivas</span>: you can now <code>git merge main</code> into the <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> PR to update.</p>",
+        "id": 440226432,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1716427168
+    },
+    {
+        "content": "<p>Done. PR <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> passes CI and has one approval. Waiting for more reviews or a merge. Now the CI runs automatically. As I suspected, first time PRs need maintainers approval for running CI (Francois did confirm this)</p>",
+        "id": 440283426,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716456674
+    },
+    {
+        "content": "<p>The PR is again all-green. Francois golfed the proofs.</p>",
+        "id": 440358615,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716481749
+    },
+    {
+        "content": "<p>Apologies for messaging again. I am looking for approvals/merge/more reviews on <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a></p>\n<p>There is already one approving review. The sooner this PR gets through the sooner we can have static vectors in batteries.</p>",
+        "id": 440457166,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716536474
+    },
+    {
+        "content": "<p>Reiterating my comment elsewhere, I don't think this PR should be merged until an adaptation PR is passing CI in mathlib (as otherwise mathlib gets stuck for a while and can't pick up other batteries releases)</p>",
+        "id": 440586087,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1716589947
+    },
+    {
+        "content": "<p>Okay. I can do this ~24 hours from now</p>",
+        "id": 440587960,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716591276
+    },
+    {
+        "content": "<p>The simplest companion PR puts Mathlib's Vector in a namespace and calls the namespaced version in the two places it is used.</p>",
+        "id": 440588197,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716591431
+    },
+    {
+        "content": "<p>Once this is merged, <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> should be safe to merge.</p>",
+        "id": 440588228,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716591461
+    },
+    {
+        "content": "<p>Once batteries Vector is available, Mathlib's Vector can be transitioned to this API and the namespace removed. As I see it, this is the smoothest path, involving the least tinkering I can think of.</p>",
+        "id": 440588369,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716591563
+    },
+    {
+        "content": "<p>It also gives us great flexibility to work with the Mathlib Vector API</p>\n<p>CC: <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> , <span class=\"user-mention\" data-user-id=\"110087\">@Kim Morrison</span> and <span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> to avoid discussing across three threads</p>",
+        "id": 440588684,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716591790
+    },
+    {
+        "content": "<p>There is no need to ping this PR every day. We're aware of it</p>",
+        "id": 440588730,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1716591839
+    },
+    {
+        "content": "<p>No this is about how to manage this and Mathlib's Vector. The discussion is spread across three threads</p>",
+        "id": 440588820,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716591883
+    },
+    {
+        "content": "<p>Since Eric mentioned the companion PR as a requirement to merging this PR, I thought this is the best place to decide on what is to be done.</p>",
+        "id": 440588896,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716591936
+    },
+    {
+        "content": "<p>the mathlib PR should probably be discussed on <a class=\"stream\" data-stream-id=\"287929\" href=\"/#narrow/stream/287929-mathlib4\">#mathlib4</a></p>",
+        "id": 440588908,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1716591951
+    },
+    {
+        "content": "<p>My proposed plan involves both this PR and the Mathlib PR</p>",
+        "id": 440588993,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716591991
+    },
+    {
+        "content": "<p>but I agree that having a plan to not break mathlib is a prerequisite for landing this PR</p>",
+        "id": 440588997,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1716591996
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/440588197\">said</a>:</p>\n<blockquote>\n<p>The simplest companion PR puts Mathlib's Vector in a namespace and calls the namespaced version in the two places it is used.</p>\n</blockquote>\n<p>Specifically the plan starts with this message</p>",
+        "id": 440589044,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716592034
+    },
+    {
+        "content": "<p>OK, sgtm</p>",
+        "id": 440589062,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1716592053
+    },
+    {
+        "content": "<p>that can probably be landed in advance anyway</p>",
+        "id": 440589102,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1716592082
+    },
+    {
+        "content": "<p>Yes. This plan works without creating dependencies.</p>",
+        "id": 440589242,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716592181
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Kim Morrison</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/438249818\">said</a>:</p>\n<blockquote>\n<p>There is general enthusiasm in the FRO for working on this as <code>Batteries.Vector</code> rather than <code>_root_.Vector</code>.</p>\n</blockquote>\n<p>If namespaced in Batteries, as Kim suggested, then there are no downstream issues at all. That would also make migration simpler if core puts a new Vector type in the root namespace.</p>",
+        "id": 440604429,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1716608541
+    },
+    {
+        "content": "<p>If the FRO doesn't want _root_.Vector, then Mathlib's Vector would also need to go into a namespace</p>",
+        "id": 440614855,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1716620484
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/440588896\">said</a>:</p>\n<blockquote>\n<p>I thought this is the best place to decide on what is to be done.</p>\n</blockquote>\n<p>Surely <a href=\"#narrow/stream/287929-mathlib4/topic/Mathlib.20Vector.20namespace/near/440576738\">your previous thread in #mathlib 4</a> is the right place? Please try not to restart discussions in different channels.</p>",
+        "id": 440616585,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1716622468
+    },
+    {
+        "content": "<p>(maybe this is my fault for not linking that thread in my message above)</p>",
+        "id": 440616619,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1716622519
+    },
+    {
+        "content": "<p>Hi, it has been over a week. I just want to check in and ask if I can get this PR reviewed or merged. It already has an approving review. The mathlib PR to test this was approved last week. I would like to use this API soon if I can. I apologise if this is too soon to send a reminder.</p>",
+        "id": 442764735,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1717588224
+    },
+    {
+        "content": "<p>I tried upgrading this <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> to 4.10.0-rc1. When doing so, I ran into a surprising issue. Previously, in the Lemmas.lean file:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kd\">@[</span><span class=\"n\">simp</span><span class=\"kd\">]</span>\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">map_empty</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">β</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">map</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">empty</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">empty</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">  </span><span class=\"n\">rfl</span>\n</code></pre></div>\n<p>The above just worked. Now <code>rfl</code> doesn't work. I guess this is due to some changes in the way either <code>rfl</code> or reducibility works by default, but I can't pinpoint the cause or the fix.</p>",
+        "id": 450230093,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720544678
+    },
+    {
+        "content": "<p>PS: I also noticed there is no default gitpod config for batteries and no link shows up on PRs. I have been using gitpod for mathlib recently and now I wonder if it makes sense to add something for batteries.</p>",
+        "id": 450231152,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720544927
+    },
+    {
+        "content": "<p>Is <code>map</code> defined by well-founded recursion? If so, it's now irreducible by default.</p>",
+        "id": 450233216,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1720545369
+    },
+    {
+        "content": "<p>I tried <code>unseal map in..</code></p>",
+        "id": 450233278,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720545395
+    },
+    {
+        "content": "<p>The result : </p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">failed</span><span class=\"w\"> </span><span class=\"n\">to</span><span class=\"w\"> </span><span class=\"n\">set</span><span class=\"w\"> </span><span class=\"bp\">`</span><span class=\"o\">[</span><span class=\"kn\">local</span><span class=\"w\"> </span><span class=\"n\">semireducible</span><span class=\"o\">]</span><span class=\"bp\">`</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"ss\">`Batteries.Vector.map</span><span class=\"bp\">`</span><span class=\"w\"> </span><span class=\"n\">is</span><span class=\"w\"> </span><span class=\"n\">currently</span><span class=\"w\"> </span><span class=\"bp\">`</span><span class=\"o\">[</span><span class=\"n\">semireducible</span><span class=\"o\">]</span><span class=\"bp\">`</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">`</span><span class=\"o\">[</span><span class=\"n\">irreducible</span><span class=\"o\">]</span><span class=\"bp\">`</span><span class=\"w\"> </span><span class=\"n\">expected</span>\n<span class=\"n\">use</span><span class=\"w\"> </span><span class=\"ss\">`set_option</span><span class=\"w\"> </span><span class=\"n\">allowUnsafeReducibility</span><span class=\"w\"> </span><span class=\"n\">true</span><span class=\"bp\">`</span><span class=\"w\"> </span><span class=\"n\">to</span><span class=\"w\"> </span><span class=\"n\">override</span><span class=\"w\"> </span><span class=\"n\">reducibility</span><span class=\"w\"> </span><span class=\"n\">status</span><span class=\"w\"> </span><span class=\"n\">validation</span>\n</code></pre></div>",
+        "id": 450233574,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720545446
+    },
+    {
+        "content": "<p>So it is something further down the definitional chain that has become irreducible.</p>",
+        "id": 450233750,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1720545484
+    },
+    {
+        "content": "<p>Is there a way to find out which one?</p>",
+        "id": 450234516,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720545653
+    },
+    {
+        "content": "<p>Some debug trace for rfl?</p>",
+        "id": 450234576,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720545661
+    },
+    {
+        "content": "<p><code>#reduce map f empty</code>  with a sufficient binder for <code>f</code></p>",
+        "id": 450235010,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1720545769
+    },
+    {
+        "content": "<p>I think it is <code>Array.mapM.map</code></p>",
+        "id": 450235083,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720545789
+    },
+    {
+        "content": "<p>Can you prove it.</p>",
+        "id": 450235150,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1720545814
+    },
+    {
+        "content": "<p>No, but digging down, it is the closest well founded recursive function</p>",
+        "id": 450235477,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720545903
+    },
+    {
+        "content": "<p>Well just run reduce and see where you get stuck?</p>",
+        "id": 450235581,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1720545938
+    },
+    {
+        "content": "<p>Oh maybe reduce uses kernel reduction which ignores this actually :/</p>",
+        "id": 450235917,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1720546003
+    },
+    {
+        "content": "<p>Well either way if <a href=\"http://Array.map\">Array.map</a> is at fault you should be able to just unfold your <code>map</code> and use a simp call to verify your theorem, that seems better than relying on some defeq anyways</p>",
+        "id": 450236020,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1720546039
+    },
+    {
+        "content": "<p>So <code>unseal Array.mapM.map</code> worked.</p>",
+        "id": 450236585,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720546183
+    },
+    {
+        "content": "<p>But a funny thing is <code>unseal</code> had to be put in before the docstring.</p>",
+        "id": 450236703,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720546206
+    },
+    {
+        "content": "<p>It was unintuitive at first.</p>",
+        "id": 450236736,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720546217
+    },
+    {
+        "content": "<p>It was a syntax error anywhere else. EDIT : I would think putting unseal just under the <code>@[simp]</code> line and above the <code>def</code> line was the correct syntax.</p>",
+        "id": 450236848,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720546265
+    },
+    {
+        "content": "<p>Using the unseal here seems like a pretty bad idea to me, you are relying on some hyperspecifics of the way that your underlying API is implemented. Why not unfold + simp instead.</p>",
+        "id": 450236925,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1720546302
+    },
+    {
+        "content": "<p>You get stuck in a loop. <code>simp [map, empty, Array.map, Array.mapM, Array.mapM.map]</code> gives a time out.</p>",
+        "id": 450237116,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720546340
+    },
+    {
+        "content": "<p>I think there's also an <code>Id.run</code> somewhere in there.</p>",
+        "id": 450237380,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720546427
+    },
+    {
+        "content": "<p>But you aren't supposed to unfold <a href=\"http://Array.map\">Array.map</a> and mapM with your loop, there should be a theorem somewhere that claims mapping over the empty array yields the empty array</p>",
+        "id": 450237381,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1720546427
+    },
+    {
+        "content": "<p>There isn't one.</p>",
+        "id": 450237402,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720546437
+    },
+    {
+        "content": "<p>At least not now.</p>",
+        "id": 450237495,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720546460
+    },
+    {
+        "content": "<p>Well then that might be a good contribution to make instead of comitting to unstable proof schemes ^^</p>",
+        "id": 450237561,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1720546482
+    },
+    {
+        "content": "<p>I do recall getting the theorem name from Array but a quick loogle search for the same name turned up empty.</p>",
+        "id": 450237564,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720546483
+    },
+    {
+        "content": "<p>So if it was indeed removed, I am not sure adding it is wise on my part.</p>",
+        "id": 450237925,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720546576
+    },
+    {
+        "content": "<p>On second thoughts, I might have obtained it from Mathlib Vectors.</p>",
+        "id": 450239004,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720546865
+    },
+    {
+        "content": "<p>I need to commute now. I'll make a PR once I am home.</p>",
+        "id": 450240106,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720547162
+    },
+    {
+        "content": "<p>OTOH, I did want to ask again if the intended syntax for <code>unseal</code> is to put it before docstrings. For large docstrings, this might make it hard to keep track this line</p>",
+        "id": 450245003,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720548318
+    },
+    {
+        "content": "<p>I don't think <code>simp</code> is the right way to deal with broken <code>rfl</code> proofs due to irreducible defs. <span class=\"user-mention\" data-user-id=\"470149\">@Joachim Breitner</span> and I briefly discussed this in <a href=\"https://github.com/leanprover-community/batteries/pull/832\">batteries#832</a> but I think we both went on to more pressing matters and never looked back. </p>\n<p>For the moment, I tend to prefer <code>with_unfolding_all rfl</code> even though that throws a big huge rug over the problem. But <code>simp</code> is another big rug, which is admittedly easier to trim to size, but it's also not guaranteed to work at all as a replacement.</p>",
+        "id": 450263220,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1720552978
+    },
+    {
+        "content": "<p>I’d say <code>unseal</code> is better than <code>with_unfolding_all</code>, but would say <code>simp</code> or <code>rw</code> is even more proper – they use the <code>.eq_*</code> equational theorems that are the public API  for a function defined by well-founded recursion, whereas <code>rfl</code> considers the internal construction.</p>",
+        "id": 450269345,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1720554879
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/450245003\">said</a>:</p>\n<blockquote>\n<p>OTOH, I did want to ask again if the intended syntax for <code>unseal</code> is to put it before docstrings. For large docstrings, this might make it hard to keep track this line</p>\n</blockquote>\n<p><code>unseal … in</code> work like <code>set_option … in</code> and precedes a full “command”. The docstring is part of the <code>def</code> command syntax. So while unintuitive, it is justifiable.</p>\n<p>Maybe there ought to be <code>unseal … in &lt;tactic&gt;</code>.</p>",
+        "id": 450269585,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1720554952
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"https://leanprover.zulipchat.com#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/450269345\">said</a>:</p>\n<blockquote>\n<p>I’d say <code>unseal</code> is better than <code>with_unfolding_all</code>, but would say <code>simp</code> or <code>rw</code> is even more proper – they use the <code>.eq_*</code> equational theorems that are the public API  for a function defined by well-founded recursion, whereas <code>rfl</code> considers the internal construction.</p>\n</blockquote>\n<p>So is it justified to use rfl for an <code>Array.map_empty</code> API function?</p>",
+        "id": 450270371,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720555135
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/450269345\">said</a>:</p>\n<blockquote>\n<p>I’d say <code>unseal</code> is better than <code>with_unfolding_all</code>, but would say <code>simp</code> or <code>rw</code> is even more proper – they use the <code>.eq_*</code> equational theorems that are the public API  for a function defined by well-founded recursion, whereas <code>rfl</code> considers the internal construction.</p>\n</blockquote>\n<p>I agree that <code>unseal</code> is better than <code>with_unfolding_all</code> because it's a localized fix rather than a big rug. But it relies on knowing exactly what def to unseal, which is not trivial and we have no automated tools for.</p>\n<p>My issues with simp are that (a) it does a whole lot more than just applying <code>.eq_*</code> lemmas, and (b) it works bottom-up instead of top-down.</p>\n<p>I still think we need a tactic that is specialized for dealing with this general issue.</p>",
+        "id": 450287638,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1720559478
+    },
+    {
+        "content": "<p>When I say <code>simp</code> I am inclined to mean something like <code>simp only […]</code>. With that I am not sure I see the problem. But you can also use <code>rw</code> if <code>simp</code> seems too poweful.</p>\n<p>In this particular case I think the problem is that <code>Array.map</code> itself has an imcomplete API, it seems, and there should be an <code>Array.map_empty</code>  that properly hides the construction of <code>Array.map</code>, and then <code>Vector.map</code> would be an thin wrapper around  <code>Array.map_empty</code>.</p>",
+        "id": 450291879,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1720560856
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"119741\">François G. Dorais</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/450287638\">said</a>:</p>\n<blockquote>\n<p>I still think we need a tactic that is specialized for dealing with this general issue.</p>\n</blockquote>\n<p>I guess what's needed is to set reducibility at a per tactic level or tactic variants with different reducibility settings.</p>",
+        "id": 450295163,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720562111
+    },
+    {
+        "content": "<p>Like <code>with_reducible rfl</code></p>",
+        "id": 450295218,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720562144
+    },
+    {
+        "content": "<p>Is there a consensus on adding <code>Array.map_empty</code>? Is it okay to use <code>unseal Array.mapM</code> and  <code>rfl</code> there?</p>",
+        "id": 450306559,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720566781
+    },
+    {
+        "content": "<p>I'll be offline for 12 hours or more. If  a consensus is reached and anyone wishes to PR it in the meantime,  I welcome it.</p>",
+        "id": 450308731,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720567688
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/450291879\">said</a>:</p>\n<blockquote>\n<p>When I say <code>simp</code> I am inclined to mean something like <code>simp only […]</code>. With that I am not sure I see the problem. But you can also use <code>rw</code> if <code>simp</code> seems too poweful.</p>\n</blockquote>\n<p>Yes, this is what I meant when I said that simp is \"easier to trim to size\". But this is still not a good solution, simp is easy to run into loops and mayhem, whereas (<code>with_unfolding_all</code> or not) <code>rfl</code> stops as soon as unification fails and can never loop.</p>\n<p>We do have tools to trim down simps, but simp needs to work first!</p>\n<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/450291879\">said</a>:</p>\n<blockquote>\n<p>In this particular case I think the problem is that <code>Array.map</code> itself has an imcomplete API, it seems, and there should be an <code>Array.map_empty</code>  that properly hides the construction of <code>Array.map</code>, and then <code>Vector.map</code> would be an thin wrapper around  <code>Array.map_empty</code>.</p>\n</blockquote>\n<p>That is true and it should be fixed. But you need to be able to identify the problem first! The sudden failure of <code>rfl</code> in this case doesn't identify the problem at all and it's hard to dig at it.</p>",
+        "id": 450309257,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1720567829
+    },
+    {
+        "content": "<p>Is it time to revive unification hints? They're already implemented but not very much used.</p>",
+        "id": 450328237,
+        "sender_full_name": "François G. Dorais",
+        "timestamp": 1720578428
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"119741\">François G. Dorais</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/450287638\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/348111-batteries/topic/RFC.3A.20Arrays.20with.20fixed.20length/near/450269345\">said</a>:</p>\n<blockquote>\n<p>I’d say <code>unseal</code> is better than <code>with_unfolding_all</code>, but would say <code>simp</code> or <code>rw</code> is even more proper – they use the <code>.eq_*</code> equational theorems that are the public API  for a function defined by well-founded recursion, whereas <code>rfl</code> considers the internal construction.</p>\n</blockquote>\n<p>My issues with simp are that (a) it does a whole lot more than just applying <code>.eq_*</code> lemmas, and (b) it works bottom-up instead of top-down.</p>\n</blockquote>\n<p>It can be made to work top-down inside an expression?</p>",
+        "id": 450337318,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1720583059
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/batteries/pull/877\">batteries#877</a> is rather short</p>",
+        "id": 450418284,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720610240
+    },
+    {
+        "content": "<p>Hopefully it can be merged soon</p>",
+        "id": 450419234,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720610427
+    },
+    {
+        "content": "<p>To clarify, <a href=\"https://github.com/leanprover-community/batteries/pull/877\">batteries#877</a> adds the array API lemma <code>map_empty</code>. It is ready for review (can't add labels)</p>",
+        "id": 450435679,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1720613969
+    },
+    {
+        "content": "<p><strong>Update</strong> : This issue has been properly fixed. <a href=\"https://github.com/leanprover-community/batteries/pull/793\">batteries#793</a> is again ready for review/merge. Vector.map_empty uses the corresponding Array.map_empty theorem.</p>",
+        "id": 452670123,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1721425042
+    }
+]

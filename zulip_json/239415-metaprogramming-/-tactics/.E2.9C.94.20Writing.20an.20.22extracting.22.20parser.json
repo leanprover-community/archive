@@ -1,0 +1,74 @@
+[
+    {
+        "content": "<p>I'd like to write a parser that, when used in a <code>syntax</code> expression, returns some expression of my design calculated from the underlying parsers. </p>\n<p>Specifically, I'd like to write a variant on <code>?</code>that returns an <code>Option</code> instead of a <code>nullNode</code>. Even more specifically, I'd like to write something like (don't execute this)</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">macro</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">term_optid</span><span class=\"o\">)</span> <span class=\"n\">atomic</span><span class=\"o\">(</span><span class=\"n\">id</span><span class=\"o\">:</span><span class=\"n\">ident</span> <span class=\"s2\">\":\"</span><span class=\"o\">)</span><span class=\"bp\">?</span> <span class=\"n\">typ</span><span class=\"o\">:</span><span class=\"n\">term</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"o\">(</span><span class=\"n\">some</span> <span class=\"n\">id</span><span class=\"o\">,</span> <span class=\"n\">typ</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>However, there is something fundamentally wrong about this macro -- putting that line into my file makes the Lean server hang. My best guess is that for some reason it's now registering every single term it can find as a potentially-valid <code>term_optid</code> or something along those lines? But I honestly don't know. (The above is actually an attempt at a workaround; the original thing I tried was </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">macro</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">term_optid</span><span class=\"o\">)</span> <span class=\"n\">atomic</span><span class=\"o\">(</span><span class=\"n\">id</span><span class=\"o\">:</span><span class=\"n\">ident</span> <span class=\"s2\">\":\"</span><span class=\"o\">)</span><span class=\"bp\">?</span> <span class=\"o\">:</span> <span class=\"n\">term</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">some</span> <span class=\"n\">id</span>\n</code></pre></div>\n<p>which, assuming it's being tried on everything for some reason, would presumably match the empty string. ...which is sort of the point, but I don't know why it'd be tried outside a syntax...)</p>\n<p>At any rate, is there some way of doing the thing I want to do here?</p>",
+        "id": 425222219,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1709783342
+    },
+    {
+        "content": "<p>... Hm. Actually, now that I write this out, it does occur to me that macros like this are intended to be terminal syntax forms, and thus should be checked against everything. Oops. Okay, lemme try making it a parser instead of a <code>syntax</code>...</p>",
+        "id": 425222460,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1709783485
+    },
+    {
+        "content": "<p>I don't see these hanging locally. I do see syntax errors in the <code>macro</code> definition, also after the <code>=&gt;</code> the result is supposed to be a <code>MacroM Syntax</code>, not a tuple.</p>",
+        "id": 425222614,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1709783617
+    },
+    {
+        "content": "<p>Though <code>syntax atomic(ident \":\")? term : term</code> does cause a stack overflow</p>",
+        "id": 425222727,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1709783687
+    },
+    {
+        "content": "<p>... Huh. That's kind of weird, actually, but --ah, okay, that makes more sense now. Though it seems you have a much more responsive Lean server than me :p</p>",
+        "id": 425222753,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1709783712
+    },
+    {
+        "content": "<p>And yeah, it needing to be a <code>MacroM Syntax</code> is another reason I should be writing a parser and not a macro. Which I think was my original intent when making the post, but I came back to it after like six hours so I lost track of my intent lol</p>",
+        "id": 425222805,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1709783750
+    },
+    {
+        "content": "<p>at any rate, I'm extremely not clear on how parsers 'return' information to begin with, so I'm struggling to come up with a <code>Parser</code> that does what I want here.</p>",
+        "id": 425223027,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1709783903
+    },
+    {
+        "content": "<p>In theory, I think the <code>optional</code> parser is supposed to return an array of length either zero or one, in lieu of a true <code>TStxOpt</code> or something similar, but I don't see how to write a <code>macro_rules</code> that corresponds to the <code>optional</code> parser except by writing out each case separately, which largely defeats the purpose of using the <code>optional</code> in my use case anyway</p>",
+        "id": 425223546,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1709784235
+    },
+    {
+        "content": "<p>Okay, I got it to sort of work by un-factoring it out from my use case and then moving the colon outside the <code>atomic</code>, so now it reads</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"n\">syntax</span> <span class=\"s2\">\"Σ| \"</span> <span class=\"n\">atomic</span><span class=\"o\">(</span><span class=\"n\">binderIdent</span><span class=\"o\">)</span><span class=\"bp\">?</span> <span class=\"s2\">\":\"</span> <span class=\"n\">term</span> <span class=\"s2\">\", \"\"⟨\"</span><span class=\"n\">sepBy1</span><span class=\"o\">(</span><span class=\"n\">ppSpace</span> <span class=\"n\">colGt</span> <span class=\"n\">term</span><span class=\"o\">,</span> <span class=\"s2\">\" | \"</span><span class=\"o\">)</span><span class=\"s2\">\"⟩\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n  <span class=\"n\">macro_rules</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">Σ|</span> <span class=\"bp\">$</span><span class=\"o\">[</span><span class=\"bp\">$</span><span class=\"n\">ids</span><span class=\"o\">]</span><span class=\"bp\">?</span> <span class=\"o\">:</span> <span class=\"bp\">$</span><span class=\"n\">btype</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"o\">,</span> <span class=\"o\">⟨</span><span class=\"bp\">$</span><span class=\"n\">ctr_cases</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"bp\">|*</span><span class=\"o\">⟩)</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span> <span class=\"bp\">...</span>\n</code></pre></div>\n<p>I suppose this works, but I would prefer to have the colon itself be optional as well. Unfortunately, </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"n\">syntax</span> <span class=\"s2\">\"Σ| \"</span> <span class=\"n\">atomic</span><span class=\"o\">(</span><span class=\"n\">binderIdent</span> <span class=\"s2\">\":\"</span><span class=\"o\">)</span><span class=\"bp\">?</span> <span class=\"n\">term</span> <span class=\"s2\">\", \"\"⟨\"</span><span class=\"n\">sepBy1</span><span class=\"o\">(</span><span class=\"n\">ppSpace</span> <span class=\"n\">colGt</span> <span class=\"n\">term</span><span class=\"o\">,</span> <span class=\"s2\">\" | \"</span><span class=\"o\">)</span><span class=\"s2\">\"⟩\"</span> <span class=\"o\">:</span> <span class=\"n\">term</span>\n  <span class=\"n\">macro_rules</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">Σ|</span> <span class=\"bp\">$</span><span class=\"o\">[</span><span class=\"bp\">$</span><span class=\"n\">ids</span><span class=\"o\">]:</span><span class=\"bp\">?</span> <span class=\"bp\">$</span><span class=\"n\">btype</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"o\">,</span> <span class=\"o\">⟨</span><span class=\"bp\">$</span><span class=\"n\">ctr_cases</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"bp\">|*</span><span class=\"o\">⟩)</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span> <span class=\"bp\">...</span>\n</code></pre></div>\n<p>does not work. I suppose at this point, though, that <code>atomic</code> expression could probably be factored into a separated parser without much difficulty? Lemme try that...</p>",
+        "id": 425224605,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1709785048
+    },
+    {
+        "content": "<p>You can make the colon be optional, just do <code>$[$ids :]?</code></p>",
+        "id": 425225267,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1709785552
+    },
+    {
+        "content": "<p>Ah dammit. I tried <code>$[$ids \":\"]?</code> and plain <code>$[$ids]?</code> but not that. Thanks!</p>",
+        "id": 425225392,
+        "sender_full_name": "Robert Maxton",
+        "timestamp": 1709785666
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"359992\">Robert Maxton</span> has marked this topic as resolved.</p>",
+        "id": 426067848,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1710228567
+    }
+]

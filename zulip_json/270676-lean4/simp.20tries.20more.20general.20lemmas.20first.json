@@ -1,0 +1,104 @@
+[
+    {
+        "content": "<p>Discrimination tree lookup gives the result (generally) in order from most general to most specific match. Type class search is smart and traverses this array backwards. <code>simp</code> is not so smart and traverses the array forwards, meaning that more general lemmas are tried before more specific lemmas.</p>\n<p>This caused a performance problem <a href=\"https://github.com/leanprover-community/mathlib4/pull/21670#issuecomment-2675793494\">here</a>. I believe <span class=\"user-mention\" data-user-id=\"470149\">@Joachim Breitner</span> looked into this at some point, but I'm not sure what the status of that is.</p>\n<p>Or am I missing a reason why more generall lemmas would better be applied first?</p>",
+        "id": 501201444,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1740179459
+    },
+    {
+        "content": "<p>The file <code>Mathlib.Data.NNRat.Defs</code> contains this library note, which would become unnecessary if this is fixed in <code>simp</code>: (written by <span class=\"user-mention\" data-user-id=\"387244\">@Yaël Dillies</span>)</p>\n<p>library_note \"specialised high priority simp lemma\" /--<br>\nIt sometimes happens that a <code>@[simp]</code> lemma declared early in the library can be proved by <code>simp</code><br>\nusing later, more general simp lemmas. In that case, the following reasons might be arguments for<br>\nthe early lemma to be tagged <code>@[simp high]</code> (rather than <code>@[simp, nolint simpNF]</code> or<br>\nun<code>@[simp]</code>ed):</p>\n<ol>\n<li>\n<p>There is a significant portion of the library which needs the early lemma to be available via<br>\n<code>simp</code> and which doesn't have access to the more general lemmas.</p>\n</li>\n<li>\n<p>The more general lemmas have more complicated typeclass assumptions, causing rewrites with them<br>\n  to be slower.<br>\n-/</p>\n</li>\n</ol>",
+        "id": 501201654,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1740179605
+    },
+    {
+        "content": "<p>Not sure if I remember all the details. I think the issue is the relative ordering of the entries for star and for a concrete key. But trying to be clever about the the meaning of the array that comes out of that isn't great software design, it depends too much on the internals of that trie data structure.</p>\n<p>So if the relative order of lemmas matter, maybe better to use explicit priorities (and comments!) for a robust approach. Or else, sort the matching lemma using some clearly defined valuation function (could be size of the lhs or number of side conditions or so).</p>",
+        "id": 501238074,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1740209392
+    },
+    {
+        "content": "<p>Ah, here is a related issue:<br>\n<a href=\"https://github.com/leanprover/lean4/issues/4173\">https://github.com/leanprover/lean4/issues/4173</a></p>",
+        "id": 501238219,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1740209514
+    },
+    {
+        "content": "<p>I would disagree that being clever about the meaning of the array is a bad idea. In fact, when thinking about type classes, this ordering is very important and convenient and is relied on in many places. In the vast majority of cases, a more specific instance should be aplied first.</p>\n<p>I do agree though that it would be better if this order was documented more explicitly, or even was explicitly mainained with some matching score (such as in my RefinedDiscrTree). For example currently, the pattern (_ + (2 + 3)) is counted as more general than (1 + _), due to the greedy nature of the order (it first looks in the left argument). This could then be turned around.</p>",
+        "id": 501241271,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1740212278
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/channel/270676-lean4/topic/simp.20tries.20more.20general.20lemmas.20first/near/501241271\">said</a>:</p>\n<blockquote>\n<p>a more specific instance should be aplied first.</p>\n</blockquote>\n<p>Absolutely! But what it means to be “more specific” shouldn’t depend on whether the DiscrTree happens to use a * or a something else. A change like yours making the tree more efficient with forall and lambda shouldn't affect the semantics. And if someone rips out the discrtree and does a linear search through all instances they should still get the same behavior. This, to me, clearly points towards a solution that sorts the theorems post-hoc, and where “more specific ” is a property of the theorem, not their discr tree or storage point in the tree.</p>",
+        "id": 501241992,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1740212908
+    },
+    {
+        "content": "<p>I think there is a reason to have 'specificness' be decided in the discrimination tree. For example the pattern for instances <code>foo bar *</code> and <code>foo * bar</code> are the same global specificness. But when applied to the target <code>foo bar *</code>, you would want the first lemma to be considdered more specific. (This argument only applies to type class search, where * patterns in the target are allowed)</p>",
+        "id": 501242767,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1740213617
+    },
+    {
+        "content": "<p>And I think it's OK that if the discrimination tree does switch to a better indexing, that then the sorting of specificness improves as well.</p>",
+        "id": 501242847,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1740213708
+    },
+    {
+        "content": "<p>By the way, when I was working on the extensible push_neg tactic, I encountered the case where I wanted x&lt;y to be negated to y≤x, but for e.g. natural numbers, 0&lt;n should be negated to n=0. I then got confused why the lemma didn't apply.</p>\n<p>My point is that I would like to be able to rely on simp picking the closer match (discrimination tree wise) and if it's not clear which match is closer, then I (as the simp set creator) can step in and add priorities.</p>",
+        "id": 501292360,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1740250612
+    },
+    {
+        "content": "<p>I started with a PR to change the order in which <code>simp</code> lemmas of equal priority are tried. A side effect of this change is that more recently added <code>simp</code> lemmas are tried before older lemmas (when they have the same priority). Is this a desirable change?<br>\n<a href=\"https://github.com/leanprover/lean4/pull/7195\">lean4#7195</a></p>",
+        "id": 501677100,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1740441174
+    },
+    {
+        "content": "<p>That is, for lemmas that have the same priority and the same pattern, the most recent one is tried.</p>",
+        "id": 501679512,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1740442214
+    },
+    {
+        "content": "<p>I think this observation supports my argument that ideally the lemma order should be independent of the implementation details of some index data structure.</p>\n<p>Note that I am not saying that your vision for meassuring “specificness” is wrong, quite the contrary! But I’d like that to be an explicit notion; say a function that takes the goal and the lhs and calculates a score, or compares the applicable lemmas, independent of how the set of applicable lemmas were found.</p>\n<p>This would also help with proof stability under import reordering.</p>\n<p>Or put differently: <code>simp -index</code> should (ideally) behave the same, just slower.</p>\n<p>And the DiscrTree should be <strong>only</strong> concerned with efficiently retrieving those lemmas/instances that could be defeq to the key, not more, not less. This gives a very clear specification to this somewhat complex beast, and nicely decouples it from the rest of the system.</p>",
+        "id": 501737006,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1740471329
+    },
+    {
+        "content": "<p>I agree that this shows that the ordering should be independent from the implementation details of the DiscrTree. I suppose that decoupling this would also mean that <code>simp</code> and type class search could both specify their own heuristics for this ordering, if that turns out to be desirable (e.g. <code>simp</code> trying older lemmas first and type class search trying newer instances first)</p>",
+        "id": 501781172,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1740483377
+    },
+    {
+        "content": "<p>I've never been particularly convinced by the \"try newer instances first\" heuristic for typeclass inference. Mathlib defines groups and rings very early on, and instantly proves that a group is a monoid and a ring is a monoid, and then much later on you create some far more exotic reasons why something might be a monoid, and then lean tries all of these first before trying to see if the thing is a group or a ring, which is often the right answer. Fortunately it's often quick to fail, but there are times when it wastes a lot of time trying to see if something is an ordered monoid or a topological field or whatever when the answer is right in front of it</p>",
+        "id": 501798452,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1740487898
+    },
+    {
+        "content": "<p>What sort of heuristic do you think would be good for <code>simp</code> and type class search when choosing what to apply first?</p>\n<p>It would be nice if it isn't too complicated, so that it is predictable. I think the specificness of the discrimination tree match is quite a good heuristic. Another option is to look at how complicated the (type class) hypotheses of the lemma are, but that seems quite complicated to measure.</p>",
+        "id": 501808384,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1740490742
+    },
+    {
+        "content": "<p>For <code>simp</code> I found some cases where you do want the more general lemma to apply: for example in <code>False ↔ False</code>, you might prefer the lemma about <code>p ↔ p</code> instead of <code>False ↔ p</code>. And for <code>if p then False else False</code> the lemma about <code>if p then x else x</code> instead of <code>if p then False else x</code>.  But I think it would be natural to tag these with <code>simp high</code> to explicitly enforce this. Althoug in my RefinedDiscrTree these get the same match score, because the repeated <code>p</code> or <code>x</code> makes the match be more specific, since <code>RefinedDiscrTree</code> keeps track of which pattern variables are the same.</p>",
+        "id": 501808540,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1740490790
+    },
+    {
+        "content": "<p>My understanding is that the problems we sometimes see with lean having a local context full of algebra and then suddenly typeclass inference taking a voyage into topology or order theory are going to be solved (and perhaps in some cases have already been solved) by refactoring the typeclass hierarchies so that these non-algebra things are mixins.</p>",
+        "id": 501889200,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1740510315
+    }
+]

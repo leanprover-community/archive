@@ -1,0 +1,44 @@
+[
+    {
+        "content": "<p>Auto-param tactics currently can't contain identifiers:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">T</span> <span class=\"o\">:=</span> <span class=\"n\">True</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">Foo</span> <span class=\"n\">where</span>\n  <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">T</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">T</span><span class=\"o\">]</span> <span class=\"c1\">-- invalid auto tactic, identifier is not allowed</span>\n</code></pre></div>\n<p>Does anyone know why this is? Perhaps the purpose is to ensure that the tactic doesn't depend on fvars, but then it would suffice to check that all identifiers resolve to global constants.</p>\n<p>The issue can be worked around with macros:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span> <span class=\"n\">T</span> <span class=\"o\">:=</span> <span class=\"n\">True</span>\n\n<span class=\"kn\">local</span> <span class=\"n\">macro</span> <span class=\"s2\">\"simp_with_T\"</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"bp\">=&gt;</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">tactic</span><span class=\"bp\">|</span> <span class=\"n\">simp</span> <span class=\"o\">[</span><span class=\"n\">T</span><span class=\"o\">])</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">Foo</span> <span class=\"n\">where</span>\n  <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">T</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">simp_with_T</span>\n</code></pre></div>\n<p>However, this is a lot of ceremony for one auto-param.</p>\n<p>A real example where this came up: <a href=\"#narrow/stream/287929-mathlib4/topic/Coxeter.20Groups/near/421120660\">https://leanprover.zulipchat.com/#narrow/stream/287929-mathlib4/topic/Coxeter.20Groups/near/421120660</a></p>",
+        "id": 421123953,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1707770247
+    },
+    {
+        "content": "<p>would thumbsup an issue for this <span aria-label=\"big smile\" class=\"emoji emoji-1f604\" role=\"img\" title=\"big smile\">:big_smile:</span></p>",
+        "id": 421389675,
+        "sender_full_name": "James Gallicchio",
+        "timestamp": 1707897756
+    },
+    {
+        "content": "<p>I think you can thumbs up the draft of a fix by Mario: <a href=\"https://github.com/leanprover/lean4/pull/3328\">lean4#3328</a></p>",
+        "id": 421420714,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1707908393
+    },
+    {
+        "content": "<p>Here's a really nasty workaround in the meantime:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">elab</span> <span class=\"s2\">\"just_let_me_use_the_tactic\"</span> <span class=\"n\">s</span><span class=\"o\">:</span><span class=\"n\">str</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">match</span> <span class=\"n\">Lean.Parser.runParserCategory</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">Lean.getEnv</span><span class=\"o\">)</span> <span class=\"bp\">`</span><span class=\"n\">tactic</span> <span class=\"n\">s.getString</span> <span class=\"k\">with</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">error</span> <span class=\"n\">e</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">throwErrorAt</span> <span class=\"n\">s</span> <span class=\"n\">e</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">ok</span> <span class=\"n\">t</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Lean.Elab.Tactic.evalTactic</span> <span class=\"n\">t</span>\n\n<span class=\"kd\">structure</span> <span class=\"n\">AlwaysOne''</span> <span class=\"n\">where</span>\n  <span class=\"n\">one</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span>\n  <span class=\"n\">one_eq</span> <span class=\"o\">:</span> <span class=\"n\">one</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">just_let_me_use_the_tactic</span> <span class=\"s2\">\"exact rfl\"</span>\n</code></pre></div>",
+        "id": 436783088,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1714686993
+    },
+    {
+        "content": "<p>Unfortunately this emits the error message from the <code>exact rfl</code> on the very first line of the file using it!</p>",
+        "id": 436783117,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1714687011
+    },
+    {
+        "content": "<p>Hacks upon hacks, this puts the error at the right position <span aria-label=\"upside down\" class=\"emoji emoji-1f643\" role=\"img\" title=\"upside down\">:upside_down:</span> </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">elab</span> <span class=\"s2\">\"just_let_me_use_the_tactic\"</span> <span class=\"n\">s</span><span class=\"o\">:</span><span class=\"n\">str</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">r</span> <span class=\"bp\">←</span> <span class=\"n\">getRef</span>\n  <span class=\"k\">let</span> <span class=\"n\">p</span> <span class=\"o\">:=</span> <span class=\"k\">if</span> <span class=\"k\">let</span> <span class=\"n\">some</span> <span class=\"n\">pos</span> <span class=\"o\">:=</span> <span class=\"n\">r.getPos</span><span class=\"bp\">?</span> <span class=\"k\">then</span> <span class=\"n\">String.replicate</span> <span class=\"n\">pos.byteIdx</span> <span class=\"sc\">' '</span> <span class=\"k\">else</span> <span class=\"s2\">\"\"</span>\n  <span class=\"k\">match</span> <span class=\"n\">Lean.Parser.runParserCategory</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">Lean.getEnv</span><span class=\"o\">)</span> <span class=\"bp\">`</span><span class=\"n\">tactic</span> <span class=\"o\">(</span><span class=\"n\">p</span> <span class=\"bp\">++</span> <span class=\"n\">s.getString</span><span class=\"o\">)</span> <span class=\"k\">with</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">error</span> <span class=\"n\">e</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">throwErrorAt</span> <span class=\"n\">s</span> <span class=\"n\">e</span>\n  <span class=\"bp\">|</span> <span class=\"bp\">.</span><span class=\"n\">ok</span> <span class=\"n\">t</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">Lean.Elab.Tactic.evalTactic</span> <span class=\"n\">t</span>\n</code></pre></div>",
+        "id": 436785336,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1714688196
+    },
+    {
+        "content": "<p>The subscript parser instead goes over the syntax and adds the right offset to everything</p>",
+        "id": 436785760,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1714688444
+    }
+]

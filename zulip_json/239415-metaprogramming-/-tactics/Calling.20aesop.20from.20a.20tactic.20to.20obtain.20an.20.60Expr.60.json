@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>I'm running into the limits of my understanding of tactics here. I'm in the following situation: in <a href=\"https://github.com/leanprover-community/mathlib4/pull/10538\">#10538</a> we have <code>proveFinsetNonempty</code> which attempts to generate a proof. I would like to see if we can do this instead via calling into aesop to do this. However, aesop works on the level of <code>MVarId</code>s (i.e. goals) and here the expected output is an <code>Expr</code>. So do I understand correctly that I have to do something like:</p>\n<p>1.Create a new goal, obtain a <code>MVarId</code></p>\n<ol start=\"2\">\n<li>Make an <code>Expr</code> with the <code>Prop</code> we want to show</li>\n<li>Set the goal type to be equal to the <code>Expr</code> we made</li>\n<li>Call <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Aesop.search#doc\">docs#Aesop.search</a> with my parameters</li>\n<li>Check that aesop doesn't return any unsolved subgoals</li>\n<li>Get the term that solved the goal with <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.getExprMVarAssignment%3F#doc\">docs#Lean.getExprMVarAssignment?</a></li>\n</ol>\n<p>If this is correct, how do I do steps 1-3?</p>",
+        "id": 421628455,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1707994532
+    },
+    {
+        "content": "<p>I think this is correct and you should be able to use <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Meta.mkFreshExprMVar#doc\">docs#Lean.Meta.mkFreshExprMVar</a> to create the mvar. Note that this mvar inherits the current local context (as reported by <code>getLCtx</code>); if you want a particular local context, use <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Meta.mkFreshExprMVarAt#doc\">docs#Lean.Meta.mkFreshExprMVarAt</a>. The local context contains the hypotheses that are allowed to appear in your final <code>Expr</code>.</p>",
+        "id": 421629830,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1707995041
+    },
+    {
+        "content": "<p>I see, thanks! We do want to use the current context for <code>assumption</code> purposes so <code>mkFreshExprMVar</code> sounds good. It returns an <code>Expr</code>, do I then use <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Expr.mvarId%21#doc\">docs#Lean.Expr.mvarId!</a> on it or is there something I should take into account?</p>",
+        "id": 421630454,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1707995269
+    },
+    {
+        "content": "<p>It seems to work, thanks! One final question: what's the best way to pass rulesets into <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Aesop.search#doc\">docs#Aesop.search</a>, for example to do the equivalent of <code>by aesop (rule_sets [-default, Finset.Nonempty])</code>? Should I try to replicate what the frontend code does?</p>",
+        "id": 421631627,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1707995696
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"238446\">Anne Baanen</span> <a href=\"#narrow/stream/239415-metaprogramming-.2F-tactics/topic/Calling.20aesop.20from.20a.20tactic.20to.20obtain.20an.20.60Expr.60/near/421630454\">said</a>:</p>\n<blockquote>\n<p>I see, thanks! We do want to use the current context for <code>assumption</code> purposes so <code>mkFreshExprMVar</code> sounds good. It returns an <code>Expr</code>, do I then use <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Expr.mvarId%21#doc\">docs#Lean.Expr.mvarId!</a> on it or is there something I should take into account?</p>\n</blockquote>\n<p>Yes, the returned <code>Expr</code> is always <code>.mvar mvarId</code>. The return type should really be changed imo, but it would be a big refactor.</p>",
+        "id": 421633014,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1707996285
+    },
+    {
+        "content": "<p>I think I answered my question about rulesets, it would be something like:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"k\">let</span> <span class=\"n\">rulesets</span> <span class=\"bp\">←</span> <span class=\"n\">Aesop.getDefaultRuleSetNames</span>\n  <span class=\"k\">let</span> <span class=\"o\">((</span><span class=\"n\">mvar</span><span class=\"o\">,</span> <span class=\"n\">rules</span><span class=\"o\">),</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"o\">(</span><span class=\"n\">Aesop.Frontend.TacticConfig.getRuleSet</span> <span class=\"n\">mvar</span>\n    <span class=\"o\">{</span> <span class=\"n\">additionalRules</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[],</span>\n      <span class=\"n\">erasedRules</span> <span class=\"o\">:=</span> <span class=\"bp\">#</span><span class=\"o\">[],</span>\n      <span class=\"n\">enabledRuleSets</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">rulesets.erase</span> <span class=\"bp\">`</span><span class=\"n\">default</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">insert</span> <span class=\"bp\">`</span><span class=\"n\">Finset.Nonempty</span><span class=\"o\">,</span>\n      <span class=\"n\">options</span> <span class=\"o\">:=</span> <span class=\"o\">{},</span>\n      <span class=\"n\">simpConfig</span> <span class=\"o\">:=</span> <span class=\"o\">{},</span>\n      <span class=\"n\">simpConfigSyntax</span><span class=\"bp\">?</span> <span class=\"o\">:=</span> <span class=\"bp\">.</span><span class=\"n\">none</span> <span class=\"o\">})</span><span class=\"bp\">.</span><span class=\"n\">run</span>\n  <span class=\"k\">let</span> <span class=\"o\">(</span><span class=\"n\">remainingGoals</span><span class=\"o\">,</span> <span class=\"n\">_</span><span class=\"o\">)</span> <span class=\"bp\">←</span> <span class=\"n\">Aesop.search</span> <span class=\"n\">mvar</span> <span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">some</span> <span class=\"n\">rules</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 421633604,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1707996546
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"238446\">Anne Baanen</span> <a href=\"#narrow/stream/239415-metaprogramming-.2F-tactics/topic/Calling.20aesop.20from.20a.20tactic.20to.20obtain.20an.20.60Expr.60/near/421631627\">said</a>:</p>\n<blockquote>\n<p>It seems to work, thanks! One final question: what's the best way to pass rulesets into <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Aesop.search#doc\">docs#Aesop.search</a>, for example to do the equivalent of <code>by aesop (rule_sets [-default, Finset.Nonempty])</code>? Should I try to replicate what the frontend code does?</p>\n</blockquote>\n<p>Oh, the handling of rule sets has changed quite a bit on master. Now  it's <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Aesop.Frontend.getGlobalRuleSets#doc\">docs#Aesop.Frontend.getGlobalRuleSets</a> into <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Aesop.mkLocalRuleSet#doc\">docs#Aesop.mkLocalRuleSet</a>. (There should be a function combining the two.)</p>",
+        "id": 421633802,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1707996625
+    },
+    {
+        "content": "<p>Got it, so it should be:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"k\">let</span> <span class=\"n\">rulesets</span> <span class=\"bp\">←</span> <span class=\"n\">Aesop.Frontend.getGlobalRuleSets</span> <span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"bp\">`</span><span class=\"n\">builtin</span><span class=\"o\">,</span> <span class=\"bp\">`</span><span class=\"n\">Finset.Nonempty</span><span class=\"o\">]</span>\n  <span class=\"k\">let</span> <span class=\"n\">rules</span> <span class=\"bp\">←</span> <span class=\"n\">Aesop.mkLocalRuleSet</span> <span class=\"n\">rulesets</span> <span class=\"o\">{</span> <span class=\"n\">terminal</span> <span class=\"o\">:=</span> <span class=\"n\">true</span><span class=\"o\">,</span> <span class=\"n\">generateScript</span> <span class=\"o\">:=</span> <span class=\"n\">false</span> <span class=\"o\">}</span>\n</code></pre></div>",
+        "id": 421635997,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1707997608
+    },
+    {
+        "content": "<p>I think so, yes.</p>",
+        "id": 421643365,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1708000313
+    },
+    {
+        "content": "<p>Thanks so much for your quick answers! :D</p>",
+        "id": 421654754,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1708004141
+    }
+]

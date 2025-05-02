@@ -1,0 +1,146 @@
+[
+    {
+        "content": "<p>I'm trying to perform a compilation step, by lifting an operation that translates expressions <code>Expr1</code> into <code>Expr2</code> into something that takes an <code>Array Expr1</code> and returns an <code>Array Expr2</code>.  Furthermore, I have two constraints:</p>\n<ul>\n<li>it is important that the size of the array doesn't change, and that I am able to prove it, because that array represents a local context, so locally bound variables are actually indices of that array, which, to avoid having to resort to <code>[·]!</code>, I encode as <code>Fin n</code> rather than <code>Nat</code></li>\n<li>the translation of each expression individually is actually a monadic action <code>Expr1 → m Expr2</code> for some monad <code>m</code>.</li>\n</ul>\n<p>If the translation of each expression didn't happen under a monad, I could simply use <code>Array.map</code>, for which there is a lemma that states that it preserves the size, and all would be well.  But since I do have a monadic action, my code looks like</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"k\">do</span><span class=\"w\"> </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">vars1</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Array</span><span class=\"w\"> </span><span class=\"n\">Expr1</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">...</span>\n<span class=\"w\">   </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">vars2</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Array</span><span class=\"w\"> </span><span class=\"n\">Expr2</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">vars1</span><span class=\"bp\">.</span><span class=\"n\">mapM</span><span class=\"w\"> </span><span class=\"n\">translation</span>\n<span class=\"w\">   </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">all_is_well</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">vars1</span><span class=\"bp\">.</span><span class=\"n\">size</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">vars2</span><span class=\"bp\">.</span><span class=\"n\">size</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">???</span>\n</code></pre></div>\n<p>now, the problem is that, when I want to prove that <code>vars1.size = vars2.size</code>, in the local context, <code>vars2</code> is not bound, ie I just have <code>vars2 : Array Expr2</code>, not <code>vars2 : Array Expr2 := ...</code>, so the goal becomes impossible to prove.</p>\n<p>I've managed to make this work for a concrete monad <code>Except ε</code>, for which I can \"peek into\" without doing a monadic bind, and so I can extract some more informatio.  However, in my use case, the monad I'd like to work in is <code>CoreM</code> (or <code>MetaM</code>), which is a stack of monads on top of <code>IO</code>, which makes this technique of \"peeking in the monad\" without binding impossible.</p>\n<p>In fact, I wouldn't even know how to state a general theorem that states that <code>mapM</code> preserves the size of the array, since the array we get is hidden in the monad, so I don't really know how to proceed.</p>",
+        "id": 480862143,
+        "sender_full_name": "jthulhu",
+        "timestamp": 1730879764
+    },
+    {
+        "content": "<p>One solution is <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=SatisfiesM#doc\">docs#SatisfiesM</a>, see e.g. <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Array.size_modifyM#doc\">docs#Array.size_modifyM</a> for a simple example. However it's difficult to make practical use of this.</p>",
+        "id": 480877220,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1730885236
+    },
+    {
+        "content": "<p>On the other hand, it's somewhat unusual that you want to prove something about <code>CoreM</code> in the first place. Could you perhaps <a href=\"https://en.wikipedia.org/wiki/XY_problem\">#xy</a> a bit for us?</p>",
+        "id": 480877328,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1730885269
+    },
+    {
+        "content": "<p>I'd like to work in <code>CoreM</code> (or with additional elaboration monads in the stack) because that makes building a better UX easier, ie. to have precise error reporting, to provide precise feedback as the cursor moves around in the expressions I elaborate, things like that.  For this reason, my first compilation steps (those that can fail) produce monadic actions in <code>CoreM</code>, rather than just, say, <code>Except ε</code>.  I hope this makes sense.</p>",
+        "id": 480878068,
+        "sender_full_name": "jthulhu",
+        "timestamp": 1730885485
+    },
+    {
+        "content": "<p>Oh yes --- but why are you writing proofs about the behaviour of <code>CoreM</code>?</p>",
+        "id": 480879543,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1730885956
+    },
+    {
+        "content": "<p>I'm not specifically interested about writing proofs about the behaviour of <code>CoreM</code>, but I'm working with types that depend on the size of the array, so I need to ensure that the array doesn't change size during one translation step to typecheck. If I were to replace <code>← vars1.mapM translation</code> with <code>:= vars1.map translation</code> in the above code, it would be easy to see that <code>vars1.size</code> and <code>vars2.size</code> are equal.  With some effort, I managed to show that it is possible if the underlying monad is <code>Except ε</code>.  However, the technique that I used does not generalize to <code>CoreM</code>, and is also very verbose with respect to the non-monadic solution.</p>",
+        "id": 480880188,
+        "sender_full_name": "jthulhu",
+        "timestamp": 1730886154
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"674423\">@jthulhu</span>, one could also use</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Batteries</span><span class=\"bp\">.</span><span class=\"n\">Data</span><span class=\"bp\">.</span><span class=\"n\">Vector</span><span class=\"bp\">.</span><span class=\"n\">Basic</span>\n\n<span class=\"kn\">namespace</span><span class=\"w\"> </span><span class=\"n\">Batteries</span><span class=\"bp\">.</span><span class=\"n\">Vector</span>\n\n<span class=\"sd\">/-- Map a monadic function over a vector. -/</span>\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">mapM</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Monad</span><span class=\"w\"> </span><span class=\"n\">m</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">m</span><span class=\"w\"> </span><span class=\"n\">β</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">v</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Vector</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">m</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Vector</span><span class=\"w\"> </span><span class=\"n\">β</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"n\">go</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">zero_le</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">.</span><span class=\"n\">empty</span>\n<span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"n\">go</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">i</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">h</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">i</span><span class=\"w\"> </span><span class=\"bp\">≤</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">r</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Vector</span><span class=\"w\"> </span><span class=\"n\">β</span><span class=\"w\"> </span><span class=\"n\">i</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">m</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Vector</span><span class=\"w\"> </span><span class=\"n\">β</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">    </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"n\">h'</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">i</span><span class=\"w\"> </span><span class=\"bp\">&lt;</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"k\">then</span>\n<span class=\"w\">      </span><span class=\"n\">go</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">i</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">omega</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">r</span><span class=\"bp\">.</span><span class=\"n\">push</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">v</span><span class=\"o\">[</span><span class=\"n\">i</span><span class=\"o\">]))</span>\n<span class=\"w\">    </span><span class=\"k\">else</span>\n<span class=\"w\">      </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"n\">r</span><span class=\"bp\">.</span><span class=\"n\">cast</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">omega</span><span class=\"o\">)</span>\n\n<span class=\"kn\">end</span><span class=\"w\"> </span><span class=\"n\">Batteries</span><span class=\"bp\">.</span><span class=\"n\">Vector</span>\n</code></pre></div>",
+        "id": 480893536,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1730890617
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>, is it actually possible to define something with this signature \"after the fact\", i.e. just using <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Array.mapM#doc\">docs#Array.mapM</a> and <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Array.size_mapM%3F#doc\">docs#Array.size_mapM?</a></p>",
+        "id": 480893987,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1730890774
+    },
+    {
+        "content": "<p>(But, <span class=\"user-mention\" data-user-id=\"674423\">@jthulhu</span>, I think the useful answer here is still to ask you to <a href=\"https://en.wikipedia.org/wiki/XY_problem\">#xy</a> further, and tell us why you want the equality of the array sizes, and see if that can just be avoided mixed in with the monadic code.)</p>",
+        "id": 480894509,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1730890942
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Kim Morrison</span> <a href=\"#narrow/channel/270676-lean4/topic/Reasoning.20through.20a.20monadic.20bind/near/480893987\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span>, is it actually possible to define something with this signature \"after the fact\", i.e. just using <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Array.mapM#doc\">docs#Array.mapM</a> and <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Array.size_mapM%3F#doc\">docs#Array.size_mapM?</a></p>\n</blockquote>\n<p>I don't think so. This is one of the biggest issues with <code>SatisfiesM</code>, but I don't think it's possible to do better on general monads. I haven't been able to come up with a counterexample to just taking it as an axiom that <code>SatisfiesM</code> implies a lift to a subtype. Possibly this operation could itself be a typeclass and proved by induction over the monad structure</p>",
+        "id": 480901363,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1730893369
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Kim Morrison</span> <a href=\"#narrow/channel/270676-lean4/topic/Reasoning.20through.20a.20monadic.20bind/near/480894509\">said</a>:</p>\n<blockquote>\n<p>(But, <span class=\"user-mention silent\" data-user-id=\"674423\">jthulhu</span>, I think the useful answer here is still to ask you to <a href=\"https://en.wikipedia.org/wiki/XY_problem\">#xy</a> further, and tell us why you want the equality of the array sizes, and see if that can just be avoided mixed in with the monadic code.)</p>\n</blockquote>\n<p>I am embedding a (core subset of) a synchronous reactive programming language, such as Lustre, to be able to reason about its semantics in Lean. It's a class of purely functional programming language, deterministic, parallel, and such that you can statically check that they react in bounded time and memory to an input (ie. imagine the software you'd run on an airplane, a rocket or a train: you want to be sure that, whenever a sensor receives some physical input, that input will be handled within X ms).  Concretely, in the language that I'd like to support, a function looks like this</p>\n<div class=\"codehilite\" data-code-language=\"lustre\"><pre><span></span><code>let f x y z = o where\n  r = x + y * 2\n  l = r * z + 23\n  o = l + r\n</code></pre></div>\n<p>At the compilation step where I am, I have translated the syntactic objects produced by Lean's parser into a structure that remembers:</p>\n<ul>\n<li>the name of the function (in my example, <code>f</code>)</li>\n<li>an array of variables that appear (in my example, <code>x</code>, <code>y</code>, <code>z</code>, <code>r</code>, <code>l</code> and <code>o</code>)</li>\n<li>the output variables (in my example, <code>o</code>)</li>\n</ul>\n<p>For each variable, I know its name, its type (but we can forget about this for now), and its body definition, which is an <code>Option Expr</code>. If the variable is an input variable, it has no body definition, otherwise it has one. Alongside all of this information, I have a lot of references to make error reporting precise, but we can also forget about this for now.</p>\n<p>I want to do a compilation pass that checks that every variable used is actually bound somewhere, fail if it is not (ie. report an error to the end user in the most graceful way possible), and otherwise replace the representation of variables, from <code>Name</code> to a <code>Fin n</code> where <code>n</code> is the number of variables.  This is very akin to a de Bruijn translation, except that we assume there is a single big binder for all the variables rather than introducing each new variable in a <code>let</code>, and there is a good reason for that: we want to accept (and make sense of) programs which are causal, but not necessarily statically causal. This is a fancy way of saying that we want to accept a class of programs for which the bindings cannot be statically ordered into a sequence of <code>let</code>s. You could think of it as if the bindings where all mutually recursively defined, implicitly.</p>\n<p>To do so, I start by collecting an environment that maps <code>Name</code>s of the variables which are actually defined somewhere in the function, to their index in the array. Then, I have a function which, given an expression, and such a mapping, tries to recursively explore the expression and replace every named variable by an index variable. Crucially, this function can fail, and has to interact with the user in case it does, because its failure indicates that the user has used a variable which is not bound anywhere. This is where I use <code>Array.mapM</code>.  Then, I know that the variables in the <em>new</em> array live in <code>Fin n</code>, where <code>n</code> is the size of the <em>old</em> array. To finish, I need to prove that the old array has the same size as the new array.</p>",
+        "id": 480908074,
+        "sender_full_name": "jthulhu",
+        "timestamp": 1730895655
+    },
+    {
+        "content": "<p>If you only use the monad for error reporting, you should be able to write a pure function that performs the renaming and returns the new data structure or, on failure, returns enough information about the non-bound variable to construct an error message. You can then fairly easily prove that this pure function has the properties you want, and on failure you can construct and throw the error.</p>",
+        "id": 480917323,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1730898772
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"256311\">Jannis Limperg</span> <a href=\"#narrow/channel/270676-lean4/topic/Reasoning.20through.20a.20monadic.20bind/near/480917323\">said</a>:</p>\n<blockquote>\n<p>If you only use the monad for error reporting, you should be able to write a pure function that performs the renaming and returns the new data structure or, on failure, returns enough information about the non-bound variable to construct an error message. You can then fairly easily prove that this pure function has the properties you want, and on failure you can construct and throw the error.</p>\n</blockquote>\n<p>I've managed to do it this way, but it's still much more verbose than I would like it to be. I was wondering whether there was a more general way to make it work regardless of the monad, that I could just \"plug in\". But having read the documentation of <code>SatifiesM</code>, I am under the impression this is a non-trivial process for which there is no general framework ready to use in Lean.</p>",
+        "id": 480920700,
+        "sender_full_name": "jthulhu",
+        "timestamp": 1730899897
+    },
+    {
+        "content": "<p>Yeah, reasoning in a monadic context is much harder (conceptually, not just in Lean) than reasoning about pure functions. So I would avoid it whenever possible.</p>",
+        "id": 480923582,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1730900825
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"674423\">@jthulhu</span>, I'm curious if the <code>Vector.mapM</code> I defined above helps at all with your original question.</p>",
+        "id": 480999973,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1730926805
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Kim Morrison</span> <a href=\"#narrow/channel/270676-lean4/topic/Reasoning.20through.20a.20monadic.20bind/near/480999973\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"674423\">jthulhu</span>, I'm curious if the <code>Vector.mapM</code> I defined above helps at all with your original question.</p>\n</blockquote>\n<p>Yes, it works wonderfully!  At first I didn't see the difference between that implementation and <code>Array</code>'s <code>mapM</code>, but I guess that's just because <code>Array</code> and <code>Vector</code> in Lean are named exactly in the opposite way as in Rust, so my brain was confused.</p>",
+        "id": 481103274,
+        "sender_full_name": "jthulhu",
+        "timestamp": 1730980448
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"674423\">jthulhu</span> has marked this topic as resolved.</p>",
+        "id": 481103310,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1730980465
+    },
+    {
+        "content": "<p>Btw this is exactly where <a href=\"https://github.com/leanprover-community/batteries/pull/925\">batteries#925</a> is stuck</p>",
+        "id": 481197292,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1731012327
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"466334\">@Shreyas Srinivas</span>, so you're unstuck now, using my code above, right? :-)</p>",
+        "id": 481202213,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1731014581
+    },
+    {
+        "content": "<p>Yes it does. Thanks. That Satisfies predicate was confusing back then</p>",
+        "id": 481210378,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1731018713
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>, would you take a look at <a href=\"https://github.com/leanprover-community/batteries/pull/1029\">batteries#1029</a>, which enables:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">xs</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Array</span><span class=\"w\"> </span><span class=\"n\">Expr</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">MetaM</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"w\"> </span><span class=\"n\">ts</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Array</span><span class=\"w\"> </span><span class=\"n\">Expr</span><span class=\"w\"> </span><span class=\"bp\">//</span><span class=\"w\"> </span><span class=\"n\">ts</span><span class=\"bp\">.</span><span class=\"n\">size</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">xs</span><span class=\"bp\">.</span><span class=\"n\">size</span><span class=\"w\"> </span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">r</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">satisfying</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">xs</span><span class=\"bp\">.</span><span class=\"n\">size_mapM</span><span class=\"w\"> </span><span class=\"n\">inferType</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"n\">r</span>\n</code></pre></div>",
+        "id": 481248273,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1731046360
+    },
+    {
+        "content": "<p>(I feel dirty constructing the <code>LawfulMonad MetaM</code> instance, but ... it is allowed?)</p>",
+        "id": 481248336,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1731046409
+    },
+    {
+        "content": "<p>(we already have the slightly dirty <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=instLawfulMonadIO_mathlib#doc\">docs#instLawfulMonadIO_mathlib</a>, and everything atop that on the monad stack is kosher)</p>",
+        "id": 481252915,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1731049470
+    },
+    {
+        "content": "<p>Okay, I think this might be ready to go:</p>\n<ul>\n<li>I've got the Mathlib update ready to go</li>\n<li>I don't want to pursue <span class=\"user-mention\" data-user-id=\"697453\">@John Ericson</span>'s suggestion at this point.</li>\n</ul>",
+        "id": 482062420,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1731456747
+    }
+]

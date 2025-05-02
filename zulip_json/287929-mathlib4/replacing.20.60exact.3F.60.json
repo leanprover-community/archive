@@ -1,0 +1,152 @@
+[
+    {
+        "content": "<p>In Mathlib currently we have access to <code>exact?</code>, as well as a duplicate <code>std_exact?</code> provided by Std. We want to remove the existing <code>exact?</code>, and then rename <code>std_exact?</code> back to <code>exact?</code>.</p>\n<p>The major differences are:</p>\n<ul>\n<li><code>std_exact?</code> uses an (amazing!) new lazily initialised discrimination tree due to <span class=\"user-mention\" data-user-id=\"110994\">@Joe Hendrix</span>, making <code>std_exact?</code> sufficiently fast that it doesn't need a cache anymore for Mathlib (~0.5s slowdown on the first call).</li>\n<li>There are some changes to the ordering of results.</li>\n</ul>\n<p>I just ran some timing tests, by taking Mathlib's <code>test/LibrarySearch/basic.lean</code>, and making a copy <code>std_basic</code> in which I've replaced <code>exact?</code> by <code>std_exact?</code> and <code>apply?</code> with <code>std_apply?</code>.  A few of the suggestions change, but to my mind the changes are all neutral or improvements, so I updated the #guard_msgs checks. Here are the timing results:</p>\n<div class=\"codehilite\" data-code-language=\"Bash\"><pre><span></span><code>kim@carica<span class=\"w\"> </span>mathlib4-2<span class=\"w\"> </span>%<span class=\"w\"> </span>hyperfine<span class=\"w\"> </span><span class=\"s2\">\"lake env lean test/LibrarySearch/std_basic.lean\"</span>\nBenchmark<span class=\"w\"> </span><span class=\"m\">1</span>:<span class=\"w\"> </span>lake<span class=\"w\"> </span>env<span class=\"w\"> </span>lean<span class=\"w\"> </span>test/LibrarySearch/std_basic.lean\n<span class=\"w\">  </span>Time<span class=\"w\"> </span><span class=\"o\">(</span>mean<span class=\"w\"> </span>±<span class=\"w\"> </span>σ<span class=\"o\">)</span>:<span class=\"w\">      </span><span class=\"m\">2</span>.236<span class=\"w\"> </span>s<span class=\"w\"> </span>±<span class=\"w\">  </span><span class=\"m\">0</span>.011<span class=\"w\"> </span>s<span class=\"w\">    </span><span class=\"o\">[</span>User:<span class=\"w\"> </span><span class=\"m\">8</span>.818<span class=\"w\"> </span>s,<span class=\"w\"> </span>System:<span class=\"w\"> </span><span class=\"m\">0</span>.767<span class=\"w\"> </span>s<span class=\"o\">]</span>\n<span class=\"w\">  </span>Range<span class=\"w\"> </span><span class=\"o\">(</span>min<span class=\"w\"> </span>…<span class=\"w\"> </span>max<span class=\"o\">)</span>:<span class=\"w\">    </span><span class=\"m\">2</span>.219<span class=\"w\"> </span>s<span class=\"w\"> </span>…<span class=\"w\">  </span><span class=\"m\">2</span>.256<span class=\"w\"> </span>s<span class=\"w\">    </span><span class=\"m\">10</span><span class=\"w\"> </span>runs\n\nkim@carica<span class=\"w\"> </span>mathlib4-2<span class=\"w\"> </span>%<span class=\"w\"> </span>hyperfine<span class=\"w\"> </span><span class=\"s2\">\"lake env lean test/LibrarySearch/basic.lean\"</span>\nBenchmark<span class=\"w\"> </span><span class=\"m\">1</span>:<span class=\"w\"> </span>lake<span class=\"w\"> </span>env<span class=\"w\"> </span>lean<span class=\"w\"> </span>test/LibrarySearch/basic.lean\n<span class=\"w\">  </span>Time<span class=\"w\"> </span><span class=\"o\">(</span>mean<span class=\"w\"> </span>±<span class=\"w\"> </span>σ<span class=\"o\">)</span>:<span class=\"w\">      </span><span class=\"m\">1</span>.590<span class=\"w\"> </span>s<span class=\"w\"> </span>±<span class=\"w\">  </span><span class=\"m\">0</span>.011<span class=\"w\"> </span>s<span class=\"w\">    </span><span class=\"o\">[</span>User:<span class=\"w\"> </span><span class=\"m\">1</span>.208<span class=\"w\"> </span>s,<span class=\"w\"> </span>System:<span class=\"w\"> </span><span class=\"m\">0</span>.359<span class=\"w\"> </span>s<span class=\"o\">]</span>\n<span class=\"w\">  </span>Range<span class=\"w\"> </span><span class=\"o\">(</span>min<span class=\"w\"> </span>…<span class=\"w\"> </span>max<span class=\"o\">)</span>:<span class=\"w\">    </span><span class=\"m\">1</span>.576<span class=\"w\"> </span>s<span class=\"w\"> </span>…<span class=\"w\">  </span><span class=\"m\">1</span>.608<span class=\"w\"> </span>s<span class=\"w\">    </span><span class=\"m\">10</span><span class=\"w\"> </span>runs\n</code></pre></div>\n<p>So it is a slight slowdown, but I am satisfied that this is not a significant problem.</p>",
+        "id": 416485687,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705546900
+    },
+    {
+        "content": "<p>The result ordering is potentially problematic. Previously, we made an effort to rank highly results which used  local hypotheses (via <code>solve_by_elim</code> after applying a library lemma).</p>\n<p>In <code>test/LibrarySearch/IsCompact.lean</code> we exercise this as follows:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">f</span> <span class=\"o\">:</span> <span class=\"n\">ℝ</span> <span class=\"bp\">→</span> <span class=\"n\">ℝ</span><span class=\"o\">)</span> <span class=\"o\">{</span><span class=\"n\">K</span> <span class=\"o\">:</span> <span class=\"n\">Set</span> <span class=\"n\">ℝ</span><span class=\"o\">}</span> <span class=\"o\">(</span><span class=\"n\">_hK</span> <span class=\"o\">:</span> <span class=\"n\">IsCompact</span> <span class=\"n\">K</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"bp\">∃</span> <span class=\"n\">x</span> <span class=\"bp\">∈</span> <span class=\"n\">K</span><span class=\"o\">,</span> <span class=\"bp\">∀</span> <span class=\"n\">y</span> <span class=\"bp\">∈</span> <span class=\"n\">K</span><span class=\"o\">,</span> <span class=\"n\">f</span> <span class=\"n\">x</span> <span class=\"bp\">≤</span> <span class=\"n\">f</span> <span class=\"n\">y</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">apply</span><span class=\"bp\">?</span>\n</code></pre></div>\n<p>Here <code>apply?</code> returns <code>refine IsCompact.exists_forall_le _hK ?_ ?_</code> as the first result, but <code>std_apply?</code> returns this only as the 11th result, after various unhelpful things like:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Try</span> <span class=\"n\">this</span><span class=\"o\">:</span> <span class=\"n\">refine</span> <span class=\"n\">bex_def.mp</span> <span class=\"bp\">?</span><span class=\"n\">a</span><span class=\"bp\">✝</span>\n<span class=\"n\">Try</span> <span class=\"n\">this</span><span class=\"o\">:</span> <span class=\"n\">refine</span> <span class=\"n\">Set.inter_nonempty.mp</span> <span class=\"bp\">?</span><span class=\"n\">a</span><span class=\"bp\">✝</span>\n<span class=\"n\">Try</span> <span class=\"n\">this</span><span class=\"o\">:</span> <span class=\"n\">refine</span> <span class=\"n\">Set.inter_nonempty_iff_exists_left.mp</span> <span class=\"bp\">?</span><span class=\"n\">a</span><span class=\"bp\">✝</span>\n<span class=\"n\">Try</span> <span class=\"n\">this</span><span class=\"o\">:</span> <span class=\"n\">refine</span> <span class=\"n\">Set.nonempty_def.mp</span> <span class=\"bp\">?</span><span class=\"n\">a</span><span class=\"bp\">✝</span>\n<span class=\"n\">Try</span> <span class=\"n\">this</span><span class=\"o\">:</span> <span class=\"n\">refine</span> <span class=\"n\">Set.not_disjoint_iff.mp</span> <span class=\"bp\">?</span><span class=\"n\">a</span><span class=\"bp\">✝</span>\n</code></pre></div>\n<p>This is admittedly an unfair example, because this is the example that someone initially brought up that prompted me to add the sort-by-local-hypotheses-used rule!</p>",
+        "id": 416486108,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705547133
+    },
+    {
+        "content": "<p>It would be nice to have more comparison points re: how the two versions order results.</p>",
+        "id": 416486208,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705547178
+    },
+    {
+        "content": "<p>I can do some, but this thread is also an invitation of anyone to exercise <code>std_apply?</code> and report back!</p>",
+        "id": 416486248,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705547202
+    },
+    {
+        "content": "<p>If the ordering change is a pervasive problem, we can tweak it further, and potentially re-incorporate the ordering by number of hypotheses used.</p>\n<p>If it is not a pervasive problem, perhaps we'll just stick with the current (simpler) implementation.</p>",
+        "id": 416486370,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705547280
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Tactic</span>\n\n<span class=\"kd\">set_option</span> <span class=\"n\">trace.profiler</span> <span class=\"n\">true</span> <span class=\"k\">in</span>\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">ℝ</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">ha</span> <span class=\"o\">:</span> <span class=\"mi\">0</span> <span class=\"bp\">≤</span> <span class=\"n\">a</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h1</span> <span class=\"o\">:</span> <span class=\"mi\">1</span> <span class=\"bp\">^</span> <span class=\"n\">n</span> <span class=\"bp\">&lt;</span> <span class=\"n\">a</span> <span class=\"bp\">^</span> <span class=\"n\">n</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"mi\">1</span> <span class=\"bp\">&lt;</span> <span class=\"n\">a</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"c1\">-- exact?</span>\n  <span class=\"c1\">-- Try this: exact lt_of_pow_lt_pow n ha h1</span>\n  <span class=\"c1\">-- in 1.19 seconds</span>\n  <span class=\"c1\">-- this lemma is deprecated</span>\n\n  <span class=\"n\">std_exact</span><span class=\"bp\">?</span>\n  <span class=\"c1\">-- Try this: exact lt_of_pow_lt_pow_left n ha h1</span>\n  <span class=\"c1\">-- in 2.7 seconds</span>\n  <span class=\"c1\">-- this lemma is not deprecated</span>\n</code></pre></div>",
+        "id": 416486992,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1705547636
+    },
+    {
+        "content": "<p>Did this just get lucky, or will <code>std_exact?</code> always avoid deprecated items?</p>",
+        "id": 416487108,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1705547674
+    },
+    {
+        "content": "<p>I wouldn't worry too much about the timings: the difference in timing is all in the first time <code>std_exact?</code> is invoked in each file.</p>",
+        "id": 416487164,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705547702
+    },
+    {
+        "content": "<p>As far as I'm aware this is luck, and there is no attempt to avoid deprecated results.</p>",
+        "id": 416487191,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705547718
+    },
+    {
+        "content": "<p>That's luck that it's avoiding deprecated.  It's probably a good default to avoid them though.</p>\n<p>std_exact? and std_apply? results are sorted to return results ordered primarily by how many symbols in the head of the theorem found match the given term followed by returning earliest defined symbol first (using the module order defined internally in the Lean environment list).</p>\n<p>It returns <code>lt_of_pow_lt_pow_left</code> because it is defined before <code>lt_of_pow_lt_pow</code>.</p>",
+        "id": 416496652,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1705552914
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/replacing.20.60exact.3F.60/near/416487164\">said</a>:</p>\n<blockquote>\n<p>I wouldn't worry too much about the timings: the difference in timing is all in the first time <code>std_exact?</code> is invoked in each file.</p>\n</blockquote>\n<p>Does this mean \"per session\"? Does it keep persistent cache after running once and then erasing itself through the suggestion?</p>",
+        "id": 416511039,
+        "sender_full_name": "Eric Rodriguez",
+        "timestamp": 1705562557
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> Did you see <a href=\"#narrow/stream/287929-mathlib4/topic/exact.3F.20.2F.20apply.3F.20.2F.20rw.3F.20.2F.20.2E.2E.2E.20.20feature.20requests/near/416045550\">this thread</a>?</p>",
+        "id": 416573599,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1705585264
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/replacing.20.60exact.3F.60/near/416485687\">said</a>:</p>\n<blockquote>\n<p>Here are the timing results:</p>\n<p><div class=\"codehilite\" data-code-language=\"Bash\"><pre><span></span><code>kim@carica<span class=\"w\"> </span>mathlib4-2<span class=\"w\"> </span>%<span class=\"w\"> </span>hyperfine<span class=\"w\"> </span><span class=\"s2\">\"lake env lean test/LibrarySearch/std_basic.lean\"</span>\nBenchmark<span class=\"w\"> </span><span class=\"m\">1</span>:<span class=\"w\"> </span>lake<span class=\"w\"> </span>env<span class=\"w\"> </span>lean<span class=\"w\"> </span>test/LibrarySearch/std_basic.lean\n<span class=\"w\">  </span>Time<span class=\"w\"> </span><span class=\"o\">(</span>mean<span class=\"w\"> </span>±<span class=\"w\"> </span>σ<span class=\"o\">)</span>:<span class=\"w\">      </span><span class=\"m\">2</span>.236<span class=\"w\"> </span>s<span class=\"w\"> </span>±<span class=\"w\">  </span><span class=\"m\">0</span>.011<span class=\"w\"> </span>s<span class=\"w\">    </span><span class=\"o\">[</span>User:<span class=\"w\"> </span><span class=\"m\">8</span>.818<span class=\"w\"> </span>s,<span class=\"w\"> </span>System:<span class=\"w\"> </span><span class=\"m\">0</span>.767<span class=\"w\"> </span>s<span class=\"o\">]</span>\n<span class=\"w\">  </span>Range<span class=\"w\"> </span><span class=\"o\">(</span>min<span class=\"w\"> </span>…<span class=\"w\"> </span>max<span class=\"o\">)</span>:<span class=\"w\">    </span><span class=\"m\">2</span>.219<span class=\"w\"> </span>s<span class=\"w\"> </span>…<span class=\"w\">  </span><span class=\"m\">2</span>.256<span class=\"w\"> </span>s<span class=\"w\">    </span><span class=\"m\">10</span><span class=\"w\"> </span>runs\n\nkim@carica<span class=\"w\"> </span>mathlib4-2<span class=\"w\"> </span>%<span class=\"w\"> </span>hyperfine<span class=\"w\"> </span><span class=\"s2\">\"lake env lean test/LibrarySearch/basic.lean\"</span>\nBenchmark<span class=\"w\"> </span><span class=\"m\">1</span>:<span class=\"w\"> </span>lake<span class=\"w\"> </span>env<span class=\"w\"> </span>lean<span class=\"w\"> </span>test/LibrarySearch/basic.lean\n<span class=\"w\">  </span>Time<span class=\"w\"> </span><span class=\"o\">(</span>mean<span class=\"w\"> </span>±<span class=\"w\"> </span>σ<span class=\"o\">)</span>:<span class=\"w\">      </span><span class=\"m\">1</span>.590<span class=\"w\"> </span>s<span class=\"w\"> </span>±<span class=\"w\">  </span><span class=\"m\">0</span>.011<span class=\"w\"> </span>s<span class=\"w\">    </span><span class=\"o\">[</span>User:<span class=\"w\"> </span><span class=\"m\">1</span>.208<span class=\"w\"> </span>s,<span class=\"w\"> </span>System:<span class=\"w\"> </span><span class=\"m\">0</span>.359<span class=\"w\"> </span>s<span class=\"o\">]</span>\n<span class=\"w\">  </span>Range<span class=\"w\"> </span><span class=\"o\">(</span>min<span class=\"w\"> </span>…<span class=\"w\"> </span>max<span class=\"o\">)</span>:<span class=\"w\">    </span><span class=\"m\">1</span>.576<span class=\"w\"> </span>s<span class=\"w\"> </span>…<span class=\"w\">  </span><span class=\"m\">1</span>.608<span class=\"w\"> </span>s<span class=\"w\">    </span><span class=\"m\">10</span><span class=\"w\"> </span>runs\n</code></pre></div><br>\n</p>\n</blockquote>\n<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> something looks fishy in these timing results. The User+System times for <code>std_basic</code> are nowhere close to the mean (but for <code>exact</code> they are).</p>",
+        "id": 416606128,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1705595042
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"284160\">Eric Rodriguez</span> <a href=\"#narrow/stream/287929-mathlib4/topic/replacing.20.60exact.3F.60/near/416511039\">said</a>:</p>\n<blockquote>\n<p>Does this mean \"per session\"? Does it keep persistent cache after running once and then erasing itself through the suggestion?</p>\n</blockquote>\n<p>Yes, it initializes a lazy discriminator tree for the environment imports the first time it is run in a Lean process, and then reuses that each time <code>std_exact?</code> is invoked.  The discriminator tree built for constants in the current module is regenerated each time std_exact? is run, but that's really small.</p>\n<p>When you apply the suggestion, the underlying lazy discriminator tree isn't changed; it is still resident in memory.</p>",
+        "id": 416681678,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1705626642
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"197836\">Jireh Loreaux</span> <a href=\"#narrow/stream/287929-mathlib4/topic/replacing.20.60exact.3F.60/near/416606128\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> something looks fishy in these timing results. The User+System times for <code>std_basic</code> are nowhere close to the mean (but for <code>exact</code> they are).</p>\n</blockquote>\n<p>Yes, what is going on here is that <code>std_basic</code> is using quite a lot of parallelism as it lazily initialise the tree!</p>",
+        "id": 416688166,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705629922
+    },
+    {
+        "content": "<p>Thus that wall time (report in the mean numbers) are still relatively low, even though User+System is high.</p>",
+        "id": 416688211,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705629953
+    },
+    {
+        "content": "<p>That said, this does suggest we should run this benchmark on a much more representative machine than mine. :-) (i.e. a laptop with &lt;= 4 cores)</p>",
+        "id": 416688301,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705629985
+    },
+    {
+        "content": "<p>Here are the benchmark results from my 8 year old laptop:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">kim</span><span class=\"bp\">@</span><span class=\"n\">arguta</span> <span class=\"n\">mathlib4</span> <span class=\"bp\">%</span> <span class=\"n\">hyperfine</span> <span class=\"s2\">\"lake env lean test/LibrarySearch/std_basic.lean\"</span>\n<span class=\"n\">Benchmark</span> <span class=\"mi\">1</span><span class=\"o\">:</span> <span class=\"n\">lake</span> <span class=\"n\">env</span> <span class=\"n\">lean</span> <span class=\"n\">test</span><span class=\"bp\">/</span><span class=\"n\">LibrarySearch</span><span class=\"bp\">/</span><span class=\"n\">std_basic.lean</span>\n  <span class=\"n\">Time</span> <span class=\"o\">(</span><span class=\"n\">mean</span> <span class=\"bp\">±</span> <span class=\"n\">σ</span><span class=\"o\">):</span>      <span class=\"mi\">7</span><span class=\"bp\">.</span><span class=\"mi\">818</span> <span class=\"n\">s</span> <span class=\"bp\">±</span>  <span class=\"mi\">0</span><span class=\"bp\">.</span><span class=\"mi\">374</span> <span class=\"n\">s</span>    <span class=\"o\">[</span><span class=\"n\">User</span><span class=\"o\">:</span> <span class=\"mi\">10</span><span class=\"bp\">.</span><span class=\"mi\">478</span> <span class=\"n\">s</span><span class=\"o\">,</span> <span class=\"n\">System</span><span class=\"o\">:</span> <span class=\"mi\">1</span><span class=\"bp\">.</span><span class=\"mi\">147</span> <span class=\"n\">s</span><span class=\"o\">]</span>\n  <span class=\"n\">Range</span> <span class=\"o\">(</span><span class=\"n\">min</span> <span class=\"bp\">…</span> <span class=\"n\">max</span><span class=\"o\">):</span>    <span class=\"mi\">7</span><span class=\"bp\">.</span><span class=\"mi\">345</span> <span class=\"n\">s</span> <span class=\"bp\">…</span>  <span class=\"mi\">8</span><span class=\"bp\">.</span><span class=\"mi\">584</span> <span class=\"n\">s</span>    <span class=\"mi\">10</span> <span class=\"n\">runs</span>\n\n<span class=\"n\">kim</span><span class=\"bp\">@</span><span class=\"n\">arguta</span> <span class=\"n\">mathlib4</span> <span class=\"bp\">%</span> <span class=\"n\">hyperfine</span> <span class=\"s2\">\"lake env lean test/LibrarySearch/basic.lean\"</span>\n<span class=\"n\">Benchmark</span> <span class=\"mi\">1</span><span class=\"o\">:</span> <span class=\"n\">lake</span> <span class=\"n\">env</span> <span class=\"n\">lean</span> <span class=\"n\">test</span><span class=\"bp\">/</span><span class=\"n\">LibrarySearch</span><span class=\"bp\">/</span><span class=\"n\">basic.lean</span>\n  <span class=\"n\">Time</span> <span class=\"o\">(</span><span class=\"n\">mean</span> <span class=\"bp\">±</span> <span class=\"n\">σ</span><span class=\"o\">):</span>      <span class=\"mi\">5</span><span class=\"bp\">.</span><span class=\"mi\">255</span> <span class=\"n\">s</span> <span class=\"bp\">±</span>  <span class=\"mi\">0</span><span class=\"bp\">.</span><span class=\"mi\">143</span> <span class=\"n\">s</span>    <span class=\"o\">[</span><span class=\"n\">User</span><span class=\"o\">:</span> <span class=\"mi\">4</span><span class=\"bp\">.</span><span class=\"mi\">082</span> <span class=\"n\">s</span><span class=\"o\">,</span> <span class=\"n\">System</span><span class=\"o\">:</span> <span class=\"mi\">0</span><span class=\"bp\">.</span><span class=\"mi\">974</span> <span class=\"n\">s</span><span class=\"o\">]</span>\n  <span class=\"n\">Range</span> <span class=\"o\">(</span><span class=\"n\">min</span> <span class=\"bp\">…</span> <span class=\"n\">max</span><span class=\"o\">):</span>    <span class=\"mi\">5</span><span class=\"bp\">.</span><span class=\"mi\">125</span> <span class=\"n\">s</span> <span class=\"bp\">…</span>  <span class=\"mi\">5</span><span class=\"bp\">.</span><span class=\"mi\">561</span> <span class=\"n\">s</span>    <span class=\"mi\">10</span> <span class=\"n\">runs</span>\n</code></pre></div>\n<p>I think that is still an acceptable slow-down.</p>",
+        "id": 416690063,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705630687
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Data.Nat.ModEq</span>\n<span class=\"kn\">import</span> <span class=\"n\">Mathlib.Tactic.LibrarySearch</span>\n\n<span class=\"kd\">theorem</span> <span class=\"n\">foo</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"n\">b</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">a</span> <span class=\"bp\">+</span> <span class=\"n\">b</span> <span class=\"bp\">≡</span> <span class=\"n\">a</span> <span class=\"o\">[</span><span class=\"n\">MOD</span> <span class=\"mi\">10</span><span class=\"o\">])</span> <span class=\"o\">:</span> <span class=\"n\">b</span> <span class=\"bp\">≡</span> <span class=\"mi\">0</span> <span class=\"o\">[</span><span class=\"n\">MOD</span> <span class=\"mi\">10</span><span class=\"o\">]</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"c1\">--exact?</span>\n  <span class=\"c1\">-- \"Try this: exact Nat.ModEq.add_left_cancel (id (Nat.ModEq.symm h)) rfl\"</span>\n  <span class=\"c1\">-- (note the unneeded `id`)</span>\n\n  <span class=\"n\">std_exact</span><span class=\"bp\">?</span>\n  <span class=\"c1\">-- \"Try this: exact Nat.ModEq.symm (Nat.ModEq.add_left_cancel h rfl)\"</span>\n</code></pre></div>",
+        "id": 416995379,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1705761101
+    },
+    {
+        "content": "<p>so it seems that <code>std_exact?</code> avoids issue <a href=\"https://github.com/leanprover-community/mathlib4/pull/7068\">#7068</a></p>",
+        "id": 416995440,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1705761140
+    },
+    {
+        "content": "<p>... but maybe just because it's searching in a different order?</p>",
+        "id": 416995456,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1705761182
+    },
+    {
+        "content": "<p>I suspect that is just an accident of searching in a different order. The <code>id</code> is coming from <code>symmSaturate</code>.</p>",
+        "id": 417144353,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705888253
+    },
+    {
+        "content": "<p>Just reversing the hypothesis <code>h</code> exhibits the same problem with <code>std_exact?</code>.</p>",
+        "id": 417144657,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705888528
+    },
+    {
+        "content": "<p>This <code>id</code> is inserted by <code>mkExpectedTypeHint</code> <a href=\"https://github.com/leanprover/std4/blob/main/Std/Tactic/Relation/Symm.lean#L71\">here</a>.</p>",
+        "id": 417144818,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705888644
+    },
+    {
+        "content": "<p>Do you want to see what happens if we omit it?</p>\n<p>Perhaps we need a cleverer version of <code>mkExpectedTypeHint</code> which checks if the hint is identical to the inferred type, and if so omits the <code>id</code>.</p>",
+        "id": 417144948,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705888741
+    }
+]

@@ -1,0 +1,104 @@
+[
+    {
+        "content": "<p>In the controversy of <a href=\"https://arxiv.org/abs/2410.06209\">LeanAgent</a>, I want to take a step back and talk about one of the issues that I think LeanAgent is trying to solve.  It is an issue that plagues automated theorem provers in practice.  It also goes by many names, so most papers in this space are unaware that others are trying to solve the same problem (and papers in this space are often not appropriately cited).</p>",
+        "id": 477662851,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260130
+    },
+    {
+        "content": "<p>The problem is simple.  You have one AI agent trained on some subset of Lean (or Isabelle, Coq) code, and you release it.  That agent quickly becomes out-of-date, especially since Lean changes so rapidly.  New theorems get added, code is refactored, tactics change names, and sometimes entire projects change names.  These things can really screw with an AI agent.  Some examples:</p>\n<ul>\n<li>ChatGPT, GPT-4, etc. are more likely to output Lean 3 code (or a Lean 3/4 mix).</li>\n<li><a href=\"http://Moogle.ai\">Moogle.ai</a> (a Lean search engine) is very much out of date, especially with the <code>Std</code> -&gt; <code>Batteries</code> renaming.</li>\n<li>Practical ATPs, like <a href=\"https://github.com/lean-dojo/LeanCopilot\">LeanCopilot</a> and <a href=\"https://github.com/cmu-l3/llmlean\">LLMLean</a>, don’t adapt to changes in Lean, Batteries, and Mathlib.</li>\n<li>Almost no current tools have a good mechanism to take into account the code in your individual project or in the file you are currently editing.</li>\n</ul>",
+        "id": 477662912,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260146
+    },
+    {
+        "content": "<p>Solving this problem takes many forms, and goes by many different names like “fine-tuning”, “online learning”, “premise selection”, “retrieval augmented generation (RAG)”, “long contexts”, “in context learning”, “life-long learning”, “post-processing”, “reinforcement learning”, and just “good engineering”.  (Of course, these are not synonyms, but they are still often used to solve the same problem.)</p>",
+        "id": 477662976,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260160
+    },
+    {
+        "content": "<p>Let me outline the various approaches, tools, and the papers which use those approaches.</p>",
+        "id": 477663020,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260175
+    },
+    {
+        "content": "<ul>\n<li><strong>Environmently-aware tactics</strong>: Tactics like <code>exact?</code> and tools like <a href=\"https://loogle.lean-lang.org/\">Loogle!</a> can easily scan the whole Lean library.  (It used to be that <code>library_search</code>, the predecessor to <code>exact?</code> was slow, and it was a nontrivial engineering feat for Lean to speed this up.  It requires storing the theorems in particular data structures, making symbolic lookup fast.  These data structures however don’t work for other more fuzzy types of lookup used by neural models.)</li>\n</ul>",
+        "id": 477663119,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260204
+    },
+    {
+        "content": "<ul>\n<li><strong>Premise/lemma/argument selection</strong>: The most common machine learning task is to look up relevant lemmas in the library.  This is often called premise, lemma, or argument selection.  There are too many such systems to name all the papers.  There are many ways to do this, but they often require a fuzzy matching system.  Usually, each lemma gets a vector embedding called a key, and then for a theorem, goal-state, or goal-state-tactic pair, one generates a query vector used to match (with say cosine similarity) to the nearest key.  (But there are other ways as well.) <a href=\"https://isabelle.in.tum.de/website-Isabelle2009-1/sledgehammer.html\">Sledgehammer</a> uses Naive Bayes to do premise selection.  <a href=\"https://arxiv.org/abs/2306.15626\">ReProver</a> and [MagnusHammer](<a href=\"https://arxiv.org/abs/2303.04488\">https://arxiv.org/abs/2303.04488</a> use transformer models with InfoNCE training.  <a href=\"https://arxiv.org/pdf/2401.02949\">Graph2Tac</a> uses graph networks with our own custom training objective to do argument selection (and the <a href=\"https://sites.google.com/view/holist/home\">HOList projects</a> also used wavenets or graph networks).  There are also a lot of fine points:<ul>\n<li>Most papers “cheat” when it comes to premise/lemma/argument selection.  The easy thing to do is batch process all the premises at once to train a key for each premise.  The engineering challenge is to make a system which calculates keys for new lemmas (or when a lemma changes, because say a definition changed).  SledgeHammer does this practically.  So does Graph2Tac.  Some first-order theorem provers do this as well.</li>\n<li>To make premise selection work in practice, one has to be able to either compute all the keys in real time or to have a cache of previously computed keys.  It could also be a mix: keys precomputed for Mathlib and downloaded, keys computed locally for your project and stored locally, and keys computed on the fly for new lemmas (like those in your current file).  (This is similar to olean files, where some are generated on release, some are generated locally by compiling, and for new files you don’t need an olean file.)  LeanCopilot only has cached keys.  Graph2Tac has a mix of cached keys, and keys computed on the fly.</li>\n<li>It is not clear from most experiments how robust premise selection is.  It is easy for a neural network to memorize that in some situation it needs to apply <code>Nat.add_comm</code>, but what if we change that lemma name to <code>Nat.plus_comm</code> or what if we make a new definition <code>MyNat</code> with <code>MyNat.add_comm</code>?  Would the premise selector work just as well?  I think the <a href=\"https://arxiv.org/abs/2410.06209\">LeanAgent</a> paper suggests that the transformer/InfoNCE style approach used in ReProver, LeanCopilot (for premise selection), and MagnusHammer may not generalize well to this new setting.  This needs more investigation and those looking to extend this to Lean’s hammer (e.g. <span class=\"user-mention\" data-user-id=\"110865\">@Jeremy Avigad</span>, <span class=\"user-mention\" data-user-id=\"409334\">@Sean Welleck</span>) should be aware of this potential danger.  A clear example of this danger was in our Graph2Tac paper.  We showed that if we used theorem names to generate the keys then the model generally did worse in new projects.  We suspect the argument selector was too attached to theorem names and not to the content of the theorems.  (I also propose some experiments later on how to test this.)</li>\n<li>Lemma and definition keys could also be used for other purposes.  In Graph2Tac, we also use them to embed the proof-states (using a graph model).  The advantage here is that when we tested in a new project, the model could handle new definitions and theorems better.</li>\n<li>In transformer-based tools like ReProver, premise selection is often called Retrieval Augmented Generation (RAG).  The retrieved premises are added to the context and used to predict the tactic.  It also provides a way for a transformer to “look up” a new definition if that definition is considered a premise and added to the context.</li>\n<li>Search engines like <a href=\"http://Moogle.ai\">Moogle.ai</a> and <a href=\"https://leansearch.net/\">LeanSearch</a> are similar to premise selection in that one is looking up theorems or definitions, but using natural language to generate the queries.  They also have similar issues with becoming out of date both if their database is not updated or if the training is too specific to the code at a point in time.</li>\n</ul>\n</li>\n</ul>",
+        "id": 477663218,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260229
+    },
+    {
+        "content": "<ul>\n<li><strong>Retraining.</strong>  The simplest way to update a model is by retraining it.  Until very large language models came out, every experiment was via retraining from scratch.  In practice, retraining could be done via continuous integration where a model (or a component of a model is retrained on every commit or every release).  This could however get expensive and I don’t think it practical to do it in practice.</li>\n</ul>",
+        "id": 477663320,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260249
+    },
+    {
+        "content": "<ul>\n<li><strong>Fine-tuning.</strong> Unlike full retraining, one could fine-tune a pre-existing model.  For the most part, this is a more practical approach since models fine-tune faster.  If one has all the training data, then one can fine-tune until convergence.  If one only has training data for a particular project, but say not for Mathlib, then one wants to be careful that they don’t overfine-tune and forget the previous data.</li>\n</ul>",
+        "id": 477663834,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260392
+    },
+    {
+        "content": "<ul>\n<li><strong>Life-long learning</strong> Neural networks are really good at forgetting stuff during training.  So if you first train on Mathlib and then train on your own project, the model could forget all of mathlib.  One approach is just to fine-tune on both mathlib and your project at the same time.  But that requires having access to the mathlib training data.  Another approach is to take inspiration from the life-long learning literature and figure out ways to fine-tune on your project without forgetting all of mathlib.  <a href=\"https://arxiv.org/abs/2410.06209\">LeanAgent</a> uses the tools and approaches of lifelong learning to update the premise selection retriever in ReProver to adapt to new projects.</li>\n</ul>",
+        "id": 477663906,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260413
+    },
+    {
+        "content": "<ul>\n<li><strong>Online learning.</strong> The most useful form of continuous improvement is online learning where you are constantly, in real time, learning from your environment.  Here are some ways this is used in theorem proving.<ul>\n<li><strong>Online k-NN.</strong>  <a href=\"https://coq-tactician.github.io/\">Tactician</a> is an online theorem prover for Coq using an online k-NN.  The idea is that after every theorem you extract data for that theorem which you can use to inform your proof of the next theorems.  For a given proof state in the proof search, you use a k-NN to find the proof state in previous theorems which are most similar to yours.  (It is like premise selection but for proof states instead of lemmas.)  Then you try whatever tactic worked for that proof state.  (Tactician has two k-NN modes.  The first uses approximate k-NN to look back over <em>all</em> proof states in the environment.  The other uses regular k-NN to look back over just the 1000 most recent tactics.)</li>\n<li><strong>Hierarchical definition/lemma embeddings.</strong>  <a href=\"https://arxiv.org/abs/2401.02949\">Graph2Tac</a> is an online theorem prover which updates definitions in real time.  These embeddings are hierarchical in that they depend on the embeddings of prerequist definitions.  This allows definitions embeddings (used for both argument selection and proof state embeddings) to be computed in real time (for new definitions, as old definition embeddings are cached).</li>\n<li><strong>Use the global context.</strong>  Any system which can adapt to the current global context (environment) in real time, like <code>exact?</code> and SledgeHammer, are sort of online systems as well. To do this, they require fast algortihms (or a good cache to avoid computing over the whole environment).</li>\n<li><strong>Use the current file.</strong>  <a href=\"https://www.arxiv.org/abs/2408.03350\">miniCTX</a> and <a href=\"https://proverbot9001.ucsd.edu/\">ProverBot9001</a> are slightly online in that they use theorems which came before in the current file.  miniCTX puts the full file in the transformer prompt for example.  (Actually, miniCTX also puts data from other files into the context as well.)  I could be mistaken, but I don’t think miniCXT is currently a practical system, and I imagine it would be challenging to make it work in practice.</li>\n<li><strong>Extreme in context learning over the whole project.</strong>  Transformers and other sequence models (like Mamba) could technically allow you to put your whole project in the prompt.  You could even process it sequentially and cache intermediate states (like at the start of each lemma in your file).  The challenge is finding a model with a context that large, but this is becoming more possible with newer models.</li>\n<li><strong>Notes.</strong> Some kinds of online learning are particularly hard for Lean tactics to use, since a tactic only has access to the environment, but not to the code or tactics used in the file or project.  This would require new solutions like a plugin or some sort of language-server-tactic integration.  (This is easier in Coq I think.)</li>\n</ul>\n</li>\n</ul>",
+        "id": 477664163,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260480
+    },
+    {
+        "content": "<ul>\n<li><strong>Post-processing.</strong> Especially when working with GPT-style LLMs through APIs, there isn’t a lot a user can do to change the model.  (And there is no way they are going to retrain the model just to fix the Lean code in it.)  Instead, a common approach is to take the model’s suggestions and post-process them.  I think this is still in the early days, but one could automatically fix references to bad or old definitions/lemmas.  One could fix tactics that fail.  Some forms of post-processing are purely symbolic like in <a href=\"https://arxiv.org/abs/2409.14274v1\">PALM</a> or <a href=\"https://arxiv.org/abs/2211.07524\">LeanAide</a>, and others use the LLM to do the fixing like in <a href=\"https://arxiv.org/abs/2303.04910\">Baldur</a> and <a href=\"https://github.com/JetBrains-Research/coqpilot\">CoqPilot</a> (after getting ITP feedback).  <a href=\"https://arxiv.org/abs/2309.15806\">Lyra</a> uses a mix of both approaches.</li>\n</ul>",
+        "id": 477664336,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260528
+    },
+    {
+        "content": "<ul>\n<li><strong>Reinforcement learning</strong> A heavy-handed, but very powerful approach to not only stay up-to-date, but to learn new things over time is reinforcement learning.  The idea is that you learn from experience while trying to prove theorems.  Some papers just use RL to further train a base model (like <a href=\"https://arxiv.org/abs/2405.14333\">DeepSeek-Prover</a>).  <a href=\"https://arxiv.org/pdf/1905.10501\">Others</a> use it to solve a corpus of theorems (where the model learns from the theorems it solved to solve other theorems) or even to solve a single theorem (like in <a href=\"https://deepmind.google/discover/blog/ai-solves-imo-problems-at-silver-medal-level/\">AlphaProof</a> where one does RL over many variations of the same theorem).  One could imagine a continuous process running on a server constantly learning about a Lean project.  It could just learn, or it could even improve the project by making PRs to fill in <code>sorry</code>s (like in LeanAgent), clean proofs (like in <a href=\"https://arxiv.org/abs/2410.04753\">ImProver</a>), or refactoring code in another way.  Further, there are many works studying RL for changing (non-stationary) environments.  One could imagine a system which learns to adapt continuously as the library slowly grows and changes over time.  (See also life-long and online learning above.) Just like there are oleans for each release of mathlib, there could be model checkpoints for each release.</li>\n</ul>",
+        "id": 477664428,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260559
+    },
+    {
+        "content": "<p>As for benchmarking solutions to this problem of a changing library:</p>",
+        "id": 477664522,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260597
+    },
+    {
+        "content": "<ul>\n<li><strong>Split on projects.</strong>  In the Graph2Tac benchmark and in CoqGym one trains on one set of projects and tests on another.  This will fully test the generalization of things like lemma selection and being able to adapt to new projects.</li>\n</ul>",
+        "id": 477664619,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260610
+    },
+    {
+        "content": "<ul>\n<li><strong>Using models trained on old versions.</strong>  Since we have tools like ReProver and GPT-4 which are trained on old Lean code, it would be good to see how they perform on current Lean code and how to improve them with minimal effort (so not retraining them).  For ReProver, I don’t think this was the point of the LeanAgent paper, but it seems that some good experiments would be just to redo the ReProver experiments with the current version of Lean, but the old version of ReProver (kind of like the baseline in LeanAgent).  Does the outdated premise selector (with an updated database of premises) still help, or is it detrimental?</li>\n</ul>",
+        "id": 477664778,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260665
+    },
+    {
+        "content": "<ul>\n<li><strong>Use newly trained models on older commits.</strong>  It is hard to justify training a model on an old version of Lean/Mathlib to see if it works on the current version since in the end you will have an intentionally outdated model which isn’t good for anything else.  But one could take a current model and test it on old commits of Lean/Mathlib and see if it still works well.</li>\n</ul>",
+        "id": 477664812,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260676
+    },
+    {
+        "content": "<ul>\n<li><strong>Intentionally out of distribution.</strong>  One could also just do manual “refactoring” of mathlib by changing some names of common objects and modifying the directory structure.  Does a current model adapt well to these changes or fail dramatically?</li>\n</ul>",
+        "id": 477664844,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1729260684
+    }
+]

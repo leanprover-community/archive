@@ -1,0 +1,110 @@
+[
+    {
+        "content": "<p>I'm working on a tactic which automatically derives rational approximations to real expressions in order to prove inequalities. I've managed to make finding the approximation quite fast, but creating the final proof term is still slow for complicated expressions.</p>\n<p>My current implementation strategy involves using the norm_num tactic to automatically prove many terms  like <code>(24 : ℚ) / 17 * (24 / 17) ≤ 2 / 1</code>. Proving these kind of expressions takes tens of milliseconds even with small numbers, which adds up since I need to prove so many terms of this kind (that is, terms computed in ℚ involving relatively small numbers of literals all of reasonable size). I would have expected it to be much faster.</p>\n<p>I have a few questions about this:<br>\n1) Why can't I just use <code>decide</code> to prove this kind of result? The kernel seems capable of computing with natural numbers and integers, so why can't it do rational numbers? It's just an integer and a natural after all.</p>\n<p>2)  Is there some kind of normal form I can write rationals in that makes NormNum faster at deriving their value? I've noticed that it indirectly special cases expressions for which <code>expr.rat?</code> works, which implies I should put the rational into the form <code>Div.div a b</code> but this doesn't actually seem to work at all.</p>\n<p>3) Should I then try to avoid entirely arithmetic with rationals inside the final proof terms? I think it would be possible but it would probably complicate the code a lot.</p>",
+        "id": 506576911,
+        "sender_full_name": "Sebastian Zimmer",
+        "timestamp": 1742330648
+    },
+    {
+        "content": "<p><code>decide</code> does work here, and for this example seems to be consistently faster than <code>norm_num</code></p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span>\n\n<span class=\"bp\">#</span><span class=\"n\">time</span><span class=\"w\"> </span><span class=\"c1\">-- 15~20 ms on the web server</span>\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"mi\">24</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℚ</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">/</span><span class=\"w\"> </span><span class=\"mi\">17</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"mi\">24</span><span class=\"w\"> </span><span class=\"bp\">/</span><span class=\"w\"> </span><span class=\"mi\">17</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">≤</span><span class=\"w\"> </span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"bp\">/</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">decide</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"n\">kernel</span>\n</code></pre></div>",
+        "id": 506578190,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1742331136
+    },
+    {
+        "content": "<p>What does +kernel do? I haven't seen that before</p>",
+        "id": 506578486,
+        "sender_full_name": "Sebastian Zimmer",
+        "timestamp": 1742331250
+    },
+    {
+        "content": "<p>It means to skip elaboration and just check with the kernel, this is slower to fail but works on more statements.</p>",
+        "id": 506578594,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1742331297
+    },
+    {
+        "content": "<p>Ah I see. Why does the elaborator fail but the kernel succeed? Transparency settings?</p>",
+        "id": 506578725,
+        "sender_full_name": "Sebastian Zimmer",
+        "timestamp": 1742331355
+    },
+    {
+        "content": "<p>Since the kernel ignores transparency, it doesn't get stuck on <code>Rat.mul</code> and <code>Rat.inv</code>, which are irreducible.</p>",
+        "id": 506578921,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1742331365
+    },
+    {
+        "content": "<p>What's the reason for those being irreducible?</p>\n<p>The code just says</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">This</span><span class=\"w\"> </span><span class=\"n\">definition</span><span class=\"w\"> </span><span class=\"n\">is</span><span class=\"w\"> </span><span class=\"bp\">`</span><span class=\"kd\">@[</span><span class=\"n\">irreducible</span><span class=\"kd\">]</span><span class=\"bp\">`</span><span class=\"w\"> </span><span class=\"n\">because</span><span class=\"w\"> </span><span class=\"n\">you</span><span class=\"w\"> </span><span class=\"n\">don't</span>\n<span class=\"n\">want</span><span class=\"w\"> </span><span class=\"n\">to</span><span class=\"w\"> </span><span class=\"n\">unfold</span><span class=\"w\"> </span><span class=\"n\">it</span>\n<span class=\"bp\">```</span>\n</code></pre></div>",
+        "id": 506579756,
+        "sender_full_name": "Sebastian Zimmer",
+        "timestamp": 1742331577
+    },
+    {
+        "content": "<p>if you have concrete expressions to check (e.g. a sum of two rationals) as part of a tactic, I recommend using norm_num's backend functions instead of using <code>by norm_num</code>, which is really the equivalent of <code>simp</code> with a norm-num simpproc</p>",
+        "id": 506580310,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1742331734
+    },
+    {
+        "content": "<p>a very simple thing you can do to reduce the impact of using the global simp set is to use <code>norm_num1</code> instead of <code>norm_num</code>, which still uses <code>simp</code> but only in a bare minimum way to find subterms to rewrite</p>",
+        "id": 506580450,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1742331796
+    },
+    {
+        "content": "<p>the backend functions have no ability to look into subterms, but they are perfect when the problem to solve is already set up to have the right shape for norm_num's consumption</p>",
+        "id": 506580675,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1742331886
+    },
+    {
+        "content": "<p>I suspect that used properly, <code>norm_num</code> can beat kernel reduction when it comes to Rat arithmetic. But I haven't tested this</p>",
+        "id": 506580828,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1742331955
+    },
+    {
+        "content": "<p>But generally if you have the ability to massage the goal into an optimal form for computation it's usually easier to just go to Nat arithmetic, and there kernel computation definitely outperforms norm_num (and <code>norm_num</code> knows this and uses the kernel for such goals)</p>",
+        "id": 506581055,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1742332032
+    },
+    {
+        "content": "<blockquote>\n<p>But generally if you have the ability to massage the goal into an optimal form for computation it's usually easier to just go to Nat arithmetic, and there kernel computation definitely outperforms norm_num (and <code>norm_num</code> knows this and uses the kernel for such goals)</p>\n</blockquote>\n<p>I'm sure that would be possible, but I want my final tactic to be easily extensible and stating/proving bounds and approximations is hard enough without having to write everything in terms of integer/natural arithmetic.</p>",
+        "id": 506581340,
+        "sender_full_name": "Sebastian Zimmer",
+        "timestamp": 1742332156
+    },
+    {
+        "content": "<p>That depends on what you mean by \"everything\"</p>",
+        "id": 506581389,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1742332184
+    },
+    {
+        "content": "<p>you should be able to structure most lemmas in the form <code>number crunching assertion -&gt; thing I want</code></p>",
+        "id": 506581537,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1742332238
+    },
+    {
+        "content": "<p>Most of norm_num's own lemmas are in this form</p>",
+        "id": 506581564,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1742332254
+    },
+    {
+        "content": "<blockquote>\n<p>2) Is there some kind of normal form I can write rationals in that makes NormNum faster at deriving their value? I've noticed that it indirectly special cases expressions for which <code>expr.rat?</code> works, which implies I should put the rational into the form <code>Div.div a b</code> but this doesn't actually seem to work at all.</p>\n</blockquote>\n<p>The normal form NormNum actually uses is subproofs like <code>IsRat x a b</code> where <code>x</code> is a term in an arbitrary type, and <code>a</code> is an <code>Int</code> numeral and <code>b</code> is a <code>Nat</code> numeral, which mean something like <code>x = a/b</code></p>",
+        "id": 506581722,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1742332294
+    },
+    {
+        "content": "<p>The lowest level interface norm_num provides that can add two rational numbers is <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Mathlib.Meta.NormNum.evalAdd.core#doc\">docs#Mathlib.Meta.NormNum.evalAdd.core</a>, which you can call with two <code>IsRat</code> values to get another one. There are functions to convert to and from <code>NormNum.Result</code> if you have an equality or just a number which is a division and which you assert (but don't need to prove) is in lowest terms</p>",
+        "id": 506583133,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1742332763
+    }
+]

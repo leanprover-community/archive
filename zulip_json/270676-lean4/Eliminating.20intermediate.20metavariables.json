@@ -1,0 +1,44 @@
+[
+    {
+        "content": "<p>What can I do to replace <code>f_old</code> with <code>f_new</code> here?</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"w\"> </span><span class=\"n\">Meta</span><span class=\"w\"> </span><span class=\"n\">Elab</span><span class=\"w\"> </span><span class=\"n\">Tactic</span>\n\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">foo</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">∃</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">refine</span><span class=\"w\"> </span><span class=\"bp\">⟨?</span><span class=\"n\">f_old</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">?</span><span class=\"n\">hf</span><span class=\"bp\">⟩</span>\n<span class=\"w\">  </span><span class=\"n\">intro</span><span class=\"w\"> </span><span class=\"n\">x</span>\n<span class=\"w\">  </span><span class=\"n\">revert</span><span class=\"w\"> </span><span class=\"n\">x</span>\n<span class=\"w\">  </span><span class=\"n\">refine</span><span class=\"w\"> </span><span class=\"bp\">?</span><span class=\"n\">f_new</span>\n<span class=\"w\">  </span><span class=\"sd\">/-- Goal state is</span>\n\n<span class=\"sd\">  case f_new</span>\n<span class=\"sd\">  ⊢ Nat → Nat</span>\n\n<span class=\"sd\">  case hf</span>\n<span class=\"sd\">  ⊢ (fun x ↦ ?f_old) 1 = 1</span>\n<span class=\"sd\">  -/</span>\n</code></pre></div>",
+        "id": 511214158,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1744215145
+    },
+    {
+        "content": "<p>(Note that this is hard to debug in the web editor since it <a href=\"#narrow/channel/113488-general/topic/lean4.2Einfoview.2EshowGoalNames.20is.20false.20in.20the.20web.20editor/near/509768221\">doesn't show case names</a>)</p>",
+        "id": 511214391,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1744215217
+    },
+    {
+        "content": "<p>I think <code>?f_old</code> is delay-assigned, so you just have to solve the goal.</p>",
+        "id": 511214705,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1744215291
+    },
+    {
+        "content": "<p>Can it be un-delayed?</p>",
+        "id": 511214920,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1744215347
+    },
+    {
+        "content": "<p>no idea</p>",
+        "id": 511215317,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1744215453
+    },
+    {
+        "content": "<p>I've filed <a href=\"https://github.com/leanprover/lean4/pull/7883\">lean4#7883</a> for a related issue</p>",
+        "id": 511226783,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1744218847
+    },
+    {
+        "content": "<p>Aaron is correct that <code>?f_old</code> is involved in a delayed assignment, but <code>?f_old</code> is not delayed assigned itself. Also, it's worth being very careful here, since the initial <code>?f_old</code> is different from the <code>?f_old</code> in the end. Here's the sequence:</p>\n<ul>\n<li><code>refine</code> creates the <code>?f_old : Nat -&gt; Nat</code> metavariable</li>\n<li><code>intro</code> creates a new metavariable <code>?m</code> with context <code>x : Nat ⊢ Nat</code> and a new metavariable <code>?m.37 : Nat -&gt; Nat</code>, then assigns <code>?f_old := fun x =&gt; ?m.37 x</code>, then records the delayed assignment <code>?m.37 x := ?m</code>, and then renames <code>?m</code> to <code>?f_old</code>.</li>\n<li><code>revert</code> creates a metavariable <code>?m : Nat -&gt; Nat</code>, assigns <code>?f_old := ?m x</code>, then renames <code>?m</code> to <code>?f_old</code>. (Note: I think there is a pretty printing oversight here: there are two metavariables named <code>?f_old</code> now, since <code>MetavarDecl</code> contains the name, so they both print as <code>?f_old</code>, but only the newest <code>?f_old</code> is what can be referred to, since that's what's in the <code>MetavarContext.userNames</code> table. As such, you can see <code>?f_old</code> in the <code>hf</code> goal, but it's not the <code>f_old</code> goal.)</li>\n<li>Then <code>refine ?f_new</code> renames the newest <code>?f_old</code> to <code>?f_new</code>.</li>\n</ul>\n<p>In the end, after instantiating metavariables, this is what we have:</p>\n<ul>\n<li>an <code>?hf</code> metavariable whose type is <code>(fun x =&gt; ?m.37 x) 1 = 1</code></li>\n<li>the delayed assignment <code>?m.37 x := ?f_new x</code></li>\n</ul>\n<p>Delayed assignments don't instantiate until their value contains no metavariables.</p>\n<p>In this case, we <em>could</em> safely instantiate the delayed assignment since the metavariable it depends on (<code>?f_new</code>) has a local context that's a sublist of the <code>?m.37</code> context. (Indeed, the local contexts are the same.) If that's something that's fast to check for, maybe <code>instantiateMVars</code> could be changed to go ahead and instantiate.</p>\n<p>We could also write a metaprogram to force that kind of delayed assignment to instantiate.</p>\n<p>Something that's also possible is writing a metaprogram to \"push\" delayed assignments, at the cost of creating new delayed assignments for every metavariable in the expression. It might be worth having it as a tactic, at least for debugging purposes.</p>",
+        "id": 511228006,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1744219268
+    }
+]

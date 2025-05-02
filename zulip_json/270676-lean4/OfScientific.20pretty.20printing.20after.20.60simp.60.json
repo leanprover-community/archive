@@ -1,0 +1,86 @@
+[
+    {
+        "content": "<p>If I do <code>simp</code>, explicit numbers like <code>0.123712</code> expand and look worse:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"kd\">lemma</span> <span class=\"n\">with_number</span> <span class=\"o\">:</span> <span class=\"o\">(</span><span class=\"mi\">0</span><span class=\"bp\">.</span><span class=\"mi\">123712</span> <span class=\"o\">:</span> <span class=\"n\">ℝ</span><span class=\"o\">)</span> <span class=\"bp\">&lt;</span> <span class=\"mi\">0</span><span class=\"bp\">.</span><span class=\"mi\">8482312</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"c1\">-- Goal print as `0.123712 &lt; 0.8482312`</span>\n  <span class=\"n\">simp</span> <span class=\"n\">only</span>\n  <span class=\"c1\">-- Goal prints as `OfScientific.ofScientific 123712 true 6 &lt; OfScientific.ofScientific 8482312 true 7`</span>\n  <span class=\"n\">norm_num</span>\n</code></pre></div>\n<p>Is there a way to keep the pretty printing nice?  (I'm tightening some bounds of very nonlinear things, and it results in explicit numbers popping up.)</p>",
+        "id": 416555053,
+        "sender_full_name": "Geoffrey Irving",
+        "timestamp": 1705578782
+    },
+    {
+        "content": "<p>The reason this is happening is that the OfScientific literals contain raw natural number literals, but after <code>simp only</code> they become normalized as literals using OfNat. This is potentially a bug in OfScientific literals.</p>\n<p>Something you could do is add your own pretty printer for OfScientific that can handle OfNat literals.</p>",
+        "id": 416555573,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705578978
+    },
+    {
+        "content": "<blockquote>\n<p>This is potentially a bug in OfScientific literals.</p>\n</blockquote>\n<p>Do you mean a bug in <code>simp</code>, in that it should not be doing this normalization?</p>",
+        "id": 416555706,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705579033
+    },
+    {
+        "content": "<p>Or that it should not contain raw numerals in the first place?</p>",
+        "id": 416555757,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705579062
+    },
+    {
+        "content": "<p>I was think it's the OfScientific literal containing a raw nat, but you could point your finger at simp too. It's aware of OfNat.ofNat, so maybe it should be aware of OfScientific.ofScientific too.</p>",
+        "id": 416555854,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705579086
+    },
+    {
+        "content": "<p>I think OfScientific should be using raw nats</p>",
+        "id": 416555987,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705579144
+    },
+    {
+        "content": "<p>so I would point the blame at simp here</p>",
+        "id": 416556021,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705579159
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"514145\">@Geoffrey Irving</span> Want to make a Lean 4 issue documenting the fact that <code>simp only</code> does this to these literals? Make sure it doesn't use mathlib -- you can use Float instead of Real. No need for the issue to suggest a solution -- we just want to track the problem.</p>",
+        "id": 416556197,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705579219
+    },
+    {
+        "content": "<p>Yep, will do.</p>",
+        "id": 416556218,
+        "sender_full_name": "Geoffrey Irving",
+        "timestamp": 1705579228
+    },
+    {
+        "content": "<p>Is <code>#simp 0.5</code> a sufficient repro?</p>",
+        "id": 416556301,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705579258
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"514145\">@Geoffrey Irving</span> Here's a free delaborator for you in the meantime, hacked from the core one:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">PrettyPrinter</span> <span class=\"n\">Delaborator</span> <span class=\"n\">SubExpr</span> <span class=\"k\">in</span>\n<span class=\"kd\">@[</span><span class=\"n\">delab</span> <span class=\"n\">app.OfScientific.ofScientific</span><span class=\"kd\">]</span>\n<span class=\"kd\">def</span> <span class=\"n\">delabOfScientific</span> <span class=\"o\">:</span> <span class=\"n\">Delab</span> <span class=\"o\">:=</span> <span class=\"n\">whenPPOption</span> <span class=\"n\">getPPCoercions</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">withOverApp</span> <span class=\"mi\">5</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">expr</span> <span class=\"bp\">←</span> <span class=\"n\">getExpr</span>\n  <span class=\"n\">guard</span> <span class=\"bp\">&lt;|</span> <span class=\"n\">expr.getAppNumArgs</span> <span class=\"bp\">==</span> <span class=\"mi\">5</span>\n  <span class=\"k\">let</span> <span class=\"n\">some</span> <span class=\"n\">m</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">expr.getArg</span><span class=\"bp\">!</span> <span class=\"mi\">2</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">nat</span><span class=\"bp\">?</span> <span class=\"bp\">|</span> <span class=\"n\">failure</span>\n  <span class=\"k\">let</span> <span class=\"n\">some</span> <span class=\"n\">e</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">expr.getArg</span><span class=\"bp\">!</span> <span class=\"mi\">4</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">nat</span><span class=\"bp\">?</span> <span class=\"bp\">|</span> <span class=\"n\">failure</span>\n  <span class=\"k\">let</span> <span class=\"n\">s</span> <span class=\"bp\">←</span> <span class=\"k\">match</span> <span class=\"n\">expr.getArg</span><span class=\"bp\">!</span> <span class=\"mi\">3</span> <span class=\"k\">with</span>\n    <span class=\"bp\">|</span> <span class=\"n\">Expr.const</span> <span class=\"bp\">``</span><span class=\"n\">Bool.true</span> <span class=\"n\">_</span>  <span class=\"bp\">=&gt;</span> <span class=\"n\">pure</span> <span class=\"n\">true</span>\n    <span class=\"bp\">|</span> <span class=\"n\">Expr.const</span> <span class=\"bp\">``</span><span class=\"n\">Bool.false</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">pure</span> <span class=\"n\">false</span>\n    <span class=\"bp\">|</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">failure</span>\n  <span class=\"k\">let</span> <span class=\"n\">str</span> <span class=\"o\">:=</span> <span class=\"n\">toString</span> <span class=\"n\">m</span>\n  <span class=\"k\">if</span> <span class=\"n\">s</span> <span class=\"bp\">&amp;&amp;</span> <span class=\"n\">e</span> <span class=\"bp\">==</span> <span class=\"n\">str.length</span> <span class=\"k\">then</span>\n    <span class=\"n\">return</span> <span class=\"n\">Syntax.mkScientificLit</span> <span class=\"o\">(</span><span class=\"s2\">\"0.\"</span> <span class=\"bp\">++</span> <span class=\"n\">str</span><span class=\"o\">)</span>\n  <span class=\"k\">else</span> <span class=\"k\">if</span> <span class=\"n\">s</span> <span class=\"bp\">&amp;&amp;</span> <span class=\"n\">e</span> <span class=\"bp\">&lt;</span> <span class=\"n\">str.length</span> <span class=\"k\">then</span>\n    <span class=\"k\">let</span> <span class=\"n\">mStr</span> <span class=\"o\">:=</span> <span class=\"n\">str.extract</span> <span class=\"mi\">0</span> <span class=\"o\">⟨</span><span class=\"n\">str.length</span> <span class=\"bp\">-</span> <span class=\"n\">e</span><span class=\"o\">⟩</span>\n    <span class=\"k\">let</span> <span class=\"n\">eStr</span> <span class=\"o\">:=</span> <span class=\"n\">str.extract</span> <span class=\"o\">⟨</span><span class=\"n\">str.length</span> <span class=\"bp\">-</span> <span class=\"n\">e</span><span class=\"o\">⟩</span> <span class=\"o\">⟨</span><span class=\"n\">str.length</span><span class=\"o\">⟩</span>\n    <span class=\"n\">return</span> <span class=\"n\">Syntax.mkScientificLit</span> <span class=\"o\">(</span><span class=\"n\">mStr</span> <span class=\"bp\">++</span> <span class=\"s2\">\".\"</span> <span class=\"bp\">++</span> <span class=\"n\">eStr</span><span class=\"o\">)</span>\n  <span class=\"k\">else</span>\n    <span class=\"n\">return</span> <span class=\"n\">Syntax.mkScientificLit</span> <span class=\"o\">(</span><span class=\"n\">str</span> <span class=\"bp\">++</span> <span class=\"s2\">\"e\"</span> <span class=\"bp\">++</span> <span class=\"o\">(</span><span class=\"k\">if</span> <span class=\"n\">s</span> <span class=\"k\">then</span> <span class=\"s2\">\"-\"</span> <span class=\"k\">else</span> <span class=\"s2\">\"\"</span><span class=\"o\">)</span> <span class=\"bp\">++</span> <span class=\"n\">toString</span> <span class=\"n\">e</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 416556727,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705579413
+    },
+    {
+        "content": "<p>Neat, thank you!</p>",
+        "id": 416556983,
+        "sender_full_name": "Geoffrey Irving",
+        "timestamp": 1705579509
+    },
+    {
+        "content": "<p>I only had to modify the <code>let ... m := ...</code> and <code>let ... e := ...</code> lines</p>",
+        "id": 416557072,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1705579541
+    },
+    {
+        "content": "<p>Github issue: <a href=\"https://github.com/leanprover/lean4/issues/3194\">https://github.com/leanprover/lean4/issues/3194</a></p>",
+        "id": 416564825,
+        "sender_full_name": "Geoffrey Irving",
+        "timestamp": 1705582321
+    }
+]

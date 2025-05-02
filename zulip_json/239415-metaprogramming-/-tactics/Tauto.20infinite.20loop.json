@@ -1,0 +1,452 @@
+[
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/issues/10590\">https://github.com/leanprover-community/mathlib4/issues/10590</a></p>\n<p>Would this issue be suitable for me to begin contributing to Mathlib's meta-library? What would an acceptable solution look like? I've written a fix that tags hypotheses with a hashset so we don't visit them twice, would this be an acceptable approach or is there a better way of doing this?</p>",
+        "id": 430350887,
+        "sender_full_name": "Sam Ezeh",
+        "timestamp": 1711768267
+    },
+    {
+        "content": "<p>The diff looks like this</p>\n<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"gh\">diff --git a/Mathlib/Tactic/Tauto.lean b/Mathlib/Tactic/Tauto.lean</span>\n<span class=\"gh\">index a61841c23a..cb5062d8a7 100644</span>\n<span class=\"gd\">--- a/Mathlib/Tactic/Tauto.lean</span>\n<span class=\"gi\">+++ b/Mathlib/Tactic/Tauto.lean</span>\n<span class=\"gu\">@@ -111,12 +111,15 @@ partial def distribNotAux (fvars : List Expr) (g : MVarId) : MetaM MVarId :=</span>\n<span class=\"w\"> </span>Tries to apply de-Morgan-like rules on all hypotheses.\n<span class=\"w\"> </span>Always succeeds, regardless of whether any progress was actually made.\n<span class=\"w\"> </span>-/\n<span class=\"gd\">-def distribNot : TacticM Unit := withMainContext do</span>\n<span class=\"gd\">-  let mut fvars := []</span>\n<span class=\"gi\">+def distribNot (visited : ST.Ref IO.RealWorld (HashSet FVarId)) : TacticM Unit := withMainContext do</span>\n<span class=\"gi\">+  let mut fvarIds := []</span>\n<span class=\"w\"> </span>  for h in ← getLCtx do\n<span class=\"gi\">+    if (← visited.get).contains h.fvarId then</span>\n<span class=\"gi\">+      continue</span>\n<span class=\"w\"> </span>    if !h.isImplementationDetail then\n<span class=\"gd\">-      fvars := mkFVar h.fvarId :: fvars</span>\n<span class=\"gd\">-  liftMetaTactic' (distribNotAux fvars)</span>\n<span class=\"gi\">+      fvarIds := h.fvarId :: fvarIds</span>\n<span class=\"gi\">+  liftMetaTactic' (distribNotAux (fvarIds.map mkFVar))</span>\n<span class=\"gi\">+  visited.modify (λ s ↦ s.insertMany fvarIds)</span>\n\n<span class=\"w\"> </span>/-- Config for the `tauto` tactic. Currently empty. TODO: add `closer` option. -/\n<span class=\"w\"> </span>structure Config\n<span class=\"gu\">@@ -158,11 +161,12 @@ duplicated work.</span>\n<span class=\"w\"> </span>def tautoCore : TacticM Unit := do\n<span class=\"w\"> </span>  _ ← tryTactic (evalTactic (← `(tactic| contradiction)))\n<span class=\"w\"> </span>  _ ← tryTactic (evalTactic (← `(tactic| assumption)))\n<span class=\"gi\">+  let visited ← ST.mkRef .empty</span>\n<span class=\"w\"> </span>  iterateUntilFailure do\n<span class=\"w\"> </span>    let gs ← getUnsolvedGoals\n<span class=\"w\"> </span>    allGoals (\n<span class=\"w\"> </span>      liftMetaTactic (fun m =&gt; do pure [(← m.intros!).2]) &lt;;&gt;\n<span class=\"gd\">-      distribNot &lt;;&gt;</span>\n<span class=\"gi\">+      distribNot visited &lt;;&gt;</span>\n<span class=\"w\"> </span>      liftMetaTactic (casesMatching casesMatcher (recursive := true) (throwOnNoMatch := false)) &lt;;&gt;\n<span class=\"w\"> </span>      (do _ ← tryTactic (evalTactic (← `(tactic| contradiction)))) &lt;;&gt;\n<span class=\"w\"> </span>      (do _ ← tryTactic (evalTactic (← `(tactic| refine or_iff_not_imp_left.mpr ?_)))) &lt;;&gt;\n</code></pre></div>",
+        "id": 430351437,
+        "sender_full_name": "Sam Ezeh",
+        "timestamp": 1711768888
+    },
+    {
+        "content": "<p>Thanks for looking into this!</p>",
+        "id": 430400291,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1711814053
+    },
+    {
+        "content": "<p>My initial reaction is: it would be nice to avoid the need for ref cells.</p>",
+        "id": 430400329,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1711814093
+    },
+    {
+        "content": "<p>Here's a more narrow \"fix\", that just bails when <code>replace</code> does not get rid of the old hypothesis:</p>\n<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"gh\">diff --git a/Mathlib/Tactic/Tauto.lean b/Mathlib/Tactic/Tauto.lean</span>\n<span class=\"gh\">index a61841c23a..9e6e61e026 100644</span>\n<span class=\"gd\">--- a/Mathlib/Tactic/Tauto.lean</span>\n<span class=\"gi\">+++ b/Mathlib/Tactic/Tauto.lean</span>\n<span class=\"gu\">@@ -25,7 +25,13 @@ def distribNotOnceAt (hypFVar : Expr) (g : MVarId) : MetaM AssertAfterResult :=</span>\n<span class=\"w\"> </span>  let .fvar fvarId := hypFVar | throwError \"not fvar {hypFVar}\"\n<span class=\"w\"> </span>  let h ← fvarId.getDecl\n<span class=\"w\"> </span>  let e : Q(Prop) ← (do guard &lt;| ← Meta.isProp h.type; pure h.type)\n<span class=\"gd\">-  let replace (p : Expr) := g.replace h.fvarId p</span>\n<span class=\"gi\">+  let replace (p : Expr) : MetaM AssertAfterResult := do</span>\n<span class=\"gi\">+     let result ← g.replace h.fvarId p</span>\n<span class=\"gi\">+     result.mvarId.withContext do</span>\n<span class=\"gi\">+     if (← getLCtx).contains h.fvarId</span>\n<span class=\"gi\">+     then throwError \"'replace' did not remove the existing hypothesis\"</span>\n<span class=\"gi\">+     pure result</span>\n<span class=\"gi\">+</span>\n<span class=\"w\"> </span>  match e with\n<span class=\"w\"> </span>  | ~q(¬ ($a : Prop) = $b) =&gt; do\n<span class=\"w\"> </span>    let h' : Q(¬$a = $b) := h.toExpr\n</code></pre></div>",
+        "id": 430400392,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1711814148
+    },
+    {
+        "content": "<p>On the other hand, with your fix, <code>tauto</code> can probably prove more things than with my fix. (EDIT: or maybe not? see my later comments below)</p>",
+        "id": 430400596,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1711814303
+    },
+    {
+        "content": "<p>Added a comment on the issue: <a href=\"https://github.com/leanprover-community/mathlib4/issues/10590#issuecomment-2028196263\">https://github.com/leanprover-community/mathlib4/issues/10590#issuecomment-2028196263</a></p>",
+        "id": 430401578,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1711815097
+    },
+    {
+        "content": "<blockquote>\n<p>My initial reaction is: it would be nice to avoid the need for ref cells.</p>\n</blockquote>\n<p>I believe it's possible for fvars to be shared among multiple subgoals being operated on by the <code>allGoals</code> combinator, and I think that we typically want <code>distribNot</code> to act on all of the hypotheses of these subgoals. So it seems potentially problematic to share the <code>visited</code> HashSet among them.</p>",
+        "id": 430402486,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1711815979
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"243791\">David Renshaw</span> <a href=\"#narrow/stream/239415-metaprogramming-.2F-tactics/topic/Tauto.20infinite.20loop/near/430402486\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>My initial reaction is: it would be nice to avoid the need for ref cells.</p>\n</blockquote>\n<p>I believe it's possible for fvars to be shared among multiple subgoals being operated on by the <code>allGoals</code> combinator, and I think that we typically want <code>distribNot</code> to act on all of the hypotheses of these subgoals. So it seems potentially problematic to share the <code>visited</code> HashSet among them.</p>\n</blockquote>\n<p>Oh I see! I had a look at the comment on GitHub and I agree, there is no point in sharing the visited hash set. I was also worried about introducing a regression but as you noted, mathlib3 simply failed on that case anyway so that's not an issue.</p>",
+        "id": 430405631,
+        "sender_full_name": "Sam Ezeh",
+        "timestamp": 1711818884
+    },
+    {
+        "content": "<p>Should I submit a PR with your solution?</p>",
+        "id": 430405765,
+        "sender_full_name": "Sam Ezeh",
+        "timestamp": 1711819018
+    },
+    {
+        "content": "<p>Sounds good to me!</p>",
+        "id": 430406845,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1711820046
+    },
+    {
+        "content": "<p>Using this example</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Data.Part</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Part</span>\n\n<span class=\"kd\">theorem</span> <span class=\"n\">mem_restrict</span> <span class=\"o\">(</span><span class=\"n\">p</span> <span class=\"o\">:</span> <span class=\"kt\">Prop</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">o</span> <span class=\"o\">:</span> <span class=\"n\">Part</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">h</span> <span class=\"o\">:</span> <span class=\"n\">p</span> <span class=\"bp\">→</span> <span class=\"n\">o.Dom</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">a</span> <span class=\"o\">:</span> <span class=\"n\">α</span><span class=\"o\">)</span> <span class=\"o\">:</span>\n    <span class=\"n\">a</span> <span class=\"bp\">∈</span> <span class=\"n\">restrict</span> <span class=\"n\">p</span> <span class=\"n\">o</span> <span class=\"n\">h</span> <span class=\"bp\">↔</span> <span class=\"n\">p</span> <span class=\"bp\">∧</span> <span class=\"n\">a</span> <span class=\"bp\">∈</span> <span class=\"n\">o</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">dsimp</span> <span class=\"o\">[</span><span class=\"n\">restrict</span><span class=\"o\">,</span> <span class=\"n\">mem_eq</span><span class=\"o\">]</span>\n  <span class=\"n\">tauto</span>\n</code></pre></div>\n<p>I get the following error when using the new tauto</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"c\">/-</span>\n<span class=\"cm\">  don't know how to synthesize placeholder</span>\n<span class=\"cm\">  context:</span>\n\n<span class=\"cm\">  α: Type u_1</span>\n<span class=\"cm\">  p: Prop</span>\n<span class=\"cm\">  o: Part α</span>\n<span class=\"cm\">  h: p → o.Dom</span>\n<span class=\"cm\">  a: α</span>\n<span class=\"cm\">  em✝: (a : Prop) → Decidable a</span>\n<span class=\"cm\">  ⊢ (∃ (h_1 : p), o.get _ = a) ↔ p ∧ ∃ (h : o.Dom), o.get h = a</span>\n<span class=\"cm\">  -/</span>\n</code></pre></div>\n<p>This really confused me because I would've expected it to act as any other error and iterateUntilFailure continues to succeed and I don't understand how throwing an error in replace causes issues with synthesis. After poking around at the code I was able to get the synthesis issue by throwing an error in <code>replace</code> but it only occurs when I also call <code>g.replace</code>. I tried the <code>trySynthInstanceQ</code> and working by cases on the Option type it returns but the tauto' tactic still fails with the same synthesis issue. What's going on here?</p>",
+        "id": 430481250,
+        "sender_full_name": "Sam Ezeh",
+        "timestamp": 1711895942
+    },
+    {
+        "content": "<p>Another thing is that CI still passed despite this, would it be worth adding a test case for this somewhere? If so, how would I go about doing this in Mathlib?</p>",
+        "id": 430481307,
+        "sender_full_name": "Sam Ezeh",
+        "timestamp": 1711895999
+    },
+    {
+        "content": "<p>So this diff is enough to cause it</p>\n<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"gh\">diff --git a/Mathlib/Tactic/Tauto.lean b/Mathlib/Tactic/Tauto.lean</span>\n<span class=\"gh\">index a61841c23a..19d211fdd7 100644</span>\n<span class=\"gd\">--- a/Mathlib/Tactic/Tauto.lean</span>\n<span class=\"gi\">+++ b/Mathlib/Tactic/Tauto.lean</span>\n<span class=\"gu\">@@ -25,7 +25,10 @@ def distribNotOnceAt (hypFVar : Expr) (g : MVarId) : MetaM AssertAfterResult :=</span>\n<span class=\"w\"> </span>  let .fvar fvarId := hypFVar | throwError \"not fvar {hypFVar}\"\n<span class=\"w\"> </span>  let h ← fvarId.getDecl\n<span class=\"w\"> </span>  let e : Q(Prop) ← (do guard &lt;| ← Meta.isProp h.type; pure h.type)\n<span class=\"gd\">-  let replace (p : Expr) := g.replace h.fvarId p</span>\n<span class=\"gi\">+  let replace (p : Expr) := do</span>\n<span class=\"gi\">+    let _ ← g.replace h.fvarId p</span>\n<span class=\"gi\">+    throwError \"always fails\"</span>\n<span class=\"gi\">+</span>\n<span class=\"w\"> </span>  match e with\n<span class=\"w\"> </span>  | ~q(¬ ($a : Prop) = $b) =&gt; do\n<span class=\"w\"> </span>    let h' : Q(¬$a = $b) := h.toExpr\n</code></pre></div>",
+        "id": 430481539,
+        "sender_full_name": "Sam Ezeh",
+        "timestamp": 1711896177
+    },
+    {
+        "content": "<p>Huh, weird.<br>\nThis seems to fix it:</p>\n<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"gh\">diff --git a/Mathlib/Tactic/Tauto.lean b/Mathlib/Tactic/Tauto.lean</span>\n<span class=\"gh\">index 9e6e61e026..2fa55ba8d9 100644</span>\n<span class=\"gd\">--- a/Mathlib/Tactic/Tauto.lean</span>\n<span class=\"gi\">+++ b/Mathlib/Tactic/Tauto.lean</span>\n<span class=\"gu\">@@ -26,10 +26,13 @@ def distribNotOnceAt (hypFVar : Expr) (g : MVarId) : MetaM AssertAfterResult :=</span>\n<span class=\"w\"> </span>  let h ← fvarId.getDecl\n<span class=\"w\"> </span>  let e : Q(Prop) ← (do guard &lt;| ← Meta.isProp h.type; pure h.type)\n<span class=\"w\"> </span>  let replace (p : Expr) : MetaM AssertAfterResult := do\n<span class=\"gi\">+     let s ← saveState</span>\n<span class=\"w\"> </span>     let result ← g.replace h.fvarId p\n<span class=\"w\"> </span>     result.mvarId.withContext do\n<span class=\"w\"> </span>     if (← getLCtx).contains h.fvarId\n<span class=\"gd\">-     then throwError \"'replace' did not remove the existing hypothesis\"</span>\n<span class=\"gi\">+     then</span>\n<span class=\"gi\">+       s.restore</span>\n<span class=\"gi\">+       throwError \"'replace' did not remove the existing hypothesis\"</span>\n<span class=\"w\"> </span>     pure result\n\n<span class=\"w\"> </span>  match e with\n</code></pre></div>",
+        "id": 430485653,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1711899077
+    },
+    {
+        "content": "<p>... but I don't yet have a good understanding of why the explicit save/restore is needed. I had thought that the exception handling would take care of the necessary rollback.</p>",
+        "id": 430485703,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1711899119
+    },
+    {
+        "content": "<p>I made a little example program to test my understanding:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span> <span class=\"n\">Elab.Tactic</span>\n\n<span class=\"n\">syntax</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">foo</span><span class=\"o\">)</span> <span class=\"s2\">\"foo\"</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span>\n\n<span class=\"n\">elab_rules</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span>\n<span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">tactic</span><span class=\"bp\">|</span> <span class=\"n\">foo</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">g</span> <span class=\"bp\">←</span> <span class=\"n\">getMainGoal</span>\n  <span class=\"n\">try</span>\n    <span class=\"n\">g.assign</span> <span class=\"o\">(</span><span class=\"n\">mkNatLit</span> <span class=\"mi\">1</span><span class=\"o\">)</span>\n    <span class=\"n\">throwError</span> <span class=\"s2\">\"oops!\"</span>\n  <span class=\"n\">catch</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"k\">if</span> <span class=\"bp\">←</span><span class=\"n\">g.isAssigned</span>\n    <span class=\"k\">then</span> <span class=\"n\">throwError</span> <span class=\"s2\">\"oh no!\"</span>\n    <span class=\"n\">g.assign</span> <span class=\"o\">(</span><span class=\"n\">mkNatLit</span> <span class=\"mi\">2</span><span class=\"o\">)</span>\n  <span class=\"n\">pure</span> <span class=\"o\">()</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">foo</span>\n\n<span class=\"k\">#print</span> <span class=\"n\">x</span>\n<span class=\"c1\">-- 2</span>\n</code></pre></div>",
+        "id": 430657752,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712002907
+    },
+    {
+        "content": "<p>and that works like I expected -- the <code>throwError</code> rolls back the <code>g.assign</code></p>",
+        "id": 430658062,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712003031
+    },
+    {
+        "content": "<p>so I still don't understand why the <code>saveState</code> and <code>s.restore</code> seem to be needed in the proposed <code>tauto</code> fix.</p>",
+        "id": 430658315,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712003134
+    },
+    {
+        "content": "<p>I think the issue is with <code>liftMetaTactic</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span> <span class=\"n\">Elab.Tactic</span>\n\n<span class=\"n\">syntax</span> <span class=\"o\">(</span><span class=\"n\">name</span> <span class=\"o\">:=</span> <span class=\"n\">foo</span><span class=\"o\">)</span> <span class=\"s2\">\"foo\"</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span>\n\n<span class=\"n\">elab_rules</span> <span class=\"o\">:</span> <span class=\"n\">tactic</span>\n<span class=\"bp\">|</span> <span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">tactic</span><span class=\"bp\">|</span> <span class=\"n\">foo</span><span class=\"o\">)</span> <span class=\"bp\">=&gt;</span> <span class=\"n\">liftMetaTactic</span> <span class=\"k\">fun</span> <span class=\"n\">g</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"n\">try</span>\n    <span class=\"n\">g.assign</span> <span class=\"o\">(</span><span class=\"n\">mkNatLit</span> <span class=\"mi\">1</span><span class=\"o\">)</span>\n    <span class=\"n\">throwError</span> <span class=\"s2\">\"oops!\"</span>\n  <span class=\"n\">catch</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"k\">if</span> <span class=\"bp\">←</span> <span class=\"n\">g.isAssigned</span> <span class=\"k\">then</span> <span class=\"n\">throwError</span> <span class=\"s2\">\"oh no!\"</span>\n    <span class=\"n\">g.assign</span> <span class=\"o\">(</span><span class=\"n\">mkNatLit</span> <span class=\"mi\">2</span><span class=\"o\">)</span>\n  <span class=\"n\">pure</span> <span class=\"o\">[]</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">foo</span> <span class=\"c1\">-- oh no!</span>\n\n<span class=\"k\">#print</span> <span class=\"n\">x</span>\n<span class=\"c1\">-- 1</span>\n</code></pre></div>\n<p>I wonder if this is related to <a href=\"https://github.com/leanprover/lean4/pull/3001\">lean4#3001</a> (though I haven’t checked that that instance is actually relevant here).</p>",
+        "id": 430662163,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712004827
+    },
+    {
+        "content": "<p>Ah, good find.</p>",
+        "id": 430662933,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712005181
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"548935\">@Thomas Murrills</span> do you agree that this seems like a bug?</p>",
+        "id": 430663051,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712005227
+    },
+    {
+        "content": "<p>Absolutely!</p>",
+        "id": 430663272,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712005336
+    },
+    {
+        "content": "<p>Actually, this seems like a problem with the<code>MetaM</code> <code>tryCatch</code> instance somehow.</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span> <span class=\"n\">Elab.Tactic</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">MVarId</span> <span class=\"bp\">→</span> <span class=\"n\">MetaM</span> <span class=\"n\">Unit</span>\n<span class=\"bp\">|</span> <span class=\"n\">g</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"n\">try</span>\n    <span class=\"n\">g.assign</span> <span class=\"o\">(</span><span class=\"n\">mkNatLit</span> <span class=\"mi\">1</span><span class=\"o\">)</span>\n    <span class=\"n\">throwError</span> <span class=\"s2\">\"oops!\"</span>\n  <span class=\"n\">catch</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"k\">if</span> <span class=\"bp\">←</span> <span class=\"n\">g.isAssigned</span> <span class=\"k\">then</span> <span class=\"n\">throwError</span> <span class=\"s2\">\"oh no!\"</span>\n    <span class=\"n\">g.assign</span> <span class=\"o\">(</span><span class=\"n\">mkNatLit</span> <span class=\"mi\">2</span><span class=\"o\">)</span>\n\n<span class=\"k\">#eval</span> <span class=\"k\">show</span> <span class=\"n\">MetaM</span> <span class=\"n\">_</span> <span class=\"k\">from</span> <span class=\"k\">do</span> <span class=\"c1\">-- oh no!</span>\n  <span class=\"k\">let</span> <span class=\"n\">a</span> <span class=\"bp\">←</span> <span class=\"n\">mkFreshExprMVar</span> <span class=\"o\">(</span><span class=\"n\">Expr.const</span> <span class=\"bp\">``</span><span class=\"n\">Nat</span> <span class=\"o\">[])</span>\n  <span class=\"n\">x</span> <span class=\"n\">a.mvarId</span><span class=\"bp\">!</span>\n</code></pre></div>",
+        "id": 430663505,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712005507
+    },
+    {
+        "content": "<p>(no <code>liftM</code> in sight)</p>",
+        "id": 430663780,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712005645
+    },
+    {
+        "content": "<p>trying to unravel this <code>MonadExcept</code> / <code>MonadExceptOf</code> stack of instances has me like <span aria-label=\"face with spiral eyes\" class=\"emoji emoji-1f635-200d-1f4ab\" role=\"img\" title=\"face with spiral eyes\">:face_with_spiral_eyes:</span></p>",
+        "id": 430664271,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712005851
+    },
+    {
+        "content": "<p>Ooh, take a look at <a class=\"stream-topic\" data-stream-id=\"113488\" href=\"/#narrow/stream/113488-general/topic/try.2C.20salvage.2C.20catch\">#general &gt; try, salvage, catch</a> ; that’s not directly useful per se, but involved unraveling that stack!</p>",
+        "id": 430664458,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712005948
+    },
+    {
+        "content": "<p>It goes all the way down to <code>EStateM</code> under <code>EIO</code>.</p>",
+        "id": 430664569,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712006016
+    },
+    {
+        "content": "<p>I think there’s a special <code>tryCatch</code> for <code>TacticM</code> and <code>CoreM</code>, but iirc the rest are in terms of monad transformers.</p>",
+        "id": 430664865,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712006158
+    },
+    {
+        "content": "<p>is it possible that the special <code>TacticM</code> is specifically adding the save/restore behavior, and <code>MetaM</code> is not getting it (perhaps even intentionally)?</p>",
+        "id": 430665036,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712006236
+    },
+    {
+        "content": "<p>Yes, I think it’s quite possible that the “right” behavior is from the special <code>TacticM</code> <code>restore</code> used in its <code>tryCatch</code>. But I would doubt it’s intentional…</p>",
+        "id": 430665215,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712006294
+    },
+    {
+        "content": "<p>I’m suspicious of the <code>MonadExceptOf</code> instance for <code>StateRefT'</code> in Init.Control.StateRef, as <code>MetaM</code> uses a <code>StateRefT'</code> to store the <code>MetavarContext</code>…</p>",
+        "id": 430666588,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712006901
+    },
+    {
+        "content": "<p>where is <code>StateRefT</code> defined? When I jump to definition it takes me to <code>StateRefT'</code>.</p>",
+        "id": 430668597,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712007420
+    },
+    {
+        "content": "<p>oh.. <a href=\"https://github.com/leanprover/lean4/blob/a440e63435606c4bf693c5a5ec6d67096e47aa4d/src/Init/Control/StateRef.lean#L14\">it's a macro</a> (unclear where it's defined, but maybe not important)</p>",
+        "id": 430668955,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712007574
+    },
+    {
+        "content": "<p>The <code>EST</code> monad does not implement try/catch backtracking:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span> <span class=\"n\">Meta</span> <span class=\"n\">Elab.Tactic</span> <span class=\"n\">Elab.Command</span>\n<span class=\"k\">#eval</span> <span class=\"k\">show</span> <span class=\"n\">MetaM</span> <span class=\"n\">Unit</span> <span class=\"k\">from</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">runEST</span> <span class=\"o\">(</span><span class=\"n\">ε</span> <span class=\"o\">:=</span> <span class=\"n\">String</span><span class=\"o\">)</span> <span class=\"k\">fun</span> <span class=\"n\">σ</span> <span class=\"bp\">↦</span> <span class=\"k\">do</span>\n    <span class=\"k\">let</span> <span class=\"n\">r</span> <span class=\"o\">:</span> <span class=\"n\">ST.Ref</span> <span class=\"n\">σ</span> <span class=\"n\">Nat</span> <span class=\"bp\">←</span> <span class=\"n\">ST.mkRef</span> <span class=\"mi\">0</span>\n    <span class=\"n\">try</span>\n      <span class=\"n\">r.set</span> <span class=\"mi\">1</span>\n      <span class=\"n\">throw</span> <span class=\"s2\">\"boom\"</span>\n    <span class=\"n\">catch</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n      <span class=\"n\">dbg_trace</span> <span class=\"bp\">←</span><span class=\"n\">r.get</span>   <span class=\"c1\">-- prints \"1\"</span>\n      <span class=\"n\">r.set</span> <span class=\"mi\">2</span>\n  <span class=\"n\">dbg_trace</span> <span class=\"n\">x</span>\n  <span class=\"n\">pure</span> <span class=\"o\">()</span>\n</code></pre></div>",
+        "id": 430672869,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712009511
+    },
+    {
+        "content": "<p>... and that seems reasonable to me.</p>",
+        "id": 430672936,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712009528
+    },
+    {
+        "content": "<p>I suppose that the reason I expect <code>MetaM</code> try/catch to backtrack the Meta state is that <code>TacticM</code> does it, and <code>TacticM</code> is \"just\" a wrapper of <code>MetaM</code>.</p>",
+        "id": 430673274,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712009726
+    },
+    {
+        "content": "<p>I’d expect it to backtrack even here—but I don’t necessarily know what other languages do with <code>ST</code>. In general I’d expect <code>try</code>/<code>catch</code> to <em>always</em> backtrack, or at the very least to have consistent behavior across monads.</p>",
+        "id": 430685873,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712017980
+    },
+    {
+        "content": "<p>I think either</p>\n<ol>\n<li>we should fix these <code>Ref</code>-related <code>tryCatch</code> instances so that they backtrack (like everything else)</li>\n<li>we should ensure that all of Lean’s nongeneric monads (<code>MetaM</code>, <code>TermElabM</code>, etc.) backtrack under <code>tryCatch</code> (and ideally <code>MonadControl</code>)</li>\n</ol>",
+        "id": 430686320,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712018297
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> <a href=\"#narrow/stream/239415-metaprogramming-.2F-tactics/topic/Tauto.20infinite.20loop/near/430685873\">said</a>:</p>\n<blockquote>\n<p>I’d expect it to backtrack even here—but I don’t necessarily know what other languages do with <code>ST</code>. In general I’d expect <code>try</code>/<code>catch</code> to <em>always</em> backtrack, or at the very least to have consistent behavior across monads.</p>\n</blockquote>\n<p><code>try</code> <code>catch</code> generally does <em>not</em> backtrack in lean, this is what <code>MonadBacktrack</code> is for. The reason for this is because backtracking state involves overhead which you don't want to pay unless you know that it will be needed, so doing this by default in all state monads would cause performance issues when using lean's many linear data structures</p>",
+        "id": 430688499,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712019896
+    },
+    {
+        "content": "<p>It would be lovely to have some kind of explicit opt in backtracking <code>try</code>/ <code>catch</code> though, rather than having to save and restore the state manually, which is error prone</p>",
+        "id": 430688557,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712019945
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> if I'm working in a monad <code>M</code>, is there an easy way to look up whether try/catch in <code>M</code> will backtrack or not?</p>",
+        "id": 430689051,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712020205
+    },
+    {
+        "content": "<p>I'm trying to do <code>#synth MonadBacktrack TacticM</code>, but it's not working</p>",
+        "id": 430689120,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712020232
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.MonadBacktrack#doc\">docs#Lean.MonadBacktrack</a></p>",
+        "id": 430689160,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712020251
+    },
+    {
+        "content": "<p>... you know the \"instances\" list in doc-gen would be a lot nicer if it showed the types rather than the names of the instances</p>",
+        "id": 430689251,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712020294
+    },
+    {
+        "content": "<p>yeah, that gives me a list of instances, but I don't see <code>TacticM</code> in there, so presumably it comes from some monad tranformer instance</p>",
+        "id": 430689255,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712020295
+    },
+    {
+        "content": "<p>oh, wait maybe it is there, just with an enormous obfuscated name</p>",
+        "id": 430689366,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712020328
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/239415-metaprogramming-.2F-tactics/topic/Tauto.20infinite.20loop/near/430689160\">said</a>:</p>\n<blockquote>\n<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.MonadBacktrack#doc\">docs#Lean.MonadBacktrack</a></p>\n</blockquote>\n<p>The way we are manually backtracking in <a href=\"https://github.com/leanprover-community/mathlib4/pull/11799\">mathlib4#11799</a> is by calling <code>MonadBacktrack.saveState</code>. So I don't see how <code>MonadBacktrack</code> can also be the marker for \"this monad automatically backtracks in try/catch\".</p>",
+        "id": 430691690,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712021661
+    },
+    {
+        "content": "<p>it's not, it's the interface for manually backtracking</p>",
+        "id": 430691757,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712021695
+    },
+    {
+        "content": "<p>the marker for \"automatically backtracks\" AFAIK is nothing because nothing does that</p>",
+        "id": 430691810,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712021719
+    },
+    {
+        "content": "<p>...although now that I come to think of it some <code>OrElse</code> instances backtrack</p>",
+        "id": 430691899,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712021758
+    },
+    {
+        "content": "<p>it's probably in need of a proper census to find out how inconsistent things actually are</p>",
+        "id": 430692028,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712021797
+    },
+    {
+        "content": "<p>Restating my question: what piece of documentation tells me that <code>TacticM</code> does try/catch backtracking and <code>MetaM</code> does not?</p>",
+        "id": 430692054,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712021808
+    },
+    {
+        "content": "<p>It seems the answer is \"none\".</p>",
+        "id": 430692074,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712021813
+    },
+    {
+        "content": "<p>the answer is \"look at the code\"</p>",
+        "id": 430692092,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712021822
+    },
+    {
+        "content": "<p>aka \"none\"</p>",
+        "id": 430692126,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712021835
+    },
+    {
+        "content": "<p>and that's really difficult because of the layers of monad transformer indirection!</p>",
+        "id": 430692150,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1712021843
+    },
+    {
+        "content": "<p>well on the flip side that's good because there are only a few monad transformer primitives to look at</p>",
+        "id": 430692202,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712021867
+    },
+    {
+        "content": "<p>Looks like the implementation of tryCatch on <code>EStateM</code> uses tricky typeclass machinery such that it backtracks only if there is a <code>Backtrackable</code> instance available, see <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=EStateM.nonBacktrackable#src\">src#EStateM.nonBacktrackable</a></p>",
+        "id": 430693026,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712022162
+    },
+    {
+        "content": "<p><code>TacticM</code> also has a special case <code>MonadExcept</code> instance, but not <code>MonadExceptOf</code>, which means that <code>tryCatch</code> and <code>tryCatchThe</code> behave differently...</p>",
+        "id": 430693330,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712022311
+    },
+    {
+        "content": "<p>the monad instance for <code>StateT</code> (<a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=StateT.instMonadExceptOfStateT#src\">src#StateT.instMonadExceptOfStateT</a>) appears to use the state nonlinearly, which seems like a bug, but is also AFAICT the only thing you could write for that instance. It seems like this means StateT will always backtrack everything, even if the state is not backtrackable?</p>",
+        "id": 430693537,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712022475
+    },
+    {
+        "content": "<p>by contrast, the monad instance for <code>StateRefT'</code> (<a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=StateRefT%27.instMonadExceptOfStateRefT%27#src\">src#StateRefT'.instMonadExceptOfStateRefT'</a>), despite using basically the same code, will not backtrack thanks to the magic of IO refs</p>",
+        "id": 430693693,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712022574
+    },
+    {
+        "content": "<p>So it looks like the conclusion is:</p>\n<p>Does it automatically backtrack on <code>tryCatch</code>?</p>\n<ul>\n<li><code>StateT</code>: yes</li>\n<li><code>StateRefT'</code>: no</li>\n<li><code>EStateM</code>: only if the state is <code>Backtrackable</code>. Is it backtrackable?<ul>\n<li>no (why does this class even exist then?)</li>\n</ul>\n</li>\n<li><code>TacticM</code>: yes</li>\n</ul>\n<p>All of the special case instances except <code>MonadExcept TacticM</code> don't change the backtracking behavior</p>\n<p>Does <code>&lt;|&gt;</code> backtrack:</p>\n<ul>\n<li><code>MetaM</code>: yes</li>\n<li><code>Parser</code>: it's complicated</li>\n<li><code>FormatterM</code> / <code>ParenthesizerM</code>: yes</li>\n<li>otherwise: it's the same as <code>try catch</code>, see above</li>\n</ul>",
+        "id": 430695245,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712023557
+    },
+    {
+        "content": "<p>in summary, state tracked in <code>StateT</code> generally backtracks, while state in <code>StateRefT'</code> doesn't, and most lean monads store all the state in <code>StateRefT'</code> or <code>EStateM</code> and so most of the state is not automatically backtracked. <code>&lt;|&gt;</code> is more likely to backtrack than <code>try catch</code>. Should this be documented more explicitly? Absolutely.</p>",
+        "id": 430695631,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712023775
+    },
+    {
+        "content": "<p>this is an API mismatch between <code>StateT</code> and <code>StateRefT</code> that I had not previously realized</p>",
+        "id": 430695741,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712023827
+    },
+    {
+        "content": "<p>This is a massive footgun, right? I’m not sure documentation alone would prevent the footgun from going off. Shouldn’t all <code>try</code>/<code>catch</code> uses behave the same (one way or another) with respect to backtracking, just as a matter of, well, good UX? Otherwise, you need to think about the details of each monad you’re in, and therefore about which lift you use—and a big part of the usefulness of lifts is that you don’t really have to think about them.</p>\n<p>Likewise, if you know a monad you’re using has state, now you need to look at the (extrinsic) implementation details of that state to know what your code means, even though the interaction with that state uses the same API (or API which obscures how the state is implemented).</p>\n<p>I think (but am ultimately guessing) that many people would expect state to be rewound by <code>try</code>/<code>catch</code>, and that not doing so is a footgun (less so if it were uniformly not rewound, but a footgun nonetheless).</p>\n<p>So, my (ideal-world) proposal would be to uniformly backtrack state with <code>try</code>, with an opt-in <em>non</em>-backtracking <code>try</code> variant (<code>try!</code>? or simply <code>do … catch</code>?), for when you’re <em>sure</em> you want to prioritize optimization over intuitive semantics. Since it’s the less intuitive/more finicky thing, my thinking is that it’s better for non-backtracking to be the one to require the deliberate opt-in.</p>\n<p>My not-quite-as-ideal-but-still-better-world proposal would be to use backtracking by default in <code>try</code>/<code>catch</code> in all of the major Lean monads—<code>MetaM</code> should work like <code>TacticM</code> and <code>CoreM</code>, etc.</p>",
+        "id": 430736616,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712045923
+    },
+    {
+        "content": "<blockquote>\n<p>Otherwise, you need to think about the details of each monad you’re in, and therefore about which lift you use—and a big part of the usefulness of lifts is that you don’t really have to think about them.</p>\n</blockquote>\n<p>Lifts don't really change things here. What matters is what <em>kind</em> of state it is, i.e. whether the state in the monad is being tracked via the <code>StateT</code> part of your monad transformer stack or a <code>StateRefT</code> part. Lifts will not move state from one slot to another. So I think it's okay that the answer is \"it's monad dependent, but the monad author has made choices about what should be persisted and what hasn't, hopefully in a way that makes sense\"</p>",
+        "id": 430738492,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712046631
+    },
+    {
+        "content": "<p>That is, for a given piece of lean state like the <code>MetavarContext</code>, you can ask whether it is persisted or not in every monad which has one of these things and get a consistent answer. (Spoiler, it is backtracked by <code>&lt;|&gt;</code> and not by <code>try catch</code>.)</p>",
+        "id": 430738778,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712046743
+    },
+    {
+        "content": "<p>Hmm, it’s my opinion that you should not have to ask about the implementation details of the state to know the semantics of <code>try</code>/<code>catch</code>. If you want something to behave differently, I think there should be different API.</p>\n<p>Also, here, lifts <em>did</em> move state from one slot to another because of <code>TacticM</code>’s custom <code>tryCatch</code>! So, more narrowly, I at least think the core Lean monads should behave consistently with respect to each other.</p>",
+        "id": 430811253,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712070309
+    },
+    {
+        "content": "<p>well in any case I can't do much about it</p>",
+        "id": 430811843,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712070443
+    },
+    {
+        "content": "<p>take it up with core if you want to fight that battle</p>",
+        "id": 430811912,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712070461
+    },
+    {
+        "content": "<p>I can't even imagine how much code would have to be reviewed after a change of that magnitude</p>",
+        "id": 430812082,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712070500
+    },
+    {
+        "content": "<p>Haha, yeah, I am just speaking in principle, not at you directly :)</p>",
+        "id": 430812689,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712070669
+    },
+    {
+        "content": "<p>When I’ve got a bit of time, I think I’ll ask in #lean4 for opinions on at least the core monad issue, and in the meantime, I’ll see if I can help out with documentation. That would certainly be better than nothing! :)</p>",
+        "id": 430817473,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1712071917
+    },
+    {
+        "content": "<p>maybe if you add docs you can highlight how inconsistent the behavior is without saying anything directly :)</p>",
+        "id": 430817634,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712071955
+    }
+]

@@ -1,0 +1,230 @@
+[
+    {
+        "content": "<p>There are a couple of minor improvements/fixes I'd like to make to the recently-upstreamed-from-std4 Lean.LabelAttribute:</p>\n<ul>\n<li>pass the <code>AttributeKind</code> to <code>ext.add</code> (currently every label is added globally, and there's no error if someone uses <code>local</code>, so this doesn't seem intentional (is it?))</li>\n<li>allow users to provide a <code>validate</code> function and specify the <code>ApplicationTime</code> in the same way <code>TagAttribute</code> does</li>\n<li>improve/fix docs, specifically<ul>\n<li>fix reference to <code>Std.Tactic.LabelAttr.labelled</code></li>\n<li>explain difference in usage from <code>TagAttribute</code> further in the module doc (<code>TagAttribute</code> is for checking if a given decl has the tag, <code>LabelAttribute</code> is for getting a collection of all labelled decls)</li>\n<li>after allowing <code>validate</code> etc.: point users from the simple macro to <code>registerLabelAttr</code> if they need these features</li>\n</ul>\n</li>\n</ul>\n<p>Would a PR (or PRs) be welcome for these?</p>",
+        "id": 426913988,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710615761
+    },
+    {
+        "content": "<ul>\n<li><code>local</code> handling seems like a good idea, but isn't <code>local</code> already being handled by <code>SimpleScopedEnvExtension</code>? (If not, could you make a <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a> ?)</li>\n<li>Do you have a use case for specifying the <code>ApplicationTime</code> or for needing to <code>validate</code> that you need this for?</li>\n<li>That difference between <code>TagAttribute</code> and <code>LabelAttribute</code> doesn't seem right to me. It's possible to retrieve a list of every declaration that has a given <code>TagAttribute</code>, as far as I've understood. I thought the big differences were (1) you can add a <code>LabelAttribute</code> in a different module from the declaration and (2) the <code>LabelAttribute</code> can be locally scoped.</li>\n</ul>",
+        "id": 426914767,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710616485
+    },
+    {
+        "content": "<p>The issue with local handling is that <code>add</code> for the attribute registered by <code>mkLabelAttr</code> looks like this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code>  <span class=\"n\">add</span>   <span class=\"o\">:=</span> <span class=\"k\">fun</span> <span class=\"n\">declName</span> <span class=\"n\">_</span> <span class=\"n\">_</span> <span class=\"bp\">=&gt;</span>\n    <span class=\"n\">ext.add</span> <span class=\"n\">declName</span>\n</code></pre></div>\n<p>where <code>ext.add</code> uses <code>SimpleScopedEnvExtension</code>'s <code>add</code>, and has a default <code>AttributeKind.global</code> argument. (I'll make a <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a> to make sure this does what I expect, though.) So, it <em>can</em> be handled by <code>SimpleScopedEnvExtension</code>, but we just don't pass the data along.</p>",
+        "id": 426914894,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710616590
+    },
+    {
+        "content": "<ul>\n<li>I do have a case for <code>validate</code>, where I want to make sure everything added with the label has a certain type. I don't have a case for the application time, but I figure if it's in core, someone might want it; consistency with <code>TagAttribute</code> is probably good; and it's very easy/low maintenance to allow this feature. Though, honestly, I'm not familiar yet with what effects this has, so maybe it doesn't make sense.</li>\n</ul>",
+        "id": 426915045,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710616733
+    },
+    {
+        "content": "<ul>\n<li>How do you retrieve a list of every tagged declaration with <code>TagAttribute</code>? My understanding is that it only provides <code>hasTag</code>, and works by looking in the extension data in the olean of the module of the given decl (or looking in the current environment if it's been tagged in the current module); and likewise <code>addImportedFn</code> is <code>fun _ _ =&gt; pure {}</code>, so we don't wind up collecting all tagged decls in something accessible in the environment.</li>\n</ul>",
+        "id": 426915296,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710616936
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> <a href=\"#narrow/stream/270676-lean4/topic/Label.20attribute.20improvements.3F/near/426914894\">said</a>:</p>\n<blockquote>\n<p>So, it <em>can</em> be handled by <code>SimpleScopedEnvExtension</code>, but we just don't pass the data along.</p>\n</blockquote>\n<p>I think with a test case and a small modification to pass that data along, it'd likely be welcome.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> <a href=\"#narrow/stream/270676-lean4/topic/Label.20attribute.20improvements.3F/near/426915045\">said</a>:</p>\n<blockquote>\n<p>consistency with <code>TagAttribute</code> is probably good</p>\n</blockquote>\n<p>If this is giving <code>LabelAttribute</code> a similar interface to <code>TagAttribute</code>, then I agree. A <code>validate</code> function makes sense to me as well, but it's good to be sure it's being motivated by a concrete application.</p>",
+        "id": 426915808,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710617384
+    },
+    {
+        "content": "<p>There's a big performance improvement on the table for <code>LabelAttribute</code>.</p>\n<p>The <code>Array Name</code> should be in sorted order, like for the <code>TagAttribute</code> arrays, so that (1) when looking up, it can do a binary search and (2) when loading a module, it merges the sorted arrays.</p>",
+        "id": 426916030,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710617530
+    },
+    {
+        "content": "<p>Would merging that way be more costly on import? I feel like <code>LabelAttribute</code> should be optimized for the application of \"give me a collection of all declarations\" while leaving lookup to <code>TagAttribute</code> (if I'm right about the distinction)—and/or create a different sort of attribute that's a \"flexible <code>TagAttribute</code>\" (allowing cross-module declarations but still being used for lookup only).</p>",
+        "id": 426916278,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710617781
+    },
+    {
+        "content": "<p>(Re: the last part, see somewhere near the end of <a class=\"stream-topic\" data-stream-id=\"113488\" href=\"/#narrow/stream/113488-general/topic/pointless.20tactic.20linter\">#general &gt; pointless tactic linter</a>; though maybe those messages should be moved.)</p>",
+        "id": 426916741,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710618218
+    },
+    {
+        "content": "<p>I confirm label attributes don’t handle <code>local</code>, I’ve been bitten by this in the past.</p>",
+        "id": 426916807,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1710618257
+    },
+    {
+        "content": "<p>See <a href=\"#narrow/stream/348111-std4/topic/register_label_attr.20and.20local.20attribute/near/402959403\">https://leanprover.zulipchat.com/#narrow/stream/348111-std4/topic/register_label_attr.20and.20local.20attribute/near/402959403</a></p>",
+        "id": 426916835,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1710618298
+    },
+    {
+        "content": "<p>The asymptotic running time of merging two sorted lists is <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>O</mi><mo stretchy=\"false\">(</mo><mi>n</mi><mo>+</mo><mi>m</mi><mo stretchy=\"false\">)</mo></mrow><annotation encoding=\"application/x-tex\">O(n+m)</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.02778em;\">O</span><span class=\"mopen\">(</span><span class=\"mord mathnormal\">n</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span><span class=\"mbin\">+</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mord mathnormal\">m</span><span class=\"mclose\">)</span></span></span></span>, and two non-sorted lists is <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>O</mi><mo stretchy=\"false\">(</mo><mi>n</mi><mi>m</mi><mo stretchy=\"false\">)</mo></mrow><annotation encoding=\"application/x-tex\">O(nm)</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.02778em;\">O</span><span class=\"mopen\">(</span><span class=\"mord mathnormal\">nm</span><span class=\"mclose\">)</span></span></span></span>, so it's the opposite of more costly :-)</p>",
+        "id": 426916865,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710618319
+    },
+    {
+        "content": "<p>Here's how you can get a list of all the TagAttribute declarations:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Lean</span>\n<span class=\"kn\">import</span> <span class=\"n\">Mathlib</span>\n\n<span class=\"kn\">open</span> <span class=\"n\">Lean</span>\n\n<span class=\"kd\">def</span> <span class=\"n\">Lean.TagAttribute.getAll</span> <span class=\"o\">(</span><span class=\"n\">attr</span> <span class=\"o\">:</span> <span class=\"n\">TagAttribute</span><span class=\"o\">)</span> <span class=\"o\">(</span><span class=\"n\">env</span> <span class=\"o\">:</span> <span class=\"n\">Environment</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">Array</span> <span class=\"n\">Name</span> <span class=\"o\">:=</span> <span class=\"n\">Id.run</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">decls</span> <span class=\"o\">:=</span> <span class=\"o\">(</span><span class=\"n\">attr.ext.toEnvExtension.getState</span> <span class=\"n\">env</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">importedEntries.flatten</span>\n  <span class=\"n\">return</span> <span class=\"n\">decls</span> <span class=\"bp\">++</span> <span class=\"o\">(</span><span class=\"n\">attr.ext.getState</span> <span class=\"n\">env</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">toArray</span>\n\n<span class=\"n\">elab</span> <span class=\"s2\">\"#match_patterns\"</span> <span class=\"o\">:</span> <span class=\"n\">command</span> <span class=\"bp\">=&gt;</span> <span class=\"k\">do</span>\n  <span class=\"k\">let</span> <span class=\"n\">decls</span> <span class=\"o\">:=</span> <span class=\"n\">matchPatternAttr.getAll</span> <span class=\"o\">(</span><span class=\"bp\">←</span> <span class=\"n\">getEnv</span><span class=\"o\">)</span>\n  <span class=\"n\">logInfo</span> <span class=\"n\">m</span><span class=\"bp\">!</span><span class=\"s2\">\"Decls: {MessageData.joinSep (decls.map fun n =&gt; n).toList \"</span><span class=\"o\">,</span> <span class=\"s2\">\"}\"</span>\n\n<span class=\"bp\">#</span><span class=\"n\">match_patterns</span>\n<span class=\"c\">/-</span>\n<span class=\"cm\">Decls: Unit.unit, HEq.rfl, Add.add, List.toArray, HAdd.hAdd, Nat.add, Neg.neg, rfl, Char.ofNat,</span>\n<span class=\"cm\">Nat.cast, Int.cast, BitVec.ofNatLt, BitVec.ofNat, Lean.mkApp9, Lean.mkApp7, Lean.mkApp8,</span>\n<span class=\"cm\">Lean.mkAppB, Lean.mkApp10, Lean.mkApp4, Lean.mkApp6, Lean.mkApp2, Lean.mkApp3, Lean.mkApp,</span>\n<span class=\"cm\">Lean.mkApp5, Lean.IR.Alt.ctor, Lean.IR.Alt.default, Lean.Meta.AC.bin, bit1, bit0, Rat.cast,</span>\n<span class=\"cm\">Sum3.in₂, Sum3.in₁, Sum3.in₀, Bot.bot, Top.top, ofLex, toLex, WithBot.some, WithTop.some,</span>\n<span class=\"cm\">Functor.AddConst.mk, Functor.Comp.mk, Functor.Const.mk, Mathlib.Meta.NormNum.Result.isFalse,</span>\n<span class=\"cm\">Mathlib.Meta.NormNum.Result.isRat, Mathlib.Meta.NormNum.Result.isNat,</span>\n<span class=\"cm\">Mathlib.Meta.NormNum.Result.isNegNat, Mathlib.Meta.NormNum.Result.isTrue, Vector.cons, Vector.nil,</span>\n<span class=\"cm\">Sym.nil, Sym.cons, Sym.mk, Sum.inlₗ, Sum.inrₗ, CategoryTheory.Limits.WalkingCospan.Hom.inl,</span>\n<span class=\"cm\">CategoryTheory.Limits.WalkingCospan.right, CategoryTheory.Limits.WalkingSpan.left,</span>\n<span class=\"cm\">CategoryTheory.Limits.WalkingCospan.Hom.id, CategoryTheory.Limits.WalkingCospan.one,</span>\n<span class=\"cm\">CategoryTheory.Limits.WalkingSpan.right, CategoryTheory.Limits.WalkingSpan.Hom.fst,</span>\n<span class=\"cm\">CategoryTheory.Limits.WalkingSpan.Hom.id, CategoryTheory.Limits.WalkingSpan.zero,</span>\n<span class=\"cm\">CategoryTheory.Limits.WalkingCospan.Hom.inr, CategoryTheory.Limits.WalkingSpan.Hom.snd,</span>\n<span class=\"cm\">CategoryTheory.Limits.WalkingCospan.left, UniformSpace.mk', ENNReal.ofNNReal, SymAlg.sym,</span>\n<span class=\"cm\">Booleanisation.comp, Booleanisation.lift, SimpleGraph.Adj.toWalk, SimpleGraph.Walk.nil',</span>\n<span class=\"cm\">SimpleGraph.Walk.cons', SimpleGraph.Coloring.mk, SNum.not, NzsNum.not, SNum.bit, Multiset.mkToType,</span>\n<span class=\"cm\">Vector3.nil, Vector3.cons, Hamming.ofHamming, Hamming.toHamming,</span>\n<span class=\"cm\">FirstOrder.Language.BoundedFormula.not, FirstOrder.Language.BoundedFormula.ex, NatOrdinal.toOrdinal,</span>\n<span class=\"cm\">Ordinal.toNatOrdinal, Lists.of', Lists.atom, OnePoint.infty, OnePoint.some,</span>\n<span class=\"cm\">Topology.WithLower.ofLower, Topology.WithUpper.toUpper, Topology.WithLower.toLower,</span>\n<span class=\"cm\">Topology.WithUpper.ofUpper, Topology.WithUpperSet.toUpperSet, Topology.WithLowerSet.ofLowerSet,</span>\n<span class=\"cm\">Topology.WithUpperSet.ofUpperSet, Topology.WithLowerSet.toLowerSet, Specialization.toEquiv,</span>\n<span class=\"cm\">Specialization.ofEquiv, Topology.WithScott.toScott, Topology.WithScott.ofScott</span>\n<span class=\"cm\">-/</span>\n</code></pre></div>",
+        "id": 426916879,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710618344
+    },
+    {
+        "content": "<p>Huh, interesting—how does that work? And how does it square with the notion that for <code>TagAttributes</code>, we're meant to look up whether a decl has a tag by going to the olean of the module it was defined in? At some point, are we just going through all decls in the environment and checking if they're tagged?</p>",
+        "id": 426917492,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710618869
+    },
+    {
+        "content": "<p>Easy: the <code>TagAttribute</code> stores an <code>Array (Array Name)</code> indexed by module id.</p>",
+        "id": 426917578,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710618971
+    },
+    {
+        "content": "<p>Flattening that array gives you the array of all declarations with that attribute. (Minus the ones defined in the current module.)</p>",
+        "id": 426917602,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710619015
+    },
+    {
+        "content": "<p>Hmm—where/how does it do that? And what's the (non?)-relation with <code>addImportedFn</code> being constant?</p>",
+        "id": 426917628,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710619052
+    },
+    {
+        "content": "<p>Isn't <code>addImportedFn</code> for initializing the state of the extension once everything is imported? The state for <code>TagAttribute</code> is just the declarations tagged in the current module.</p>\n<p>My understanding is that the argument that's passed to it (the <code>Array (Array Name)</code>) is still accessible from <code>Lean.PersistentEnvExtensionState.importedEntries</code>, which is what <code>hasTag</code> is making use of.</p>",
+        "id": 426917807,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710619215
+    },
+    {
+        "content": "<p>Hm, maybe what I said about making <code>LabelAttribute</code> use sorted lists isn't possible since it uses <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.ScopedEnvExtension.addImportedFn#doc\">docs#Lean.ScopedEnvExtension.addImportedFn</a></p>\n<p>Still, it should be possible to use <code>NameSet</code> instead of <code>Array Name</code> for the state, which would speed things up in theory (according to the asymptotics at least).</p>",
+        "id": 426918236,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710619617
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Label.20attribute.20improvements.3F/near/426917807\">said</a>:</p>\n<blockquote>\n<p>Isn't <code>addImportedFn</code> for initializing the state of the extension once everything is imported? The state for <code>TagAttribute</code> is just the declarations tagged in the current module.</p>\n<p>My understanding is that the argument that's passed to it (the <code>Array (Array Name)</code>) is still accessible from <code>Lean.PersistentEnvExtensionState.importedEntries</code>, which is what <code>hasTag</code> is making use of.</p>\n</blockquote>\n<p>Ah, ok! This is making more sense now. :)</p>",
+        "id": 426918348,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710619734
+    },
+    {
+        "content": "<p>But I guess then I'd like to reconcile it with what <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> said <a href=\"#narrow/stream/113488-general/topic/pointless.20tactic.20linter/near/426670623\">here</a>. I'm figuring the \"loading from disk for ~free using mmap\" part is the construction of <code>importedEntries</code>, and the overhead would be flattening (if performed). For <code>TagAttributes</code> we decide that the <code>NameSet</code> state in the environemnt created by <code>addImportedFn</code> should start fresh in each file, and only include current-module tagged decls. Access is quick because it's either \"access the untouched <code>importedEntries</code> array at the right index, or use the small, current <code>NameSet</code>\". (If that's right, then things make sense to me.)</p>",
+        "id": 426918843,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710620193
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Label.20attribute.20improvements.3F/near/426918236\">said</a>:</p>\n<blockquote>\n<p>Hm, maybe what I said about making <code>LabelAttribute</code> use sorted lists isn't possible since it uses <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.ScopedEnvExtension.addImportedFn#doc\">docs#Lean.ScopedEnvExtension.addImportedFn</a></p>\n<p>Still, it should be possible to use <code>NameSet</code> instead of <code>Array Name</code> for the state, which would speed things up in theory (according to the asymptotics at least).</p>\n</blockquote>\n<p>I've been seeing <code>NameSet</code> around and was wondering: do you know if folding over a <code>NameSet</code> is more/less/~equally efficient as folding over an <code>Array</code>? Sometimes (as in my application) that's what you want to do with the bag of decls you get. Or, would it even make more sense to doubly fold over <code>importedEntries</code> directly, without flattening first?</p>\n<p>I guess I'm worried about the fact that you'd essentially be folding over every single module, most of them empty. But maybe you have to do that anyway when using <code>addImportedFn</code>?</p>",
+        "id": 426919177,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710620478
+    },
+    {
+        "content": "<p>Just guessing, folding over an array is more efficient, but the same <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>O</mi><mo stretchy=\"false\">(</mo><mi>n</mi><mo stretchy=\"false\">)</mo></mrow><annotation encoding=\"application/x-tex\">O(n)</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:1em;vertical-align:-0.25em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.02778em;\">O</span><span class=\"mopen\">(</span><span class=\"mord mathnormal\">n</span><span class=\"mclose\">)</span></span></span></span> running time.</p>\n<blockquote>\n<p>Or, would it even make more sense to doubly fold over importedEntries directly, without flattening first?</p>\n</blockquote>\n<p>For <code>LabelAttribute</code>? I don't think we have that choice. It's a scoped attribute, so it has to process all the global vs scoped entries anyway in <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.ScopedEnvExtension.addImportedFn#doc\">docs#Lean.ScopedEnvExtension.addImportedFn</a>, which is what calls <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.ScopedEnvExtension.Descr.addEntry#doc\">docs#Lean.ScopedEnvExtension.Descr.addEntry</a> per entry</p>",
+        "id": 426919688,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710620951
+    },
+    {
+        "content": "<p>Right, I was wondering about the general case of \"how to store names then get all of them\", not necessarily <code>LabelAttribute</code>—basically, \"is <code>TagAttribute</code> optimized for getting/folding over collections of names, and if not, what would be\".</p>\n<p>I suppose I'll mention more properties of my specific application as motivation: I need to get and fold over a small growable collection of names which will never be erased from, and which doesn't need scoping.</p>\n<p>(I'm actually wondering if maybe a simple <code>IO.Ref</code> of some sort is most appropriate here, since it won't be managed by the user...but I'm not familiar yet with doing things at such a low level.)</p>",
+        "id": 426919830,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710621106
+    },
+    {
+        "content": "<p>(Btw, parallel conversation, but <a href=\"https://leanprover-community.github.io/mwe.html\">#mwe</a> for label attributes not handling scoping:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Std.Test.Internal.DummyLabelAttr</span>\n\n<span class=\"kn\">section</span>\n<span class=\"kd\">@[</span><span class=\"n\">local</span> <span class=\"n\">dummy_label_attr</span><span class=\"kd\">]</span> <span class=\"kd\">def</span> <span class=\"n\">x</span> <span class=\"o\">:=</span> <span class=\"n\">true</span>\n<span class=\"kd\">end</span>\n\n<span class=\"k\">#eval</span> <span class=\"n\">Lean.labelled</span> <span class=\"bp\">`</span><span class=\"n\">dummy_label_attr</span> <span class=\"c1\">-- #[`x]</span>\n</code></pre></div>\n<p>I'm not sure how to include this test in a Lean PR itself, though, given that afaik no label attributes are registered in core and you can't import test files; maybe the fix is straightforward enough that it doesn't need one...)</p>",
+        "id": 426920142,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710621402
+    },
+    {
+        "content": "<p>Thanks. It seems good to include in a PR description to illustrate the issue (or to create an issue with this and then link to that issue in the PR).</p>",
+        "id": 426920255,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710621533
+    },
+    {
+        "content": "<p>When I wrote <code>Lean.TagAttribute.getAll</code> I was trying to think about whether a <code>Lean.TagAttribute.foldM</code> would be better, but it's really hard to say without profiling.</p>\n<p>Sometimes things are faster if you create a temporary structure that you immediately throw away. There might be a lot of overhead in folding a function over all the entries, vs running an efficient loop over the returned array. Though maybe with compiler magic (inlining) the fold could become a nested <code>for</code> loop.</p>",
+        "id": 426920351,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710621632
+    },
+    {
+        "content": "<p>Oh, interesting—are nested <code>for</code>s more efficient than nested <code>fold</code>s?</p>",
+        "id": 426920606,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710621929
+    },
+    {
+        "content": "<p>Calling a function has overhead (from maintaining stack frames), and <code>for</code>s should compile into loops (on the Lean side, into recursive functions that do tail calls, which the C compiler can turn into jumps rather than calls).</p>\n<p><code>fold</code>s seem to be marked <code>@[inline]</code> though, so they should be loops too.</p>",
+        "id": 426921223,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1710622562
+    },
+    {
+        "content": "<p>Oh, good to know! (Especially that I haven't been slowing things down when using <code>fold</code> instead of <code>for</code>.)</p>",
+        "id": 426921340,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710622653
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/stream/270676-lean4/topic/Label.20attribute.20improvements.3F/near/426920255\">said</a>:</p>\n<blockquote>\n<p>Thanks. It seems good to include in a PR description to illustrate the issue (or to create an issue with this and then link to that issue in the PR).</p>\n</blockquote>\n<p>Issue: <a href=\"https://github.com/leanprover/lean4/pull/3697\">lean4#3697</a>; PR: <a href=\"https://github.com/leanprover/lean4/pull/3698\">lean4#3698</a></p>",
+        "id": 426921409,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710622702
+    },
+    {
+        "content": "<p>One question re: <code>ApplicationTime</code>: why does <code>TagAttribute</code> apply after typechecking, but <code>LabelAttribute</code> applies after compilation?</p>",
+        "id": 426921887,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710623202
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/pull/3699\">lean4#3699</a> is a draft PR for bringing <code>registerLabelAttr</code> into consistency with <code>registerTagAttribute</code>, including making the default <code>applicationTime</code> <code>.afterTypeChecking</code>. There are a couple of opinions I'd like to solicit, though:</p>",
+        "id": 426923387,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710624649
+    },
+    {
+        "content": "<ol>\n<li>Should the name be modified to <code>registerLabelAttribute</code> for consistency with <code>registerTagAttribute</code>? (If so, does that include <code>register_label_attr</code> += <code>ibute</code>?)</li>\n</ol>",
+        "id": 426923411,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710624672
+    },
+    {
+        "content": "<ol start=\"2\">\n<li>Should the macro accept an optional argument for validation, or just point users to <code>registerLabelAttr</code>(<code>ibute</code>) in the docstring if they need that feature?</li>\n</ol>",
+        "id": 426923523,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1710624783
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/issues/3643\">This issue</a> seems relevant as well.</p>",
+        "id": 426925349,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1710626862
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/issues/3643\">This issue</a> seems relevant as well.</p>",
+        "id": 426925433,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1710626929
+    },
+    {
+        "content": "<p>(It is only one issue, repeated since I'm on mobile.)</p>",
+        "id": 426925933,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1710627530
+    }
+]

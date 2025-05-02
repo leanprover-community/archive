@@ -28,5 +28,101 @@
         "id": 365126377,
         "sender_full_name": "Mario Carneiro",
         "timestamp": 1686404996
+    },
+    {
+        "content": "<p>I think this doesn't work so well after all; if you register the alias with <code>initialize</code>, then you get a crash if you load a module using that alias with <code>withImportModules</code> (as we do in many CI scripts), as the initializer will not have run.</p>",
+        "id": 482288560,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1731545342
+    },
+    {
+        "content": "<p>So we need to do one of:</p>\n<ul>\n<li>Not use <code>add_parser_alias</code> in <code>initialize</code> (i.e. by using <code>builtin_initialize</code> and precompiling parts of mathlib)</li>\n<li>Not using <code>withImportModules</code>, and instead using <code>Lean.enableInitializersExecution</code> and <code>importModules</code>.  batteries <a href=\"https://github.com/leanprover-community/mathlib4/pull/1047\">#1047</a> and <a href=\"https://github.com/leanprover-community/import-graph/pull/44\">import-graph#44</a> implement this approach</li>\n<li>Change how parser aliases are registered to avoid a crash if a syntax references a parser alias that is not configured</li>\n</ul>",
+        "id": 482507159,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1731630023
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/batteries/pull/1047\">batteries#1047</a></p>",
+        "id": 482527095,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1731642503
+    },
+    {
+        "content": "<p>As far as I can tell this also means that it is no longer possible to call <code>withModules</code> twice in the same process with different imports, as the <code>initialize</code> that runs <code>add_parser_alias</code> won't run the second time.</p>",
+        "id": 483309465,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1732035102
+    },
+    {
+        "content": "<p>Regarding the bullets above, it was my understanding that it is part of setting up a lean elaborator process that you have to call <code>enableInitializersExecution</code> first (only once, usually right at the start of <code>main</code>)</p>",
+        "id": 483333435,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1732042783
+    },
+    {
+        "content": "<p>If this is the case, then what is the intended application of <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.withImportModules#doc\">docs#Lean.withImportModules</a> ?</p>",
+        "id": 483369586,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1732057400
+    },
+    {
+        "content": "<p>That function segfaults for me if used with <code>enableInitializersExecution</code> (hence dropping it in <a href=\"https://github.com/leanprover-community/batteries/pull/1047\">batteries#1047</a>), presumably because it tried to free the compacted regions</p>",
+        "id": 483369623,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1732057418
+    },
+    {
+        "content": "<p>well that doesn't really answer the question, of course it is freeing the compacted regions but why does that cause a segfault?</p>",
+        "id": 483444541,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1732096382
+    },
+    {
+        "content": "<p>The comment is clear that this happens when you hold on to a reference to a lean object past that boundary, so the question is who is doing that</p>",
+        "id": 483444663,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1732096430
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/270676-lean4/topic/Non-builtin.20parser.20aliases/near/483333435\">said</a>:</p>\n<blockquote>\n<p>Regarding the bullets above, it was my understanding that it is part of setting up a lean elaborator process that you have to call <code>enableInitializersExecution</code> first (only once, usually right at the start of <code>main</code>)</p>\n</blockquote>\n<p>Only if you want to invoke (non-builtin) initializers. If you have a cusotm frontend executable that elaborates files with a known set of imports that are already initialized in the executable, this is unnecessary (and may be counterproductive). For example, Lake does not  currently use <code>enableInitializersExecution</code>.</p>",
+        "id": 483569335,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1732135874
+    },
+    {
+        "content": "<p><code>enableInitializersExecution</code> also only effects non-builtin initializers that are imported by the elabroator. Initializers (builtin or otherwise) in modules imported by an executable will always be run at the start of the executable.</p>",
+        "id": 483570035,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1732136181
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/channel/270676-lean4/topic/Non-builtin.20parser.20aliases/near/483309465\">said</a>:</p>\n<blockquote>\n<p>As far as I can tell this also means that it is no longer possible to call <code>withModules</code> twice in the same process with different imports, as the <code>initialize</code> that runs <code>add_parser_alias</code> won't run the second time.</p>\n</blockquote>\n<p>The idea is that initializers should only need to be run once. The alias is added to the (global executable) aliases reference and is thus available to all future elaboration. Thus, the danger is not that the alias won't exist in the second <code>withModules</code> but rather that <em>will</em> even if the new set of modules does not include the module which adds it.</p>",
+        "id": 483570859,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1732136515
+    },
+    {
+        "content": "<p>More generally, the Lean elaborator is currently meant to be a one-enviroment / one-import set per process. Doing otherwise will pose risks.</p>",
+        "id": 483571186,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1732136643
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"315577\">Mac Malone</span> <a href=\"#narrow/channel/270676-lean4/topic/Non-builtin.20parser.20aliases/near/483570859\">said</a>:</p>\n<blockquote>\n<p>Thus, the danger is not that the alias won't exist in the second <code>withModules</code> but rather that <em>will</em> even if the new set of modules does not include the module which adds it.</p>\n</blockquote>\n<p>If the first call imports <code>[`A]</code>, and the second call imports <code>[`A, `B]</code>, then I believe the initializers in A will be run once (as expected) but the initializers in <code>B</code> will never be run?</p>",
+        "id": 483600592,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1732152214
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/270676-lean4/topic/Non-builtin.20parser.20aliases/near/483444663\">said</a>:</p>\n<blockquote>\n<p>The comment is clear that this happens when you hold on to a reference to a lean object past that boundary, so the question is who is doing that</p>\n</blockquote>\n<p>Is the parser alias itself such a reference?</p>",
+        "id": 483600742,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1732152305
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/channel/270676-lean4/topic/Non-builtin.20parser.20aliases/near/483600592\">said</a>:</p>\n<blockquote>\n<p>If the first call imports <code>[`A]</code>, and the second call imports <code>[`A, `B]</code>, then I believe the initializers in A will be run once (as expected) but the initializers in <code>B</code> will never be run?</p>\n</blockquote>\n<p>If you call <code>enableInitializersExecution</code> before each (so twice), the initializers for <code>A</code> for should be run in the first <code>withImportModules</code> and the iniitializers for <code>B</code> should be run in the second.</p>",
+        "id": 483838743,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1732252457
     }
 ]

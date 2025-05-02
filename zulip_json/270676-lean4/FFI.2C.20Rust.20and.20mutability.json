@@ -1,0 +1,344 @@
+[
+    {
+        "content": "<p>Hi all,</p>\n<p>I am creating Lean bindings for a Rust library whose main type works on the basis of mutation and doesn't implement <code>Clone</code>. Thus I can't create deep copies of these objects.</p>\n<p>So the behavior I would naively get is as if by doing <code>let set' := set.insert 42</code> I would end up with <code>set' == set</code>. That is, I mutated <code>set</code><span aria-label=\"double exclamation\" class=\"emoji emoji-203c\" role=\"img\" title=\"double exclamation\">:double_exclamation:</span></p>\n<p>I know I am crawling into cursed territory here. But how would you model this at the Lean API level in order to prevent catastrophes?</p>\n<p>I have a working solution right now, but I don't want to spoil it and cause unwanted bias. I'm looking for new approaches.</p>\n<p>Thanks in advance!</p>",
+        "id": 500760690,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740006624
+    },
+    {
+        "content": "<p>I would treat it like a file, which also doesn't have <code>Clone</code>.</p>",
+        "id": 500761104,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1740006832
+    },
+    {
+        "content": "<p>What does treating it like a file look like? What do you mean, more specifically?</p>",
+        "id": 500761502,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740007017
+    },
+    {
+        "content": "<p>When accessing a file, you open a file handler, and then do stuff by calling methods on the file handler, and then when you are done, you close the file handler. Everything is through the file handler.</p>\n<p>So, I guess what I mean is, use some kind of handler which will be your Lean object that can be duplicated.</p>",
+        "id": 500761919,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1740007235
+    },
+    {
+        "content": "<p>Like, you'd accumulate the operations in an array and then apply them all at once?</p>",
+        "id": 500762259,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740007424
+    },
+    {
+        "content": "<p>Put the operations in a monad, it what I meant, but that might work too.</p>",
+        "id": 500762418,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1740007508
+    },
+    {
+        "content": "<p>Hm, there's a caveat. These Rust functions that mutate the original object return things that I need in order to perform the next operations. So the accumulation approach won't work.</p>\n<p>The monad approach follows the path I chose. Maybe there's no escape from a monad.</p>",
+        "id": 500762676,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740007632
+    },
+    {
+        "content": "<p>I believe the two viable paths are linear types or monad, and Lean doesn't have the former, so it looks like our hand is forced here.</p>",
+        "id": 500767421,
+        "sender_full_name": "Chris Wong",
+        "timestamp": 1740010038
+    },
+    {
+        "content": "<p>I found a much simpler solution: return a tuple <em>as if</em> the function wouldn't perform inplace-mutation, keep this function private and then expose a macro that does the rewrite automatically <span aria-label=\"magic wand\" class=\"emoji emoji-1fa84\" role=\"img\" title=\"magic wand\">:magic_wand:</span></p>\n<p>No need for a monad. And the resulting (macro-expanded) code can be formally verified.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"sd\">/--</span>\n<span class=\"sd\">**Mutates** the `ConstraintSystemBuilder` and returns a `ChannelId` and the</span>\n<span class=\"sd\">mutated `ConstraintSystemBuilder`.</span>\n<span class=\"sd\">-/</span>\n<span class=\"kd\">@[</span><span class=\"n\">extern</span><span class=\"w\"> </span><span class=\"s2\">\"c_constraint_system_builder_add_channel\"</span><span class=\"kd\">]</span>\n<span class=\"kn\">private</span><span class=\"w\"> </span><span class=\"kn\">opaque</span><span class=\"w\"> </span><span class=\"n\">addChannel</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ConstraintSystemBuilder</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">ChannelId</span><span class=\"w\"> </span><span class=\"bp\">×</span><span class=\"w\"> </span><span class=\"n\">ConstraintSystemBuilder</span>\n\n<span class=\"sd\">/-- Simulates inplace mutation with a syntactical overwrite. -/</span>\n<span class=\"kn\">macro</span><span class=\"w\"> </span><span class=\"s2\">\"let\"</span><span class=\"w\"> </span><span class=\"n\">ch</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"w\"> </span><span class=\"s2\">\"≪\"</span><span class=\"w\"> </span><span class=\"s2\">\"add_channel\"</span><span class=\"w\"> </span><span class=\"n\">csb</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"w\"> </span><span class=\"n\">rst</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">  </span><span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">ch</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">csb</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">addChannel</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">csb</span><span class=\"bp\">;</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">rst</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>And then:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">≪</span><span class=\"w\"> </span><span class=\"n\">add_channel</span><span class=\"w\"> </span><span class=\"n\">builder</span>\n</code></pre></div>\n<p>I'll be following this pattern to deal with Rust APIs, which are often based on mutation.</p>",
+        "id": 500989502,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740093996
+    },
+    {
+        "content": "<p>Can you share a toy example?</p>",
+        "id": 500990541,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1740094562
+    },
+    {
+        "content": "<p>Sure</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"sd\">/-- Imagine this function mutates the input `Nat` -/</span>\n<span class=\"kn\">private</span><span class=\"w\"> </span><span class=\"kn\">opaque</span><span class=\"w\"> </span><span class=\"n\">cursedFunction</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"w\"> </span><span class=\"bp\">×</span><span class=\"w\"> </span><span class=\"n\">Nat</span>\n\n<span class=\"kn\">macro</span><span class=\"w\"> </span><span class=\"s2\">\"let\"</span><span class=\"w\"> </span><span class=\"n\">bool</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"w\"> </span><span class=\"s2\">\"≪\"</span><span class=\"w\"> </span><span class=\"s2\">\"cursed_function\"</span><span class=\"w\"> </span><span class=\"n\">nat</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"w\"> </span><span class=\"n\">rst</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">  </span><span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">bool</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">cursedFunction</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">nat</span><span class=\"bp\">;</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">rst</span><span class=\"o\">)</span>\n\n<span class=\"bp\">#</span><span class=\"n\">check</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">someNat</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"mi\">42</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">≪</span><span class=\"w\"> </span><span class=\"n\">cursed_function</span><span class=\"w\"> </span><span class=\"n\">someNat</span>\n<span class=\"w\">  </span><span class=\"n\">b</span>\n</code></pre></div>",
+        "id": 500991382,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740095007
+    },
+    {
+        "content": "<p>What happens if you try to use <code>someNat</code> after?</p>",
+        "id": 500991984,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1740095314
+    },
+    {
+        "content": "<p>It will contain the mutated value, which is expected, given the syntactical rewrite (which in fact did nothing because <code>someNat</code> was already mutated)</p>",
+        "id": 500992224,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740095442
+    },
+    {
+        "content": "<p>What I want to prevent is:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">someNat</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"mi\">42</span>\n<span class=\"k\">let</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">cursedFunction</span><span class=\"w\"> </span><span class=\"n\">someNat</span>\n<span class=\"k\">let</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">p</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">q</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">cursedFunction</span><span class=\"w\"> </span><span class=\"n\">someNat</span>\n</code></pre></div>\n<p>Such that <code>(x, y) != (p, q)</code></p>",
+        "id": 500992486,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740095561
+    },
+    {
+        "content": "<p>You may ask if rewriting is indeed necessary. In my experiments, it's necessary otherwise Lean will cache the call to the cursedFunction and simulate idempotency behind the curtains. And also, it keeps the resulting expanded code healthy, as if <code>cursedFunction</code> wasn't cursed at all</p>",
+        "id": 500993004,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740095843
+    },
+    {
+        "content": "<p>And here's a trick to satisfy the unused variable linter:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"sd\">/-- Imagine this function mutates the input `Nat` -/</span>\n<span class=\"kn\">private</span><span class=\"w\"> </span><span class=\"kn\">opaque</span><span class=\"w\"> </span><span class=\"n\">cursedFunction</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"w\"> </span><span class=\"bp\">×</span><span class=\"w\"> </span><span class=\"n\">Nat</span>\n\n<span class=\"kn\">macro</span><span class=\"w\"> </span><span class=\"s2\">\"let\"</span><span class=\"w\"> </span><span class=\"n\">bool</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"w\"> </span><span class=\"s2\">\"≪\"</span><span class=\"w\"> </span><span class=\"s2\">\"cursed_function\"</span><span class=\"w\"> </span><span class=\"n\">nat</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"w\"> </span><span class=\"n\">rst</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">  </span><span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">bool</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">cursedFunction</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">nat</span><span class=\"bp\">;</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">rst</span><span class=\"o\">)</span>\n\n<span class=\"kn\">macro</span><span class=\"w\"> </span><span class=\"s2\">\"let\"</span><span class=\"w\"> </span><span class=\"n\">bool</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"w\"> </span><span class=\"s2\">\"≪\"</span><span class=\"w\"> </span><span class=\"s2\">\"cursed_function\"</span><span class=\"w\"> </span><span class=\"n\">nat</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"w\"> </span><span class=\"s2\">\".\"</span><span class=\"w\"> </span><span class=\"n\">rst</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">  </span><span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">bool</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">cursedFunction</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">nat</span><span class=\"bp\">;</span><span class=\"w\"> </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">nat</span><span class=\"bp\">;</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">rst</span><span class=\"o\">)</span>\n\n<span class=\"bp\">#</span><span class=\"n\">check</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">someNat</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"mi\">42</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">b₁</span><span class=\"w\"> </span><span class=\"bp\">≪</span><span class=\"w\"> </span><span class=\"n\">cursed_function</span><span class=\"w\"> </span><span class=\"n\">someNat</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">b₂</span><span class=\"w\"> </span><span class=\"bp\">≪</span><span class=\"w\"> </span><span class=\"n\">cursed_function</span><span class=\"w\"> </span><span class=\"n\">someNat</span><span class=\"bp\">.</span><span class=\"w\"> </span><span class=\"c1\">-- no \"unused variable `someNat`\"!</span>\n<span class=\"w\">  </span><span class=\"n\">b₂</span><span class=\"w\"> </span><span class=\"bp\">&amp;&amp;</span><span class=\"w\"> </span><span class=\"n\">b₁</span>\n<span class=\"c1\">-- let someNat := 42;</span>\n<span class=\"c1\">-- match cursedFunction someNat with</span>\n<span class=\"c1\">-- | (b₁, someNat) =&gt;</span>\n<span class=\"c1\">--   match cursedFunction someNat with</span>\n<span class=\"c1\">--   | (b₂, someNat) =&gt;</span>\n<span class=\"c1\">--     let x := someNat;</span>\n<span class=\"c1\">--     b₂ &amp;&amp; b₁ : Bool</span>\n</code></pre></div>",
+        "id": 500993595,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740096101
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"sd\">/-- Imagine this function mutates the input `Nat` -/</span>\n<span class=\"kn\">private</span><span class=\"w\"> </span><span class=\"kn\">opaque</span><span class=\"w\"> </span><span class=\"n\">cursedFunction</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"w\"> </span><span class=\"bp\">×</span><span class=\"w\"> </span><span class=\"n\">Nat</span>\n\n<span class=\"kn\">macro</span><span class=\"w\"> </span><span class=\"s2\">\"let\"</span><span class=\"w\"> </span><span class=\"n\">bool</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"w\"> </span><span class=\"s2\">\"≪\"</span><span class=\"w\"> </span><span class=\"s2\">\"cursed_function\"</span><span class=\"w\"> </span><span class=\"n\">nat</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"w\"> </span><span class=\"n\">rst</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">  </span><span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">bool</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">cursedFunction</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">nat</span><span class=\"bp\">;</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">rst</span><span class=\"o\">)</span>\n\n<span class=\"bp\">#</span><span class=\"n\">check</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">someNat</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"mi\">42</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">≪</span><span class=\"w\"> </span><span class=\"n\">cursed_function</span><span class=\"w\"> </span><span class=\"n\">someNat</span>\n<span class=\"w\">  </span><span class=\"k\">by</span>\n<span class=\"w\">    </span><span class=\"n\">clear</span><span class=\"w\"> </span><span class=\"n\">someNat</span>\n<span class=\"w\">    </span><span class=\"n\">exact</span><span class=\"w\"> </span><span class=\"n\">someNat</span>\n</code></pre></div>",
+        "id": 500993922,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1740096230
+    },
+    {
+        "content": "<p>That's interesting. If you really want you can break the implementation. I could implement an elaborator to erase the previous value completely, but the current macro is enough for me not to shoot my own foot</p>",
+        "id": 500994764,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740096622
+    },
+    {
+        "content": "<p>I think the better way to implement something like this if you really need to manage a linear object in lean is to wrap the external object in a <code>lean_external_object</code> which keeps track of a generation id (one immutable one per handle and one which is bumped every time you use a mutating method) in addition to the linear resource, and if you attempt to use a handle that is not current you panic and/or do nothing</p>",
+        "id": 500996559,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740097662
+    },
+    {
+        "content": "<p>then the <code>opaque</code> you expose to lean code will actually take and return a handle</p>",
+        "id": 500996677,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740097700
+    },
+    {
+        "content": "<p>if copying is possible but expensive you can also do what most objects in lean do and do the copy if the handle is shared when doing the mutating operation</p>",
+        "id": 500996870,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740097815
+    },
+    {
+        "content": "<p>that way you don't have to panic but instead you \"just\" have a performance cliff</p>",
+        "id": 500996920,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740097841
+    },
+    {
+        "content": "<p>Another way to implement sound linear values in lean, without generation ids, is for a handle to basically be a <code>Option&lt;Box&lt;T&gt;&gt;</code>, i.e. owning the linear resource or being null. Then when you perform a mutating operation you take the value out of the old handle and put it in the new one to be returned, and uses of the newly null out of date handle panic and/or do nothing</p>",
+        "id": 500997293,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740098048
+    },
+    {
+        "content": "<p>My first ideas involved this panicking approach if the code wasn't right. But I would rather have some solution in which you can't get the code wrong (or you need to try slightly harder in order to do it)</p>",
+        "id": 500997739,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740098342
+    },
+    {
+        "content": "<p>you can just use a state monad and don't provide any rollback function</p>",
+        "id": 500997805,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740098394
+    },
+    {
+        "content": "<p>that's basically what <code>IO</code> does</p>",
+        "id": 500997815,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740098400
+    },
+    {
+        "content": "<p>your <code>let</code> macro is just reinventing do notation and I'm not sure why</p>",
+        "id": 500997887,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740098423
+    },
+    {
+        "content": "<p>the point of the panics is not just to avoid getting the code wrong, it's to make it sound to embed in lean at all</p>",
+        "id": 500998004,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740098499
+    },
+    {
+        "content": "<p>mutating the input is unsound behavior</p>",
+        "id": 500998017,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740098510
+    },
+    {
+        "content": "<p>but you can still treat the old values as if they still exist for logical reasoning purposes; the panics are there to ensure you can never observe the difference</p>",
+        "id": 500998136,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740098577
+    },
+    {
+        "content": "<p>so the opaques are state-threading pure functions and you can axiomatize these if you want to reason about them, and the monad is there to guide people to correct usage of the functions when actually writing code, in the style of your macro</p>",
+        "id": 500998281,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740098674
+    },
+    {
+        "content": "<p>Have your working environment be a monad that can create, modify, and destroy instances of your type. Then, have all your accessors return a value wrapped in your monad. That way you never have direct access to this type that cannot be duplicated. Since you don't ever have it directly, you can never duplicate it. You can probably even do this without <code>opaque</code> by writing a coinductive definition for your monad and all the accessors.</p>",
+        "id": 500998689,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1740098917
+    },
+    {
+        "content": "<p>My previous solution was indeed a stateful monad. But this macro is more ergonomic.</p>\n<p>Mario's input made me reconsider the panics. The best approach is probably a mix of the two</p>",
+        "id": 500998795,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740098987
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/270676-lean4/topic/FFI.2C.20Rust.20and.20mutability/near/500996559\">said</a>:</p>\n<blockquote>\n<p>I think the better way to implement something like this if you really need to manage a linear object in lean is to wrap the external object in a <code>lean_external_object</code> which keeps track of a generation id (one immutable one per handle and one which is bumped every time you use a mutating method) in addition to the linear resource, and if you attempt to use a handle that is not current you panic and/or do nothing</p>\n</blockquote>\n<p>Is there a place containing some documentation on these IDs?</p>",
+        "id": 501000271,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740099840
+    },
+    {
+        "content": "<p>It might be my Haskell mindset leaking, but I don't think the ergonomic cost of monad notation is that high. Especially given that the Lean compiler itself is built around it.</p>",
+        "id": 501003885,
+        "sender_full_name": "Chris Wong",
+        "timestamp": 1740101975
+    },
+    {
+        "content": "<p>Monad notation is fine. Having to be in a monad... not as cool as not having to</p>",
+        "id": 501005844,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740103230
+    },
+    {
+        "content": "<p>The generation idea seems clever, but if I'm reading it correctly, it might be less safe. You could mutate the object 2^64 times and then the counter would overflow. Whereas with a refcount you would need to deliberately leak memory to break it.</p>",
+        "id": 501012195,
+        "sender_full_name": "Chris Wong",
+        "timestamp": 1740107453
+    },
+    {
+        "content": "<p>You can also panic if the incremented counter is zero.</p>\n<p>If you check lean.h, there are several other ways Lean panics if some variables reach a certain value.</p>",
+        "id": 501054340,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740128560
+    },
+    {
+        "content": "<p>Yeah, but my point is, it would be reasonable to mutate something 2^64 times <span aria-label=\"stuck out tongue\" class=\"emoji emoji-1f61b\" role=\"img\" title=\"stuck out tongue\">:stuck_out_tongue:</span></p>",
+        "id": 501057791,
+        "sender_full_name": "Chris Wong",
+        "timestamp": 1740129635
+    },
+    {
+        "content": "<p>if you try to mutate something 2^64 times your computer will break</p>",
+        "id": 501394212,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740331860
+    },
+    {
+        "content": "<p>keep in mind that there are similar caveats about types like <code>Nat</code>, which claim to be infinite but I can clearly cause my computer to crash by evaluating graham's number</p>",
+        "id": 501394334,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740331945
+    },
+    {
+        "content": "<p>lean's type theory is not sound wr.t. liveness of produced programs because of modeling decisions like this</p>",
+        "id": 501394379,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740332001
+    },
+    {
+        "content": "<p>Assuming you mutated a variable 1 billion times per second it would take &gt;500 years for the counter to overflow</p>",
+        "id": 501438796,
+        "sender_full_name": "Niels Voss",
+        "timestamp": 1740368075
+    },
+    {
+        "content": "<p>A while back when this thread was discussed <a class=\"stream-topic\" data-stream-id=\"270676\" href=\"/#narrow/channel/270676-lean4/topic/Semantics.20of.20IO.20don.27t.20match.20provable.20properties.3F/with/485680245\">#lean4 &gt; Semantics of IO don't match provable properties?</a> I was trying to think of if there was a way to get Linear Types into Lean without having to bolt on an extra typechecker like in Ground Zero (they have to write <code>hott def</code> instead of <code>def</code> to avoid inconsistencies). I looked up how Linear Haskell worked, and apparently, there's a new function type <code>A #-&gt; B</code> which is like <code>A -&gt; B</code> but only uses <code>a</code> once.</p>\n<p>Do you think such a <code>#-&gt;</code> could be created using opaque trickery? I was thinking that <code>#-&gt;</code> could be an opaque type that is equal at runtime to <code>-&gt;</code> known to satisfy the following axioms:</p>\n<ul>\n<li>A function <code>f : A #-&gt; B</code> can be converted to a function <code>g : A -&gt; B</code></li>\n<li>Given <code>f : A #-&gt; B</code> and <code>g : B #-&gt; C</code>, there is a function <code>gf : A #-&gt; C</code>, and this operation is associative.</li>\n<li>If a type <code>A</code> in Lean has an instance of the <code>Cloneable</code> typeclass, which would be automatically derived for all inductive types except those that contain \"outside\" types like <code>IO.RealWorld</code>, a function <code>f : A -&gt; B</code> can be converted to a function <code>f : A #-&gt; B</code></li>\n<li>Given <code>f : A #-&gt; B x C</code> and <code>g : B #-&gt; D</code> and <code>h : C #-&gt; D</code>, we can get a function of type <code>A #-&gt; D</code></li>\n<li>Certain opaque functions are known to be linear, like we would have a <code>opaque IO.println (s : String) : IO.RealWorld #-&gt; IO.RealWorld</code>.</li>\n<li>Certain external functions only accept linear functions as inputs. (Without this, there would be no reason to ever use linear functions).</li>\n</ul>\n<p>If we have this, we can then define a <code>LStateM σ α := σ #-&gt; α × σ</code>. This also gets us a <code>LIO</code> version of the <code>IO</code> monad which respects the proving semantics.</p>\n<p>This would let \"bad\" functions which use a variable twice (or have time-traveling tokens like in the IO thread) be defined but prevent them from ever actually being run.</p>\n<p>Again, I have put very little thought into this, so I apologize if this is neither feasible nor useful.</p>",
+        "id": 501441902,
+        "sender_full_name": "Niels Voss",
+        "timestamp": 1740370162
+    },
+    {
+        "content": "<p>I was able to simplify the mutation counts. In fact, we don't even need to count mutations. This is enough</p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"k\">typedef</span><span class=\"w\"> </span><span class=\"k\">struct</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"kt\">bool</span><span class=\"w\"> </span><span class=\"n\">outdated</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"cm\">/* A reference to the underlying mutable object */</span>\n<span class=\"w\">    </span><span class=\"kt\">void</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"n\">object_ref</span><span class=\"p\">;</span>\n<span class=\"w\">    </span><span class=\"cm\">/* A pointer to a function that can free `object_ref` */</span>\n<span class=\"w\">    </span><span class=\"kt\">void</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"o\">*</span><span class=\"n\">finalizer</span><span class=\"p\">)(</span><span class=\"kt\">void</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"p\">);</span>\n<span class=\"p\">}</span><span class=\"w\"> </span><span class=\"n\">linear_object</span><span class=\"p\">;</span>\n</code></pre></div>\n<p><code>finalizer</code> calls a Rust function that triggers the default <code>drop</code> routine.</p>\n<p>When the Rust object mutates, we do</p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"k\">static</span><span class=\"w\"> </span><span class=\"kr\">inline</span><span class=\"w\"> </span><span class=\"kt\">void</span><span class=\"w\"> </span><span class=\"nf\">mark_outdated</span><span class=\"p\">(</span><span class=\"n\">linear_object</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"n\">linear</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"n\">linear</span><span class=\"o\">-&gt;</span><span class=\"n\">outdated</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"nb\">true</span><span class=\"p\">;</span>\n<span class=\"p\">}</span>\n</code></pre></div>\n<p>If we want to create a new reference, we do</p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"k\">static</span><span class=\"w\"> </span><span class=\"kr\">inline</span><span class=\"w\"> </span><span class=\"n\">linear_object</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"nf\">linear_bump</span><span class=\"p\">(</span><span class=\"n\">linear_object</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"n\">linear</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"n\">mark_outdated</span><span class=\"p\">(</span><span class=\"n\">linear</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"n\">linear_object_init</span><span class=\"p\">(</span><span class=\"n\">linear</span><span class=\"o\">-&gt;</span><span class=\"n\">object_ref</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"n\">linear</span><span class=\"o\">-&gt;</span><span class=\"n\">finalizer</span><span class=\"p\">);</span>\n<span class=\"p\">}</span>\n</code></pre></div>\n<p>Before using the object, we need to</p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"k\">static</span><span class=\"w\"> </span><span class=\"kr\">inline</span><span class=\"w\"> </span><span class=\"kt\">void</span><span class=\"w\"> </span><span class=\"nf\">assert_linearity</span><span class=\"p\">(</span><span class=\"n\">linear_object</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"n\">linear</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"n\">LEAN_UNLIKELY</span><span class=\"p\">(</span><span class=\"n\">linear</span><span class=\"o\">-&gt;</span><span class=\"n\">outdated</span><span class=\"p\">))</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">        </span><span class=\"n\">lean_internal_panic</span><span class=\"p\">(</span><span class=\"s\">\"Non-linear usage of linear object\"</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"p\">}</span>\n<span class=\"p\">}</span>\n</code></pre></div>\n<p>And to free the object from memory:</p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"k\">static</span><span class=\"w\"> </span><span class=\"kr\">inline</span><span class=\"w\"> </span><span class=\"kt\">void</span><span class=\"w\"> </span><span class=\"nf\">free_linear_object</span><span class=\"p\">(</span><span class=\"n\">linear_object</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"n\">linear</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"c1\">// Only finalize `object_ref` if `linear` is the latest linear object reference.</span>\n<span class=\"w\">    </span><span class=\"c1\">// By doing this, we avoid double-free attempts.</span>\n<span class=\"w\">    </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"p\">(</span><span class=\"n\">LEAN_UNLIKELY</span><span class=\"p\">(</span><span class=\"o\">!</span><span class=\"n\">linear</span><span class=\"o\">-&gt;</span><span class=\"n\">outdated</span><span class=\"p\">))</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">        </span><span class=\"n\">linear</span><span class=\"o\">-&gt;</span><span class=\"n\">finalizer</span><span class=\"p\">(</span><span class=\"n\">linear</span><span class=\"o\">-&gt;</span><span class=\"n\">object_ref</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"p\">}</span>\n<span class=\"w\">    </span><span class=\"n\">free</span><span class=\"p\">(</span><span class=\"n\">linear</span><span class=\"p\">);</span>\n<span class=\"p\">}</span>\n</code></pre></div>\n<p>As per the higher level guardrails in Lean itself, I've become unsatisfied with all solutions that don't involve core support for linear types.</p>",
+        "id": 501574067,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740410944
+    },
+    {
+        "content": "<p>The solution involving syntactical manipulation via macros is the one with the least bad UX I've found so far, as there's no need to define things in monads. The monad approach becomes especially annoying when you need to do things in another monad, which then would need some kind of lifting.</p>",
+        "id": 501577430,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740411785
+    },
+    {
+        "content": "<p>Is there a tactic that clears all \"dead\" binders from my context? I mean those with daggers at the end of their names.</p>",
+        "id": 501577919,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740411910
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"451983\">Arthur Paulino</span> <a href=\"#narrow/channel/270676-lean4/topic/FFI.2C.20Rust.20and.20mutability/near/501574067\">said</a>:</p>\n<blockquote>\n<p>If we want to create a new reference, we do</p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"k\">static</span><span class=\"w\"> </span><span class=\"kr\">inline</span><span class=\"w\"> </span><span class=\"n\">linear_object</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"nf\">linear_bump</span><span class=\"p\">(</span><span class=\"n\">linear_object</span><span class=\"w\"> </span><span class=\"o\">*</span><span class=\"n\">linear</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"w\">    </span><span class=\"n\">mark_outdated</span><span class=\"p\">(</span><span class=\"n\">linear</span><span class=\"p\">);</span>\n<span class=\"w\">    </span><span class=\"k\">return</span><span class=\"w\"> </span><span class=\"n\">linear_object_init</span><span class=\"p\">(</span><span class=\"n\">linear</span><span class=\"o\">-&gt;</span><span class=\"n\">object_ref</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"n\">linear</span><span class=\"o\">-&gt;</span><span class=\"n\">finalizer</span><span class=\"p\">);</span>\n<span class=\"p\">}</span>\n</code></pre></div>\n</blockquote>\n<p>This one seems wrong, cloning a handle on the lean side shouldn't need anything to be marked as outdated. Think of it as lean having a <code>Rc&lt;T&gt;</code> and you do <code>Rc::from_mut</code> to optimistically get mutable access only when doing a mutating operation and <code>Rc::clone</code> everywhere else</p>",
+        "id": 501584071,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740413164
+    },
+    {
+        "content": "<p>Yeah I've gone back and forth on that one. At first I had separated functions but in the end everytime I wanted to call the second function I had to call the first one first. So I made a function that does just that.</p>\n<p><code>linear_bump</code> is supposed to be called after the Rust object is mutated, as the old reference needs to be invalidated.</p>",
+        "id": 501586065,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740413552
+    },
+    {
+        "content": "<p>These are the cases:</p>\n<ul>\n<li>The Rust function needs <code>&amp;mut self</code>: the C code does a <code>linear_bump</code></li>\n<li>The Rust function takes ownership of <code>self</code>: a wrapper Rust function calls <code>std::mem::take</code> and the C code just calls <code>mark_outdated</code>, not generating a new valid reference for Lean</li>\n<li>The Rust function takes a shared reference <code>&amp;self</code>: this is fine and the C code doesn't need to do anything so the Lean reference is healthy</li>\n</ul>",
+        "id": 501587887,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740413948
+    },
+    {
+        "content": "<p>is there a reason you can't have <code>outdated</code> double up with <code>object_ref</code> and make it a nullable pointer?</p>",
+        "id": 501599742,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740416744
+    },
+    {
+        "content": "<p>Do outdated objects still get finalized?</p>",
+        "id": 501599804,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1740416760
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/270676-lean4/topic/FFI.2C.20Rust.20and.20mutability/near/501599742\">said</a>:</p>\n<blockquote>\n<p>is there a reason you can't have <code>outdated</code> double up with <code>object_ref</code> and make it a nullable pointer?</p>\n</blockquote>\n<p>Sorry, I don't follow the idea<br>\n<span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/270676-lean4/topic/FFI.2C.20Rust.20and.20mutability/near/501599804\">said</a>:</p>\n<blockquote>\n<p>Do outdated objects still get finalized?</p>\n</blockquote>\n<p>Yeah, they just don't get to free <code>object_ref</code></p>",
+        "id": 501603831,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740417739
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/270676-lean4/topic/FFI.2C.20Rust.20and.20mutability/near/501599742\">said</a>:</p>\n<blockquote>\n<p>is there a reason you can't have <code>outdated</code> double up with <code>object_ref</code> and make it a nullable pointer?</p>\n</blockquote>\n<p>Oh I see now. Instead of using a <code>bool</code> to keep track of the data validity, we can just use <code>objcet_ref</code> and make it point to <code>NULL</code> to invalidate the <code>linear_object</code>. That's even better. Thanks!</p>",
+        "id": 501608772,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1740418928
+    },
+    {
+        "content": "<p>Is there a way to mark an <code>opaque</code> whose definition is <code>extern</code> (in C) to <strong>not</strong> cache at runtime? I need the C code to always run</p>",
+        "id": 504712353,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1741652079
+    },
+    {
+        "content": "<p>Maybe something similar to what <code>dbg_trace</code> is doing?</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kd\">@[</span><span class=\"n\">never_extract</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">extern</span><span class=\"w\"> </span><span class=\"s2\">\"lean_dbg_trace\"</span><span class=\"kd\">]</span>\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">dbgTrace</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"w\"> </span><span class=\"n\">u</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">s</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">String</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Unit</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">()</span>\n</code></pre></div>\n<p>I'm just guessing here though.</p>",
+        "id": 504719221,
+        "sender_full_name": "Tomas Skrivan",
+        "timestamp": 1741655979
+    },
+    {
+        "content": "<p>Whoa, you just hit the nail on the head. Thank you!!</p>",
+        "id": 504719516,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1741656156
+    }
+]

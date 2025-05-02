@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>I've been working on the prototype of a programming language (currently it's mainly written in Rust, with a Tree-Sitter parser), and am interested in trying to re-implement the prototype in Lean4.</p>\n<p>What is attracting me to Lean, is that in theory it should allow me to reuse a ton of complex components (parser, typechecker, cogedenner etc) and would let me focus on the interesting bits. I could <em>transpile</em> my program's syntax into Lean's expressions using elaborators and have all of Lean's power at my disposal.</p>\n<p>The first step would be to redefine my grammar using Lean's <code>syntax</code> declaration, in order to model my language as a DSL. But I'm already seeing many big obstacles...</p>\n<ol>\n<li>It looks like I cannot <code>import</code> files written in my language, right? Either I write my program within a <code>.lean</code> file, or otherwise I have to read the file manually and parse it...</li>\n<li>\n<p>The point above implies that I can't take advantage of Lean's IDE support for my programs (unless they live within <code>.lean</code> files), correct?<br>\n    In any case, I've tried to play with the \"IMP\" DSL shown in \"Metaprogramming in Lean 4\"and noticed that the IDE support is poor within IMP expressions (no color highlighting, no jump-to-definition etc): so I guess I wouldn't gain much anyways?</p>\n</li>\n<li>\n<p>My language's syntax is indentation independent (it uses <code>{}</code> and <code>;</code>) and uses tab characters for indentation. These points mean that I couldn't use Lean's parser even if there were a solution for the points above, right?</p>\n</li>\n</ol>\n<p>At this point I have two questions:</p>\n<ol>\n<li>Is it a good idea to try to implement my programming language within Lean? Or am I going to run into similar problems at every stage and am better off by writing my own compiler from scratch? My goal language is something similar to Koka: a strongly-typed language with algebraic effect handlers. I believe I should be able to map its whole semantics onto Lean objects.</li>\n<li>Where do I start with parsing? Is there any good parser (or a combinator library) available in Lean I can use for my indentation-insensitive grammar? Otherwise should I try to use Tree-Sitter via FFI or what else?</li>\n</ol>",
+        "id": 491494973,
+        "sender_full_name": "Spanky",
+        "timestamp": 1735733086
+    },
+    {
+        "content": "<p>Regarding obstacles:</p>\n<ol>\n<li>You could take a look at Verso, which uses Lean files for markup. Each file starts with a header, and then there's a Lean command to switch to the DSL. <a href=\"https://github.com/leanprover/verso/blob/main/examples/textbook/DemoTextbook.lean\">Example</a>. I think Verso uses a mix of Lean parsers (and syntax defined with <code>syntax</code>) and custom parsers.</li>\n<li>Yes, likely. Re IMP, it must not be setting metadata necessary to drive the Lean LSP, like TermInfo, etc.  Verso has gone through the work to support these things, and I believe that it supports advanced features like incremental elaboration as well. I'd expect you'd use custom environment extensions to collect DSL-specific information needed during compilation; that's how you can get additional information passed between different modules.</li>\n<li>Indentation-independent languages should have no problem using Lean's parsers. Any reason you think it would be a problem?</li>\n</ol>\n<p>Your questions:</p>\n<ol>\n<li>If you understand compilers and you've written a compiler before, I don't see why not. Eventually you could write your own frontend to control the file format completely (i.e., no more Lean headers), but I don't know if there's any way to use the Lean VS Code extension with custom languages.</li>\n<li>Re 3 above, I'm not sure why indentation-insensitive grammars would cause any issues. So long as the language is parseable with Lean's <code>syntax</code> declarations, it's probably doable. I know there is some limitation in the keywords system, but I don't remember the details.</li>\n</ol>",
+        "id": 491509609,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1735746798
+    },
+    {
+        "content": "<p>About point 3:</p>\n<ol>\n<li>If any tab character (<code>\\t</code>) is used to indent code anywhere in a Lean file, the Lean's parser bails out: <a href=\"https://github.com/leanprover/lean4/blob/master/src/Lean/Parser/Basic.lean#L560\">https://github.com/leanprover/lean4/blob/master/src/Lean/Parser/Basic.lean#L560</a></li>\n<li>While experimenting I had some issues with newlines too (either broke some expression in points where Lean didn't like it, or indented the new lines in forbidden ways), but I'm unable to reproduce that right now.</li>\n</ol>\n<p>About point 1, I don't like the idea of having to rename all my source files to <code>.lean</code> and having to use some lean commands (an <code>import</code> and an <code>open</code>) at the top of the file. That would make my existing source files incompatible with the other (partial) implementation of the language, the one written in Rust.</p>\n<p>My current plan is to write my custom <code>importMyLang filePath</code> command, which uses IO to read <code>filePath</code> into a string, then replaces the <code>\\t</code> and <code>\\n</code> characters with <code> </code> and parses the result with the Lean's parser.<br>\nI'll need to figure out how to use the parser wisely: either figure out how pass some of the local <code>syntax</code>/<code>macro</code>/<code>elab</code> rules to the parser or alternatively how to manually use the <code>ParserFn</code>s from <code>Lean.Parser</code> to parse my code and then feed it into some elaborators.</p>\n<p>EDIT: could anyone direct me to some sort of guide about the Lean's parser? I've been exploring its sources for a while, but I coludn't figure out yet how the parser gets invoked to process a new file, or how the <code>syntax</code> command is implemented, or even how the <code>ParserFn</code>s work exactly...</p>",
+        "id": 491514955,
+        "sender_full_name": "Spanky",
+        "timestamp": 1735751770
+    },
+    {
+        "content": "<p>I forgot that <code>whitespace</code> disallowed tab characters. (That's the only issue though — I thought you might have been suggesting that somehow Lean is only suitable for indentation-sensitive grammars.)</p>",
+        "id": 491515206,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1735752024
+    },
+    {
+        "content": "<p>You could look at Lean/Elab/Frontend.lean for an example Lean frontend. This one isn't actively used by Lean itself, but it's still around because there are some applications using it. You can see <code>Parser.parseCommand</code> being called in <code>processCommand</code>.</p>",
+        "id": 491515287,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1735752114
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Prototyping.20a.20programming.20language.20with.20Lean4's.20elaborators/near/491515206\">said</a>:</p>\n<blockquote>\n<p>I thought you might have been suggesting that somehow Lean is only suitable for indentation-sensitive grammars.)</p>\n</blockquote>\n<p>I was indeed thinking that, but it sounds like I was mistaken.</p>",
+        "id": 491515347,
+        "sender_full_name": "Spanky",
+        "timestamp": 1735752151
+    },
+    {
+        "content": "<p>I don't think you need to replace <code>\\n</code> with <code> </code>, just <code>\\t</code>, if you want to make use of builtin <code>whitespace</code> parser.</p>\n<p>Note that <code>Lean.Parser.mkInputContext</code> (used in the frontend) already does <code>\\r\\n</code> -&gt; <code>\\n</code> normalization. You could make your own <code>mkInputContext</code> function that inserts your additional normalization.</p>",
+        "id": 491515720,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1735752493
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"815997\">Spanky</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Prototyping.20a.20programming.20language.20with.20Lean4's.20elaborators/near/491514955\">said</a>:</p>\n<blockquote>\n<p>About point 1, I don't like the idea of having to rename all my source files to <code>.lean</code> and having to use some lean commands (an <code>import</code> and an <code>open</code>) at the top of the file. That would make my existing source files incompatible with the other (partial) implementation of the language, the one written in Rust.</p>\n</blockquote>\n<p>If you just want to parse external files, I think something like <a href=\"https://github.com/fgdorais/lean4-parser/\">lean4-parser</a> is what you're looking for, you'll have a much easier time than if you try to use Lean's parser for this.</p>",
+        "id": 491516100,
+        "sender_full_name": "Frédéric Dupuis",
+        "timestamp": 1735752901
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"815997\">Spanky</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Prototyping.20a.20programming.20language.20with.20Lean4's.20elaborators/near/491514955\">said</a>:</p>\n<blockquote>\n<p>EDIT: could anyone direct me to some sort of guide about the Lean's parser? I've been exploring its sources for a while, but I coludn't figure out yet how the parser gets invoked to process a new file, or how the <code>syntax</code> command is implemented, or even how the <code>ParserFn</code>s work exactly...</p>\n</blockquote>\n<p>Have you read <a href=\"https://lean-lang.org/doc/reference/latest/Elaboration-and-Compilation/#parser\">https://lean-lang.org/doc/reference/latest/Elaboration-and-Compilation/#parser</a> already?</p>",
+        "id": 491518314,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1735755033
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"311453\">Frédéric Dupuis</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Prototyping.20a.20programming.20language.20with.20Lean4's.20elaborators/near/491516100\">said</a>:</p>\n<blockquote>\n<p>If you just want to parse external files, I think something like <a href=\"https://github.com/fgdorais/lean4-parser/\">lean4-parser</a> is what you're looking for, you'll have a much easier time than if you try to use Lean's parser for this.</p>\n</blockquote>\n<p>It seems way simpler (and possibly more versatile for a language completely different from Lean?) than the Lean's parser.<br>\nOn the other hand, it doesn't seem to come with anything to parse expressions, nor with any convenient abstractions like the <code>syntax</code> command.<br>\nI guess I'll keep juggling between this one and the Lean's parser until I manage to find my way.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"110031\">Patrick Massot</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Prototyping.20a.20programming.20language.20with.20Lean4's.20elaborators/near/491518314\">said</a>:</p>\n<blockquote>\n<p>Have you read <a href=\"https://lean-lang.org/doc/reference/latest/Elaboration-and-Compilation/#parser\">https://lean-lang.org/doc/reference/latest/Elaboration-and-Compilation/#parser</a> already?</p>\n</blockquote>\n<p>I haven't. Thanks for the link, reading it right now.</p>",
+        "id": 491519732,
+        "sender_full_name": "Spanky",
+        "timestamp": 1735756544
+    }
+]

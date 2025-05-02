@@ -1,0 +1,86 @@
+[
+    {
+        "content": "<p>So I have been cleaning up porting notes by searching for them in all files and testing each occurrence one by one, using commands like:</p>\n<div class=\"codehilite\" data-code-language=\"Bash\"><pre><span></span><code>rg<span class=\"w\"> </span>-i<span class=\"w\"> </span><span class=\"s1\">'10618'</span><span class=\"w\"> </span>--vimgrep<span class=\"w\"> </span><span class=\"p\">|</span><span class=\"w\"> </span>sort<span class=\"w\"> </span><span class=\"p\">|</span><span class=\"w\"> </span>nvim<span class=\"w\"> </span>-\n</code></pre></div>\n<p>which outputs a list of file of the form:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>Mathlib/Algebra/Algebra/Hom.lean:51:19:-- Porting note (#10618): simp can prove this\nMathlib/Algebra/GCDMonoid/Basic.lean:123:19:-- Porting note (#10618): `simp` can prove this\nMathlib/Algebra/GCDMonoid/Basic.lean:128:19:-- Porting note (#10618): `simp` can prove this\nMathlib/Algebra/GCDMonoid/Basic.lean:869:19:-- Porting note (#10618): `simp` can prove this\nMathlib/Algebra/Group/Equiv/Basic.lean:474:19:-- Porting note (#10618): `simp` can prove this but it is a valid `dsimp` lemma.\nMathlib/Algebra/Group/Equiv/Basic.lean:479:19:-- Porting note (#10618): `simp` can prove this but it is a valid `dsimp` lemma.\nMathlib/Algebra/MonoidAlgebra/Defs.lean:1421:30:-- @[simp] -- Porting note (#10618): simp can prove this.\nMathlib/Algebra/MonoidAlgebra/Defs.lean:762:30:-- @[simp] -- Porting note (#10618): simp can prove this.\nMathlib/Algebra/Order/Monoid/Unbundled/WithTop.lean:371:19:-- Porting note (#10618): simp can already prove this.\n</code></pre></div>\n<p>A big annoyance is that I finish editing one file, go to the next one on the list and have to wait for a few hundred intermediate files to compile because I touched a deep dependency.</p>\n<p>One solution would be to have a little program that could sort a list of files in the above format by place in the import order (with leaves coming before roots). That way I shouldn't have to wait for any imports when I switch to the next file. Is anyone interested in building a command like this?</p>",
+        "id": 478288843,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1729604629
+    },
+    {
+        "content": "<p>I have wanted something like this also for the linter outputs.</p>",
+        "id": 478289570,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1729604802
+    },
+    {
+        "content": "<p>What I do is I make changes in vs code <em>without saving</em> - I just leave all changed files open until I'm done (or run out of memory). That means more dependent files will still compile using cached dependencies</p>",
+        "id": 478289618,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1729604819
+    },
+    {
+        "content": "<p>That only works as long as you don't change any signatures, of course</p>",
+        "id": 478289663,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1729604833
+    },
+    {
+        "content": "<p>If we had a switch that makes a linter flag them, then \"import order\" is also <code>lake build</code>-output order.</p>",
+        "id": 478289919,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1729604909
+    },
+    {
+        "content": "<p>This is what I do with fixing up linters, walk in reverse order of what <code>lake build</code> reports.  It does require having full oleans for the chatty version, though.</p>",
+        "id": 478290020,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1729604944
+    },
+    {
+        "content": "<p>I use this script to parse the lake build output with linter warnings:</p>\n<div class=\"codehilite\" data-code-language=\"Bash\"><pre><span></span><code><span class=\"w\">    </span>lake<span class=\"w\"> </span>build<span class=\"w\"> </span><span class=\"p\">|</span><span class=\"w\"> </span>awk<span class=\"w\"> </span>-F:<span class=\"w\"> </span>-v<span class=\"w\"> </span><span class=\"nv\">regex</span><span class=\"o\">=</span><span class=\"s2\">\"warning\"</span><span class=\"w\"> </span><span class=\"s1\">'BEGIN{ OFS=\":\"; print \"(code .\" }</span>\n<span class=\"s1\">      # on warnings, we set ourselves up for using a targeted `code`</span>\n<span class=\"s1\">      ($0 ~ regex) { print \"code -r -g \"$2, $3; }</span>\n<span class=\"s1\">      # to get an idea of progress, whenever 10 files have been built, we print a comment</span>\n<span class=\"s1\">      /0\\// { printf(\"# %s\\n\", $0) } END{ print \")\" }'</span><span class=\"w\"> </span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 478290460,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1729605055
+    },
+    {
+        "content": "<p>Here is a prototype:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">ImportGraph</span><span class=\"bp\">.</span><span class=\"n\">Imports</span>\n\n<span class=\"kn\">namespace</span><span class=\"w\"> </span><span class=\"n\">SortImports</span>\n\n<span class=\"kn\">open</span><span class=\"w\"> </span><span class=\"n\">Lean</span>\n\n<span class=\"sd\">/-- The `&lt;` partial order on modules: `importLT env mod₁ mod₂` means that `mod₂` imports `mod₁`. -/</span>\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">importLT</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">env</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Environment</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f1</span><span class=\"w\"> </span><span class=\"n\">f2</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Name</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">  </span><span class=\"o\">(</span><span class=\"n\">env</span><span class=\"bp\">.</span><span class=\"n\">findRedundantImports</span><span class=\"w\"> </span><span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">f1</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">f2</span><span class=\"o\">])</span><span class=\"bp\">.</span><span class=\"n\">contains</span><span class=\"w\"> </span><span class=\"n\">f1</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">`sort_imports mod₁ mod₂ ... modₙ` sorts `mod₁ mod₂ ... modₙ` so that in the resulting</span>\n<span class=\"sd\">list a module that appears somewhere can only import modules that appear before it.</span>\n\n<span class=\"sd\">It removes repetitions in the given list.</span>\n<span class=\"sd\">-/</span>\n<span class=\"kn\">elab</span><span class=\"w\"> </span><span class=\"s2\">\"sort_imports \"</span><span class=\"w\"> </span><span class=\"n\">ids</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">command</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">fs</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">ids</span><span class=\"bp\">.</span><span class=\"n\">map</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">·.</span><span class=\"n\">getId</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">env</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">importModules</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">fs</span><span class=\"bp\">.</span><span class=\"n\">map</span><span class=\"w\"> </span><span class=\"o\">({</span><span class=\"n\">module</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">·</span><span class=\"o\">}))</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">getOptions</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">rip</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Std</span><span class=\"bp\">.</span><span class=\"n\">HashSet</span><span class=\"bp\">.</span><span class=\"n\">ofArray</span><span class=\"w\"> </span><span class=\"n\">fs</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">toArray</span><span class=\"bp\">.</span><span class=\"n\">qsort</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">importLT</span><span class=\"w\"> </span><span class=\"n\">env</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"n\">logInfo</span><span class=\"w\"> </span><span class=\"bp\">&lt;|</span><span class=\"w\"> </span><span class=\"bp\">.</span><span class=\"n\">joinSep</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">rip</span><span class=\"bp\">.</span><span class=\"n\">toList</span><span class=\"bp\">.</span><span class=\"n\">map</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">m!</span><span class=\"s2\">\"{·}\"</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"s2\">\"</span><span class=\"se\">\\n</span><span class=\"s2\">\"</span>\n\n<span class=\"kn\">end</span><span class=\"w\"> </span><span class=\"n\">SortImports</span>\n</code></pre></div>",
+        "id": 478346802,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1729622778
+    },
+    {
+        "content": "<p>Using that command on the imports that Anne mentioned, I get:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"sd\">/--</span>\n<span class=\"sd\">info: Mathlib.Algebra.Group.Equiv.Basic</span>\n<span class=\"sd\">Mathlib.Algebra.Order.Monoid.Unbundled.WithTop</span>\n<span class=\"sd\">Mathlib.Algebra.Algebra.Hom</span>\n<span class=\"sd\">Mathlib.Algebra.GCDMonoid.Basic</span>\n<span class=\"sd\">Mathlib.Algebra.MonoidAlgebra.Defs</span>\n<span class=\"sd\">-/</span>\n<span class=\"bp\">#</span><span class=\"n\">guard_msgs</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"n\">sort_imports</span>\n<span class=\"w\">  </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">Hom</span>\n<span class=\"w\">  </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">GCDMonoid</span><span class=\"bp\">.</span><span class=\"n\">Basic</span>\n<span class=\"w\">  </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">GCDMonoid</span><span class=\"bp\">.</span><span class=\"n\">Basic</span>\n<span class=\"w\">  </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">GCDMonoid</span><span class=\"bp\">.</span><span class=\"n\">Basic</span>\n<span class=\"w\">  </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">Group</span><span class=\"bp\">.</span><span class=\"n\">Equiv</span><span class=\"bp\">.</span><span class=\"n\">Basic</span>\n<span class=\"w\">  </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">Group</span><span class=\"bp\">.</span><span class=\"n\">Equiv</span><span class=\"bp\">.</span><span class=\"n\">Basic</span>\n<span class=\"w\">  </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">MonoidAlgebra</span><span class=\"bp\">.</span><span class=\"n\">Defs</span>\n<span class=\"w\">  </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">MonoidAlgebra</span><span class=\"bp\">.</span><span class=\"n\">Defs</span>\n<span class=\"w\">  </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">Order</span><span class=\"bp\">.</span><span class=\"n\">Monoid</span><span class=\"bp\">.</span><span class=\"n\">Unbundled</span><span class=\"bp\">.</span><span class=\"n\">WithTop</span>\n</code></pre></div>",
+        "id": 478346895,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1729622835
+    },
+    {
+        "content": "<p>If this works well, then preprocessing the input modules by splitting at <code>:</code>, converting a filename to a module name and processing that should be completely straightforward.</p>",
+        "id": 478347066,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1729622900
+    },
+    {
+        "content": "<p>Note that this uses that the oleans for the files that you pass are present (and I think that it would start compiling them otherwise).</p>",
+        "id": 478347158,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1729622955
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"307953\">Ruben Van de Velde</span> <a href=\"#narrow/channel/113488-general/topic/Sort.20lines.20by.20import.20order.20of.20files/near/478289618\">said</a>:</p>\n<blockquote>\n<p>What I do is I make changes in vs code <em>without saving</em></p>\n</blockquote>\n<p>Another way is to make use of <code>git stash</code>. Sometimes I do <code>git stash</code> after each change, and then do a sufficient number of <code>git stash pop</code>s at the end.</p>",
+        "id": 478595050,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1729723433
+    },
+    {
+        "content": "<p>Don't you risk polluting your cache in between?</p>",
+        "id": 478596548,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1729724422
+    },
+    {
+        "content": "<p>In my experience you can usually get away with changing a file and then reverting the changes, especially if you don't start hammering the blue \"imports are out of date, click here\" button on other tabs</p>",
+        "id": 478631920,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1729745293
+    }
+]

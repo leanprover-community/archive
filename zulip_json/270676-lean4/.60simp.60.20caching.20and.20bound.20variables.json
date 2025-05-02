@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>I have (again) made a change to the implementation of <code>simp</code> that improves its performance (<a href=\"https://github.com/leanprover/lean4/pull/7804\">lean#7804</a>):</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">build</span><span class=\"w\">   </span><span class=\"bp\">-</span><span class=\"mf\">948.805</span><span class=\"bp\">⬝</span><span class=\"mi\">10</span><span class=\"bp\">⁹</span><span class=\"w\">    </span><span class=\"o\">(</span><span class=\"bp\">-</span><span class=\"mf\">0.57</span><span class=\"bp\">%</span><span class=\"o\">)</span>\n<span class=\"n\">simp</span><span class=\"w\">    </span><span class=\"bp\">-</span><span class=\"mi\">146</span><span class=\"o\">,</span><span class=\"mi\">84</span><span class=\"w\"> </span><span class=\"n\">s</span><span class=\"w\">       </span><span class=\"o\">(</span><span class=\"bp\">-</span><span class=\"mi\">2</span><span class=\"o\">,</span><span class=\"mi\">615</span><span class=\"bp\">%</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>This change is not related to <code>dsimp</code>. Instead it is about how caching interacts with bound variables.</p>\n<p>Consider some expression <code>fun x =&gt; p x = 0</code>. And let's say in the first pass it simplifies <code>p x</code> to <code>q x</code>. It will then make sure <code>q x</code> doesn't simplify further. Then it makes sure <code>q x = 0</code> doesn't simplify further. Then it makes sure <code>fun x =&gt; q x = 0</code> doesn't simplify further. To do this, it introduces a <em>fresh</em> variable <code>x</code> and starts simplifying <code>q x = 0</code> all over again, without any cache about the terms with the new variable <code>x</code>.</p>\n<p>My fix is to allow the function <code>simpStep</code> to say whether all the subterms of the result have been simplified. And if so, we make sure to not run <code>simpStep</code> on that exact result again. This means that it won't unnecessarily visit lambda and forall subterms again.</p>",
+        "id": 510146562,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1743762702
+    },
+    {
+        "content": "<p>I'm guessing the FRO will want to wait with this kind of change until when you're refactoring simp properly, but then it's something to consider when that time comes :)</p>",
+        "id": 510146857,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1743762789
+    },
+    {
+        "content": "<p>I'm sure <span class=\"user-mention\" data-user-id=\"470149\">@Joachim Breitner</span> (who is working on <code>simp</code> this quarter) will take a look (at least to triage) when he is back from holidays need week!</p>",
+        "id": 510540924,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1743990275
+    },
+    {
+        "content": "<p>Thanks for digging for performance wins here. It’s true that I will focus on the simplifier this quarter, but it may be a while until I feel confident enough about it to make such refactorings.</p>\n<p>You write</p>\n<blockquote>\n<p>The solution is to use the invariant that <code>simpStep</code> applied to its output gives the same result (assuming <code>singlePass := false</code>).</p>\n</blockquote>\n<p>but it’s unclear to me if this is an existing documented invariant, or an existing documented invariant that doesn’t actually hold before your change, or an invariant that your change is introducing.</p>",
+        "id": 511912647,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1744554396
+    },
+    {
+        "content": "<p><code>2,615%</code> should be <code>2.615%</code> right?</p>",
+        "id": 511914555,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1744555946
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/270676-lean4/topic/.60simp.60.20caching.20and.20bound.20variables/near/511914555\">said</a>:</p>\n<blockquote>\n<p><code>2,615%</code> should be <code>2.615%</code> right?</p>\n</blockquote>\n<p>The speedcentre uses the German notation, it always confuses me a bit <span aria-label=\"sweat smile\" class=\"emoji emoji-1f605\" role=\"img\" title=\"sweat smile\">:sweat_smile:</span></p>",
+        "id": 511932947,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1744570569
+    },
+    {
+        "content": "<p>not for me, it must be locale-sensitive</p>",
+        "id": 511933098,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1744570699
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"470149\">Joachim Breitner</span> <a href=\"#narrow/stream/270676-lean4/topic/.60simp.60.20caching.20and.20bound.20variables/near/511912647\">said</a>:</p>\n<blockquote>\n<blockquote>\n<p>The solution is to use the invariant that <code>simpStep</code> applied to its output gives the same result (assuming <code>singlePass := false</code>).</p>\n</blockquote>\n<p>but it’s unclear to me if this is an existing documented invariant, or an existing documented invariant that doesn’t actually hold before your change, or an invariant that your change is introducing.</p>\n</blockquote>\n<p>Yes, initially I thought it was an existing invariant, but it doesn't actually hold in general.</p>\n<p>On the other hand, <code>simpLoop</code> (and hence <code>simp</code>, which calls <code>simpLoop</code>), does have the invariant that it applied to its output gives the same result (assuming <code>singlePass := false</code>), and similarly for <code>dsimp</code> (I'm not sure it has a <code>singlePass</code> option).</p>\n<p>When <code>simpStep</code> encounters a lambda, it <code>dsimp</code>s the domains, and <code>simp</code>s the body. Thus, in this case, the invariant does hold: running <code>simpStep</code> on its result when the expression is a lambda does give the same result.</p>\n<p>So, I modified <code>simpStep</code> to say whether this is the case, i.e. to say whether the subterms are fully simplified.</p>",
+        "id": 511934058,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1744571486
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/channel/270676-lean4/topic/.60simp.60.20caching.20and.20bound.20variables/near/511932947\">said</a>:</p>\n<blockquote>\n<p>The speedcentre uses the German notation, it always confuses me a bit <span aria-label=\"sweat smile\" class=\"emoji emoji-1f605\" role=\"img\" title=\"sweat smile\">:sweat_smile:</span></p>\n</blockquote>\n<p>Does the german notation use a different separator for negative percentages like<code>-0.57%</code>, which seems to have survived without comma-ification in your original message?</p>",
+        "id": 511939101,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1744575443
+    },
+    {
+        "content": "<p>I took the first number from the comment placed by the bot on the PR, and the second number from the speedcentre website <span aria-label=\"sweat smile\" class=\"emoji emoji-1f605\" role=\"img\" title=\"sweat smile\">:sweat_smile:</span>. The German notation essentially swaps all uses of <code>,</code> and <code>.</code>.</p>",
+        "id": 511981077,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1744606373
+    }
+]

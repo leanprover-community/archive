@@ -1,0 +1,332 @@
+[
+    {
+        "content": "<p>Clearing the value could fail if anything depends on the value of the local definition</p>",
+        "id": 482215120,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1731515831
+    },
+    {
+        "content": "<p>Ah, I start to see why this would be complicated.  Nonetheless it seems to me that in many situations there are unambiguously \"clearable\" lets -- is there any API along these lines?</p>",
+        "id": 482216366,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731516214
+    },
+    {
+        "content": "<p>You could use clearValue and catch the error (or you could see how clearValue implements it — it reverts the context, making the target be a <code>let</code> expression, and then it turns it into a <code>forall</code> expression and sees if that passes <code>isTypeCorrect</code> — being able to turn a <code>let</code> into a <code>forall</code> or <code>lambda</code> is what I think of as being the definition of a clearable let.)</p>",
+        "id": 482216817,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1731516347
+    },
+    {
+        "content": "<p>I think I would like something a bit stronger, right?  It doesn't matter if the let isn't clearable in the whole goal-plus-hypotheses I am currently working it, I just want to know if the let is clearable in the two expressions I'm checking the defeq on.</p>",
+        "id": 482217668,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731516593
+    },
+    {
+        "content": "<p>You could form the lambda expression from reverting all the used fvars that depend on the let and then seeing if it's type correct</p>",
+        "id": 482217972,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1731516673
+    },
+    {
+        "content": "<p>(so, compute the list of fvars to revert, then use <code>mkLambdaFVars (usedOnly := true) fvars expressionInQuestion</code>)</p>",
+        "id": 482218061,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1731516701
+    },
+    {
+        "content": "<p>Ok, I think I understand that strategy, although it's something that would take me some time to learn how to implement. I'll look for other workarounds, and come back to this if I don't find them!</p>",
+        "id": 482221866,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731517878
+    },
+    {
+        "content": "<p>Is there a way to compute the \"minimal context\" of a set of expressions? Something that will clear all the hypotheses and variables which aren't used in the expressions?</p>",
+        "id": 482222743,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731518208
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 482238656,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731523755
+    },
+    {
+        "content": "<p>I think you can first find the array of free variables that depend on your given let variable as follows:</p>\n<p>Do a for loop through all free variables in the context (which goes in order), starting after your let variable. For every fvar, you loop through its free variables (in its type and its value if it has a value), and if any of those is equal to your let variable, or to any of the variables in your array, then add it to your array.</p>",
+        "id": 482239934,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731524222
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"260507\">Heather Macbeth</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/whnf.20variant.20which.20preserves.20let-bindings/near/482222743\">said</a>:</p>\n<blockquote>\n<p>Is there a way to compute the \"minimal context\" of a set of expressions? Something that will clear all the hypotheses and variables which aren't used in the expressions?</p>\n</blockquote>\n<p>To compute the variables that an expression depends on, you do a similar kind of for loop though the local context as I described above, but you have to loop through it in the reverse direction.</p>\n<p>If you want to make a local context out of this, you can use <code>LocalContext.erase</code> to modify the local context by erasing all the fvars you don't want anymore.</p>",
+        "id": 482240593,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731524445
+    },
+    {
+        "content": "<p>OK, thanks!  This too is probably above my pay grade, but I'll come back to it if I can't find a workaround.</p>",
+        "id": 482243259,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731525495
+    },
+    {
+        "content": "<p>I don't know if this is the most efficient way to do this, but I hacked together something that might work: </p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span><span class=\"w\"> </span><span class=\"n\">Lean</span>\n\n<span class=\"kd\">def</span><span class=\"w\"> </span><span class=\"n\">Lean.Meta.withMinimalLCtx</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">e</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Expr</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">go</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">MetaM</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">MetaM</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">mut</span><span class=\"w\"> </span><span class=\"n\">unusedFVars</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">#</span><span class=\"o\">[]</span>\n<span class=\"w\">  </span><span class=\"n\">for</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">fvarId</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">_</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"k\">in</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">getLCtx</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">fvarIdToDecl</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">    </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"n\">e.containsFVar</span><span class=\"w\"> </span><span class=\"n\">fvarId</span><span class=\"w\"> </span><span class=\"k\">then</span><span class=\"w\"> </span><span class=\"n\">continue</span>\n<span class=\"w\">    </span><span class=\"n\">unusedFVars</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">unusedFVars.push</span><span class=\"w\"> </span><span class=\"n\">fvarId</span>\n<span class=\"w\">  </span><span class=\"n\">Meta.withErasedFVars</span><span class=\"w\"> </span><span class=\"n\">unusedFVars</span><span class=\"w\"> </span><span class=\"n\">go</span>\n</code></pre></div>\n<p>Edit: I forgot about <a href=\"https://leanprover-community.github.io/mathlib4_docs/Lean/Expr.html#Lean.Expr.containsFVar\">Lean.Expr.containsFVar</a>, which makes the code much cleaner.</p>",
+        "id": 482254681,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1731529583
+    },
+    {
+        "content": "<p>Nice!  So maybe I could do something like:</p>\n<ul>\n<li>write a variant of your function which finds the \"minimal context\" <code>c</code> for two expressions (rather than a single expression)</li>\n<li>recursively clear all the lets in <code>c</code> (and fail if impossible)</li>\n<li>run <code>isDefEq</code>in <code>c</code></li>\n</ul>",
+        "id": 482256492,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731530246
+    },
+    {
+        "content": "<p>This is essentially what I suggested, but forgetting about further dependencies. The problem here is than you could have <code>α : Type</code> and <code>a : α</code> and if your expression contains only <code>a</code>, then you run into problems, because you erased <code>α</code></p>",
+        "id": 482274759,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731537732
+    },
+    {
+        "content": "<p>Ah, that's tricky.  So <code>e.containsFVar</code> will not be <code>true</code> for <code>α</code> if the situation is that <code>e</code> contains some <code>a : α</code>?</p>",
+        "id": 482277658,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731539102
+    },
+    {
+        "content": "<p>Yes, for example if <code>e</code> is just <code>a</code>. I'm currently trying to write a version that does work.</p>",
+        "id": 482277800,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731539179
+    },
+    {
+        "content": "<p>Oh yeah, good point! I suppose you could traverse over all subexpressions with <code>Meta.forEachExpr</code>, and collect the fvars used in both the terms and their types.</p>",
+        "id": 482278214,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1731539437
+    },
+    {
+        "content": "<p>you can write <code>for fvarDecl in ← getLCtx do</code> to loop through the <code>LocalContext</code> in order, but doing it in reverse is a bit more awkward. Here's a way I would do it:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">mut</span><span class=\"w\"> </span><span class=\"n\">s</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">collectFVars</span><span class=\"w\"> </span><span class=\"o\">{}</span><span class=\"w\"> </span><span class=\"n\">e</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">lctx</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">getLCtx</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">mut</span><span class=\"w\"> </span><span class=\"n\">i</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">lctx</span><span class=\"bp\">.</span><span class=\"n\">numIndices</span>\n<span class=\"w\">  </span><span class=\"n\">while</span><span class=\"w\"> </span><span class=\"n\">i</span><span class=\"w\"> </span><span class=\"bp\">!=</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">    </span><span class=\"n\">i</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">i</span><span class=\"w\"> </span><span class=\"bp\">-</span><span class=\"w\"> </span><span class=\"mi\">1</span>\n<span class=\"w\">    </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">some</span><span class=\"w\"> </span><span class=\"n\">fvarDecl</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">lctx</span><span class=\"bp\">.</span><span class=\"n\">getAt?</span><span class=\"w\"> </span><span class=\"n\">i</span><span class=\"w\"> </span><span class=\"k\">then</span>\n<span class=\"w\">      </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"n\">s</span><span class=\"bp\">.</span><span class=\"n\">fvarSet</span><span class=\"bp\">.</span><span class=\"n\">contains</span><span class=\"w\"> </span><span class=\"n\">fvarDecl</span><span class=\"bp\">.</span><span class=\"n\">fvarId</span><span class=\"w\"> </span><span class=\"k\">then</span>\n<span class=\"w\">        </span><span class=\"n\">s</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">collectFVars</span><span class=\"w\"> </span><span class=\"n\">s</span><span class=\"w\"> </span><span class=\"n\">fvarDecl</span><span class=\"bp\">.</span><span class=\"n\">type</span>\n<span class=\"w\">        </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">some</span><span class=\"w\"> </span><span class=\"n\">value</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">fvarDecl</span><span class=\"bp\">.</span><span class=\"n\">value?</span><span class=\"w\"> </span><span class=\"k\">then</span>\n<span class=\"w\">          </span><span class=\"n\">s</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">collectFVars</span><span class=\"w\"> </span><span class=\"n\">s</span><span class=\"w\"> </span><span class=\"n\">value</span>\n</code></pre></div>",
+        "id": 482279431,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731540055
+    },
+    {
+        "content": "<p>I am somewhat surprised that (as far as I've seen) there isn't already a funtion that does this.</p>",
+        "id": 482279494,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731540082
+    },
+    {
+        "content": "<p>OK, interesting.  Do if I understand correctly that, at the end of this logic, the <code>s</code> is the fvars that are \"directly or indirectly\" used in the expression <code>e</code>?</p>",
+        "id": 482283089,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731541959
+    },
+    {
+        "content": "<p>Like you, I'm bit surprised that this isn't well-trodden ground in the metaprogramming API.</p>",
+        "id": 482283155,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731542001
+    },
+    {
+        "content": "<p>There does exist <code>collectForwardDeps</code>. The docstring starts with</p>\n<p>Given <code>toRevert</code> an array of free variables s.t. <code>lctx</code> contains their declarations,<br>\n  return a new array of free variables that contains <code>toRevert</code> and all variables<br>\n  in <code>lctx</code> that may depend on <code>toRevert</code>.</p>",
+        "id": 482287112,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731544334
+    },
+    {
+        "content": "<p>On the topic of this collecting (backwards) dependencies, are you sure that collecting these fvars used directly or indirectly in your expression is what you need? I don't know how that would be useful.</p>",
+        "id": 482287346,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731544475
+    },
+    {
+        "content": "<p>First, I should say that I'm no longer sure I want this \"<code>isDefEq</code> which doesn't look inside lets\".  In my setting I'm leaning towards using a stricter equivalence relation on expressions, which doesn't look inside lets but also doesn't eta-reduce, beta-reduce, etc.  And that's available easily as expr-equality (possibly working inside CanonM).</p>",
+        "id": 482288529,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731545318
+    },
+    {
+        "content": "<p>So this is mostly for curiosity now (and also because \"<code>isDefEq</code> which doesn't look inside lets\" seems like a sensible thing which I or someone else might want in the future).</p>",
+        "id": 482288598,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731545368
+    },
+    {
+        "content": "<p>But this is what I had in mind to write the \"<code>isDefEq</code> which doesn't look inside lets\":<br>\n<span class=\"user-mention silent\" data-user-id=\"260507\">Heather Macbeth</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/whnf.20variant.20which.20preserves.20let-bindings/near/482256492\">said</a>:</p>\n<blockquote>\n<p>maybe I could do something like:</p>\n<ul>\n<li>write a variant of your function which finds the \"minimal context\" <code>c</code> for two expressions (rather than a single expression)</li>\n<li>recursively clear all the lets in <code>c</code> (and fail if impossible)</li>\n<li>run <code>isDefEq</code>in <code>c</code></li>\n</ul>\n</blockquote>",
+        "id": 482288709,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731545431
+    },
+    {
+        "content": "<p>Where the first step would be collecting backward dependencies of the two expressions I was comparing (and clearing everything in the context which wasn't a dependency of one of them).</p>",
+        "id": 482288796,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731545494
+    },
+    {
+        "content": "<p>I don't see how clearing things from the context that aren't used is helpful here. The goal was to run <code>mkLambdaFVars</code> with the forwards dependencies of the particular let-expression. e.g. if we are trying to remove the value of <code>a : α := b</code>, there is no point in abstracting the backwards dependency <code>α</code>. Instead we are interested in the forwards dependencies, i.e. the fvars that use <code>a</code>.</p>",
+        "id": 482289362,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731545865
+    },
+    {
+        "content": "<p>I hadn't seen the <code>canonM</code> before, that seems pretty useful for distinguishing expressions by the criterion that they look different to the user.</p>",
+        "id": 482289525,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731545972
+    },
+    {
+        "content": "<p>Suppose I am in a setting like</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"n\">z</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℝ</span>\n<span class=\"n\">A</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">ℝ</span>\n<span class=\"n\">a</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">A</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">x</span>\n<span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">A</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">y</span>\n<span class=\"n\">T</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">ℝ</span>\n<span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">x</span>\n<span class=\"n\">q</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">y</span>\n<span class=\"n\">r</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">z</span>\n<span class=\"bp\">⊢</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"bp\">^</span><span class=\"w\"> </span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">q</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">r</span>\n</code></pre></div>\n<p>and I was interested in whether <code>a</code> and <code>id a</code> were defeq-not-unfolding-lets.  Then I was thinking I would</p>\n<p>(1) clear all the stuff which doesn't appear in <code>a</code> or <code>id a</code>: then I'm left with</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℝ</span>\n<span class=\"n\">A</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">ℝ</span>\n<span class=\"n\">a</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">A</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">x</span>\n</code></pre></div>\n<p>(2) iteratively clear the values of the lets that remain: first forget that <code>a</code> was defined to be <code>x</code>, then forget that <code>A</code> was defined to be <code>ℝ</code></p>\n<p>(3) check the defeq of <code>a</code> and <code>id A</code> in this new context.</p>",
+        "id": 482290247,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731546450
+    },
+    {
+        "content": "<p>My concern was that if I don't perform the step (1), then my code will spuriously object about clearing <code>T</code> or <code>p</code> because they appear in the goal, even though they are irrelevant to the two expressions I want to compare.  (Maybe I didn't cook up this example quite right, but perhaps you see what I mean anyway.)</p>",
+        "id": 482290406,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731546561
+    },
+    {
+        "content": "<p>Right, but intead of clearing it from the goal, you would only be clearing them from your one or two expressions. And since they don't appear there, clearing <code>T</code> or <code>p</code> won't do anything.</p>",
+        "id": 482290546,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731546661
+    },
+    {
+        "content": "<p>So I think what you'd need is to collect the forwards dependencies from all the free variables in your expression, and then run <code>mkLambdaFVars</code> on your expression with these free variables, and check the type of that. For this it doesn't matter what the current goal is. (in fact, <code>MetaM</code> doesn't even know what the current goal is, you need <code>TacticM</code> for that)</p>",
+        "id": 482290794,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731546845
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/whnf.20variant.20which.20preserves.20let-bindings/near/482290794\">said</a>:</p>\n<blockquote>\n<p>So I think what you'd need is to collect the forwards dependencies from all the free variables in your expression, </p>\n</blockquote>\n<p>I notice that you don't mention let-bindings at all in that sketched approach!  Are the let-bindings perhaps somehow a red herring?  That is, I just want to treat all free variables the same, whether or not they have a let-binding in the context.</p>",
+        "id": 482291210,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731547082
+    },
+    {
+        "content": "<p>When checking dependencies, there is a difference between let variables and normal free variables, because in a let-variable you need to check both the type and the value. Is that what you mean?</p>",
+        "id": 482291552,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731547324
+    },
+    {
+        "content": "<p>I'm not sure.  I'm pretty confused!  Maybe it's not really possible to make progress here without writing down a few examples to discuss concretely.</p>",
+        "id": 482291802,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731547502
+    },
+    {
+        "content": "<p>So this is the problematic exmple I have in mind:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"mi\">5</span>\n<span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Fin</span><span class=\"w\"> </span><span class=\"n\">a</span>\n<span class=\"n\">c</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Fin</span><span class=\"w\"> </span><span class=\"mi\">5</span>\n<span class=\"n\">h</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">c</span>\n</code></pre></div>\n<p>Then there is a problem if your expression contains <code>h</code>, and otherwise it is fine to forget the definition of <code>a</code>.</p>",
+        "id": 482292358,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731547806
+    },
+    {
+        "content": "<p>Hmm, now that I think of it, if you expressions contains <code>b</code> or <code>h</code>, you would also need to collect backwards dependencies, just to be able to find <code>a </code>.</p>",
+        "id": 482292362,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731547810
+    },
+    {
+        "content": "<p>Are you sure that you don't have a given list of let variables that you want to not unfold, instead of just all of them? Because if you want to do this for all free variables, it seems to get pretty messy.</p>",
+        "id": 482292475,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731547896
+    },
+    {
+        "content": "<p>I was thinking there ought to be a \"best-effort\" version of \"defeq without looking inside lets\" -- on some broad class of examples (which includes most cases in the wild) it would not unfold the lets, but it would have some other behaviour (either looking inside the lets or failing, not sure which) when the expression doesn't make sense without looking inside the lets.</p>\n<p>Your example would fall into the latter class (for <code>a</code>, not for the other variables).</p>",
+        "id": 482292954,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731548220
+    },
+    {
+        "content": "<p>In principle this wouldn't be a hard change. We already have different transparency settings for unfolding constants (in order: reducible, instance, regular, all). We may as well have 2 transparency settings for let-free variables.</p>",
+        "id": 482293438,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731548535
+    },
+    {
+        "content": "<p>By the way<code>isDefEq</code> sometimes locally changes the transparency setting as appropriate. It could potentially do the same for the let-variable transparency.</p>",
+        "id": 482293658,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731548669
+    },
+    {
+        "content": "<p>I think it would be pretty intuitive to have the low transparency settings not unfold lets, and the high transparency settings unfold lets.  Not sure to draw the line, but perhaps \"default\" would be the first level at which lets are unfolded.</p>",
+        "id": 482293686,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731548703
+    },
+    {
+        "content": "<p>Honestly, before I started digging into some tactic behaviour yesterday that I didn't expect, I would have assumed that was the case!</p>",
+        "id": 482293727,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731548734
+    },
+    {
+        "content": "<p>It sound reasonable, but I would guess that a lot of things would break after such a change.</p>",
+        "id": 482293825,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731548804
+    },
+    {
+        "content": "<p>I guess a change that wouldn't break anything would be to have a setting even weaker than <code>reducible</code> which doesn't unfold lets.</p>",
+        "id": 482294047,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731548899
+    },
+    {
+        "content": "<p>It might end up being on the scale of <a href=\"https://github.com/leanprover/lean4/pull/2682\">lean4#2682</a> (which made a similar change in <code>simp</code>).</p>",
+        "id": 482294264,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731549077
+    },
+    {
+        "content": "<p>Currently any tactic which uses <code>isDefEq</code> anywhere in the implementation may unfold lets ... including in some pretty surprising cases.</p>",
+        "id": 482294768,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731549386
+    },
+    {
+        "content": "<p>I see, it makes sense that one would generally want to avoid this unfolding .</p>\n<p>But <code>isDefEq</code> itself doesn't return an expression. So then I guess you mean that it gives metavariable assignments in which these variables are unfolded? Or what sort of surprising cases do we get?</p>",
+        "id": 482295067,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731549573
+    },
+    {
+        "content": "<p>This seems to happen in non-finishing tactics which have <code>isDefEq</code>s in their implementation: let-unfolding happens sometimes, <em>but not always</em>, as a side effect.</p>",
+        "id": 482295327,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731549702
+    },
+    {
+        "content": "<p>For example, <code>ring_nf</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span>\n\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℤ</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℤ</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">ℤ</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"kt\">Prop</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">True</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℤ</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">x</span>\n<span class=\"w\">  </span><span class=\"k\">have</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">    </span><span class=\"n\">ring_nf</span>\n</code></pre></div>",
+        "id": 482295351,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731549717
+    },
+    {
+        "content": "<p>I don't think most users would correctly guess the goal state after that <code>ring_nf</code>: it's</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>⊢ R (x * 2) (a * 2)\n</code></pre></div>",
+        "id": 482295456,
+        "sender_full_name": "Heather Macbeth",
+        "timestamp": 1731549774
+    },
+    {
+        "content": "<p>I agree, it would make sense in this case to have this weaker transparency setting. We also have <code>ring_nf!</code> which uses default transparency instead of reducible. But we could have <code>ring_nf</code> work in this weaker transparency setting.</p>",
+        "id": 482297317,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1731551124
+    },
+    {
+        "content": "<p>54 messages were moved here from <a class=\"stream-topic\" data-stream-id=\"239415\" href=\"/#narrow/channel/239415-metaprogramming-.2F-tactics/topic/whnf.20variant.20which.20preserves.20let-bindings\">#metaprogramming / tactics &gt; whnf variant which preserves let-bindings</a> by <span class=\"user-mention silent\" data-user-id=\"260507\">Heather Macbeth</span>.</p>",
+        "id": 482714650,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1731715883
+    }
+]

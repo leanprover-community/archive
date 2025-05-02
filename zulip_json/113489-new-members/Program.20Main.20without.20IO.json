@@ -1,0 +1,50 @@
+[
+    {
+        "content": "<p>Hi,<br>\nim writing a library where i want to prevent Users from performing   IO in programs, except through my own API. My idea was to provide a 'custom' main method which gets called from within an actual main that is located in the library. Is there some way of forward declaring a function, or supply this class instance in an other file after the main?</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"c1\">--library</span>\n<span class=\"kn\">class</span><span class=\"w\"> </span><span class=\"n\">CustomMain</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"n\">main</span><span class=\"o\">:(</span><span class=\"n\">List</span><span class=\"w\"> </span><span class=\"n\">String</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">-&gt;</span><span class=\"w\"> </span><span class=\"n\">UInt32</span><span class=\"w\"> </span><span class=\"c1\">-- no IO here</span>\n\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">main</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">args</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">List</span><span class=\"w\"> </span><span class=\"n\">String</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">CustomMain</span><span class=\"o\">]:</span><span class=\"w\"> </span><span class=\"n\">IO</span><span class=\"w\"> </span><span class=\"n\">UInt32</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">do</span><span class=\"w\"> </span><span class=\"c1\">--no valid main without CustomMain instance</span>\n<span class=\"w\">  </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"n\">CustomMain</span><span class=\"bp\">.</span><span class=\"n\">main</span><span class=\"w\"> </span><span class=\"n\">args</span>\n\n<span class=\"c1\">--other file</span>\n<span class=\"kn\">instance</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">CustomMain</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"n\">main</span><span class=\"w\"> </span><span class=\"n\">args</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"mi\">0</span>\n</code></pre></div>",
+        "id": 465854581,
+        "sender_full_name": "Simon Daniel",
+        "timestamp": 1724881383
+    },
+    {
+        "content": "<p>Unfortunately no, there is no way to forward declare functions. This is because forward declarations would allow you to use mutual recursion, which would in turn let you prove <code>False</code>.</p>\n<p>That being said, maybe there's another way to do it using more advanced features in Lean, like <code>mutual</code> or <code>implementedBy</code>, or even defining a custom command with metaprogramming, but I am not aware of them. You would need to ask someone else.</p>\n<p>Do you trust the user of your library not to run code they shouldn't? Because what you could do is make a function <code>def run [CustomMain] : IO UInt32</code> and then expect users to write <code>def main := run</code> somewhere after declaring an instance of <code>CustomMain</code></p>",
+        "id": 466301224,
+        "sender_full_name": "Niels Voss",
+        "timestamp": 1725033852
+    },
+    {
+        "content": "<p>You could even in theory make a command with metaprogramming so that you could use <code>run_main (args : List String) : UInit32 := 0</code> without having to worry about interacting with <code>main</code> directly, though ofc a user that deliberately wants to run impure programs could.</p>",
+        "id": 466302045,
+        "sender_full_name": "Niels Voss",
+        "timestamp": 1725034172
+    },
+    {
+        "content": "<p>im currently using a <code>run</code> function like you suggested. I guess having to write out<code>def main := run</code> is just a minor inconvenience.<br>\nIt would be cool however to prevent the user from running impure code, instead of having to rely on him correctly calling into the library.<br>\nA metaprogramming solution also seems nice to hide the main from the user!</p>",
+        "id": 466306546,
+        "sender_full_name": "Simon Daniel",
+        "timestamp": 1725035809
+    },
+    {
+        "content": "<p>The problem is that there's no way to tell a file A to do something from a file B unless A imports B. If your library code is in file A, then making B.lean can't really affect A, because A basically has no idea that B.lean even exists. At most, maybe you could do some trick to try to search folders for files like B.lean and dynamically resolve imports, but that's probably more trouble than it's worth.</p>\n<p>I do not know if it is possible to attain \"inversion of control\" where the library contains <code>main</code> and you write a plugin to hook onto that. Maybe you could achieve it by having your end user specify an \"entrypoint\" in the lakefile? This does sound like more trouble than it's worth</p>",
+        "id": 466322634,
+        "sender_full_name": "Niels Voss",
+        "timestamp": 1725042484
+    },
+    {
+        "content": "<p>You could write a linter in your library that rejects any definition of <code>main</code> other than <code>def main := run</code></p>",
+        "id": 466330613,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1725046111
+    },
+    {
+        "content": "<p>(linters get to run every time downstream code adds a definition)</p>",
+        "id": 466330641,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1725046126
+    },
+    {
+        "content": "<p>seems like linters could do the job, from looking at examples from batteries it should be a Std.Tactic.Linter?</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kd\">@[</span><span class=\"n\">env_linter</span><span class=\"kd\">]</span><span class=\"w\"> </span><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">checkMain</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Std</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">Lint</span><span class=\"bp\">.</span><span class=\"n\">Linter</span>\n</code></pre></div>\n<p>with env_linter it seems to only run the linter on a #lint command, is that correct?</p>",
+        "id": 466480418,
+        "sender_full_name": "Simon Daniel",
+        "timestamp": 1725090047
+    }
+]

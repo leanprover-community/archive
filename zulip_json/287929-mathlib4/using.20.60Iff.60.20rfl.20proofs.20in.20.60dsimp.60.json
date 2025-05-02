@@ -184,5 +184,83 @@
         "id": 399090227,
         "sender_full_name": "Eric Wieser",
         "timestamp": 1698535321
+    },
+    {
+        "content": "<p>I was surprised to learn today that <code>dsimp</code> still doesn't use lemmas proven by <code>Iff.rfl</code>. It would be nice if it could...</p>",
+        "id": 481938772,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1731415397
+    },
+    {
+        "content": "<p>i imagine this doesn't always work, as it might cause loops?</p>",
+        "id": 481940569,
+        "sender_full_name": "Edward van de Meent",
+        "timestamp": 1731415869
+    },
+    {
+        "content": "<p>This is issue <a href=\"https://github.com/leanprover/lean4/pull/2678\">lean4#2678</a> btw, and <span class=\"user-mention\" data-user-id=\"548935\">@Thomas Murrills</span> has two draft PRs related to this: <a href=\"https://github.com/leanprover/lean4/pull/3973\">lean4#3973</a> &amp; <a href=\"https://github.com/leanprover/lean4/pull/2679\">lean4#2679</a>. @Thomas: what is the status of these PRs?</p>",
+        "id": 482008662,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1731435189
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"684366\">Edward van de Meent</span> <a href=\"#narrow/channel/287929-mathlib4/topic/using.20.60Iff.60.20rfl.20proofs.20in.20.60dsimp.60/near/481940569\">said</a>:</p>\n<blockquote>\n<p>i imagine this doesn't always work, as it might cause loops?</p>\n</blockquote>\n<p>I don't see the issue. Sure, it could cause loops, but we'll be careful with it (and the <code>simpNF</code> lemma should check for this?). And a lemma makes <code>dsimp</code> loop only if it would make <code>simp</code> loop, I think. So I don't think that is a reason not to implement this.<br>\nClarification: of course I only want <code>dsimp</code> to use lemmas proven by <code>Iff.rfl</code> <em>and</em> tagged by <code>@[simp]</code>.</p>",
+        "id": 482008998,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1731435303
+    },
+    {
+        "content": "<p>The status is “it worked as intended, but in practice required so many config adjustments to <code>simp</code> calls in mathlib (e.g. <code>dsimp := false</code>) that, at the time, I gave up” :/</p>\n<p>I’ll bump everything and take another look. It’s possible that changes to <code>simp</code> in the meantime just so happen to have mitigated things, or that I’d understand the practical issue better now. (Or, at worst, changing the simp config is at least now much nicer syntactically. :) )</p>",
+        "id": 482030490,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1731442129
+    },
+    {
+        "content": "<p>Weirdly, I'm hitting <a href=\"https://github.com/leanprover/lean4/actions/runs/11811430566/job/32904996978?pr=3973\">an error</a> only in the Linux build. Might anyone have an idea as to why (1) the Linux job seems to be the only one to build stage 2, and (2) how to practically approach debugging this error? The issue is that since the Linux build failed, no toolchain is created for any platform, so I can't inspect what's wrong locally. Is my only option an entirely local compilation? (Note: I need <code>release-ci</code> because I'm on an Intel-based Mac. I'd like to avoid compiling Lean locally on that mac if possible! :) )</p>",
+        "id": 482103704,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1731482246
+    },
+    {
+        "content": "<p>An answer to (1) is that the Linux build is the only one that builds stage 2 :-)</p>\n<p>I only do local builds for debugging, so I don't have any tips there. But, you likely only need a stage1 build to test this. You can create a file in the tests directory and try to reproduce the failure in Init/Data/Option/Attach.lean, then hope you can come up with a proof that succeeds both before and after your changes to what can be dsimped.</p>",
+        "id": 482104475,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1731482594
+    },
+    {
+        "content": "<p>Hmm, right—I suppose one temporary change I could make is just copying the term-mode proof that <code>by?</code> shows me currently, which sidesteps <code>simp</code> entirely, and hope that this is enough to get me a functioning toolchain!</p>",
+        "id": 482105093,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1731482842
+    },
+    {
+        "content": "<p>I've been investigating this, and have a table of all the (~70 and counting) errors I've encountered so far (recorded together with their causes, involved expressions, problematic new <code>dsimp</code> lemmas, etc.) which paints a <em>mostly</em> straightforward picture.</p>\n<p><code>simp</code> calls out to <code>dsimp</code> when rewriting under certain binders in certain circumstances, such as certain type (or prop) families. For example, in <code>@Subtype.val α (p : α → Prop) (self : Subtype p) : α</code> with <code>p := fun x =&gt; e</code>, <code>simp</code> will use <code>dsimp</code> to rewrite <code>e</code>. The new <code>dsimp</code> lemmas used here cause later lemmas to not be able to be applied; it seems the <code>DiscrTree</code> just no longer matches them.</p>\n<p>Often the issue is within a single <code>simp</code> call, but sometimes it causes subsequent issues, like a later <code>rw</code> failing; or some tactic which calls <code>simp</code> fails, such as <code>aesop</code> or <code>nontriviality</code>. Often, but not always, disabling <code>dsimp</code> in the config and/or removing a certain problematic lemma works; however, sometimes these lemmas (or other <code>dsimp</code> lemmas) are necessary in other spots.</p>\n<p>It could be that this change to <code>dsimp</code> causes other simp lemmas to no longer be in simp normal form, but I suspect</p>\n<ol>\n<li>that sometimes the failure is more complex, meaning that the other lemmas involved in a particular newly-failing <code>simp</code> call <em>are</em> in <code>simp</code> normal form, but the specific expression at hand is more complex and can be <code>dsimp</code>ed in a way which nonetheless changes its structure </li>\n<li>that we would not want to change this normal form. The most frequent issue involves <code>Subtype</code>, and this would mean, for example, changing e.g. <code>{ x // x ∈ _ }</code> to the rhs of whatever the  relevant <code>mem_*</code> lemma is:  for example, with <code>o : Option A</code>, <code>{ x // x ∈ o }</code> would have to become <code>{ x // some x = o }</code>.</li>\n</ol>",
+        "id": 483133018,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1731967639
+    },
+    {
+        "content": "<p>I can go further into the spectrum of different issues and some ideas for potential fixes, but first I wanted to check on what changes are already in the pipeline! :) For example, the PR description for Leo's <a href=\"https://github.com/leanprover/lean4/pull/6054\">lean4#6054</a> says</p>\n<blockquote>\n<p>motivation: this is the first step to fix the mismatch between <code>isDefEq</code> and the discrimination tree indexing.</p>\n</blockquote>\n<p>Does this mean that DiscrTree's will (somehow) be better at matching up to <code>isDefEq</code>? If so, that could fix this, I think. But I don't know if that really is the goal for these PRs.</p>",
+        "id": 483133377,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1731967778
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> do you happen to know the full scope of what's meant by the PR description of <a href=\"https://github.com/leanprover/lean4/pull/6054\">lean4#6054</a> ? (I saw you discuss it briefly in <a class=\"stream-topic\" data-stream-id=\"239415\" href=\"/#narrow/channel/239415-metaprogramming-.2F-tactics/topic/whnf.20variant.20which.20preserves.20let-bindings\">#metaprogramming / tactics &gt; whnf variant which preserves let-bindings</a>)</p>",
+        "id": 483369942,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1732057584
+    },
+    {
+        "content": "<p>It's something to do with making sure that when simp's configuration is in sync with Meta's configuration, so for example if zetaDelta is false then let decls aren't reduced when building a discrimination tree from the local context, and I think another example is to make sure that simp's configuration will control how simp reduces terms</p>",
+        "id": 483370341,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1732057815
+    },
+    {
+        "content": "<p>(I won’t be returning for another week, but wanted to outline some possible approaches in response to a GitHub comment!)</p>\n<p>Hmm, ok. It seems like it’s not quite so broad as to eliminate this issue, I think.</p>\n<p>I think that one way or another, we do not want to simply adapt these simp calls by e.g. adding <code>-dsimp</code>; there are enough to suggest that <code>simp</code> is actually made worse by naive inclusion of these lemmas in <code>dsimp</code>.</p>\n<p>Here are four ways I can think of fixing this problem (for various senses of “fixing”).</p>\n<ol>\n<li>Make <code>simp</code> not <code>dsimp</code> in the relevant place. This means either not <code>dsimp</code>ing arguments on which later arguments depend (a property <code>simp</code> already knows about) or something more surgical (e.g. changing <code>dsimp</code>s configuration in that call). I’ll probably try this first; it’s easy. But it might cause other problems.</li>\n<li>Change a bunch of lemmas to put them in the new simp normal form. I think this is not a great solution: often the new normal forms are worse (see above), and it probably does not account for all errors.</li>\n<li>Target specific lemmas or types at the sites of breakages: either make sure problematic lemmas are not <code>dsimp</code> lemmas, or change how <code>Subtype</code> and <code>DFunlike.coe</code> are handled specifically somehow (a judicious <code>no_index</code>?). (This seems ad-hoc and hard to maintain to me.)</li>\n<li>Create a mechanism for “remembering” defeq versions of an expression prior to <code>dsimp</code> rewrites to allow more DiscrTree matches. This would be the most complicated but the most general, and might help in other ways—or might be ridiculously costly. Implementation-wise, we could store the past defeq versions of expressions in an extension that DiscrTree operations could know about, or we could include it in the expression itself.</li>\n</ol>",
+        "id": 496383178,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1738083933
     }
 ]

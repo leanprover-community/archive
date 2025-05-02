@@ -1,0 +1,176 @@
+[
+    {
+        "content": "<p>Hi all.  I have an open Lean 4 PR (<a href=\"https://github.com/leanprover/lean4/pull/3808\">lean4#3808</a>) that removes some simp annotations using <code>Nat.succ</code> and adds simprocs to more efficiently solve some basic arithmetic normalization problems that Lean currently struggles with such as:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">example</span> <span class=\"o\">:</span> <span class=\"mi\">12345678</span> <span class=\"bp\">≠</span> <span class=\"mi\">1234567</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">simp</span>\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">x</span> <span class=\"o\">:</span> <span class=\"n\">Nat</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"n\">x</span> <span class=\"bp\">+</span> <span class=\"mi\">12345678</span> <span class=\"bp\">≥</span> <span class=\"mi\">1234567</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span> <span class=\"n\">simp</span>\n</code></pre></div>\n<p>When testing on Mathlib, I noticed that this PR seems to weaken <code>norm_num</code>.   That's a Mathlib tactic and out of scope for a Lean PR, but I thought I'd alert folks to the issue in case there are any changes that would help Mathlib.</p>\n<p>The simproc approach in that PR has some downsides in complexity, but Lean default simp rules shouldn't struggle with numeric literals either.</p>",
+        "id": 431387324,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1712258806
+    },
+    {
+        "content": "<p>Why does <code>37</code> (aka <code>OfNat.ofNat (nat_lit 37)</code>) unify with <code>succ (OfNat.ofNat (nat_lit 36))</code>? To me it seems like the <code>succ</code> lemmas should remain <code>simp</code>, but we should stop allowing <code>succ _</code> to match with numeric literals?</p>",
+        "id": 431400266,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712264005
+    },
+    {
+        "content": "<p>(after all, <code>simpProc</code>s can now handle the numeric literals)</p>",
+        "id": 431400413,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712264056
+    },
+    {
+        "content": "<p>Changing discriminator trees to not treat offset terms as star would make those lemmas effectively never trigger as simp rules given <a href=\"https://github.com/leanprover/lean4/blob/485baa1b8cf4620c49c37aa69723ad75ac6f601f/src/Init/Data/Nat/Basic.lean#L151\"><code>Nat.succ_eq_add_one</code></a> is now <code>simp</code>.</p>\n<p>My hunch is that dropping support for offset terms is going to lead to a less effective simp for most users, but I also don't have the bandwidth to investigate downstream effects in more detail.</p>",
+        "id": 431403787,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1712265430
+    },
+    {
+        "content": "<p>I've not heard the term \"offset term\" before; what does it refer to here?</p>",
+        "id": 431408815,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712267690
+    },
+    {
+        "content": "<p>Your point about <code>Nat.succ_eq_add_one</code> is a good one</p>",
+        "id": 431408825,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712267697
+    },
+    {
+        "content": "<p>I should have expanded that a bit.  That's a term I was using informally to describe terms that match the <code>isOffset</code> predicate used in the implementation of discriminator trees <a href=\"https://github.com/leanprover/lean4/blob/485baa1b8cf4620c49c37aa69723ad75ac6f601f/src/Lean/Meta/DiscrTree.lean#L229-L258\">here</a>.</p>\n<p>Discriminator trees are essentially a filter and so if you wanted the discriminator tree to not match the <code>37</code> literal against  <code>succ x</code> then the first thing to change is probably the definition of <code>shouldAddAsStar</code> in that file.</p>",
+        "id": 431410856,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1712268567
+    },
+    {
+        "content": "<p>I think this is already a painpoint for mathlib, and there's an open lean4 issue about it; due to numeric literals not indexing <code>OfNat</code> in the discrTrees, mathlib is littered with <code>no_index</code> lemmas which are probably bad for performance.</p>",
+        "id": 431412628,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712269530
+    },
+    {
+        "content": "<p>I this regression to <code>norm_num</code> is just from a changing simp set changing how Nat.succ simplifies, that seems fine to me. I don't think that tactic should rely on those sorts of simp lemmas.</p>",
+        "id": 431415773,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1712271304
+    },
+    {
+        "content": "<p>In particular, they weaken <code>norm_num</code>'s ability to efficiently normalize numbers, for the same reason you want the simprocs.</p>",
+        "id": 431415988,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1712271426
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/287929-mathlib4/topic/simprocs.20and.20norm_num/near/431412628\">said</a>:</p>\n<blockquote>\n<p>I think this is already a painpoint for mathlib, and there's an open lean4 issue about it; due to numeric literals not indexing <code>OfNat</code> in the discrTrees, mathlib is littered with <code>no_index</code> lemmas which are probably bad for performance.</p>\n</blockquote>\n<p>You're talking about <a href=\"https://github.com/leanprover/lean4/pull/2867\">lean4#2867</a> which is different but related. That issue is about how terms like <code>5 : Nat</code> appear in the discrtree. <code>isOffset</code> is about how terms like <code>n + 2</code> appear in the discrtree. My fix for the former leaves the latter unchanged</p>",
+        "id": 431419094,
+        "sender_full_name": "Timo Carlin-Burns",
+        "timestamp": 1712273329
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> <a href=\"#narrow/stream/287929-mathlib4/topic/simprocs.20and.20norm_num/near/431415773\">said</a>:</p>\n<blockquote>\n<p>I this regression to <code>norm_num</code> is just from a changing simp set changing how Nat.succ simplifies, that seems fine to me. I don't think that tactic should rely on those sorts of simp lemmas.</p>\n<p>In particular, they weaken <code>norm_num</code>'s ability to efficiently normalize numbers, for the same reason you want the simprocs.</p>\n</blockquote>\n<p>I'm confused, that seems like a big issue? Normalizing numbers is its job, after all (it's right in the name).</p>\n<p>Is there an MWE which explains what regression is being talked about here?</p>",
+        "id": 431421671,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712275017
+    },
+    {
+        "content": "<blockquote>\n<p>Hi all. I have an open Lean 4 PR (<a href=\"https://github.com/leanprover/lean4/pull/3808\">lean4#3808</a>) </p>\n</blockquote>\n<p>Just to note, this is now a merged PR, not an open PR</p>",
+        "id": 431421892,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712275187
+    },
+    {
+        "content": "<p>Something pretty wonky is going on in <a href=\"https://github.com/leanprover-community/mathlib4/compare/nightly-testing...lean-pr-testing-3808\">https://github.com/leanprover-community/mathlib4/compare/nightly-testing...lean-pr-testing-3808</a>; <code>std</code> is in the lake manifest 5 times!</p>",
+        "id": 431422296,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712275407
+    },
+    {
+        "content": "<p>Yes, I've done testing on a local copy of Mathlib and the results seem fairly reasonable.  The issue with lake is really strange, but it has to be orthogonal.  I'll manually update that manifest.</p>",
+        "id": 431422558,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1712275569
+    },
+    {
+        "content": "<p>Could <a href=\"https://github.com/leanprover/lean4/pull/3808/files#r1552614362\">this instance concern</a> be related to the norm_num issues?</p>",
+        "id": 431422852,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712275736
+    },
+    {
+        "content": "<p>Does <code>norm_num</code> automatically use <code>[simp]</code> rules?  It's possible that <code>Nat.succ.injEq</code> no longer being <code>simp</code> is impacting <code>norm_num</code>'s normalization.</p>",
+        "id": 431422914,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1712275778
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110994\">Joe Hendrix</span> <a href=\"#narrow/stream/287929-mathlib4/topic/simprocs.20and.20norm_num/near/431422914\">said</a>:</p>\n<blockquote>\n<p>Does <code>norm_num</code> automatically use <code>[simp]</code> rules?  It's possible that <code>Nat.succ.injEq</code> no longer being <code>simp</code> is impacting <code>norm_num</code>'s normalization.</p>\n</blockquote>\n<p><code>norm_num</code> is an extension of <code>simp</code>, and takes all the same options</p>",
+        "id": 431423177,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1712275936
+    },
+    {
+        "content": "<p>30 messages were moved from this topic to <a class=\"stream-topic\" data-stream-id=\"287929\" href=\"/#narrow/stream/287929-mathlib4/topic/Interfacing.20with.20changes.20to.20core\">#mathlib4 &gt; Interfacing with changes to core</a> by <span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span>.</p>",
+        "id": 431424660,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1712277186
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/287929-mathlib4/topic/simprocs.20and.20norm_num/near/431422852\">said</a>:</p>\n<blockquote>\n<p>Could <a href=\"https://github.com/leanprover/lean4/pull/3808/files#r1552614362\">this instance concern</a> be related to the norm_num issues?</p>\n</blockquote>\n<p>I split the thread because I don't want this point to be swamped; matching instances syntactically is IMO pretty much always a bug (and objectively incompatible with the current typeclass design in Mathlib).</p>",
+        "id": 431424771,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712277287
+    },
+    {
+        "content": "<p>I picked a conservative approach with that check precisely to avoid the simproc matching unexpected parts of Mathlib.  It strictly generalizes the existing simprocs.  I think a <code>norm_cast</code> issue if it is using the <code>simp</code> discriminator tree.</p>",
+        "id": 431425165,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1712277632
+    },
+    {
+        "content": "<p>Well, you've removed <code>simp</code> on some lemmas with the claim that the <code>simpproc</code> replaces them, but this is not the case</p>",
+        "id": 431425335,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712277750
+    },
+    {
+        "content": "<p>The lemmas will fire on any defeq instance, the simp-proc will only match syntactically</p>",
+        "id": 431425357,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712277773
+    },
+    {
+        "content": "<p>So I think <code>norm_num</code> aside, this has made <code>simp</code> able to work with <code>n + 1</code> but not <code>n + 1</code>, where the difference is only visible in the infoview.</p>",
+        "id": 431425414,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712277830
+    },
+    {
+        "content": "<p>Those lemmas involved <code>Nat.succ</code>.  What instance is relevant?</p>",
+        "id": 431425415,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1712277831
+    },
+    {
+        "content": "<p>The <code>succ</code> lemma matches against <code>n + 1</code> too</p>",
+        "id": 431425534,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712277952
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kn\">import</span> <span class=\"n\">Mathlib.Data.Nat.Basic</span>\n\n<span class=\"kd\">example</span> <span class=\"o\">(</span><span class=\"n\">n</span> <span class=\"o\">:</span> <span class=\"n\">ℕ</span><span class=\"o\">)</span> <span class=\"o\">:</span> <span class=\"mi\">1</span> <span class=\"bp\">+</span> <span class=\"n\">n</span> <span class=\"bp\">=</span> <span class=\"mi\">1</span> <span class=\"bp\">+</span> <span class=\"mi\">3</span> <span class=\"o\">:=</span> <span class=\"kd\">by</span>\n  <span class=\"n\">rw</span> <span class=\"o\">[</span><span class=\"n\">add_comm</span> <span class=\"mi\">1</span><span class=\"o\">,</span> <span class=\"n\">add_comm</span> <span class=\"mi\">1</span><span class=\"o\">]</span>\n  <span class=\"c1\">-- this works, but a simproc looking for `instNatAdd` will fail</span>\n  <span class=\"n\">simp</span> <span class=\"n\">only</span> <span class=\"o\">[</span><span class=\"n\">Nat.succ.injEq</span><span class=\"o\">]</span>\n  <span class=\"gr\">sorry</span>\n</code></pre></div>",
+        "id": 431425716,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1712278091
+    },
+    {
+        "content": "<p>Awesome.  Thanks I can make a Lean specific one to evaluate.</p>",
+        "id": 431426925,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1712279050
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> Interestingly, the <code>simp only</code> line didn't appear to be succeeding in <code>master</code> due to additional syntacic checks added in an earlier PR.  The issue has been added in <a href=\"https://github.com/leanprover/lean4/pull/3836\">lean4#3836</a>, and a proposed fix PR is in <a href=\"https://github.com/leanprover/lean4/pull/3838\">lean4#3838</a> that addresses both the <code>isDefEq</code> failure and the new simproc.</p>",
+        "id": 431672532,
+        "sender_full_name": "Joe Hendrix",
+        "timestamp": 1712409286
+    }
+]

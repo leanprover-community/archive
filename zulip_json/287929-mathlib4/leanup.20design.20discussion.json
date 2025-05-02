@@ -1,0 +1,950 @@
+[
+    {
+        "content": "<p>I'm thinking about what a \"mathport4\" would look like, which migrates projects from old lean 4 to new lean 4. The provisional name of the project is <code>leanup</code> since it's a bit snappier. Here's an overall sketch:</p>\n<ol start=\"0\">\n<li>It is triggered by the user where they would otherwise use <code>lake update</code>. Importantly, we are currently on an old version of lean 4 and the current project builds. If the project is not on a supported version, we require that they manually upgrade or downgrade to the nearest supported version first.</li>\n<li>First, we build the project and generate an \"elaborator dump\", a JSON version of the AST and the InfoTree. This will be a highly compatible format, shared between all supported lean versions and versioned at high granularity.</li>\n<li>We apply \"migrations\" sequentially to hop from one supported version to the next. We don't modify the elaborator dump or the text directly, but rather build up a semantic diff which expresses the changes to be made.</li>\n<li>We upgrade the project to the target supported version.</li>\n<li>We apply the changes to the text, making use of block indent motion where possible to avoid unnecessary textual diffs.</li>\n<li>The user can run <code>lake update</code> if there is still a gap to the latest version, this part is done without assistance.</li>\n</ol>\n<p>Step 2 is the interesting one. (Step 1 and step 4 are also 80% of the work to a code reformatter.) Possible migrations are:</p>\n<ul>\n<li>A theorem is renamed. This will be kept symbolic, but during step 3 we can take into account the namespaces and opens to ensure that we refer to the name in a natural way.</li>\n<li>A theorem is deleted. Unfortunately there isn't much we can do in this case, it will have to be handled in the migration management stage.</li>\n<li>A theorem has arguments reordered, added or removed. This is an especially common kind of syntactic transformation that we can have special support for.</li>\n<li>A piece of syntax (a command, term elab or tactic) is modified or restructured. These will have to be handled by custom code (\"migration plugins\") for the most part.</li>\n</ul>\n<p>The key piece in this mechanism is the migration list. This project will not be depending on mathlib (and will likely be a dependency of mathlib, for reasons described below), so the migration list is something that has to be provided externally through data files. <code>leanup</code> itself can provide migrations for lean changes, but mathlib will want to add its own migrations. The structure would be something like this:</p>\n<ul>\n<li><code>migrations/all.json</code> is of the form <code>[[commit, migration...]...]</code> where <code>commit</code> is the SHA of the next supported version and <code>migration</code> is either a file reference like <code>\"v4.3.0-rc2.json\"</code> or an inline migration list. (Multiple migrations can be provided for a commit, these are applied sequentially. This is sometimes important if effects need to stack up in the right order.)</li>\n<li><code>migrations/v4.3.0-rc2.json</code> would have the form <code>{\"changes\": [[removed, added]...], \"extra\": \"Mathlib.Migrations.V4_3_0_rc2\"}</code> where:<ul>\n<li><code>changes</code> is a list of changes where <code>removed</code> and/or <code>added</code> are fully qualified names or <code>null</code> to indicate additions/removals/changes</li>\n<li><code>extra</code>, if provided, is a reference to a lean file which defines additional programmatic migrations. These files are compiled by lake as an additional library target.</li>\n</ul>\n</li>\n</ul>\n<p>The final component is the management of migrations, for which we need another tool, <code>leanup-build</code>, which is run by maintainers to add an additional supported version to the list, and will run (or extend) <code>leaff</code> to construct an initial attempt at the migration between two versions of mathlib, which is then manually refined. It will use heuristics and <code>#align</code> statements to try to minimize the number of theorems marked as \"deleted\". I would expect there to be essentially no deletions in mathlib migrations, because even a mostly wrong 'rename' to a theorem with a completely different type but which is morally related is better than nothing.</p>\n<p>What do people think about this overall design and workflow? There are a lot of moving parts here, but nothing that I think is impossible to implement. I think the biggest change to the status quo here is that mathlib will be maintaining a migrations database, which may be a big ask, which is why I think the <code>leanup-build</code> program is important since we need to ensure the cost of maintenance is low and we can add additional supported points after the fact before, after, and in between existing points without too much difficulty. <code>leanup</code> itself is tasked with maintaining the migrations database for lean and possibly also std.</p>",
+        "id": 412831357,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705252606
+    },
+    {
+        "content": "<p>For reference, what is the difference between \"old Lean 4\" and \"new Lean 4\"?</p>",
+        "id": 412834882,
+        "sender_full_name": "Wrenna Robson",
+        "timestamp": 1705255750
+    },
+    {
+        "content": "<p>Lean 4 from a few months ago vs current Lean 4, so the difference is whatever commits have happened between them</p>",
+        "id": 412835603,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1705256431
+    },
+    {
+        "content": "<p>It sounds great!</p>",
+        "id": 412835969,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1705256829
+    },
+    {
+        "content": "<p>I'm unclear from the description how the migrations are indexed.</p>\n<p>You said:</p>\n<blockquote>\n<p><code>migrations/all.json</code> is of the form <code>[[commit, migration...]...]</code> where <code>commit</code> is the SHA of the next supported version</p>\n</blockquote>\n<p>but I don't understand what \"next supported version\" is referring to. Presumably it is a Lean toolchain version? Does <code>migrations/all.json</code> contain information about moving from old toolchains to the current toolchain, or or information about moving from one (old) toolchain to another toolchain (possibly the current one)?</p>\n<p>Are you envisioning this strictly being at toolchain granularity, or could upstream projects have independent versioning schemes? (e.g. if my project used lean <code>4.37.0</code> and dependency <code>X</code> <code>v17</code>, and I want to move to <code>4.38.0</code> and <code>v18</code>, I could look up migration instructions from Lean for the <code>4.37.0</code> -&gt; <code>v4.38.0</code> change, and loop up instructions from <code>X</code> for the <code>v17</code> to <code>v18</code> change).</p>",
+        "id": 412852742,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705272452
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110087\">@Scott Morrison</span> The idea is that there are a bunch of <code>commit</code>s listed in chronological order in the file, these are the \"supported versions\". They are mathlib commits, and need not align with toolchain versions, but I'm imagining for the initial MVP we'll focus on toolchain tagged mathlibs since more supported commits means more data gathering effort. <code>leanup</code> will upgrade projects from any supported version to any later one.</p>",
+        "id": 412868913,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705282173
+    },
+    {
+        "content": "<p>Ah, okay. So it would look at each upstream dependency (e.g. Mathlib), and find all the commits mentioned in Mathlib's <code>migrations/all.json</code> that occur after the currently referenced commit (in the lake-manifest of the project we're updating), and apply those.</p>",
+        "id": 412869113,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1705282274
+    },
+    {
+        "content": "<p>The names of migration files (like <code>v4.3.0-rc2.json</code> and <code>Mathlib.Migrations.V4_3_0_rc2</code> here) is purely up to the library author to choose, they need not line up with anything else. I would recommend that they contain dates or some other globally ordered thing in them though, as opposed to just being SHAs so that people can binary search them and understand what order they are applied in</p>",
+        "id": 412869144,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705282297
+    },
+    {
+        "content": "<p>One task that leanup will need to do which I'm not entirely sure about is to locate where a given commit lies chronologically in a list of SHAs. That is, assuming for simplicity that the master branch is linearly ordered like mathlib, and that the supported commit list is already ordered correctly, we have to find out which of those commits is after the current one and which is before. (If the current commit is supported then that's easy, but we also have to handle the case that the user is on an unsupported commit between two supported versions of mathlib.) This needs some kind of git request, and what's more it needs to work on shallow clones since that's what lake checks out.</p>",
+        "id": 412870856,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705283243
+    },
+    {
+        "content": "<p>Presumably it would be fine for this tool to un-shallow the clones</p>",
+        "id": 412888764,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705296577
+    },
+    {
+        "content": "<p>Since you can't do anything with the history in a shallow clone anyway</p>",
+        "id": 412888838,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705296613
+    },
+    {
+        "content": "<p>it might be nice if we could provide some quick API endpoints to avoid having to download too much for this</p>",
+        "id": 412888908,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705296665
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Scott Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/412869113\">said</a>:</p>\n<blockquote>\n<p>So it would [...] find all the commits mentioned in Mathlib's <code>migrations/all.json</code></p>\n</blockquote>\n<p>Just to check I understand Mario's proposal correctly, I think this json file does not live in mathlib itself (or at least, not in the master branch), as this gives us a way to easily correct past migrations?</p>",
+        "id": 412891015,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705298277
+    },
+    {
+        "content": "<p>No, my proposal is to put that file in mathlib itself</p>",
+        "id": 412891546,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705298624
+    },
+    {
+        "content": "<p>We would use the migrations file from the target commit (in normal usage, that means the latest master or whatever <code>lake update</code> would select)</p>",
+        "id": 412891667,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705298704
+    },
+    {
+        "content": "<p>One of the reasons we want this to be in the git repo itself is because this solves the issue I kind of glossed over regarding linear history: if you have a long lived branch you can have migrations for it too, reflecting the history of the branch back to the initial commit or wherever</p>",
+        "id": 412891895,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705298828
+    },
+    {
+        "content": "<p>that doesn't really solve the issue of merge commits though</p>",
+        "id": 412891978,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705298882
+    },
+    {
+        "content": "<p>I love this! Five points/thoughts:</p>\n<ol>\n<li>I’d echo the need to keep maintenance workload low. To that end, I think it might be useful if each PR is required to come with its own migration, one way or another: either the trivial migration; a <code>leanup-build</code> autogenerated one; a manual migration plugin; or a special “deferred” migration (like a <code>sorry</code>) when we don’t want to deal with it now (but want to record &amp; communicate the present lack of one, which is better than simply not supporting the commit—hopefully these would be infrequent, but would probably be necessary sometimes!). I think this could be relatively painless if we invest in a little GitHub tooling to check if the migration is needed, attempt to autogenerate/commit one with leanup-build, and automatically attach a status when possible. The maintainers would then be responsible only for the deferred migrations (unless someone else volunteered, of course), and it would be easy to keep track of what work there was still to do.</li>\n<li>Many changes to mathlib4 that require migrations—e.g. theorem renames—could simply <em>be</em> migrations in the first place. It would be useful to have a workflow/tools which allowed someone to write the migration first, then apply the migration to mathlib4 (and use the resulting changes as a mathlib4 PR)! (Something like <code>leanup self</code>?)</li>\n<li>Re: lean and std changes, I think it’d be useful to subsume adaptation PRs by adaption <em>migrations</em> as much as possible. That is, when making a std4 or lean4 PR, instead of making a corresponding PR to mathlib4/std4 adapting to the changes manually, we’d simply create a lean4 or std4 migration, and then run <code>leanup</code> on mathlib4/std4 when bumping. Tooling should test (at lean4/std4 PR time) that the associated migration works as expected. E.g., <code>lean-pr-testing-NNNN</code> would start with a <code>leanup</code>ped (<code>lean</code>ed-<code>up</code>?) version of mathlib4, applying all previous migrations as well as the migration associated with PR #NNNN (which the PR author would provide, somehow). And hopefully in many cases a migration would be all that’s necessary!</li>\n<li>There would still be cases (esp. with core changes, I’m guessing) that require fully manual fixes (where even migration plugins aren’t sufficient). What would we do in these cases? It might make sense to have leanup emit a provided message when attempting to migrate past that commit, e.g. “Breaking change to <code>rw</code>: [explanation of how it behaves differently]”. (Possibly only with <code>leanup -v</code>?) Maybe <code>leanup -i</code>(?) would stop at this point and ask if you needed to fix things up before proceeding (or maybe this would be default behavior).</li>\n<li>I’m a little unsure if having the migrations located within the repository would be incompatible with (1.). With squash commits, that seems to mean (1.) would need a commit history that goes [commit A]; [automated leanup commit for commit A]; [commit B]; [automated leanup commit for commit B]; etc. This could be avoided by either maintaining a separate repository (and just have more tooling for synchronizing the corresponding branches and PRs to implement (1.)), which would also let us fix up past commits—and/or by not using commits as keys for the migrations, but instead storing the current “leanup key” in the project itself so that it can be updated in the same commit that we add the migration in. The key could be a (long) version number that was kept updated appropriately by GitHub tooling (assuming that’s possible given merge queues, I’m not sure). (The latter option would also solve the “finding where the current commit is” issue, as presumably these version numbers would be interpretable by lean and be orderable.)</li>\n</ol>",
+        "id": 412906206,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705307062
+    },
+    {
+        "content": "<p>I don't think we should ever really \"defer\" a migration. We should always have some migration, and we can post-hoc improve the quality of autogenerated migrations independently from the usual PR traffic</p>",
+        "id": 412906515,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705307186
+    },
+    {
+        "content": "<p>Even for migrations of tactics or things requiring a plugin, for instance? That’s what I was thinking of.</p>",
+        "id": 412906645,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705307248
+    },
+    {
+        "content": "<p>Having some todo that doesn't block the PR is just a recipe for getting a bunch of work to pile up without a clear mechanism to clear it</p>",
+        "id": 412906655,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705307250
+    },
+    {
+        "content": "<p>It would be nice to have migrations for syntax stuff, but I don't think we necessarily want to require it, because it can be almost arbitrarily complex depending on how you want to handle it</p>",
+        "id": 412906846,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705307319
+    },
+    {
+        "content": "<p>We may want to have a low effort thing which indicates that syntax changed (so that we can find it later) without actually doing a real migration, maybe you could call that a todo</p>",
+        "id": 412907017,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705307385
+    },
+    {
+        "content": "<p>certainly one of the challenges with improving migrations after the fact will be locating when things happened</p>",
+        "id": 412907206,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705307439
+    },
+    {
+        "content": "<p>True—fwiw I was envisioning deferring migrations as a kind of “last resort” option for when we want to avoid introducing a ton of friction to getting a PR in, but still want to remember to eventually provide a migration of some sort and/or alert leanup users that, hey, this change isn’t covered by the migrations. I think that lines up roughly with what you’re saying (in sentiment at least)?</p>",
+        "id": 412907227,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705307452
+    },
+    {
+        "content": "<p>it's a good point that using <code>leanup</code> to conduct std and mathlib updates will naturally improve the quality of migrations because incentives are aligned</p>",
+        "id": 412907604,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705307595
+    },
+    {
+        "content": "<p>But keep in mind that like mathport, I expect leanup to only have a 95% success rate, some manual adjustment will probably be required in many if not most migrations</p>",
+        "id": 412907793,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705307662
+    },
+    {
+        "content": "<p>Re (4): I was also thinking about a <code>leanup -i</code> similar to interactive rebase which would take smaller steps and also pause between steps to get the code compiling again. My plan for handling changes that can't be automatically fixed is to just do nothing about them; this would cause breakage in the project and you would either fix them on the spot or after all migrations have been applied. The important part is that the easy stuff is out of the way so that you can just focus on these breakages without everything else</p>",
+        "id": 412908366,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705307889
+    },
+    {
+        "content": "<p>But for sure, we could also have a \"migration\" which is just a note which is printed to stdout</p>",
+        "id": 412908509,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705307954
+    },
+    {
+        "content": "<p>the leanup key idea would certainly help with the commit locating issue, although a downside is that it's not backward compatible, we wouldn't be able to retroactively handle early lean 4 stuff</p>",
+        "id": 412909152,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705308205
+    },
+    {
+        "content": "<p>The major drawback of putting anything outside the repo is that it means we can't just seamlessly work on any github project, we would need some external infrastructure which would become an additional point of failure</p>",
+        "id": 412909663,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705308421
+    },
+    {
+        "content": "<p>I think we could do something like a hybrid of the \"leanup key\" idea and commit identifiers for historical stuff and ex post facto migrations</p>",
+        "id": 412909926,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705308521
+    },
+    {
+        "content": "<p>That all makes sense! (Btw, I’m technically away, so I might not participate in this discussion much further, but I opened zulip, happened to see this thread, and thought it was cool… <span aria-label=\"grinning face with smiling eyes\" class=\"emoji emoji-1f601\" role=\"img\" title=\"grinning face with smiling eyes\">:grinning_face_with_smiling_eyes:</span>)</p>",
+        "id": 412918440,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705311656
+    },
+    {
+        "content": "<p>It just occurs to me that for mathlib specifically, a good choice for a \"leanup key\" which is not commit-based is the PR number, although it will not be monotonic since PRs end up on the main branch in the order they are landed but are named based on the order they were created</p>",
+        "id": 413054851,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705366206
+    },
+    {
+        "content": "<p>From an avoiding-conflicts angle I think the best kind of in-repo migration tracking is just to have a bunch of independent files and no <code>all.json</code> which collects them together (because this will be a frequent source of merge conflicts). The downside is that this requires additional postprocessing to be usable by leanup, since you would have to use a lot of indirect information like when files appeared to put an order on things</p>",
+        "id": 413055655,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705366474
+    },
+    {
+        "content": "<p>The \"leanup key\" is also prone to merge conflicts, if there is a file which contains the current key which is used to find where a commit lies in the list</p>",
+        "id": 413056028,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705366619
+    },
+    {
+        "content": "<p>I wonder if we can use bors to automatically put a leanup commit (if necessary) at the end of every staging commit, so people can just put <code>\"XXX\"</code> for the commit ID and the bot will fill this in with the actual commit as calculated on the staging branch. That way we don't waste any extra CI time on the [commit A], [leanup commit for commit A], [commit B], [leanup commit for commit B] issue, and we only have one leanup commit per batch instead of per commit</p>",
+        "id": 413057722,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705367289
+    },
+    {
+        "content": "<p>I'm starting to think that using actual commit IDs like this together with appropriate automation are the only viable method subject to the no-external-infrastructure constraint</p>",
+        "id": 413057839,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705367353
+    },
+    {
+        "content": "<p>Can bors run a script to add a commit to a branch just before merging? If so we could:</p>\n<ul>\n<li>use a long version number as a leanup key, e.g. 4.7.1.103, ordered lexicographically</li>\n<li>have each migration file be independent but in a common <code>migrations/</code> directory, and named by some (translation of) the leanup key, e.g. v4-7-1-103.lean (or maybe directories, e.g. 4/7/1/103.lean?)</li>\n<li>the leanup key of the project is inferred as the highest leanup key in <code>migrations/</code> instead of being written in a file</li>\n<li>the migration associated with a given PR (if there is one) is <code>migrations/_currentMigration.lean</code> (or some special name)</li>\n<li>right before bors merges a branch into master, it finds the leanup key of the master branch, increments it (4.7.1.104), and renames the <code>_currentMigration.lean</code> file accordingly (if it exists)</li>\n</ul>\n<p>(If we’re incrementing any but the last component (e.g. moving to 4.7.2), we can do that manually.)</p>",
+        "id": 413078894,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705379623
+    },
+    {
+        "content": "<p>bors actions are controlled by <code>mk_build_yml.sh</code>, so yes we can make it do what we want</p>",
+        "id": 413078983,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705379668
+    },
+    {
+        "content": "<p>Note that in my plan most migrations would be json, you would only need .lean migrations for complex things involving custom code. This is important because if all goes well there will presumably be hundreds to thousands of migrations for mathlib and we don't want to have to compile all of those lean files if 90% of them are autogenerated leaff-based migrations</p>",
+        "id": 413079380,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705379943
+    },
+    {
+        "content": "<p>oh, wait—are there some contexts in which people might not have permission to list all files in a directory to infer the leanup key? or would that be pretty rare?</p>\n<p>(though the inference of the leanup key suggested above is really just to prevent merge conflicts; we could just as well update an explicitly-stored leanup key with automation, and live with the merge conflicts. or, I wonder if there’s a way to configure a file in mathlib4 to tell git to not modify the leanup key file when merging (as it will just be overwritten by automation)? not sure what <code>.gitignore</code> files and friends are capable of.)</p>",
+        "id": 413080415,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705380722
+    },
+    {
+        "content": "<p>That doesn't cover the case of retrofitting a migration that was skipped though. Suppose that we have v4-7-1-103 and then five commits and then v4-7-1-104, and then we decide that actually we want to split the 104 migration in two because commit number two in the series happened to be very popular / lacks a migration in hindsight. It doesn't have a unique leanup key, the algorithm would say that it has key v4-7-1-103 just like the first commit, but we want to add an intermediate v4-7-1-103-deadbeef migration</p>",
+        "id": 413080470,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705380737
+    },
+    {
+        "content": "<p>I think listing files is not an issue, we can get <code>git</code> to list the files even if the filesystem doesn't support it (but I don't think any supported OS has an issue like this)</p>",
+        "id": 413080499,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705380778
+    },
+    {
+        "content": "<p>Hmm, we could just extend the numbering: 4.7.1.103 &lt; 4.7.1.103.1 &lt; 4.7.1.104. (Though actually in this scenario there probably should be a special delimiter between the automatically-handled portion of the key and the manual version number, e.g. 4.7.1-103.1, just so things never get confused.)</p>",
+        "id": 413080786,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705380968
+    },
+    {
+        "content": "<p>regarding directory separation, I'm thinking that <code>v4-7-1/103.lean</code> is a good split which doesn't make too many folders or too many files</p>",
+        "id": 413080800,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705380974
+    },
+    {
+        "content": "<p>I agree that we can use the fact that lex order is dense to our advantage here, but that's not the problem, the problem is that commit number two was not marked as 4.7.1.103.1 in this example. It's an immutable commit and the last file in it is 4.7.1.103</p>",
+        "id": 413080888,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705381056
+    },
+    {
+        "content": "<p>the <code>-deadbeef</code> there is a commit SHA, which we can use to identify commit number two even though it doesn't have a unique key</p>",
+        "id": 413081007,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705381152
+    },
+    {
+        "content": "<p>It's also worth mentioning that the same solution that works for retrofitted migrations like this also works for historical migrations from commits prior to the introduction of <code>migrations/</code></p>",
+        "id": 413081048,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705381198
+    },
+    {
+        "content": "<p>Ah, okay, I think I see…but just to be clear, in what scenarios do we actually need the deadbeef-as-commit-SHA info? This is if we’re leanupping (leaning up?) to the aforementioned commit 2 and are specifying as such using the commit SHA? Then: we look at master, check if the SHA appears in deadbeef position, and otherwise infer the leanup key at commit 2?</p>",
+        "id": 413081730,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705381656
+    },
+    {
+        "content": "<p>Another option would be to maintain a single file somewhere associating special commits to “artificial” leanup keys, e.g. pairs like <code>[&lt;aforementioned commit 2 SHA&gt;, 4.7.1-103.1]</code>, which would also work for historical migrations. But this is kind of just a matter of where we keep the SHA data (the filename itself or in a file)</p>",
+        "id": 413082297,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705382122
+    },
+    {
+        "content": "<p>The workflow is that we start out at an arbitrary commit, maybe it has a migration and maybe not, and have to find the interval of migrations given the git repo and that commit and a target commit (which will usually be latest master, but can be earlier, especially during a <code>leanup -i</code> interactive migration)</p>",
+        "id": 413086089,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705384953
+    },
+    {
+        "content": "<p>Let's say we have commits A B C D E, and A is v0 and E is v1, and later we decide to make C v0.5. The master branch describes the migrations v0 -&gt; v0.5 and v0.5 -&gt; v1 and also points at A, C, E somehow, and we need to deduce that if we are on commits A or B then we apply both migrations but if we are on commits C or D then we only apply the v0.5 -&gt; v1 migration</p>",
+        "id": 413086351,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705385108
+    },
+    {
+        "content": "<p>Prior to the introduction of v0.5 we would have had only one v0 -&gt; v1 migration which is equivalent to the composition of the v0 -&gt; v0.5 and v0.5 -&gt; v1 migrations (but maybe of lower quality), and we would apply this migration in order to go from any of A B C D to E. We would introduce v0.5 if we find that people on C and D are getting messed up by the incorrectly applied v0 -&gt; v0.5 part of the migration</p>",
+        "id": 413086760,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705385376
+    },
+    {
+        "content": "<p>\"Artificial leanup keys\" are I think more or less what we need here, but it isn't a straight lookup because we also have to be able to handle commits which are not marked but lie somewhere next to one of these artificial keys. We end up with a sort of two level hierarchy: The commits are separated into regions with the same leanup key (i.e. A,B,C,D are v0 and E is v1 in the above example), and then artificial keys are just marked commits like C, which we may associate to a name like v0.5 if we like but it isn't really used for ordering. (EDIT: Oh, except that once we have located the start we still want to apply a big interval of migrations in order without any further git lookups, so we do need the ordering here.)</p>\n<p>Given initial commit D, we can see that the leanup key is v0 because that's directly in the repo, and then we check the artificial keys for v0 to see that C is marked; then we walk up the parent commits as long as we are still on v0 until we either hit the root or an artificial key, and in this case we reach C first, so D is on v0.5, while if we started at B we would fall off the end without finding any artificial keys so we know we are on v0.</p>",
+        "id": 413088004,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705386210
+    },
+    {
+        "content": "<p>Makes sense!! :) (Btw, it strikes me that by the time we “fix up” a migration like this, the commits will already be in place and immutable. So we can have the artificial key suffix simply be the number of commits since the root commit: e.g. B would be allocated v0.1, C would get v0.2, and D v0.3. (Ofc, only C’s artificial key of v0.2 would actually be used in the above situation.))</p>",
+        "id": 413108010,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705395694
+    },
+    {
+        "content": "<p>We could, but \"n commits past commit X\" is not an indexing method supported by git, so it would be difficult to locate and cross reference things that way. (Also consider that this whole discussion extends to early history commits, these all being in the \"version zero\" regime. It would get a bit unwieldy to refer to things as \"commit 1404 since the dawn of mathlib4\".)</p>",
+        "id": 413109222,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705396073
+    },
+    {
+        "content": "<p>Can you remind me why we need \"leanup keys\" that are different from git hashes? Is it really that expensive to compute the order of hashes, and if so, can we store that order in a generated file?</p>",
+        "id": 413109611,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705396199
+    },
+    {
+        "content": "<p>The issue is that when you are writing a migration, you don't know yet what commit it has. Plus we want the migrations themselves to be neatly ordered and organized in the repo</p>",
+        "id": 413109840,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705396266
+    },
+    {
+        "content": "<p>I think computing the order of <em>all</em> hashes will indeed be quite expensive. Ideally all the git searching should be relatively local in scope, looking for the next migration tag, rather than collating every commit in the repo</p>",
+        "id": 413110096,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705396352
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/413054851\">said</a>:</p>\n<blockquote>\n<p>It just occurs to me that for mathlib specifically, a good choice for a \"leanup key\" which is not commit-based is the PR number, although it will not be monotonic since PRs end up on the main branch in the order they are landed but are named based on the order they were created</p>\n</blockquote>\n<p>PR numbers can be converted into git hashes without too much work; perhaps users can use the PR number as a key, and a bot can annotate the SHA in a cron job after the PR lands?</p>",
+        "id": 413112044,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705397032
+    },
+    {
+        "content": "<p>I think the real question is whether we want to enforce ordering of file names, or whether they should just be ordered \"randomly\" / by PR in the folder and we have some external data like a list of commits or PRs which gives the ordering</p>",
+        "id": 413112540,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705397184
+    },
+    {
+        "content": "<p>Thomas's design with just files and no global index except for \"fixups\" after the fact means there are fewer merge conflicts. Even if a bot manages the global index file it can still cause conflicts when rebasing and such</p>",
+        "id": 413112992,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705397316
+    },
+    {
+        "content": "<p>If the only thing that ever updates the index is a bot running against master, I don't see any conflicts arising</p>",
+        "id": 413114337,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705397749
+    },
+    {
+        "content": "<p>(and we could have CI to enforce the index is not touched by hand in PRs)</p>",
+        "id": 413114447,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705397771
+    },
+    {
+        "content": "<p>true</p>",
+        "id": 413114539,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705397804
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/413109222\">said</a>:</p>\n<blockquote>\n<p>We could, but \"n commits past commit X\" is not an indexing method supported by git</p>\n</blockquote>\n<p>Gotcha—this wouldn’t be useful for indexing, then, but just for giving us an order for free while making sure that there are always enough migration spots open and saving us a bit of annoyance (if we called C v0.1 but then wanted to create an artificial key for B, we’d have to bump C—or call B v0.0.1, i guess).</p>\n<p>I feel there’s also at least a little value to being able to order any two keys intrinsically, without checking another file</p>\n<blockquote>\n<p>(Also consider that this whole discussion extends to early history commits, these all being in the \"version zero\" regime. It would get a bit unwieldy to refer to things as \"commit 1404 since the dawn of mathlib4\".)</p>\n</blockquote>\n<p>True, I was only considering non-historical ones here. I was imagining we’d create the overall artificial leanup keys for historical commits manually (possibly with artificial versions as well) and only use this scheme when fixing up things between <em>those</em> manually-identified migration points! :) But there are many other ways to do this.</p>",
+        "id": 413114553,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705397810
+    },
+    {
+        "content": "<p>one \"drawback\" of naming migrations after PRs is that there is an implication that the migrations are caused by that PR and nothing else, which excludes the possibility of doing chunks of PRs at a time for larger hops</p>",
+        "id": 413115357,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705398107
+    },
+    {
+        "content": "<p>(\"drawback\" being in quotes because it's not necessarily a bad thing to try to enforce every PR to come with a migration, but it would hurt more than it helps while we are still getting up to speed and migrations are few and far between)</p>",
+        "id": 413115616,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705398201
+    },
+    {
+        "content": "<p>I also think there’s value to introducing versioning into the repo itself—if we <em>did</em> have an only-bot-updated file in the mix here, it’d be great if it contained a sensible version number, that way we could say <code>@[deprecated since &lt;version&gt;]</code>, check the current version number of a package in lean itself, etc.</p>\n<p>Plus, being able to use a version number as a leanup target instead of (in addition to) a commit SHA or PR might be appealing, as you can match the major features and changes up against release notes (if they exist)</p>",
+        "id": 413115961,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705398318
+    },
+    {
+        "content": "<p>I definitely agree with that, we've probably put off versioning for mathlib long enough. That said I don't want a versioning policy to be a prerequisite for using leanup</p>",
+        "id": 413116195,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705398387
+    },
+    {
+        "content": "<p>I suppose an initial folder (of some name?) in <code>migrations/</code> wouldn’t necessitate versioning; if the repo wanted to introduce versioning later on and apply it retroactively, the artificial keys file could be used for this task as well somehow (e.g. if the initial folder is called <code>init/</code>, the artificial keys file could say that the existing <code>init/50.json</code> is now the start of <code>v1.0.0</code>, <code>init/20.json</code> is the start of <code>v0.1.0</code>, etc.)</p>",
+        "id": 413123664,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705400766
+    },
+    {
+        "content": "<p>let's not consider the case of changing key names after the fact just yet - this design is complicated enough as it is</p>",
+        "id": 413124519,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705401041
+    },
+    {
+        "content": "<p>I think <span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> is right that with a bot we can probably just use commit SHAs as in the original design</p>",
+        "id": 413124830,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705401152
+    },
+    {
+        "content": "<p>Don’t we still wind up with [commit A] [leanup commit for A] [commit B] [leanup commit for B] like that?</p>",
+        "id": 413221342,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705432015
+    },
+    {
+        "content": "<p>we can still use the bot optimization: only one leanup commit per batch, and no additional CI requirements</p>",
+        "id": 413221457,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705432080
+    },
+    {
+        "content": "<p>I started to put pen to paper on this program and I immediately realized something else: leanup is also going to need to have many version branches and recompile itself for the target lean version</p>",
+        "id": 413221738,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705432196
+    },
+    {
+        "content": "<p>I'm thinking about stashing it inside the <code>.elan/toolchains/VERSION/leanup</code> directory</p>",
+        "id": 413221852,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705432232
+    },
+    {
+        "content": "<p>The reason is because the first thing it does is orchestrate a lake build of the project with additional data collection, which means it needs to use the lake API and it needs to work on the old version of lean</p>",
+        "id": 413222188,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705432388
+    },
+    {
+        "content": "<p>This is probably easy to figure out, but with only commit SHAs as keys and only a bot to update the index, how do we do fixup migrations? Maybe a separate temporary file that specifies the insertion that must be made to the index, then the bot figures out where to insert it in the index, inserts it into the index, and then deletes the temporary file?</p>",
+        "id": 413248989,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705443563
+    },
+    {
+        "content": "<p>Can't we just edit the migration file to do a fixup?</p>",
+        "id": 415936881,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705457780
+    },
+    {
+        "content": "<p>(that is, if we have files with SHAs as their names that describe past migrations, can't we just... edit those files?)</p>",
+        "id": 415936939,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705457822
+    },
+    {
+        "content": "<p>Here I’m using “fixup migration” to mean “we didn’t have any migration associated with a prior commit, but want to introduce one retroactively” (which maybe isn’t the best terminology)</p>",
+        "id": 415937118,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705457935
+    },
+    {
+        "content": "<p>I think my comment basically still applies; a new file can be created, and the bot can regenerate the index from scratch every time</p>",
+        "id": 415937200,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705457995
+    },
+    {
+        "content": "<p>Crawling a git history is far cheaper than building mathlib anyway</p>",
+        "id": 415937266,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705458012
+    },
+    {
+        "content": "<p>Though wait, is your proposal to have files which are named by the commit SHA as well, as opposed to an index pointing to arbitrarily-named files as in the original proposal?</p>",
+        "id": 415937382,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705458121
+    },
+    {
+        "content": "<p>Shas are probably bad names vs PR numbers, but I envisage each file containing a reference to the sha it migrates to</p>",
+        "id": 415937523,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705458205
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/413221342\">said</a>:</p>\n<blockquote>\n<p>Don’t we still wind up with [commit A] [leanup commit for A] [commit B] [leanup commit for B] like that?</p>\n</blockquote>\n<p>Is \"leanup commit\" \"add migration config\" or \"apply a the migration to the source\"?</p>",
+        "id": 415937680,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705458293
+    },
+    {
+        "content": "<p>By “leanup commit” I mean “commit where we instantiate placeholders for a migration’s own commit SHA (in the case where the migration is introduced in the same PR/squash-commit it refers to, which should be most migrations)” (is this what you mean by “add migration config”?)</p>",
+        "id": 415939455,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1705459346
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/415937523\">said</a>:</p>\n<blockquote>\n<p>Shas are probably bad names vs PR numbers, but I envisage each file containing a reference to the sha it migrates to</p>\n</blockquote>\n<p>IMO we shouldn't put the SHA in the individual migration file. I am imagining a migration file with a name like <code>v4.5.0-rc1/pr_1234.json</code> which has no SHA in it, and then the index file <code>all.json</code> contains a mapping like <code>[[\"1234abcd\", \"v4.5.0-rc1/pr_1234.json\"], ...]</code> and which is managed by the bot. To create a retrofit migration you edit the index file directly to add a past SHA, and to create a new migration you just add a file without adding it to the index, and the bot will ensure that all unindexed migration files are added to the mapping in the commit that added them.</p>",
+        "id": 415963940,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1705474654
+    },
+    {
+        "content": "<p>The advantage of my proposal is that the index file contains no new data and is strictly an optimization; and so could potentially be kept on azure/AWS rather than within the repo</p>",
+        "id": 415998008,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1705487912
+    },
+    {
+        "content": "<p>Was looking for automated migration proposals (after watching Lean Together) and found this.</p>\n<p>What I'm wondering is why we're building a new format and infrastructure for this?</p>\n<p>For example, Rust uses lint suggestions for its edition upgrades. And Kotlin lets you include the replacement code in its <code>@deprecated</code> annotation:<br>\n<a href=\"https://readyset.build/kotlin-deprecation-goodies-a35a397aa9b5\">https://readyset.build/kotlin-deprecation-goodies-a35a397aa9b5</a></p>\n<p>I know Lean has some really powerful code rewriting tools in its macros-by-example and simprocs. So it seems strange to me that we're not repurposing any of that.</p>",
+        "id": 418459430,
+        "sender_full_name": "Chris Wong",
+        "timestamp": 1706402908
+    },
+    {
+        "content": "<p>The problem with the fully-in-lean approaches is that they don't allow migration <em>across lean versions</em></p>",
+        "id": 418461779,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706405509
+    },
+    {
+        "content": "<p>So we have to transform the data into something durable across versions and do a little bit of work with old lean and a little bit of work with new lean and hopefully we can survive the trip</p>",
+        "id": 418461845,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706405559
+    },
+    {
+        "content": "<p>Rust and Kotlin solve this problem by <em>actually being backward compatible</em>. It would be nice if lean did this too but it seems like too much to ask in the near term</p>",
+        "id": 418461899,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706405616
+    },
+    {
+        "content": "<p>The deprecation mechanisms available in Rust and Kotlin work when the library changes but the compiler doesn't. But when coming back to an old project, Lean changes are approximately as likely to be causing migration pains as Mathlib changes, and furthermore even if we ignored the Lean changes it would not do to ignore the mathlib changes that happened on old versions of lean and are no longer applicable because we can't migrate the migrations (!)</p>",
+        "id": 418462325,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706406073
+    },
+    {
+        "content": "<p>If Lean were to guarantee that version <code>x+1</code> can still parse (not necessarily elaborate) code from version <code>x</code>, that would suffice, right? Then the syntax of version <code>x+1</code> would be a superset of the syntax of version <code>x</code> and so a migration could be given as a syntax-to-syntax translation (or a hint that something has to be done manually).</p>",
+        "id": 418494163,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1706440741
+    },
+    {
+        "content": "<p>syntax-to-syntax translations are heavily limited in accuracy though (c.f. mathport), I'd rather not be limited by that</p>",
+        "id": 418494205,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706440791
+    },
+    {
+        "content": "<p>Plus, I'm not sure we can extract anything like that promise in the first place</p>",
+        "id": 418494269,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706440821
+    },
+    {
+        "content": "<p>Also does it count if the syntax still parses but the syntax tree is different?</p>",
+        "id": 418494313,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706440874
+    },
+    {
+        "content": "<p>because in that case you would have to render and reparse the syntax in order to transform the tree to a new valid AST</p>",
+        "id": 418494334,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706440910
+    },
+    {
+        "content": "<p>I think the syntax tree doesn't have to be the same since the migration is defined in version <code>x + 1</code>. So suppose <code>simp (config := ...)</code> is renamed to <code>simp (options := ...)</code>. In Lean version <code>x+1</code>, <code>simp</code> allows both variants and a migration offers to rewrite <code>(config := ...)</code> to <code>(options := ....)</code>. Version <code>x+2</code> then drops <code>(config := ...)</code>.</p>",
+        "id": 418494755,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1706441300
+    },
+    {
+        "content": "<p>Let me think about how this would work for other common migrations...</p>",
+        "id": 418494765,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1706441312
+    },
+    {
+        "content": "<p>As I'm envisioning it, the migration itself operates on an elaborated AST thingy, i.e. text stuffed up with as much contextual data as possible because we don't expect it to re-elaborate without user assistance and we don't want to ask for that until after we're done applying all migrations</p>",
+        "id": 418494955,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706441491
+    },
+    {
+        "content": "<p>So it's not like we would run a single migration to edit some text, pause, then try to reparse the text on version <code>x+1</code> and hope that things still work</p>",
+        "id": 418495034,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706441535
+    },
+    {
+        "content": "<p>The scenario you described is nice for users who are manually bumping things, but I wouldn't make it a mandatory part of leanup operation, because historically most syntax changes have been of the more traumatic kind where you just change <code>simp (config := ...)</code> to <code>simp (options := ...)</code> in core and then just fix the world</p>",
+        "id": 418495210,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706441736
+    },
+    {
+        "content": "<p>And I would prefer leanup to be able to work on lean as it exists and not just on the lean we hope it to one day become</p>",
+        "id": 418495282,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706441786
+    },
+    {
+        "content": "<p>(because I would argue that it is the nature of <em>migration tools</em> that they have to deal with imperfection, otherwise there would be nothing to migrate)</p>",
+        "id": 418495315,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706441831
+    },
+    {
+        "content": "<p>Also, even in your example we still have to deal with the \"traumatic change\" of removing <code>(config := ...)</code> in version <code>x+2</code>, because the migration for <code>x+2</code> has to say what to do with code that still says <code>config :=</code> for some reason</p>",
+        "id": 418495457,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706441981
+    },
+    {
+        "content": "<p>I suppose that points for the need for \"pre-migrations\", which are migrations which run on the previous version and don't change semantics but remove syntax or theorem uses that are about to disappear and which we don't want to handle rewriting on the new version</p>",
+        "id": 418495589,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706442092
+    },
+    {
+        "content": "<p>that is, the rewrite for <code>simp (config := ...)</code> to <code>simp (options := ...)</code> would be a version <code>x+2</code> pre-migration, which runs on version <code>x+1</code> and hence is able to talk about both syntaxes at once</p>",
+        "id": 418495672,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706442146
+    },
+    {
+        "content": "<p>Indeed my design (well, sketch) relies on doing the migrations one by one and fixing up any errors as they come. This is less nice for big jumps (and it involves downloading some intermediate Lean versions, which is not ideal but perhaps not a deal breaker).  However, I'm somewhat optimistic that most small changes can be migrated automatically. And for bigger changes (e.g. a tactic was removed entirely with no one-to-one replacement), I'm not sure whether I want a migration tool to attempt a big jump. It seems easier, both on the tool and perhaps the user, to fix up any errors immediately rather than try to carry a broken state forward.</p>",
+        "id": 418496012,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1706442496
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/418495457\">said</a>:</p>\n<blockquote>\n<p>Also, even in your example we still have to deal with the \"traumatic change\" of removing <code>(config := ...)</code> in version <code>x+2</code>, because the migration for <code>x+2</code> has to say what to do with code that still says <code>config :=</code> for some reason</p>\n</blockquote>\n<p>This would mean that the user hasn't fully applied the migrations in version <code>x+1</code>. That's their problem imo. It's like ignoring a deprecation warning.</p>",
+        "id": 418496049,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1706442565
+    },
+    {
+        "content": "<p>I think it would be pretty prohibitive for mathlib, if there are 10 commits a day and you skip a month that means you have to recompile the project 300 times</p>",
+        "id": 418496126,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706442623
+    },
+    {
+        "content": "<p>It's true that if there are big changes you may want to stop and recalibrate more often (aka <code>leanup -i</code>), but I think support for big jumps where not much relevant to your project changes is also important</p>",
+        "id": 418496200,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706442714
+    },
+    {
+        "content": "<p>it's basically the same consideration as with interactive rebase</p>",
+        "id": 418496264,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706442742
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/418496126\">said</a>:</p>\n<blockquote>\n<p>I think it would be pretty prohibitive for mathlib, if there are 10 commits a day and you skip a month that means you have to recompile the project 300 times</p>\n</blockquote>\n<p>Fair, but are commit-to-commit migrations for Mathlib necessary? I would think most dependent projects want to jump between monthly releases at most. And the migrations could still be defined as the changes are made (I think?).</p>",
+        "id": 418496295,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1706442776
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"256311\">Jannis Limperg</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/418496049\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/418495457\">said</a>:</p>\n<blockquote>\n<p>Also, even in your example we still have to deal with the \"traumatic change\" of removing <code>(config := ...)</code> in version <code>x+2</code>, because the migration for <code>x+2</code> has to say what to do with code that still says <code>config :=</code> for some reason</p>\n</blockquote>\n<p>This would mean that the user hasn't fully applied the migrations in version <code>x+1</code>. That's their problem imo. It's like ignoring a deprecation warning.</p>\n</blockquote>\n<p>They might have <em>been</em> on version <code>x+1</code> to start with</p>",
+        "id": 418496316,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706442794
+    },
+    {
+        "content": "<p>plus, there's no guarantee <code>config :=</code> was even deprecated in <code>x+1</code></p>",
+        "id": 418496353,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706442832
+    },
+    {
+        "content": "<p>Okay, I assume that <code>config :=</code> would be deprecated if it's slated to disappear in the next version. So the user would get a warning.</p>",
+        "id": 418496438,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1706442907
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/418496200\">said</a>:</p>\n<blockquote>\n<p>It's true that if there are big changes you may want to stop and recalibrate more often (aka <code>leanup -i</code>), but I think support for big jumps where not much relevant to your project changes is also important</p>\n</blockquote>\n<p>Fair. If little of relevance changes, I would hope that the migrations are correspondingly automatic (like <code>rebase -i</code> auto-merging), but they may indeed take a long time.</p>",
+        "id": 418496517,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1706442977
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"256311\">Jannis Limperg</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/418496295\">said</a>:</p>\n<blockquote>\n<p>Fair, but are commit-to-commit migrations for Mathlib necessary? I would think most dependent projects want to jump between monthly releases at most. And the migrations could still be defined as the changes are made (I think?).</p>\n</blockquote>\n<p>I think we will want to start with monthly migrations, but ramp up to per-PR migrations once we have a good process in place, because that makes more sense for maintenance. Plus, more accurate migrations means that we can upgrade projects that are on arbitrary commits, and one important class of those is old mathlib PRs</p>",
+        "id": 418496526,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706442988
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"256311\">Jannis Limperg</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/418496517\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/418496200\">said</a>:</p>\n<blockquote>\n<p>It's true that if there are big changes you may want to stop and recalibrate more often (aka <code>leanup -i</code>), but I think support for big jumps where not much relevant to your project changes is also important</p>\n</blockquote>\n<p>Fair. If little of relevance changes, I would hope that the migrations are correspondingly automatic (like <code>rebase -i</code> auto-merging), but they may indeed take a long time.</p>\n</blockquote>\n<p>I think that re-elaborating frequently is not only very costly, it also significantly increases the probability of an inessential breakage that will break the flow</p>",
+        "id": 418496583,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706443049
+    },
+    {
+        "content": "<p>I see. If commit-to-commit migrations are the desired mode, I guess that kills the design.</p>",
+        "id": 418496777,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1706443227
+    },
+    {
+        "content": "<p>We can still glob up a sequence of commit-to-commit migrations and try to apply them as a block, but this is not necessarily correct if some theorem undergoes multiple renames in that period</p>",
+        "id": 418496831,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706443284
+    },
+    {
+        "content": "<p>basically, as long as all the diffs are commutative this is okay, but it's hard to predict how often that is really the case</p>",
+        "id": 418496843,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706443313
+    },
+    {
+        "content": "<p>with some kind of changes like add/rename/delete we can possibly calculate the composition correctly but migrations defined by code are not analyzable in this way</p>",
+        "id": 418496923,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706443374
+    },
+    {
+        "content": "<p>Another nifty property of migrations operating on an elab dump instead of lean text is that you don't have inter-file dependencies, it becomes a fully parallel problem</p>",
+        "id": 418497026,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1706443501
+    },
+    {
+        "content": "<p>Oh yes, that's actually very nice.</p>",
+        "id": 418503795,
+        "sender_full_name": "Jannis Limperg",
+        "timestamp": 1706449240
+    },
+    {
+        "content": "<p>We had quite a bit of discussion among mathlib maintainers about this topic and the <code>#align</code> statements. We need to see whether anyone wants to help here.</p>\n<p>The current situation is: </p>\n<ul>\n<li>The <code>#align</code> statements take up space, they do not look nice, and occur a maintenance cost.</li>\n<li>the <code>#align</code> statements are no longer useful with porting stuff from Lean 3, because we have not seen any port recently and porting now would be very difficult because so many things changed during the past year. I think I didn’t see anyone denying this.</li>\n<li>the <code>#align</code> statements are recording some potentially useful information. This information could be useful to help updating projects from an old Lean/Mathlib 4 to a newer one. </li>\n<li>But this information is currently not used.</li>\n<li>The issue of having easier migration tools is a really important one. There are more and more important Lean projects beyond Core/Batteries/Mathlib, in all directions we are interested in.</li>\n<li>There are ambitious plans discussed in this thread.</li>\n<li>But nobody is working on leanup currently. This seems unlikely to change in the near future.</li>\n<li>The recent improvements of the deprecation attributes are really nice but  they will never do everything leanup is meant to do.</li>\n<li>Recently we got a bot posting <a href=\"https://github.com/leanprover-community/mathlib4/pull/13706#issuecomment-2159397417\">some diff information</a> as comments to GitHub PRs. But this diff information is extracted by <a href=\"https://github.com/leanprover-community/mathlib4/blob/master/scripts/no_lost_declarations.sh\">a shell script</a> based on git logs and regexp heuristics. There is no Lean meta-programming involved here.</li>\n<li>Alex Best’s <a href=\"https://github.com/alexjbest/leaff\">leaff tool</a> is not super actively maintained but is actually very stable. It depends on almost nothing and the bump commits we see in git history of that project are almost only changing the <code>lean-toolchain</code> file.</li>\n</ul>\n<p>So the question is: can we get rid of <code>#align</code> without loosing information that could be useful in a future migration tool? </p>\n<p>It seems that the following could be a short term workflow:</p>\n<ul>\n<li>whenever a PR is opened on GitHub, a bot runs a Lean meta-program that computes which declarations were renamed. Maybe this uses leaff, maybe not. The goal here is to compare with the <code>#align</code> baseline, so it should be more reliable that the shell script in the sense that it only produces valid fully qualified Lean names, but not necessarily much fancier (although it seems that also getting the Lean 4 name before renaming would be an easy win compared to <code>#align</code>).  Then the bot creates some json file recording this information, and pushes a commit putting this file in some folder of the mathlib repository that is not the main <code>Mathlib</code> folder. </li>\n<li>during the PR reviewing process, we can ask the bot to redo its computation and update this file. Of course human beings can also update the file by hand, but hopefully this should not be needed.</li>\n<li>when bors is ready to merge a PR, it checks that the renaming information is still reliable. If yes then it puts the current date in the json file and merge. If not then it calls the diff bot again. If the diff bot fails then bors refuses to merge the PR and human intervention is required.</li>\n<li>the result is that Mathlib gains a <code>migration</code> folder with one json file per PR. This information is not used for anything yet, but is strictly better than what <code>#align</code> records, removes the ugly <code>#align</code> lines from the main files and, hopefully, does that with less overhead that the current <code>#align</code> maintenance duties.</li>\n</ul>\n<p>An important thing to discuss is how this compares to strictly enforcing that every rename comes with a deprecation alias (say the diff bot would simply complain about missing deprecation aliases and not create the json file). I think the main immediate difference is that deprecations are meant to be transient whether the json files would remain in the repo forever. But this is probably worth the trouble only if we think that those migration files will one day become something like the leanup dream.</p>\n<p>Now the big question: is anyone willing to work on implementing this? I think the required meta-programming is very light, so this is mostly a job for CI/GitHub bots enthusiasts. If nobody volunteers then we will probably simply remove the align statements in the near future.</p>",
+        "id": 446244359,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1719043793
+    },
+    {
+        "content": "<p>Please can we not introduce automation that pushes commits to PRs without very strong reasons for doing so? This introduces a whole new layer of complication and fragility to our system.</p>",
+        "id": 446245116,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1719044392
+    },
+    {
+        "content": "<p>If information beyond deprecation attributes would be useful, surely we can track it without committing it!</p>",
+        "id": 446245214,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1719044458
+    },
+    {
+        "content": "<p>Alternative designs are welcome! I was only trying to find a compromise here. I am about to board a transatlantic flight so I won’t be able to participate in this discussion for some time.</p>",
+        "id": 446245579,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1719044801
+    },
+    {
+        "content": "<p>See <a href=\"https://github.com/leanprover-community/mathlib4/pull/12410\">#12410</a> for an indication (by now about two months old, but if desired, I can merge master and bench again) of what the performance impact on building Mathlib is.</p>",
+        "id": 446246543,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1719045611
+    },
+    {
+        "content": "<p>I'm not sure I quite follow the relevance of #align in this discussion - is it because we could theoretically build a tool that uses changes from <code>#align foo bar</code> to <code>#align foo baz</code> as evidence of a rename bar -&gt; baz?</p>",
+        "id": 446247160,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1719046180
+    },
+    {
+        "content": "<p>The shell script that <code>move-decls</code> uses and the one that the <code>Mathlib reports</code> uses can be combined easily to give a complete diff of  the fully-qualified names between any two commits that have a working cache.</p>\n<p>Trying to get also the signatures of the declarations into the mix is possible, but would require more work.</p>",
+        "id": 446247475,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1719046483
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Kim Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/446245116\">said</a>:</p>\n<blockquote>\n<p>Please can we not introduce automation that pushes commits to PRs without very strong reasons for doing so? This introduces a whole new layer of complication and fragility to our system.</p>\n</blockquote>\n<p>I agree that this usually makes a mess of CI; perhaps the json could go in the PR description above the fold, and CI could check it is there (edit: having it in the repo makes it possible to retrospectively fix past migrations, so perhaps that is better after all).</p>",
+        "id": 446255371,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1719051295
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110031\">Patrick Massot</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/446244359\">said</a>:</p>\n<blockquote>\n<p>An important thing to discuss is how this compares to strictly enforcing that every rename comes with a deprecation alias.</p>\n</blockquote>\n<p>Occasionally we end up with a rename (foo, bar) -&gt; (bar, foo), or (foo, bar) -&gt; (bar, baz). In these cases <code>@[deprecated]</code> can't help us, but <code>#align</code> or a suitable replacement can</p>",
+        "id": 446255787,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1719051476
+    },
+    {
+        "content": "<p>As a very low-tech suggestion, one could also extract all <code>#align</code>s into one file (e.g. <code>Mathlib.Mathport.Aligns</code>) and let them rot there: If somebody tried to use mathport again they might be essential, but they wouldn't bother anybody elsewhere in mathlib.</p>\n<p>It sounds a bit like the suggestions to help migrating across recent mathlib versions and renames therein isn't directly linked to the <code>#align</code> statements existing today.</p>",
+        "id": 446260050,
+        "sender_full_name": "Jon Eugster",
+        "timestamp": 1719053219
+    },
+    {
+        "content": "<p>Is the idea that there should be a persistent naming across commits, so that you can track the name of each declaration?</p>\n<p>The <code>#align</code>s were taking over partly this task between latest lean3 and latest lean4, but now the idea is that these should track each declaration and its renames across every commit?</p>\n<p>This would certainly be useful for <code>refactor</code> to then automate bumps.</p>",
+        "id": 446261691,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1719054142
+    },
+    {
+        "content": "<p>As for automating this, if a commit is just a rename, with no change in the type signature, then this is probably straightforward.  If the signature changes, though, then I can see how an automated process can be fooled easily.</p>",
+        "id": 446261810,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1719054250
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/stream/287929-mathlib4/topic/leanup.20design.20discussion/near/446255371\">said</a>:</p>\n<blockquote>\n<p>perhaps the json could go in the PR description above the fold, and CI could check it is there (edit: having it in the repo makes it possible to retrospectively fix past migrations, so perhaps that is better after all).</p>\n</blockquote>\n<p>Would be nice if bors could pick it from the PR description into a json in the repo</p>",
+        "id": 446264041,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1719055807
+    },
+    {
+        "content": "<p>I have implemented in Lean a version of the <code>move-decls</code>: <a href=\"https://github.com/leanprover-community/mathlib4/pull/14046\">#14046</a>.</p>\n<p>The PR has a couple of problems, though.</p>\n<ol>\n<li>I would like to separate the test to a separate workflow that only runs after the cache has been built and uploaded.  Right now it is an extra step of CI, right after the cache is uploaded.  This seems to be impossible without some administrator changing some branch protection rule or the script already being on master, i.e. merging \"blindly\" a PR, hoping that CI would \"just work\".</li>\n<li>For the simple reason of obtaining the PR number from GitHub actions, I added that the Mathlib CI should be run on <code>pull_request</code>s as well as <code>push</code>.  The effect of this is that CI shows basically every step twice (although I am not sure whether it really runs them all twice).</li>\n<li>The step is not especially fast, as the relevant CI step takes approximately 2mins (plus an overhead of about 20sec to checkout the full Mathlib repository, instead of just the head commit of the PR).</li>\n</ol>\n<p>Making CI run on both <code>pull_request</code>s and <code>push</code>es also has the effect that the PR fails CI, even though all the steps appear to be successful.  I suspect that these are some later steps that cancel some \"repeated\" version of themselves that had started earlier.</p>\n<p>In conclusion, the PR shows</p>\n<ul>\n<li>the \"old\" declaration diff, that picks up the new lean command, even though it is in <code>scripts</code> and</li>\n<li>the \"new\" declaration diff, that picks up on the changed namespace for one of the declarations.</li>\n</ul>\n<p>Ironically, the declaration that changed names is not the \"obvious\" one, as that one is marked <code>unsafe</code> and is ignored by the diff.  You can also see what the diff of <em>all</em> declarations is by looking at the history of the added comment: the very first run was a full diff, not just the \"reasonable\" declarations.</p>",
+        "id": 446381836,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1719126991
+    },
+    {
+        "content": "<p>Re: 2, this is running everything twice, so is a no-go.</p>",
+        "id": 446386037,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1719129203
+    },
+    {
+        "content": "<p>Ok, I think that if I managed to make the step a separate one, then I could make that step only run on <code>pull_request</code>s and would fix the rest.</p>",
+        "id": 446386169,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1719129260
+    },
+    {
+        "content": "<p>However, I think that the only way for this to be testable is to actually merge the extra, separate CI workflow without knowing if it will really work.</p>",
+        "id": 446386296,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1719129317
+    },
+    {
+        "content": "<p>(I think, information about this is very hard to obtain.)</p>",
+        "id": 446386327,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1719129330
+    },
+    {
+        "content": "<p>I tried lots of variations of the GitHub actions that supposedly wait on other actions to finish and none of them actually worked.  I also read that they work if the \"wait-for-the-action-to-finish\" logic is already on master.</p>",
+        "id": 446386580,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1719129437
+    },
+    {
+        "content": "<p>Alternatively, there seems to be a workaround, but it needs the main CI step on mathlib to be named and (I think) that it currently is not.</p>",
+        "id": 446386637,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1719129467
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"321459\">@Damiano Testa</span> I think the declaration diff script is getting something wrong. For example, <a href=\"https://github.com/leanprover-community/mathlib4/pull/14544#issuecomment-2215486578\">here</a> it says no declarations were harmed, but that's not true, the namespace changed from <code>StarAlgHom</code> to <code>NonUnitalStarAlgHom</code>.</p>",
+        "id": 450229619,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1720544572
+    },
+    {
+        "content": "<p>This <code>decl_diff</code> is text-based, so it only notices if the very first layer of surface syntax changes.  In particular, it is not aware of namespaces.  So, what you can deduce is that very likely, you did not loose lemmas, but they may have changed by something \"invisible\".</p>",
+        "id": 450230110,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1720544685
+    },
+    {
+        "content": "<p>The script that computes the actual diff of the declaration names, using typing information is stuck since I am not yet sure of how to avoid duplicating running CI to get the relevant information...</p>",
+        "id": 450230328,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1720544739
+    },
+    {
+        "content": "<p>I suppose you could just keep track of <code>namespace Foo</code> and <code>end Foo</code>, but that means you need to track state, even if only per file.</p>",
+        "id": 450233841,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1720545514
+    },
+    {
+        "content": "<p>Right, it is of course possible to extend it, but the idea of this script was to be a light and quick patch before leaff...</p>",
+        "id": 450235743,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1720545972
+    },
+    {
+        "content": "<p>Also, tracking <code>namespace</code> means also being aware of <code>_root_</code> and slowly you are trying to become a parser for lean syntax.</p>",
+        "id": 450235999,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1720546028
+    },
+    {
+        "content": "<p>Yeah, I think putting engineering effort in something lean-based would be better. I'm not sure what - if anything - is stopping us from building something leaff-based</p>",
+        "id": 450236314,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1720546102
+    },
+    {
+        "content": "<p>Besides, despite the simple-mindedness of the script, I am fairly surprised by how well it seems to perform.  You need to know some quirks (like the namespace issue that you mention), but, taking that into account, the script is essentially a regex parsing of <code>git diff</code>.</p>",
+        "id": 450237235,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1720546374
+    },
+    {
+        "content": "<p>yes, its simplicity and immediacy is nice, despite the drawbacks. I just didn't realize its scope and initially thought this (ignoring namespaces) was a bug.</p>",
+        "id": 450257267,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1720551618
+    }
+]
