@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>I am learning meta-programming in Lean, and found three ways to assign metavariables, and wonder which one we should use in what scenario?</p>\n<ul>\n<li><code>MVarId.assign</code> is taught in the <a href=\"https://leanprover-community.github.io/lean4-metaprogramming-book/main/04_metam.html\">metaprogramming book</a>, however in the source code it comes with the scary comment \"This is a low-level API, and it is safer to use <code>isDefEq (mkMVar mvarId) x</code>.\"</li>\n<li><code>MVarId.checkedAssign</code> seems safer, but the comment above it makes it seem less safe than <code>isDefEq</code> (\"This method uses the same assignment validation performed by <code>isDefEq</code>, but it does not check whether the types match.\")</li>\n<li><code>isDefEq</code> works and seems to be the safest, but is not great for code readability</li>\n</ul>\n<p>I eventually wrapped <code>isDefEq</code> in the following helper function</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">MVarId</span><span class=\"bp\">.</span><span class=\"n\">safeAssign</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">mvarId</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">MVarId</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">val</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Expr</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">MetaM</span><span class=\"w\"> </span><span class=\"n\">Unit</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"n\">guard</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">isDefEq</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">mkMVar</span><span class=\"w\"> </span><span class=\"n\">mvarId</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"n\">val</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>Any opinions on what is the correct way of assigning metavariables in Lean? Thanks!</p>",
+        "id": 532928429,
+        "sender_full_name": "Théophile",
+        "timestamp": 1754403853
+    },
+    {
+        "content": "<p>This unfortunately won't assign synthetic opaque metavariables</p>",
+        "id": 532935232,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754406055
+    },
+    {
+        "content": "<p>also I think <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Expr.mvar#doc\">docs#Lean.Expr.mvar</a> is preferred over <code>mkMVar</code></p>",
+        "id": 532935368,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754406080
+    },
+    {
+        "content": "<p>although that's true (according to docstring), i believe this is not reflected everywhere in the actual use</p>",
+        "id": 532935580,
+        "sender_full_name": "Edward van de Meent",
+        "timestamp": 1754406137
+    },
+    {
+        "content": "<p>that's because no one has taken on the task of replacing it everywhere yet</p>",
+        "id": 532935646,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754406157
+    },
+    {
+        "content": "<blockquote>\n<p>This unfortunately won't assign synthetic opaque metavariables</p>\n</blockquote>\n<p>Ah indeed. I guess in that case it is recommended to use <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.MVarId.checkedAssign#doc\">docs#Lean.MVarId.checkedAssign</a> ?<br>\n(I yet have to figure out where, when and why synthetic / syntheticopaque metavariables are used)</p>",
+        "id": 532938491,
+        "sender_full_name": "Théophile",
+        "timestamp": 1754407110
+    },
+    {
+        "content": "<p>synthetic opaque metavariables are used in tactics</p>",
+        "id": 532941524,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754408087
+    },
+    {
+        "content": "<p>The MVarId.assign docstring is a little misleading, since proof metavariables aren't always assigned by it (issue <a href=\"https://github.com/leanprover/lean4/pull/2054\">lean4#2054</a>)</p>\n<p>Yes, Lean.MVarId.checkedAssign is a good alternative. You should be sure the types are defeq first (either by construction or by using isDefEq). The main bit of safety it provides is that it ensures you're not adding any cycles in the metavariable assignments. MVarId.assign is very low-level and does no checks whatsoever.</p>\n<p>Another function is Lean.MVarId.assignIfDefEq in Batteries, which unifies types before assigning with isDefEq, but it doesn't use Lean.MVarId.checkedAssign. I believe this function pre-dates checkedAssign.</p>",
+        "id": 532942440,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754408429
+    },
+    {
+        "content": "<p>Synthetic opaque metavariables are a concern when you write tactics. Roughly speaking, every tactic has two phases:</p>\n<ol>\n<li>Term elaboration</li>\n<li>Metaprogram evaluation</li>\n</ol>\n<p>The first phase uses TermElabM to elaborate any terms that appear in the tactic syntax (like <code>f x</code> in <code>exact f x</code>). When going from phase 1 to phase 2, you need to <em>complete</em> the elaboration, either using a checkpoint like <code>Term.synthesizeSyntheticMVarsUsingDefaults</code> or by wrapping the elaboration in a combinator like <code>withSynthesize</code>. There are functions like <code>Tactic.elabTerm</code> that do all this elaboration completion logic for you.</p>\n<p>Once elaboration is \"complete\", all the \"synthetic\" metavariables should be solved for (e.g. typeclass instances, postponed elaborators, coercions, embedded tactics, etc.) All that should be left are \"synthetic opaque metavariables\", representing new goals. The syntax <code>?_</code> and <code>?name</code> introduce synthetic opaque metavariables. \"Synthetic\" means that someone is responsible for assigning them eventually, and \"opaque\" means that the system normally treats them as unknown constants during isDefEq — after all, they are not the system's responsibility, they are goals for the user. (There are also some complications the system implements to ensure users never see their goals change (otherwise <code>revert</code> could have some action-at-a-distance!), namely so-called delayed assignments.)</p>\n<p>In phase 2, the tactic acts on behalf of the user to construct terms, and it should be able to assign synthetic opaque metavariables, since that's the same as assigning users' goals. Using <code>MVarId.assign</code>/<code>MVarId.checkedAssign</code>/<code>MVarId.assignIfDefEq</code> are direct ways to assign synthetic opaque metavariables. Another possibility is using the <code>withAssignableSyntheticOpaque</code> combinator, which enables <code>isDefEq</code> to assign such metavariables. This is used for example in <code>refine</code>, so that metavariables that appear in the goal can be assigned.</p>\n<p>Hopefully that helps give a general understanding of metavariable assignment.</p>\n<p>Regarding <a href=\"https://github.com/leanprover/lean4/pull/2054\">lean4#2054</a>, it's worth knowing that a reason isDefEq can succeed without assigning metavariables is proof irrelevance. Given proofs <code>h</code> and <code>h'</code> of the same proposition <code>p</code>, <code>isDefEq h h'</code> can return <code>true</code> immediately without looking at <code>h</code> or <code>h'</code> any further. In practice, it does tend to assign metavariables, but not always, so it can't be relied on as an assignment mechanism for tactics (which predominantly operate on proof metavariables!)</p>",
+        "id": 532945534,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754409485
+    },
+    {
+        "content": "<p>Thank you so much for the detailed answer <span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> ! I now understand better thanks to your explanations (and the issue you pointed to), and I will change how I assign meta-variables (to avoid the footgun you mentioned). As I start to understand things I have even more questions, but I think I will read through the extensive comments in MetavarContext.lean first, it might provide some answers :)</p>",
+        "id": 532993879,
+        "sender_full_name": "Théophile",
+        "timestamp": 1754430236
+    }
+]

@@ -1,0 +1,740 @@
+[
+    {
+        "content": "<p>With the release of <a href=\"#narrow/channel/113486-announce/topic/v4.2E22.2E0-rc2/with/526509605\"><code>v4.22.0-rc2</code></a>, the new <code>grind</code> tactic is available to users. We're really excited about <code>grind</code>, and hope that it will open up many new possibilities in proof automation. It's really powerful, and it's extensible. <strong>But</strong> it's a new release, and getting the full power of <code>grind</code> requires considerable investment from the authors of libraries in annotating their theorems, and this post is mostly intended to set reasonable expectations about what to expect in Mathlib, now and in the future.</p>",
+        "id": 526510080,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751333583
+    },
+    {
+        "content": "<h2>What is grind?</h2>\n<p>We have <a href=\"https://lean-lang.org/doc/reference/latest/The--grind--tactic/#grind\">a whole chapter of the Lean reference manual on <code>grind</code></a>! You really should read that. :-) I'm only going to give a very brief overview here.</p>\n<p>You can think of <code>grind</code> as a Lean-native SMT solver. This means that:</p>\n<ul>\n<li>We maintain a \"whiteboard\" of \"asserted facts\".</li>\n<li>We maintain a pool of terms arranged into equivalence classes</li>\n<li>Whenever <code>grind</code> proves two terms are equal, it merges the corresponding equivalence classes</li>\n<li><code>grind</code> understands congruence, so if it learns <code>x = y</code>, it knows <code>f x = f y</code> for any <code>f</code>.</li>\n<li>When <code>True</code> and <code>False</code> end up in the same equivalence class, we're done</li>\n<li>There's a mechanism to register \"patterns\" with <code>grind</code>, so that whenever <code>grind</code> sees a term matching one of the patterns, it adds the registered theorem to the whiteboard (and, if this is a quantified equality, instantiates this with any terms it's seen, to combine more equivalence classes).</li>\n<li><code>grind</code> will perform case splits conservatively</li>\n<li>There is an extensible mechanism for \"solvers\", which are sent asserted facts of particular kinds (e.g. linear inequalities over the integers), and can use arbitrary decision procedures to either derive a contradiction or to return new facts to the \"whiteboard\".</li>\n<li>Two prominent examples of solvers are <code>cutsat</code>, which is a decision procedure for linear integer arithmetic (i.e. replacing <code>omega</code>), and a Grobner basis module (eventually these should be able to replace many Mathlib tactics, including <code>ring</code>, <code>linarith</code>, <code>polyrith</code> and <code>linear_combination</code>).</li>\n<li>When <code>grind</code> fails, it gives extensive diagnostics about the equivalence classes it found. Many of the solver modules are also “model producing”, and on failure will display the counterexample they’ve found.</li>\n</ul>\n<p>Importantly <code>grind</code> is Lean-native (it understands dependent types and typeclass instances!) and is proof producing.</p>",
+        "id": 526510092,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751333592
+    },
+    {
+        "content": "<h2>An example:</h2>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span>\n\n<span class=\"kn\">open</span><span class=\"w\"> </span><span class=\"n\">Real</span>\n\n<span class=\"c1\">-- We tell `grind` that whenever it sees `cos x` or `sin x`,</span>\n<span class=\"c1\">-- it should add `(cos x)^2 + (sin x)^2 = 1` to the whiteboard.</span>\n<span class=\"n\">grind_pattern</span><span class=\"w\"> </span><span class=\"n\">cos_sq_add_sin_sq</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">cos</span><span class=\"w\"> </span><span class=\"n\">x</span>\n<span class=\"n\">grind_pattern</span><span class=\"w\"> </span><span class=\"n\">cos_sq_add_sin_sq</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">sin</span><span class=\"w\"> </span><span class=\"n\">x</span>\n\n<span class=\"c1\">-- Here `grind` notices that `(cos x)^2 + (sin x)^2 = 1`,</span>\n<span class=\"c1\">-- sends this to the Grobner basis module,</span>\n<span class=\"c1\">-- and we can prove equalities modulo that relation!</span>\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">cos</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">sin</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"o\">)</span><span class=\"bp\">^</span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">cos</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">sin</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">grind</span>\n\n<span class=\"c1\">-- `grind` notices that the two arguments of `f` are equal,</span>\n<span class=\"c1\">-- and hence the function applications are too.</span>\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℝ</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">ℕ</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">((</span><span class=\"n\">cos</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">sin</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"o\">)</span><span class=\"bp\">^</span><span class=\"mi\">2</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">cos</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">sin</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">grind</span>\n\n<span class=\"c1\">-- After that, we can use basic modularity conditions:</span>\n<span class=\"c1\">-- this reduces to `4 * x ≠ 2 + x` for some `x : ℕ`</span>\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℝ</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">ℕ</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">4</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">((</span><span class=\"n\">cos</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">sin</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"o\">)</span><span class=\"bp\">^</span><span class=\"mi\">2</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">≠</span><span class=\"w\"> </span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">cos</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">sin</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">grind</span>\n\n<span class=\"c1\">-- A bit of case splitting is also fine.</span>\n<span class=\"c1\">-- If `max = 3`, then `f _ = 0`, and we're done.</span>\n<span class=\"c1\">-- Otherwise, the previous argument applies.</span>\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℝ</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">ℕ</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n<span class=\"w\">    </span><span class=\"n\">max</span><span class=\"w\"> </span><span class=\"mi\">3</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"mi\">4</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">((</span><span class=\"n\">cos</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">sin</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"o\">)</span><span class=\"bp\">^</span><span class=\"mi\">2</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"bp\">≠</span><span class=\"w\"> </span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">cos</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">sin</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">grind</span>\n</code></pre></div>",
+        "id": 526510117,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751333609
+    },
+    {
+        "content": "<h2>What <code>grind</code> <strong>is not</strong></h2>\n<ul>\n<li><code>grind</code> is not intended for large SAT problems! (It can do small problems, but is not optimised for problems with many case splits.)</li>\n<li><code>grind</code> is not black box automation: to get the best use out of <code>grind</code>, library authors need to annotate theorems using <code>grind_pattern</code> or the <code>@[grind]</code> attribute, so that <code>grind</code> can instantiate facts about the definitions. More about this later!</li>\n<li>We've made considerable effort to annotate the standard library, but there are going to be holes and mistakes in these annotations, so please be skeptical, and suggest corrections/additions.</li>\n<li><code>grind</code> does not call <code>simp</code>! If you want <code>grind</code> to know about a <code>simp</code> lemma, it needs to be separately annotated with <code>@[grind]</code>.</li>\n<li><code>grind</code> does not instantiate universal quantifiers! Just because you have <code>∀ n, P n</code> in the context, and you know that <code>37</code> is interesting, does not mean that <code>grind</code> will conclude <code>P 37</code>. (The important exception here is that if you have <code>∀ x, f x = g x</code>, then we add a local ematching pattern for <code>f ?_</code>, and this triggers on all terms <code>f y</code>, coalescing their equivalence classes with <code>g y</code>.) We're thinking about heuristics to allow a more aggressive <code>grind</code> mode to do this, but we're starting with a more conservative approach.</li>\n<li><code>grind</code> is not (yet) a replacement for the algebra tactics in Mathlib. Currently, <code>grind</code> has a lot of overlapping functionality with <code>omega</code>, <code>ring</code>, <code>linarith</code>, and <code>field_simp</code>, but in each case today you'll be able to find problems that these tactics can solve but <code>grind</code> can't. We're working hard on this, but there's no need to tell us yet about failures you find here.</li>\n<li><code>grind</code> does not (yet) expose its internals as standalone tactics --- e.g. there's no access to the Grobner module except by calling <code>grind</code>. This is intentional, and we'll be revisiting this in the future as we identify the right balance between important use cases and maintaining <code>grind</code>.</li>\n</ul>",
+        "id": 526510136,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751333615
+    },
+    {
+        "content": "<h2>Tell me more!</h2>\n<p>Seriously, <a href=\"https://lean-lang.org/doc/reference/latest/The--grind--tactic/#grind\">read the chapter</a> in the reference manual cover to cover, and play with the examples. :-)</p>",
+        "id": 526510143,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751333620
+    },
+    {
+        "content": "<h2>How can I get started?</h2>\n<p>We're encouraging users for now to use <code>grind</code> mostly in new developments. We do think that eventually we can start using <code>grind</code> all throughout Mathlib, but we'd suggest some patience and caution here.</p>\n<p>A good place to start is by identifying proofs you've already written that mostly use the tactics <code>split</code>, <code>rw</code>/<code>simp only</code>, and finishing tactics like <code>ring</code> / <code>omega</code> / <code>linarith</code>. Start by trying to replace the \"leaves\" of your proof by <code>grind</code>. When you're replacing <code>rw [X, Y, Z]</code>, replace this by <code>grind [X, Y, Z]</code>, removing anything <code>grind</code> complains about. (Note you never need to tell <code>grind</code> about local hypotheses; it freely uses these.) Move up the \"tree\" of the proof, successively replacing <code>some_tactic; grind</code> with just <code>grind</code>, and see where you get stuck!</p>\n<p>If you've found a proof you like that looks like <code>grind [A, B]</code>, the next thing to consider is whether to add <code>@[grind]</code> annotations to the theorems <code>A</code> and <code>B</code>. Do consider using <code>@[local grind]</code> for encapsulation, so the theorems are only instantiated in the current file/section.</p>\n<p>You'll need to read the reference manual to understand the details of how <code>@[grind]</code> works by guessing the correct pattern to use for instantiation. I would recommend that as you're learning, whenever you put <code>@[grind]</code> on a theorem, you write <code>@[grind?]</code> to see the pattern that <code>grind</code> chose, and switch to one of the variants <code>@[grind =]</code>, <code>@[grind →]</code> or <code>@[grind ←]</code> if you don't like the pattern, or write your own <code>grind_pattern</code> directive.</p>\n<p>Once you've added the grind annotations, you can replace your proof <code>grind [A, B]</code> by just <code>grind</code>. (And perhaps consider if there is an auto-param <code> := by grind</code> that you can install so you don't even need to write that!)</p>\n<p>I can't emphasise enough that when trying to get <code>grind</code> to work in a new domain, <strong>it is essential to read the failure diagnostics</strong>. Often, one can look at the model produced by <code>cutsat</code> or <code>linarith</code> (or subsequent model builders we add!), and see something \"wrong\", and from this guess the additional facts you need to tell <code>grind</code>. Otherwise, one next looks at the equivalence classes. Unfortunately this can sometimes be quite large (we're thinking about tooling!). You're looking for terms that you know should be equal, but have not been identified.</p>\n<p>Finally, the diagnostics are very useful in diagnosing situations where you've been over-eager in adding <code>grind</code> annotations (it's easy to do...) The diagnostics will tell you which theorems have been instantiated, and for each case split, which theorem triggered the case split. It's worth looking at these to be sure you haven't added something that is instantiating too often, or causing too many case splits. You can see the diagnostic output for successful grind runs using <code>set_option diagnostics true</code>.</p>",
+        "id": 526510167,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751333630
+    },
+    {
+        "content": "<h2>Is it fast?</h2>\n<p>We think so. :-) <code>grind</code> is designed to be quite efficient, both in its internals and in the proof terms it produces. But it's an infinitely extensible tool, so of course there will be problems on which it will run forever. We're not interested for now in bug reports of the form \"<code>grind</code> fails on my large SAT problem\", or \"<code>grind</code> fails on my large Grobner basis problem\". If <code>grind</code> gets slow, read the diagnostics! We're also aware that our choice to not immediately provide access to the internal components comes at a time cost. While <code>grind</code>s \"cutsat\" algorithm is often faster than <code>omega</code>, very often the \"waking up <code>grind</code>\" cost means that <code>grind</code> is still slower than <code>omega</code>. We <em>may</em> provide some knobs to turn to run <code>grind</code> in more limited modes in future. <strong>However</strong>, if the time cost is small (e.g. less than 2x), we would strongly encourage accepting some slight slow-downs in exchange for the power and uniformity of <code>grind</code>, and not worry about shaving off milliseconds by using a more specialised but less composable tactic.</p>",
+        "id": 526510169,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751333632
+    },
+    {
+        "content": "<p>I tried <code>grind</code> on version 4.18.0-rc1, and it solved a goal (actually four very similar goals in parallel) that <code>aesop</code>, <code>simp_all</code>, and other automation I tried all couldn't figure out.</p>",
+        "id": 526510578,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1751333924
+    },
+    {
+        "content": "<p>Do you think it's still too early to start making PRs for <code>grind</code> tags in mathlib?</p>",
+        "id": 526511420,
+        "sender_full_name": "Frédéric Dupuis",
+        "timestamp": 1751334554
+    },
+    {
+        "content": "<p>no I think now is the time</p>",
+        "id": 526512227,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751335142
+    },
+    {
+        "content": "<p>std had a big head start already, so this month is when we should get mathlib's annotations in before the stable</p>",
+        "id": 526512277,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751335183
+    },
+    {
+        "content": "<p>Let's at very least be cautious merging such PRs, and make sure they are reviewed by someone with experience adding <code>@[grind]</code> annotations. Hopefully the pool of such people will grow rapidly, particularly as I'm going to be completely offline for 2 weeks starting Saturday. :-)</p>",
+        "id": 526512352,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751335229
+    },
+    {
+        "content": "<p>yeah, I'm not yet sure how to think about grind annotations and the performance implications</p>",
+        "id": 526512434,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751335276
+    },
+    {
+        "content": "<p>Please make sure to read carefully the section on how the multi-pattern selection heuristics work at <a href=\"https://lean-lang.org/doc/reference/latest/The--grind--tactic/E___matching/#The-Lean-Language-Reference--The--grind--tactic--E___matching\">https://lean-lang.org/doc/reference/latest/The--grind--tactic/E___matching/#The-Lean-Language-Reference--The--grind--tactic--E___matching</a>.</p>",
+        "id": 526512450,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751335292
+    },
+    {
+        "content": "<p>Maybe one way to say it is: please don't PR <code>@[grind]</code> annotations unless you've read and understood that! (Suggestions for improving and extending the exposition there are also very welcome.)</p>",
+        "id": 526512488,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751335329
+    },
+    {
+        "content": "<p>there was an example in the chapter of having <code>(sin x)^2 + (cos x)^2 = 1</code> be triggered on <code>sin x</code>, but is that a good global grind lemma? Would it be good if it were a multi-pattern?</p>",
+        "id": 526512505,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751335342
+    },
+    {
+        "content": "<p>Exactly --- we need to work out if this is sane in Mathlib as a global attribute on <em>either</em> <code>sin</code> or <code>cos</code>, as a multi-pattern triggered by both, or whether these need to be scoped.</p>",
+        "id": 526512546,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751335387
+    },
+    {
+        "content": "<p>We presumably at least want to avoid infinite loops of instantiation, just like we want to avoid looping simp lemmas</p>",
+        "id": 526512556,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751335395
+    },
+    {
+        "content": "<p>(Oh, actually, I'm not sure that <code>grind_pattern</code> can be scoped... The attributes can be, but I'd have to look to see how <code>grind_pattern</code> works.)</p>",
+        "id": 526512589,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751335425
+    },
+    {
+        "content": "<p>I was also thinking about cases where you want to use <code>grind_pattern</code> in an individual grind call, does that work?</p>",
+        "id": 526512623,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751335455
+    },
+    {
+        "content": "<p>So far we haven't encountered any problems re: infinite instantiation loops. Maybe we will, but <code>grind</code> seems to be clever enough for now.</p>",
+        "id": 526512627,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751335458
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526512505\">said</a>:</p>\n<blockquote>\n<p>there was an example in the chapter of having <code>(sin x)^2 + (cos x)^2 = 1</code> be triggered on <code>sin x</code>, but is that a good global grind lemma? Would it be good if it were a multi-pattern?</p>\n</blockquote>\n<p>rules like this seem like they could easily get you into trouble if you don't have some clear global principle behind it</p>",
+        "id": 526512665,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751335507
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526512623\">said</a>:</p>\n<blockquote>\n<p>I was also thinking about cases where you want to use <code>grind_pattern</code> in an individual grind call, does that work?</p>\n</blockquote>\n<p>Yes, I think we need a mechanism for <code>local grind_pattern</code> too, which is, I think, also not available yet. There's no way to specify custom patterns in the <code>grind [...]</code> argument list.</p>",
+        "id": 526512668,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751335509
+    },
+    {
+        "content": "<p>does <code>grind_pattern</code> require the lemma to already be <code>@[grind]</code>?</p>",
+        "id": 526512800,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751335601
+    },
+    {
+        "content": "<p>No, it's an alternative.</p>",
+        "id": 526512816,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751335612
+    },
+    {
+        "content": "<p><code>@[grind]</code> and all its variants are just wrappers around <code>grind_pattern</code>.</p>",
+        "id": 526512837,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751335627
+    },
+    {
+        "content": "<p>(Well, a some variants like <code>@[grind cases]</code>, <code>@[grind ext]</code>, and <code>@[grind ←=]</code> are doing more complicated things.)</p>",
+        "id": 526512878,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751335661
+    },
+    {
+        "content": "<p>or <code>grind_pattern?</code> I assume</p>",
+        "id": 526512882,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751335663
+    },
+    {
+        "content": "<p>There is <code>@[grind?]</code>, but no <code>grind_pattern?</code>. I'm not sure what that would do; it should be faithfully repeating whatever you write after <code>grind_pattern =&gt; ...</code></p>",
+        "id": 526512922,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751335705
+    },
+    {
+        "content": "<p>Congrats for the release! You have mentioned once or twice that <code>grind</code> would be a powerful tool for category theory. Do you have advice on how annotations should be set up there?</p>",
+        "id": 526517884,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1751340496
+    },
+    {
+        "content": "<p>I think that the pretty-printer thinks that <code>grind</code> as an attribute should always be followed by a space and hence complains about <code>@[grind] ...</code> saying that it should be <code>@[grind ] ...</code>.</p>\n<p>I'll check if <a href=\"https://github.com/leanprover-community/mathlib4/pull/26196\">#26196</a> still works as a temporary solution.<br>\nEDIT: <a href=\"https://github.com/leanprover-community/mathlib4/pull/26196\">#26196</a> does indeed still \"fix\" the issue, but it silences all attributes, not just <code>grind</code>.  I have been unable to silence only grind.</p>\n<p>EDIT(much later): <a href=\"https://github.com/leanprover/lean4/pull/9128\">lean4#9128</a> should have fixed this issue.</p>",
+        "id": 526547091,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1751356624
+    },
+    {
+        "content": "<p>I have been experimenting with <code>grind</code> which is really a very exciting development. I am puzzled by an error message I am getting. Here is a bunch of similar code:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">attribute</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">grind?</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">le_succ_iff</span><span class=\"w\"> </span><span class=\"c1\">-- Nat.le_succ_iff: [@LE.le `[Nat] `[instLENat] #1 (#0 + 1)]</span>\n\n<span class=\"kn\">attribute</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">grind?</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">le_succ_iff</span><span class=\"w\"> </span><span class=\"c1\">-- Nat.le_succ_iff: [@LE.le `[Nat] `[instLENat] #1 (#0 + 1)]</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">error: invalid `grind` forward theorem, theorem `Nat.le_succ_iff` does not have propositional hypotheses</span>\n<span class=\"sd\">-/</span>\n<span class=\"bp\">#</span><span class=\"n\">guard_msgs</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"kn\">attribute</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">grind?</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">le_succ_iff</span>\n</code></pre></div>\n<p>As far as I can tell, the theorem <code>Nat.le_succ_iff</code> does have a propositional hypothesis. Is the problem the conjunction in the conclusion side?</p>",
+        "id": 526557450,
+        "sender_full_name": "Siddhartha Gadgil",
+        "timestamp": 1751359761
+    },
+    {
+        "content": "<p>Try doing it on <code>Nat.le_or_eq_of_le_succ</code>, which does definitely have propositional hypotheses (<code>Nat.le_succ_iff</code> is an iff and so it is a bit questionable what the conclusion is)</p>",
+        "id": 526572609,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1751364545
+    },
+    {
+        "content": "<p>what is a <code>multi-pattern</code></p>",
+        "id": 526586480,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1751369366
+    },
+    {
+        "content": "<p>In fact, what is the language of patterns, what exactly is happening when an expression is being traversed? it is being simplified? Is a hypothesis getting applied?</p>",
+        "id": 526586558,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1751369388
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"466334\">@Shreyas Srinivas</span>, just checking you have read the reference manual section. It is covered there, with examples.</p>",
+        "id": 526597162,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751372976
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"286014\">Robin Carlier</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526517884\">said</a>:</p>\n<blockquote>\n<p>Congrats for the release! You have mentioned once or twice that <code>grind</code> would be a powerful tool for category theory. Do you have advice on how annotations should be set up there?</p>\n</blockquote>\n<p><span class=\"user-mention\" data-user-id=\"286014\">@Robin Carlier</span>, yes, there is an old <code>grind_cat</code> branch that needs to be revived, where I started replacing <code>aesop_cat</code> with something using grind. It was strictly more powerful for as far through (not far, overall) category theory as I got.</p>",
+        "id": 526597309,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751373022
+    },
+    {
+        "content": "<p>The trick will be to set up something that calls <code>grind_cat</code>, falling back to <code>aesop_cat</code>, during the transition, and possible with some options so it can print traces messages explaining which one it is using.</p>",
+        "id": 526597428,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751373060
+    },
+    {
+        "content": "<p>Ok, thanks, I’ve been playing this morning with some annotations and I like it already, I’ll read what you have done to get some inspiration on the kind of annotations we want and the kind we don’t want.</p>",
+        "id": 526597723,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1751373155
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"266304\">Siddhartha Gadgil</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526557450\">said</a>:</p>\n<blockquote>\n<p>I have been experimenting with <code>grind</code> which is really a very exciting development. I am puzzled by an error message I am getting. Here is a bunch of similar code:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">attribute</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">grind?</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">le_succ_iff</span><span class=\"w\"> </span><span class=\"c1\">-- Nat.le_succ_iff: [@LE.le `[Nat] `[instLENat] #1 (#0 + 1)]</span>\n\n<span class=\"kn\">attribute</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">grind?</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">le_succ_iff</span><span class=\"w\"> </span><span class=\"c1\">-- Nat.le_succ_iff: [@LE.le `[Nat] `[instLENat] #1 (#0 + 1)]</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">error: invalid `grind` forward theorem, theorem `Nat.le_succ_iff` does not have propositional hypotheses</span>\n<span class=\"sd\">-/</span>\n<span class=\"bp\">#</span><span class=\"n\">guard_msgs</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"kn\">attribute</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">grind?</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">le_succ_iff</span>\n</code></pre></div>\n<p>As far as I can tell, the theorem <code>Nat.le_succ_iff</code> does have a propositional hypothesis. Is the problem the conjunction in the conclusion side?</p>\n</blockquote>\n<p>Because arithmetic is handled separately by grind is it generally a bad idea (and often disallowed) to set up grind patterns matching on arithmetic operators, particularly on <code>Nat</code> and <code>Int</code>. Just avoid such annotations for now, and instead start telling us about the arithmetic problems that \"feel close\" to what <code>grind</code> can already do, and explain why they matter. We are planning on doing <em>a lot</em> more arithmetic in the near future.</p>",
+        "id": 526597726,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751373156
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"321459\">Damiano Testa</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526547091\">said</a>:</p>\n<blockquote>\n<p>I think that the pretty-printer thinks that <code>grind</code> as an attribute should always be followed by a space and hence complains about <code>@[grind] ...</code> saying that it should be <code>@[grind ] ...</code>.</p>\n<p>I'll check if <a href=\"https://github.com/leanprover-community/mathlib4/pull/26196\">#26196</a> still works as a temporary solution.<br>\nEDIT: <a href=\"https://github.com/leanprover-community/mathlib4/pull/26196\">#26196</a> does indeed still \"fix\" the issue, but it silences all attributes, not just <code>grind</code>.  I have been unable to silence only grind.</p>\n</blockquote>\n<p>nice, this linter has a side effect of being much better at helping us catch obscure pretty printing mistakes in the grammar</p>",
+        "id": 526598446,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751373396
+    },
+    {
+        "content": "<p>Yes, it already caught some problems, with spaces in <code>@[grind =]</code>, but I missed the problem with <code>@[grind]</code> itself. Unfortunately fixing this is an annoying bootstrapping chore which I'm pretty unexcited about. :-(</p>",
+        "id": 526598818,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751373524
+    },
+    {
+        "content": "<p>Changing spaces should normally not be that bad, unless they need to be matched on for <code>&lt;|&gt;</code>.</p>",
+        "id": 526600158,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1751373981
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/pull/9128\">lean4#9128</a></p>",
+        "id": 526600174,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1751373988
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Kim Morrison</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526597428\">said</a>:</p>\n<blockquote>\n<p>The trick will be to set up something that calls <code>grind_cat</code>, falling back to <code>aesop_cat</code>, during the transition, and possible with some options so it can print traces messages explaining which one it is using.</p>\n</blockquote>\n<p>I just updated and pushed the <code>grind_cat</code> branch on my <code>kim-em</code> fork of Mathlib. Anyone wanting to play with it is welcome, I won't have time for a few weeks.</p>",
+        "id": 526600326,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751374042
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"873547\">@Robin Arnez</span> I don't think there are any cases where spaces are matched on. It's purely for pretty printing. (They don't leave any nodes in the Syntax)</p>",
+        "id": 526601266,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1751374347
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110087\">Kim Morrison</span> <a href=\"#narrow/stream/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526600326\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110087\">Kim Morrison</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526597428\">said</a>:</p>\n<blockquote>\n<p>The trick will be to set up something that calls <code>grind_cat</code>, falling back to <code>aesop_cat</code>, during the transition, and possible with some options so it can print traces messages explaining which one it is using.</p>\n</blockquote>\n<p>I just updated and pushed the <code>grind_cat</code> branch on my <code>kim-em</code> fork of Mathlib. Anyone wanting to play with it is welcome, I won't have time for a few weeks.</p>\n</blockquote>\n<p>Thanks! I'll try to learn from it and PR a decent \"first annotation set\" for \"base\" category stuff somewhere during this week or the next so that we can at least get started with something, and then see to define a <code>grind_cat</code> with fallback aesop_cat. With all due credits of course!</p>",
+        "id": 526602224,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1751374625
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526601266\">schrieb</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"873547\">Robin Arnez</span> I don't think there are any cases where spaces are matched on. It's purely for pretty printing. (They don't leave any nodes in the Syntax)</p>\n</blockquote>\n<p>They do in <code>&lt;|&gt;</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Lean</span>\n\n<span class=\"kn\">elab</span><span class=\"w\"> </span><span class=\"s2\">\"#raw_term \"</span><span class=\"w\"> </span><span class=\"n\">c</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">command</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">logInfo</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">toString</span><span class=\"w\"> </span><span class=\"n\">c</span><span class=\"o\">)</span>\n\n<span class=\"kn\">syntax</span><span class=\"w\"> </span><span class=\"s2\">\"hi \"</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"s2\">\"a \"</span><span class=\"w\"> </span><span class=\"bp\">&lt;|&gt;</span><span class=\"w\"> </span><span class=\"s2\">\"b \"</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"s2\">\"x\"</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">term</span>\n<span class=\"kn\">syntax</span><span class=\"w\"> </span><span class=\"s2\">\"other \"</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"s2\">\"a\"</span><span class=\"w\"> </span><span class=\"bp\">&lt;|&gt;</span><span class=\"w\"> </span><span class=\"s2\">\"b\"</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"s2\">\"x\"</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">term</span>\n\n<span class=\"sd\">/-- info: (termHiABX \"hi\" (token.«a » \"a\") \"x\") -/</span>\n<span class=\"bp\">#</span><span class=\"n\">guard_msgs</span><span class=\"w\"> </span><span class=\"k\">in</span><span class=\"w\"> </span><span class=\"bp\">#</span><span class=\"n\">raw_term</span><span class=\"w\"> </span><span class=\"n\">hi</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">x</span>\n<span class=\"sd\">/-- info: (termOtherABX \"other\" (token.a \"a\") \"x\") -/</span>\n<span class=\"bp\">#</span><span class=\"n\">guard_msgs</span><span class=\"w\"> </span><span class=\"k\">in</span><span class=\"w\"> </span><span class=\"bp\">#</span><span class=\"n\">raw_term</span><span class=\"w\"> </span><span class=\"n\">other</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">x</span>\n</code></pre></div>",
+        "id": 526602927,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1751374845
+    },
+    {
+        "content": "<p>Those are different tokens, yes. I thought you meant ppSpace.</p>",
+        "id": 526604064,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1751375208
+    },
+    {
+        "content": "<p>Yeah, no spacing in general</p>",
+        "id": 526604148,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1751375234
+    },
+    {
+        "content": "<p>I would prefer though if these dedicated nodes had spacing removed</p>",
+        "id": 526605437,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1751375614
+    },
+    {
+        "content": "<p>woah, I did not realize that spaces were retained in those parsers. I think that should be considered a bug, it's valuable that pretty printer changes do not change the parser grammar</p>",
+        "id": 526608709,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751376565
+    },
+    {
+        "content": "<p>I did read the manual, but i think I am still trying to wrap my head around what it means to have a list of patterns. Suppose I have a multipattern <code>$pat1, $pat2, ...</code> according to the manual, grind will only apply a rule if all the patterns are present as hypothesis. Will it test each pattern against every hypotheses? If a hypothesis fits two patterns, will it be matched to one specific pattern? Does the order of the patterns matter? Can we have any lean expression as a pattern? Are holes allowed? How are identifiers picked (like <code>x</code> in the example)?</p>",
+        "id": 526610045,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1751376877
+    },
+    {
+        "content": "<p>There's two notions, activation and instantiation. The activation stage just checks that we've seen <em>some</em> term (your message talks about hypotheses, but this is the wrong word here) that would match each pattern in the multi-pattern for a rule. Once the rule is activated, we instantiate it in <em>all</em> possible ways with the terms we've seen. The order of patterns shouldn't matter, except conceivably some efficiency of the activation algorithm. Patterns are lean expressions with bvars as the \"holes\", nothing else. The identifiers appearing in the pattern are exactly those used in the theorem statement.</p>",
+        "id": 526611331,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751377201
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526610045\">said</a>:</p>\n<blockquote>\n<p>Can we have any lean expression as a pattern? Are holes allowed? How are identifiers picked (like <code>x</code> in the example)?</p>\n</blockquote>\n<p>I'm pretty sure the expressions in a <code>grind_pattern</code> are supposed to be subterms of the theorem statement and reuse the variable names from there. You can think of it kind of like how a rewrite works, but with a generalized notion of what the LHS is. In a rewrite, you identify the LHS being the subterm on the left of the equals sign, and try to instantiate it against the subterms of the goal. In grind you have a big soup of terms (closed under subterm and initialized with the stuff in the goal), and as soon as one of those terms matches with a grind lemma's pattern, the whole theorem is instantiated to match that and added to the soup</p>",
+        "id": 526612783,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751377583
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526608709\">said</a>:</p>\n<blockquote>\n<p>woah, I did not realize that spaces were retained in those parsers</p>\n</blockquote>\n<p>Robin explained some more detail what's going on. It's specifically if you are working with <code>&lt;|&gt;</code> and tokens (e.g. <code>\"a\" &lt;|&gt; \" b\"</code>). In other cases, the spaces are stripped and form an atom.</p>",
+        "id": 526614163,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1751378010
+    },
+    {
+        "content": "<p>It makes me think that <code>\" b\"</code> should expand as <code>ppSpace \"b\"</code> rather than having the leading/trailing space logic in the token formatter...</p>",
+        "id": 526614413,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1751378092
+    },
+    {
+        "content": "<p>yes, these <code>token</code> things are rare, I'm aware</p>",
+        "id": 526614442,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751378099
+    },
+    {
+        "content": "<p>but I think the naming of <code>token.foo</code> should just strip leading/trailing whitespace</p>",
+        "id": 526614541,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751378126
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526614413\">said</a>:</p>\n<blockquote>\n<p>It makes me think that <code>\" b\"</code> should expand as <code>ppSpace \"b\"</code> rather than having the leading/trailing space logic in the token formatter...</p>\n</blockquote>\n<p>Are those actually the same? What about <code>\"  b\"</code>?</p>",
+        "id": 526614809,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751378200
+    },
+    {
+        "content": "<p>I thought <code>\"  b\"</code> didn't do anything different from <code>\" b\"</code>.</p>",
+        "id": 526614939,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1751378235
+    },
+    {
+        "content": "<p>I believe it pretty prints with two spaces</p>",
+        "id": 526615035,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751378265
+    },
+    {
+        "content": "<p>Last I checked <code>pushToken</code>, it detects that there's whitespace then uses <code>pushLine</code>, though there's some special logic if it's a <code>\\n</code></p>",
+        "id": 526615219,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1751378312
+    },
+    {
+        "content": "<p>Huh, you're right, I guess I misunderstood that code.</p>",
+        "id": 526615438,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1751378376
+    },
+    {
+        "content": "<p>Ah, <code>\"b  \"</code> is the same as <code>\"b \"</code></p>",
+        "id": 526615558,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1751378404
+    },
+    {
+        "content": "<p>I'm sure this all made sense to someone at some point <span aria-label=\"smile\" class=\"emoji emoji-1f604\" role=\"img\" title=\"smile\">:smile:</span></p>",
+        "id": 526617683,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751378995
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526612783\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526610045\">said</a>:</p>\n<blockquote>\n<p>Can we have any lean expression as a pattern? Are holes allowed? How are identifiers picked (like <code>x</code> in the example)?</p>\n</blockquote>\n<p>I'm pretty sure the expressions in a <code>grind_pattern</code> are supposed to be subterms of the theorem statement and reuse the variable names from there.</p>\n</blockquote>\n<p>Does this include variables under quantifiers (guessing yes)?</p>",
+        "id": 526618567,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1751379260
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526612783\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526610045\">said</a>:</p>\n<blockquote>\n<p>Can we have any lean expression as a pattern? Are holes allowed? How are identifiers picked (like <code>x</code> in the example)?</p>\n</blockquote>\n<p>In a rewrite, you identify the LHS being the subterm on the left of the equals sign, and try to \"instantiate\" it against the subterms of the goal.... the whole theorem is instantiated to match that and added to the soup</p>\n</blockquote>\n<p>To be sure, here, the word instantiate covers substituting terms into bound variables, substitution (rewriting) of subterms, applying implications, applying congruence rules, and some other stuff right?</p>",
+        "id": 526619887,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1751379632
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526618567\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.60.20is.20available.2E.20What.20should.20Mathlib.20users.20expect.3F/near/526612783\">said</a>:</p>\n<blockquote>\n<p>I'm pretty sure the expressions in a <code>grind_pattern</code> are supposed to be subterms of the theorem statement and reuse the variable names from there.</p>\n</blockquote>\n<p>Does this include variables under quantifiers?</p>\n</blockquote>\n<p>If I had to guess, I believe it would only include the variables under top level quantifiers. You could trigger on them but there would be no way to make the instantiation line up with the trigger term if it's a more deeply nested bound variable. For these terms, you would need to include the whole subterm in the pattern. (So this is not unlike the restrictions on matching under bound variables in <code>rw</code> in the end.)</p>",
+        "id": 526620772,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751379887
+    },
+    {
+        "content": "<p>Basically I can't see how one can include variables inside nested quantifiers because we are using surface level syntax to write terms by the looks of it, so name capturing can happen if deeply quantified variables are allowed.</p>",
+        "id": 526621367,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1751380049
+    },
+    {
+        "content": "<p>can you give an example?</p>",
+        "id": 526621486,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751380077
+    },
+    {
+        "content": "<p>what I'm saying is you take the theorem statement, strip all the initial quantifiers off (preserving names), and then the subterms of that expression (that don't have loose bound variables) are what you can write as grind patterns</p>",
+        "id": 526621716,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751380140
+    },
+    {
+        "content": "<p>Okay I get it now.</p>",
+        "id": 526621791,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1751380154
+    },
+    {
+        "content": "<p>Basically if you have a statement like <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi mathvariant=\"normal\">∃</mi><mi>y</mi><mo>:</mo><mi mathvariant=\"double-struck\">N</mi><mo separator=\"true\">,</mo><mi>y</mi><mo>+</mo><mn>1</mn><mo>=</mo><mn>2</mn><mo>∧</mo><mi mathvariant=\"normal\">∃</mi><mi>z</mi><mo>:</mo><mi mathvariant=\"double-struck\">N</mi><mi mathvariant=\"normal\">∃</mi><mi>y</mi><mo>:</mo><mi mathvariant=\"double-struck\">N</mi><mo separator=\"true\">,</mo><mi>y</mi><mo>+</mo><mn>1</mn><mo>+</mo><mi>z</mi><mo>=</mo><mn>10</mn></mrow><annotation encoding=\"application/x-tex\">\\exists y : \\mathbb{N}, y + 1 = 2 \\land \\exists z : \\mathbb{N} \\exists y :\\mathbb{N}, y + 1 + z = 10</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.8889em;vertical-align:-0.1944em;\"></span><span class=\"mord\">∃</span><span class=\"mord mathnormal\" style=\"margin-right:0.03588em;\">y</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">:</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.8833em;vertical-align:-0.1944em;\"></span><span class=\"mord mathbb\">N</span><span class=\"mpunct\">,</span><span class=\"mspace\" style=\"margin-right:0.1667em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.03588em;\">y</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span><span class=\"mbin\">+</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.6444em;\"></span><span class=\"mord\">1</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">=</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.6444em;\"></span><span class=\"mord\">2</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span><span class=\"mbin\">∧</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.6944em;\"></span><span class=\"mord\">∃</span><span class=\"mord mathnormal\" style=\"margin-right:0.04398em;\">z</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">:</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.8889em;vertical-align:-0.1944em;\"></span><span class=\"mord mathbb\">N</span><span class=\"mord\">∃</span><span class=\"mord mathnormal\" style=\"margin-right:0.03588em;\">y</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">:</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.8833em;vertical-align:-0.1944em;\"></span><span class=\"mord mathbb\">N</span><span class=\"mpunct\">,</span><span class=\"mspace\" style=\"margin-right:0.1667em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.03588em;\">y</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span><span class=\"mbin\">+</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.7278em;vertical-align:-0.0833em;\"></span><span class=\"mord\">1</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span><span class=\"mbin\">+</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.4306em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.04398em;\">z</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span><span class=\"mrel\">=</span><span class=\"mspace\" style=\"margin-right:0.2778em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.6444em;\"></span><span class=\"mord\">10</span></span></span></span> then a pattern like <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>y</mi><mo>+</mo><mn>1</mn></mrow><annotation encoding=\"application/x-tex\">y + 1</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.7778em;vertical-align:-0.1944em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.03588em;\">y</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span><span class=\"mbin\">+</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.6444em;\"></span><span class=\"mord\">1</span></span></span></span> should not capture both occurrences of <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>y</mi><mo>+</mo><mn>1</mn></mrow><annotation encoding=\"application/x-tex\">y + 1</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.7778em;vertical-align:-0.1944em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.03588em;\">y</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span><span class=\"mbin\">+</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.6444em;\"></span><span class=\"mord\">1</span></span></span></span> as using the same identifier <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>y</mi></mrow><annotation encoding=\"application/x-tex\">y</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.625em;vertical-align:-0.1944em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.03588em;\">y</span></span></span></span>..</p>",
+        "id": 526622277,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1751380294
+    },
+    {
+        "content": "<p>and what you are saying is that the second occurrence wouldn't count as a match of <span class=\"katex\"><span class=\"katex-mathml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><semantics><mrow><mi>y</mi><mo>+</mo><mn>1</mn></mrow><annotation encoding=\"application/x-tex\">y + 1</annotation></semantics></math></span><span class=\"katex-html\" aria-hidden=\"true\"><span class=\"base\"><span class=\"strut\" style=\"height:0.7778em;vertical-align:-0.1944em;\"></span><span class=\"mord mathnormal\" style=\"margin-right:0.03588em;\">y</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span><span class=\"mbin\">+</span><span class=\"mspace\" style=\"margin-right:0.2222em;\"></span></span><span class=\"base\"><span class=\"strut\" style=\"height:0.6444em;\"></span><span class=\"mord\">1</span></span></span></span> because it is under <del>two</del> non-top-level quantifiers.</p>",
+        "id": 526622635,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1751380391
+    },
+    {
+        "content": "<p>sorry I was wondering if I needed to be more precise about quantifiers, I mean universal quantifiers only</p>",
+        "id": 526625255,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751381111
+    },
+    {
+        "content": "<p>you wouldn't be able to use <code>y + 1</code> as a pattern because it's not bound by a top level universal quantifier</p>",
+        "id": 526625456,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751381162
+    },
+    {
+        "content": "<p>there aren't really any proper subterms except boring things like <code>2</code> that could be patterns in that expression</p>",
+        "id": 526625597,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751381205
+    },
+    {
+        "content": "<p>okay. I guess these things could be clarified in the manual.</p>",
+        "id": 526626197,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1751381388
+    },
+    {
+        "content": "<p>it's really not that different from instantiation in <code>rw</code></p>",
+        "id": 526626350,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751381436
+    },
+    {
+        "content": "<p>you get a decent approximation of simp if you just tag the LHS of each equality simp lemma as a grind pattern</p>",
+        "id": 526626645,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751381501
+    },
+    {
+        "content": "<p>(at least as regards instantiation of rewrite rules; the way those are put together is of course different and grind has less overall directionality)</p>",
+        "id": 526626872,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751381567
+    },
+    {
+        "content": "<p>Is the following considered to be in scope for <code>grind</code> (at least eventually)?</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span>\n\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℝ</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">h₀</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"bp\">≠</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℕ</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">hn</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">&gt;</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℝ</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n<span class=\"w\">    </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"bp\">/</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">^</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"bp\">^</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"bp\">^</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">/</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"bp\">^</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">-</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">grind</span>\n<span class=\"w\">  </span><span class=\"c1\">-- field_simp</span>\n<span class=\"w\">  </span><span class=\"c1\">-- rw [mul_comm M, mul_assoc, ← pow_succ', Nat.sub_add_cancel hn]</span>\n</code></pre></div>\n<p>With \"Latest Mathlib\" in the Web editor, <code>grind</code> fails. From the diagnostic output, it does not appear that it attempts anything approaching what <code>field_simp</code> does (unsatisfactorily; <code>field_simp</code> does not leave a goal that <code>ring</code> can solve).</p>\n<p>In fact, <code>grind</code>already fails here:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span>\n\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℝ</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">h₀</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"bp\">≠</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℕ</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">hn</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">&gt;</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"bp\">^</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">/</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"bp\">^</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">-</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">grind</span>\n</code></pre></div>\n<p>(and writing <code>grind [eq_div_iff, pow_succ]</code> does not change that, even though the goal can be solved by <code>rw [eq_comm, eq_div_iff h₀, ← pow_succ, Nat.sub_add_cancel hn]</code>).</p>\n<p>Background: I was trying to follow <span class=\"user-mention\" data-user-id=\"110087\">@Kim Morrison</span> 's advice to try to replace short tactic proofs by <code>grind</code> (in my formalization of the Gelfand-Mazur theorem over the reals), but so far had no success, even in places where I was hoping that it would work.</p>",
+        "id": 526657004,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1751391924
+    },
+    {
+        "content": "<p>Keep in mind that the various classes like <code>Lean.Grind.Field</code> are not yet instantiated in mathlib, so it's not suprising that this fails for now.</p>",
+        "id": 526661387,
+        "sender_full_name": "Frédéric Dupuis",
+        "timestamp": 1751393804
+    },
+    {
+        "content": "<p>I think Kim said that it was?</p>",
+        "id": 526662240,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751394206
+    },
+    {
+        "content": "<p>But indeed, <code>#synth Lean.Grind.Field ℚ</code> fails.</p>",
+        "id": 526662393,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1751394274
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Semiring.toGrindSemiring#doc\">docs#Semiring.toGrindSemiring</a></p>",
+        "id": 526663198,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1751394639
+    },
+    {
+        "content": "<p>Ah, I guess they're just too new to be listed in the list of instances in the docs?</p>",
+        "id": 526664408,
+        "sender_full_name": "Frédéric Dupuis",
+        "timestamp": 1751395210
+    },
+    {
+        "content": "<p>I don't see the analogous <code>Field</code> module</p>",
+        "id": 526664895,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1751395466
+    },
+    {
+        "content": "<p>So I would guess the adaptation is still in progress</p>",
+        "id": 526665017,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1751395517
+    },
+    {
+        "content": "<p>But even adding the <code>Lean.Grind.Field</code> instance for the reals does not help.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span>\n\n<span class=\"kn\">noncomputable</span>\n<span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Grind</span><span class=\"bp\">.</span><span class=\"n\">Field</span><span class=\"w\"> </span><span class=\"n\">ℝ</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"bp\">__</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">CommRing</span><span class=\"bp\">.</span><span class=\"n\">toGrindCommRing</span><span class=\"w\"> </span><span class=\"n\">ℝ</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">toRing</span>\n<span class=\"w\">  </span><span class=\"n\">mul_comm</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">mul_comm</span>\n<span class=\"w\">  </span><span class=\"n\">inv</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">·⁻¹</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"n\">div</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">·</span><span class=\"w\"> </span><span class=\"bp\">/</span><span class=\"w\"> </span><span class=\"bp\">·</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"n\">div_eq_mul_inv</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">div_eq_mul_inv</span>\n<span class=\"w\">  </span><span class=\"n\">zero_ne_one</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">zero_ne_one</span>\n<span class=\"w\">  </span><span class=\"n\">inv_zero</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">simp</span>\n<span class=\"w\">  </span><span class=\"n\">mul_inv_cancel</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">a</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"n\">ha</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">convert</span><span class=\"w\"> </span><span class=\"n\">mul_inv_cancel₀</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"n\">ha</span>\n\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℝ</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">h₀</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"bp\">≠</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℕ</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">hn</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">&gt;</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℝ</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n<span class=\"w\">    </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"bp\">/</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">^</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"bp\">^</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"bp\">^</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">/</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"bp\">^</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">-</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"c1\">-- grind -- fails</span>\n<span class=\"w\">  </span><span class=\"n\">rw</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">mul_add</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">div_pow</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">mul_div_assoc</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">mul_div_right_comm</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">add_div</span><span class=\"o\">,</span>\n<span class=\"w\">    </span><span class=\"n\">mul_one</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">zpow_natCast_sub_natCast₀</span><span class=\"w\"> </span><span class=\"n\">h₀</span><span class=\"o\">,</span>\n<span class=\"w\">    </span><span class=\"k\">show</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℤ</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">-</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">-</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"o\">:)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">omega</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">zpow_one</span><span class=\"o\">,</span>\n<span class=\"w\">    </span><span class=\"n\">mul_comm</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">mul_div_assoc</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">div_div_eq_mul_div</span><span class=\"o\">]</span>\n<span class=\"w\">  </span><span class=\"n\">congr</span>\n<span class=\"w\">  </span><span class=\"c1\">-- grind -- fails</span>\n<span class=\"w\">  </span><span class=\"n\">rw</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">eq_comm</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">eq_div_iff</span><span class=\"w\"> </span><span class=\"n\">h₀</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">pow_succ</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">sub_add_cancel</span><span class=\"w\"> </span><span class=\"n\">hn</span><span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 526665369,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1751395689
+    },
+    {
+        "content": "<p>(Same for <code>ℚ</code> in place of <code>ℝ</code> and without <code>noncomputable</code>.)</p>",
+        "id": 526665523,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1751395765
+    },
+    {
+        "content": "<p>Thanks for this example. There's a case splitting problem here that we'll have to decide how to tackle.</p>",
+        "id": 526709621,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751423385
+    },
+    {
+        "content": "<p>I'll go install the <code>Field</code> instances first, however!</p>",
+        "id": 526709636,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751423394
+    },
+    {
+        "content": "<p>Basic support for fields is at <a href=\"https://github.com/leanprover-community/mathlib4/pull/26615\">#26615</a>.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℝ</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">h</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">≠</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"bp\">^</span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"bp\">-</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"bp\">^</span><span class=\"mi\">2</span><span class=\"o\">)</span><span class=\"bp\">/</span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">-</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">grind</span>\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℝ</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">h</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"o\">)</span><span class=\"bp\">^</span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"bp\">≠</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"bp\">^</span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"bp\">-</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"bp\">^</span><span class=\"mi\">2</span><span class=\"o\">)</span><span class=\"bp\">/</span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">-</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">grind</span>\n</code></pre></div>\n<p>We plan to add more support in this direction, but interesting failure cases are welcome!</p>",
+        "id": 526712681,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751426247
+    },
+    {
+        "content": "<p>I just want to give a shout out for some lovely golfs euprunin found using <code>grind</code> in <a href=\"https://github.com/leanprover-community/mathlib4/pull/26622\">#26622</a>.</p>",
+        "id": 526753306,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751446820
+    },
+    {
+        "content": "<p>Wow</p>",
+        "id": 526753411,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1751446860
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"243791\">@David Renshaw</span> fancy trying <code>TryAtEachStep</code> on mathlib with <code>grind</code>? I guess one would have to be careful that we don't make the library shorter but slower...</p>",
+        "id": 526753824,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1751446991
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110038\">@Kevin Buzzard</span>, <span class=\"user-mention\" data-user-id=\"238446\">@Anne Baanen</span> is planning on writing essentially a replacement for tryAtEachStep for this purpose. Let's wait for them.</p>",
+        "id": 526753912,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751447025
+    },
+    {
+        "content": "<p>(But I will say --- I am going to be arguing for allowing <code>grind</code> even when there is a small relative slow-down...)</p>",
+        "id": 526754038,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751447065
+    },
+    {
+        "content": "<p>Sure, I just want to avoid large relative slowdowns!</p>",
+        "id": 526754973,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1751447366
+    },
+    {
+        "content": "<p>I tried it on Compfiles and it found some interesting golfs, like this one: <a href=\"https://github.com/dwrensha/compfiles/commit/d998f7c3c2a3ba5bafa2190e58e4feee4b694c71\">https://github.com/dwrensha/compfiles/commit/d998f7c3c2a3ba5bafa2190e58e4feee4b694c71</a></p>",
+        "id": 526761885,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1751449731
+    },
+    {
+        "content": "<p>It also found a bug where <code>grind</code> hangs basically forever: <a href=\"https://github.com/leanprover/lean4/issues/9125\">https://github.com/leanprover/lean4/issues/9125</a>.</p>",
+        "id": 526762045,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1751449791
+    },
+    {
+        "content": "<p>Yes <a href=\"https://github.com/leanprover/lean4/pull/9125\">lean#9125</a> was a great find. There's already a fix in place that at least makes it fail in reasonable time, and we think we know how to make it work.</p>",
+        "id": 526769557,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751452306
+    },
+    {
+        "content": "<p>Is grind supposed to have kernel application type mismatches?</p>",
+        "id": 526859635,
+        "sender_full_name": "metakuntyyy",
+        "timestamp": 1751481272
+    },
+    {
+        "content": "<p>No, can you give an mwe?</p>",
+        "id": 526859748,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1751481309
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span>\n\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">leaf</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">r</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℕ</span><span class=\"w\"> </span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Option</span><span class=\"bp\">.</span><span class=\"n\">map</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">cast</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">R</span><span class=\"o\">:=(</span><span class=\"n\">ZMod</span><span class=\"w\"> </span><span class=\"n\">r</span><span class=\"o\">)))</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">some</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"o\">))</span><span class=\"bp\">.</span><span class=\"n\">getD</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">grind</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">cast_zero</span><span class=\"o\">]</span>\n</code></pre></div>\n<p>works, but if you remove Nat.cast_zero you get a kernel application mismatch</p>",
+        "id": 526860548,
+        "sender_full_name": "metakuntyyy",
+        "timestamp": 1751481611
+    },
+    {
+        "content": "<p>Also if I use it in my bigger theorem I get a application type mismatch no matter what.</p>",
+        "id": 526860637,
+        "sender_full_name": "metakuntyyy",
+        "timestamp": 1751481644
+    },
+    {
+        "content": "<p>Here is the error message just for completeness sake.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"o\">(</span><span class=\"n\">kernel</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"n\">application</span><span class=\"w\"> </span><span class=\"n\">type</span><span class=\"w\"> </span><span class=\"n\">mismatch</span>\n<span class=\"w\">  </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Grind</span><span class=\"bp\">.</span><span class=\"n\">ne_of_ne_of_eq_left</span>\n<span class=\"w\">    </span><span class=\"o\">(</span><span class=\"n\">Eq</span><span class=\"bp\">.</span><span class=\"n\">trans</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Eq</span><span class=\"bp\">.</span><span class=\"n\">symm</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Eq</span><span class=\"bp\">.</span><span class=\"n\">mp</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Eq</span><span class=\"bp\">.</span><span class=\"n\">refl</span><span class=\"w\"> </span><span class=\"o\">((</span><span class=\"n\">some</span><span class=\"w\"> </span><span class=\"bp\">↑</span><span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">getD</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"bp\">↑</span><span class=\"mi\">0</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"n\">Option</span><span class=\"bp\">.</span><span class=\"n\">getD_some</span><span class=\"o\">))</span>\n<span class=\"w\">      </span><span class=\"o\">(</span><span class=\"n\">congrArg</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">↦</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"n\">getD</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"o\">)</span>\n<span class=\"w\">        </span><span class=\"o\">(</span><span class=\"n\">Eq</span><span class=\"bp\">.</span><span class=\"n\">symm</span>\n<span class=\"w\">          </span><span class=\"o\">(</span><span class=\"n\">Eq</span><span class=\"bp\">.</span><span class=\"n\">mp</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Eq</span><span class=\"bp\">.</span><span class=\"n\">refl</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Option</span><span class=\"bp\">.</span><span class=\"n\">map</span><span class=\"w\"> </span><span class=\"n\">NatCast</span><span class=\"bp\">.</span><span class=\"n\">natCast</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">some</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">some</span><span class=\"w\"> </span><span class=\"bp\">↑</span><span class=\"mi\">0</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Option</span><span class=\"bp\">.</span><span class=\"n\">map_some</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"n\">NatCast</span><span class=\"bp\">.</span><span class=\"n\">natCast</span><span class=\"o\">)))))</span>\n<span class=\"w\">    </span><span class=\"n\">h</span>\n<span class=\"w\">    </span><span class=\"o\">(</span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">ctx</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">RArray</span><span class=\"bp\">.</span><span class=\"n\">leaf</span><span class=\"w\"> </span><span class=\"bp\">↑</span><span class=\"mi\">0</span><span class=\"bp\">;</span>\n<span class=\"w\">    </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">e_1</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Grind</span><span class=\"bp\">.</span><span class=\"n\">CommRing</span><span class=\"bp\">.</span><span class=\"n\">Expr</span><span class=\"bp\">.</span><span class=\"n\">num</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"bp\">;</span>\n<span class=\"w\">    </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">p_1</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Grind</span><span class=\"bp\">.</span><span class=\"n\">CommRing</span><span class=\"bp\">.</span><span class=\"n\">Poly</span><span class=\"bp\">.</span><span class=\"n\">num</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"bp\">;</span>\n<span class=\"w\">    </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Grind</span><span class=\"bp\">.</span><span class=\"n\">CommRing</span><span class=\"bp\">.</span><span class=\"n\">Stepwise</span><span class=\"bp\">.</span><span class=\"n\">imp_1eq</span><span class=\"w\"> </span><span class=\"n\">ctx</span><span class=\"w\"> </span><span class=\"n\">e_1</span><span class=\"w\"> </span><span class=\"n\">e_1</span><span class=\"w\"> </span><span class=\"n\">p_1</span><span class=\"w\"> </span><span class=\"n\">p_1</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Eq</span><span class=\"bp\">.</span><span class=\"n\">refl</span><span class=\"w\"> </span><span class=\"n\">true</span><span class=\"o\">)</span>\n<span class=\"w\">      </span><span class=\"o\">(</span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Grind</span><span class=\"bp\">.</span><span class=\"n\">CommRing</span><span class=\"bp\">.</span><span class=\"n\">Stepwise</span><span class=\"bp\">.</span><span class=\"n\">d_init</span><span class=\"w\"> </span><span class=\"n\">ctx</span><span class=\"w\"> </span><span class=\"n\">p_1</span><span class=\"o\">))</span>\n<span class=\"n\">argument</span><span class=\"w\"> </span><span class=\"n\">has</span><span class=\"w\"> </span><span class=\"n\">type</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">ctx</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">RArray</span><span class=\"bp\">.</span><span class=\"n\">leaf</span><span class=\"w\"> </span><span class=\"bp\">↑</span><span class=\"mi\">0</span><span class=\"bp\">;</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">e_1</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Grind</span><span class=\"bp\">.</span><span class=\"n\">CommRing</span><span class=\"bp\">.</span><span class=\"n\">Expr</span><span class=\"bp\">.</span><span class=\"n\">num</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"bp\">;</span>\n<span class=\"w\">  </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Grind</span><span class=\"bp\">.</span><span class=\"n\">CommRing</span><span class=\"bp\">.</span><span class=\"n\">Expr</span><span class=\"bp\">.</span><span class=\"n\">denote</span><span class=\"w\"> </span><span class=\"n\">ctx</span><span class=\"w\"> </span><span class=\"n\">e_1</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Grind</span><span class=\"bp\">.</span><span class=\"n\">CommRing</span><span class=\"bp\">.</span><span class=\"n\">Expr</span><span class=\"bp\">.</span><span class=\"n\">denote</span><span class=\"w\"> </span><span class=\"n\">ctx</span><span class=\"w\"> </span><span class=\"n\">e_1</span>\n<span class=\"n\">but</span><span class=\"w\"> </span><span class=\"n\">function</span><span class=\"w\"> </span><span class=\"n\">has</span><span class=\"w\"> </span><span class=\"n\">type</span>\n<span class=\"w\">  </span><span class=\"bp\">↑</span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">False</span>\n</code></pre></div>",
+        "id": 526860737,
+        "sender_full_name": "metakuntyyy",
+        "timestamp": 1751481692
+    },
+    {
+        "content": "<p>It seems <code>@[grind ←=]</code> is broken.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span>\n\n<span class=\"kn\">variable</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">X</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">CommGroup</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"o\">]</span>\n\n<span class=\"kd\">@[</span><span class=\"n\">grind</span><span class=\"w\"> </span><span class=\"bp\">←=</span><span class=\"kd\">]</span>\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">inv_ext2</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">h</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"bp\">⁻¹</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">exact</span><span class=\"w\"> </span><span class=\"n\">DivisionMonoid</span><span class=\"bp\">.</span><span class=\"n\">inv_eq_of_mul</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"n\">h</span>\n\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">inv_ext'</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">h</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"bp\">⁻¹</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">grind</span><span class=\"w\"> </span><span class=\"c1\">--panic</span>\n</code></pre></div>",
+        "id": 526876049,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1751488877
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"725717\">@metakuntyyy</span>, <span class=\"user-mention\" data-user-id=\"286014\">@Robin Carlier</span>, if you can work out how to make no-import examples out of these, please create issues on the lean4 repository.</p>\n<p>(I will do this, but not for a while, as a holiday is about to start!)</p>",
+        "id": 526922468,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751522405
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kd\">@[</span><span class=\"n\">grind</span><span class=\"w\"> </span><span class=\"bp\">←=</span><span class=\"kd\">]</span>\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">inv_eq</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">One</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Mul</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Inv</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">w</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"bp\">⁻¹</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"gr\">sorry</span>\n\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">test</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">One</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Mul</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Inv</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">w</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"bp\">⁻¹</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">grind</span><span class=\"w\"> </span><span class=\"c1\">--panic</span>\n</code></pre></div>\n<p>This is the example use of <code>@[grind ←=]</code> from the manual. Will open the issue shortly, but note that it seems like a complete blocker to have grind working correctly with inverses in category theory.</p>",
+        "id": 526925233,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1751524098
+    },
+    {
+        "content": "<p>Oh, that already panics! Great, thank you.</p>",
+        "id": 526925340,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751524177
+    },
+    {
+        "content": "<p><del>basically it seems as soon as a <code>@[grind ←=]</code> is registered any subsequent grind call panics</del> See below</p>",
+        "id": 526925416,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1751524219
+    },
+    {
+        "content": "<p>I wish the manual had picked this up. :-(</p>",
+        "id": 526925440,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751524237
+    },
+    {
+        "content": "<p>(or perhaps just those that tries to instantiate the bad one? will try a little bit more)</p>",
+        "id": 526925481,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1751524268
+    },
+    {
+        "content": "<p>Ok thankfully no panic on \"unrelated\" theorems.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kd\">@[</span><span class=\"n\">grind</span><span class=\"w\"> </span><span class=\"bp\">←=</span><span class=\"kd\">]</span>\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">inv_eq</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">One</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Mul</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Inv</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">w</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"bp\">⁻¹</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"gr\">sorry</span>\n\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">test</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">One</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Mul</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Inv</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">w</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n<span class=\"w\">    </span><span class=\"n\">a</span><span class=\"bp\">⁻¹</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">grind</span><span class=\"w\"> </span><span class=\"c1\">-- panic</span>\n\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">unrelated</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"n\">m</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n<span class=\"w\">    </span><span class=\"o\">(</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">m</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">m</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"bp\">*</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"mi\">2</span><span class=\"bp\">*</span><span class=\"n\">n</span><span class=\"bp\">*</span><span class=\"n\">m</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">m</span><span class=\"bp\">*</span><span class=\"n\">m</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">grind</span><span class=\"w\">  </span><span class=\"c1\">-- works, phew</span>\n</code></pre></div>",
+        "id": 526925817,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1751524449
+    },
+    {
+        "content": "<p>Leo is looking at it now. Not sure if we'll be able to squeeze a solution into rc3 before I go away, but we'll try!</p>",
+        "id": 526926236,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751524684
+    },
+    {
+        "content": "<p>Do I still open the issue?</p>",
+        "id": 526926276,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1751524704
+    },
+    {
+        "content": "<p>No need</p>",
+        "id": 526926284,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751524710
+    },
+    {
+        "content": "<p>Fingers crossed then, I stumbled upon it when trying to make grind prove <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=CategoryTheory.IsIso.Iso.inv_hom#doc\">docs#CategoryTheory.IsIso.Iso.inv_hom</a></p>",
+        "id": 526926759,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1751524969
+    },
+    {
+        "content": "<p>Fixed!</p>",
+        "id": 526927851,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1751525496
+    },
+    {
+        "content": "<p>I’d like some help from people more familiar with internals than me to extract a MWE to file an issue: I’ve run into an other weird behaviour:<br>\nin the <a href=\"https://github.com/robin-carlier/mathlib4/tree/initial-grind-category\">branch</a> (that mostly copies <span class=\"user-mention\" data-user-id=\"110087\">@Kim Morrison</span>'s) <code>initial-grind-category</code> on my fork, file <code>Mathlib/CategoryTheory/NatIso.lean</code>, grind is having a hard time with <code>NatIso.ofComponents</code>: it complains about an </p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">unexpected</span><span class=\"w\"> </span><span class=\"n\">kernel</span><span class=\"w\"> </span><span class=\"n\">projection</span><span class=\"w\"> </span><span class=\"n\">term</span><span class=\"w\"> </span><span class=\"n\">during</span><span class=\"w\"> </span><span class=\"n\">internalization</span>\n</code></pre></div>\n<p>and looking at the goal state, the hypothesis <code>(X : C) → F.obj X ≅ G.obj X</code> is indeed transformed into <code>(X : C) → F.1.1 X ≅ G.1.1 X</code>, I’m trying to reproduce that setup in an mwe but have had no luck so far getting it to error...</p>\n<p>Edit: now at <a href=\"https://github.com/leanprover/lean4/pull/9187\">lean4#9187</a></p>",
+        "id": 527141724,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1751621153
+    }
+]

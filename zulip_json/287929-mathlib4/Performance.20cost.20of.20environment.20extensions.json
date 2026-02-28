@@ -1,0 +1,212 @@
+[
+    {
+        "content": "<p>I discovered today that environment extensions (something like <code>PersistentEnvExtension</code>, <code>ScopedEnvExtension</code> or <code>NameMapExtension</code>) cause a noticeable performance drop in mathlib. This is because at the time of initialization (i.e. when loading the imports), each environment extension has to be loaded. This consists of 3 steps:</p>\n<ol>\n<li>Create an array with length equal to the number of imported modules.</li>\n<li>For all <code>n</code>, for the <code>n</code>-th imported module, put the entries from that module in position <code>n</code> in the array.</li>\n<li>Fold over this array of arrays to obtain the initial state of the environment extension.</li>\n</ol>\n<p>Even if the number of entries in the extension is neglegible, with how many files mathlib has, the above steps take a significant amount of time. Note that the time spent on this is proportional to the number of (transitive) edges in the import graph, so the time spent on this while building mathlib may grow quadratically in terms of the number of files in mathlib.</p>\n<p>In particular, it was <a href=\"https://github.com/leanprover-community/mathlib4/pull/32438\">#32438</a> where I discovered that adding/removing 3 (almost) unused environment extensions gives a difference of about 320G instructions. I then went to see if there are places where we could easily get rid of some other environment extensions.</p>",
+        "id": 571319234,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1769983451
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/34685\">#34685</a> refactors the <code>to_additive</code>/<code>to_dual</code> code, removing 2 environment extensions, and giving a <strong>-285.4G</strong> (<strong>-0.16%</strong>) improvement.</p>",
+        "id": 571319256,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1769983475
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/34679\">#34679</a> refactors the <code>@[stacks]</code> attribute implementation to avoid step (3), which saves <strong>-117.5G</strong> (<strong>-0.07%</strong>)</p>",
+        "id": 571319309,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1769983545
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/34696\">#34696</a> removes another environment extension in <code>to_additive</code> (and is being benchmarked)</p>",
+        "id": 571319366,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1769983618
+    },
+    {
+        "content": "<p>Note that the speedup here is especially beneficial to people writing <code>import Mathlib</code>. In <a href=\"https://github.com/leanprover-community/mathlib4/pull/34685\">#34685</a>, we get that the file <code>Mathlib</code> speeds up with <strong>-129.9M</strong> (<strong>-0.83%</strong>).</p>",
+        "id": 571319988,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1769984267
+    },
+    {
+        "content": "<p>Besides these refactors, do you think the steps (1)-(3) could be optimized?</p>",
+        "id": 571368472,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1770020081
+    },
+    {
+        "content": "<p>I think it might be possible to avoid doing step (3) unnecessarily by wrapping the value in a <code>Thunk</code>. I'll see if I can make that work.</p>",
+        "id": 571408503,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770031907
+    },
+    {
+        "content": "<p>I also made <a href=\"https://github.com/leanprover-community/batteries/pull/1646\">batteries#1646</a>, which deals with the <code>alias</code> environment extension, which gives <strong>-100.8G</strong> (<strong>-0.06%</strong>)</p>",
+        "id": 571410131,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770032465
+    },
+    {
+        "content": "<p>Is it possible to do the fold over the modules without explicitly building the whole array of arrays? eg perhaps loading each module lazily to build up the initial state?</p>",
+        "id": 571410679,
+        "sender_full_name": "Bhavik Mehta",
+        "timestamp": 1770032647
+    },
+    {
+        "content": "<p>That sounds reasonable, though I think it might not give an improvement. The current implementation is as follows:</p>\n<p>The <code>finalizeImport</code> function calls <code>setImportedEntries</code> to create the array of arrays (steps (1) and (2)). <code>finalizeImport</code> then calls <code>finalizePersistentExtensions</code>, which applies <code>addImportedFn</code> (this is usually a folding function) to the arrays of arrays (step (3)).</p>\n<p>Each module has a <code>ModuleData</code> which has a field <code>entries : Array (Name × Array EnvExtensionEntry)</code> that stores all of the entries from that file (<code>EnvExtensionEntry</code> is a dummy type that will get <code>unsafeCast</code>ed). So, to create all of the arrays of arrays for all of the environment extensions, <code>setImportedEntries</code> simply loops through the <code>entries</code> of each module.</p>\n<p>The problem with doing a fold over the modules without explicitly making these arrays, is that you would have to do a lookup in the <code>entries</code> of each module, which is costly. This is avoided by making all of the arrays of arrays at once.</p>",
+        "id": 571448394,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770043073
+    },
+    {
+        "content": "<p>Another idea for improving performance, could be to have a single environment extension that represents multiple different environment extensions, each of which is identified by a <code>Name</code>. This would allow us to merge various not-so-often-used environment extensions into a single one.</p>",
+        "id": 571449388,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770043312
+    },
+    {
+        "content": "<p>I wrote some code that measures the time takes by step (3) by various environment extensions.</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n<p>Code</p>\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<p>import Mathlib</p>\n<p>partial def go : CoreM Unit := do<br>\n  let env ← getEnv<br>\n  let opts ← getOptions<br>\n  let mut result : Array (Name × Nat) := #[]<br>\n  let pExtDescrs ← persistentEnvExtensionsRef.get<br>\n  for h : i in *...pExtDescrs.size do<br>\n    let extDescr := pExtDescrs[i]<br>\n    let s := extDescr.toEnvExtension.getState (asyncMode := .sync) env<br>\n    let t0 ← IO.monoMsNow      <br>\n    let newState ← extDescr.addImportedFn s.importedEntries { env := env, opts := opts }<br>\n    let t1 ← IO.monoMsNow<br>\n    result := result.push (<a href=\"http://extDescr.name\">extDescr.name</a>, t1 - t0)<br>\n  result := result.qsort (·.2 &gt; ·.2)<br>\n  let strings := <a href=\"http://result.map\">result.map</a> fun (name, time) ↦ s!\"{name}: {time}\\n\"<br>\n  logInfo m!\"{strings.foldl (· ++ ·) \"\"}\"<br>\nrun_meta go</p>\n</div></div>\n<p>Here are the results that are over 3ms:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">simpExtension</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">491</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">instanceExtension</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">132</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Parser</span><span class=\"bp\">.</span><span class=\"n\">parserExtension</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">104</span>\n<span class=\"n\">Batteries</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">Lint</span><span class=\"bp\">.</span><span class=\"n\">batteriesLinterExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">92</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">ToAdditive</span><span class=\"bp\">.</span><span class=\"n\">translations</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">24</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">Grind</span><span class=\"bp\">.</span><span class=\"n\">grindExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">19</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">FunProp</span><span class=\"bp\">.</span><span class=\"n\">functionTheoremsExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">19</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">globalInstanceExtension</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">16</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">GCongr</span><span class=\"bp\">.</span><span class=\"n\">gcongrExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">15</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">StacksTag</span><span class=\"bp\">.</span><span class=\"n\">tagExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">12</span>\n<span class=\"n\">Continuous</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">12</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Elab</span><span class=\"bp\">.</span><span class=\"n\">macroAttribute</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">11</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">ToDual</span><span class=\"bp\">.</span><span class=\"n\">argInfoAttr</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">11</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">NormCast</span><span class=\"bp\">.</span><span class=\"n\">normCastExt</span><span class=\"bp\">.</span><span class=\"n\">down</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">10</span>\n<span class=\"n\">Batteries</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">Alias</span><span class=\"bp\">.</span><span class=\"n\">aliasExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">9</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">ToAdditive</span><span class=\"bp\">.</span><span class=\"n\">argInfoAttr</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">8</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">Ext</span><span class=\"bp\">.</span><span class=\"n\">extExtension</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">8</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Linter</span><span class=\"bp\">.</span><span class=\"n\">deprecatedModuleExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">8</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Linter</span><span class=\"bp\">.</span><span class=\"n\">UnusedTactic</span><span class=\"bp\">.</span><span class=\"n\">allowedUnusedTacticExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">8</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">ToDual</span><span class=\"bp\">.</span><span class=\"n\">translations</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">7</span>\n<span class=\"n\">Batteries</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">transExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">7</span>\n<span class=\"n\">Bound</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">7</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">Push</span><span class=\"bp\">.</span><span class=\"n\">pushExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">7</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">PrettyPrinter</span><span class=\"bp\">.</span><span class=\"n\">Delaborator</span><span class=\"bp\">.</span><span class=\"n\">appUnexpanderAttribute</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">7</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">NormCast</span><span class=\"bp\">.</span><span class=\"n\">pushCastExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">6</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">Hint</span><span class=\"bp\">.</span><span class=\"n\">hintExtension</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">6</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">ToAdditive</span><span class=\"bp\">.</span><span class=\"n\">doTranslateAttr</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">6</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">Positivity</span><span class=\"bp\">.</span><span class=\"n\">positivityExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">6</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">ToDual</span><span class=\"bp\">.</span><span class=\"n\">doTranslateAttr</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">6</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">NormCast</span><span class=\"bp\">.</span><span class=\"n\">normCastExt</span><span class=\"bp\">.</span><span class=\"n\">up</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">6</span>\n<span class=\"n\">eqnsAttribute</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">5</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">NormCast</span><span class=\"bp\">.</span><span class=\"n\">normCastExt</span><span class=\"bp\">.</span><span class=\"n\">squash</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">5</span>\n<span class=\"n\">Batteries</span><span class=\"bp\">.</span><span class=\"n\">CodeAction</span><span class=\"bp\">.</span><span class=\"n\">tacticCodeActionExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">5</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">ToDual</span><span class=\"bp\">.</span><span class=\"n\">ignoreArgsAttr</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">5</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">namespacesExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">5</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">GCongr</span><span class=\"bp\">.</span><span class=\"n\">forwardExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">5</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">NormNum</span><span class=\"bp\">.</span><span class=\"n\">normNumExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">5</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">TacticAnalysis</span><span class=\"bp\">.</span><span class=\"n\">tacticAnalysisExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">5</span>\n<span class=\"n\">Simps</span><span class=\"bp\">.</span><span class=\"n\">structureExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">5</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">FunProp</span><span class=\"bp\">.</span><span class=\"n\">morTheoremsExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">4</span>\n<span class=\"n\">Batteries</span><span class=\"bp\">.</span><span class=\"n\">Util</span><span class=\"bp\">.</span><span class=\"n\">LibraryNote</span><span class=\"bp\">.</span><span class=\"n\">libraryNoteExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">4</span>\n<span class=\"n\">Simps</span><span class=\"bp\">.</span><span class=\"n\">notationClassAttr</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">4</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">Translate</span><span class=\"bp\">.</span><span class=\"n\">changeNumeralAttr</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">4</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">FunProp</span><span class=\"bp\">.</span><span class=\"n\">transitionTheoremsExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">4</span>\n<span class=\"n\">Batteries</span><span class=\"bp\">.</span><span class=\"n\">CodeAction</span><span class=\"bp\">.</span><span class=\"n\">tacticSeqCodeActionExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">4</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">Push</span><span class=\"bp\">.</span><span class=\"n\">pullExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">4</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">ToAdditive</span><span class=\"bp\">.</span><span class=\"n\">ignoreArgsAttr</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">4</span>\n<span class=\"n\">default</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">4</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">Rfl</span><span class=\"bp\">.</span><span class=\"n\">reflExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">3</span>\n<span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">FunProp</span><span class=\"bp\">.</span><span class=\"n\">lambdaTheoremsExt</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">3</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Elab</span><span class=\"bp\">.</span><span class=\"n\">Term</span><span class=\"bp\">.</span><span class=\"n\">termElabAttribute</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">3</span>\n<span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Elab</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">tacticElabAttribute</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">3</span>\n<span class=\"n\">SetLike</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">3</span>\n</code></pre></div>",
+        "id": 571450884,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770043680
+    },
+    {
+        "content": "<p>The first few are very reasonable: simp, type class instances, parser. But the <code>env_linter</code> should really not take that much time.</p>\n<p>It turns out that there was a little oopsie in the implementation of <code>env_linter</code>. The problem is that every file reports all existing <code>@[env_linter]</code> tags as being created in that file. As a result, most mathlib files claim to have over 30 entries in this environment extension. I fix this in <a href=\"https://github.com/leanprover-community/batteries/pull/1648\">batteries#1648</a>, which gives <a href=\"https://github.com/leanprover-community/mathlib4/pull/34724#issuecomment-3835194576\">a speedup</a> of <strong>-696.2G</strong> (<strong>-0.39%</strong>) in mathlib.</p>",
+        "id": 571451952,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770043909
+    },
+    {
+        "content": "<p>What is the total percentage of build time that you've shaved off in the past two days? From a quick calculation, it's at least 0.7% already!</p>",
+        "id": 571453754,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1770044315
+    },
+    {
+        "content": "<p>It's easier to count in G-instructions. For example one of the messages above says \"we speed up a file by 0.83%\" but it's only 129.9M instructions so this is nothing (a typical PR will add far more than that). But the hundreds-of-G speed-ups are a big deal.</p>",
+        "id": 571472503,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1770048929
+    },
+    {
+        "content": "<p>Yes, the G-instructions are nice to use as a benchmark because they are the most consistent. However, it can be that they do not exactly correspond to build time.</p>",
+        "id": 571472950,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770049057
+    },
+    {
+        "content": "<p>In <a href=\"https://github.com/leanprover-community/batteries/pull/1650\">batteries#1650</a>, I experimented with letting <code>NameMapExtension</code> wrap its state in a <code>Thunk</code>, so that the state is only computed (this is step (3)) when strictly necessary.</p>\n<p>The <a href=\"https://github.com/leanprover-community/mathlib4/pull/34745#issuecomment-3841088588\">result</a> is a speedup of <strong>-1.0T</strong> (<strong>-0.58%</strong>) (which may overlap a bit with the gains from <a href=\"https://github.com/leanprover-community/mathlib4/pull/34685\">#34685</a> and <a href=\"https://github.com/leanprover-community/mathlib4/pull/34696\">#34696</a>).</p>\n<p>What I noticed in the above list of initialization times for environment extensions is that all examples of unreasonably slow environment extensions, such as <code>Mathlib.Tactic.ToDual.ignoreArgsAttr</code>, and <code>Continuous</code> (which is the <code>aesop</code>-tag) are defined outside of core Lean, and hence the code is ran by the interpreter, which is why it is slow.</p>\n<p>In particular, many of these use <code>NameMapExtension</code> which is defined in Batteries. Hence the idea to make it lazy. I think we could get even more improvements if all environment extensions were computed lazily by default, but this requires a change in core that would run into very annoying bootstrapping problems.</p>",
+        "id": 571720330,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770139300
+    },
+    {
+        "content": "<p>Can we make Lean compile them and run compiled code?</p>",
+        "id": 571720661,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1770139407
+    },
+    {
+        "content": "<p>The problem with compiled code is that it differs depending on the operating system. The lean binary goes through the effort of having these different versions, but presumably this is more annoying to do for mathlib cache?</p>\n<p>Nevertheless, I think this would be really great to have.</p>",
+        "id": 571721419,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770139603
+    },
+    {
+        "content": "<p>I wouldn't be surprised if compiling it after <code>lake exe cache get</code> will be faster than interpreting the code thousands of times. How do I force Lean to compile meta code in a file I <code>import</code>? I failed to quickly find it in the manual.</p>",
+        "id": 571721765,
+        "sender_full_name": "Yury G. Kudryashov",
+        "timestamp": 1770139695
+    },
+    {
+        "content": "<p>Are <code>simp</code> sets declared via <code>register_simp_attr</code> also environment extensions under the hood?</p>",
+        "id": 571722273,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1770139831
+    },
+    {
+        "content": "<p>there is a lake configuration option <code>precompileModules</code> which will compile all imported modules in that library, not just meta code (this is from before the module system). It would be really nice if we could have a version of this which would only compile <code>meta import</code>ed code.</p>",
+        "id": 571722609,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770139927
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"286014\">Robin Carlier</span> <a href=\"#narrow/channel/287929-mathlib4/topic/Performance.20cost.20of.20environment.20extensions/near/571722273\">said</a>:</p>\n<blockquote>\n<p>Are <code>simp</code> sets declared via <code>register_simp_attr</code> also environment extensions under the hood?</p>\n</blockquote>\n<p>Yes they are. But their overhead is a lot less, thanks to running compiled code. It is about 0.3ms, in the above list where I only showed things over 3ms.</p>",
+        "id": 571723866,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770140262
+    },
+    {
+        "content": "<p>i wonder what the impact of the <code>ring</code> tactic will be here, since having that precompiled will (presumably) require a decent part of the <code>Ring</code> hierarchy being built <em>and</em> compiled?</p>",
+        "id": 571727054,
+        "sender_full_name": "Edward van de Meent",
+        "timestamp": 1770141299
+    },
+    {
+        "content": "<p>I guess that would be a good test to see how smart the module system is :). Presumably, this could be avoided by not meta-importing the <code>Ring</code> hierarchy.</p>",
+        "id": 571727686,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770141467
+    },
+    {
+        "content": "<p>unfortunately, <a href=\"https://tqft.net/mathlib4files/Mathlib/Tactic/Ring/Basic\">file#Mathlib/Tactic/Ring/Basic</a> shows that this is not how it is in current mathlib... i think the use of (types of) typed expressions (e.g. <code>Q(Ring $R)</code>) <em>requires</em> the theory be available at the time of compiling? this also goes for the <code>norm_num</code> tactic, i believe...</p>",
+        "id": 571793573,
+        "sender_full_name": "Edward van de Meent",
+        "timestamp": 1770164301
+    },
+    {
+        "content": "<p>I'm making a PR to improve this</p>",
+        "id": 571806744,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770173015
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/34823\">#34823</a></p>",
+        "id": 571811503,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770176913
+    },
+    {
+        "content": "<p>We should probably have a technical debt counter for the number of files outside Mathlib.Tactic/Mathlib.Lean that are meta-imported somewhere.</p>",
+        "id": 571811641,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770177012
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/channel/287929-mathlib4/topic/Performance.20cost.20of.20environment.20extensions/near/571720330\">said</a>:</p>\n<blockquote>\n<p>In <a href=\"https://github.com/leanprover-community/batteries/pull/1650\">batteries#1650</a>, I experimented with letting <code>NameMapExtension</code> wrap its state in a <code>Thunk</code></p>\n</blockquote>\n<p>I have reopened this in <a href=\"https://github.com/leanprover-community/batteries/pull/1667\">batteries#1667</a>, which now has a successful mathlib build, and has a speedup of <strong>-890.3G</strong> (<strong>-0.49%</strong>)</p>",
+        "id": 573510144,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770900089
+    },
+    {
+        "content": "<p>I do wonder how big of a performance improvement we could get by using a lazy discrimination tree in <code>simp</code>. When writing <code>import Mathlib</code>, 0.5 seconds are spent simply on building the <code>simp</code> discrimination tree.</p>\n<p>We don't even need all of the nodes of the tree to be lazy, we could simply wrap all of the depth-1 nodes of the tree in a <code>Thunk</code>.</p>",
+        "id": 573511922,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1770900556
+    },
+    {
+        "content": "<p>It feels a bit like an uphill battle with these performance improvements <span aria-label=\"sweat smile\" class=\"emoji emoji-1f605\" role=\"img\" title=\"sweat smile\">:sweat_smile:</span> </p>\n<p><a href=\"/user_uploads/3121/_YUK9fiMAPjgMdabwwSwANGx/afbeelding.png\">build times over the last 10 days</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/_YUK9fiMAPjgMdabwwSwANGx/afbeelding.png\" title=\"build times over the last 10 days\"><img data-original-content-type=\"image/png\" data-original-dimensions=\"1641x1101\" src=\"/user_uploads/thumbnail/3121/_YUK9fiMAPjgMdabwwSwANGx/afbeelding.png/840x560.webp\"></a></div>",
+        "id": 573875995,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1771056442
+    },
+    {
+        "content": "<p>Can you plot build times per line of code?</p>",
+        "id": 573877075,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1771057574
+    },
+    {
+        "content": "<p>It turns out we can plot the number of lines of code in the same plot!</p>\n<p><a href=\"/user_uploads/3121/k3Klrwz2j66DA9tuVWykbGY1/afbeelding.png\">afbeelding.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/k3Klrwz2j66DA9tuVWykbGY1/afbeelding.png\" title=\"afbeelding.png\"><img data-original-content-type=\"image/png\" data-original-dimensions=\"1655x1095\" src=\"/user_uploads/thumbnail/3121/k3Klrwz2j66DA9tuVWykbGY1/afbeelding.png/840x560.webp\"></a></div>",
+        "id": 573877425,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1771057884
+    },
+    {
+        "content": "<p>Actually, the above shows the build instructions. The actual build times (task clock) are a lot less deterministic:</p>\n<p><a href=\"/user_uploads/3121/v6942Sm1jQFOCpYScSBdlLbr/afbeelding.png\">afbeelding.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/v6942Sm1jQFOCpYScSBdlLbr/afbeelding.png\" title=\"afbeelding.png\"><img data-original-content-type=\"image/png\" data-original-dimensions=\"1651x1090\" src=\"/user_uploads/thumbnail/3121/v6942Sm1jQFOCpYScSBdlLbr/afbeelding.png/840x560.webp\"></a></div>",
+        "id": 573877538,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1771058030
+    }
+]

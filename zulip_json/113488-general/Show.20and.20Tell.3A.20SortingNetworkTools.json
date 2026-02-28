@@ -1,0 +1,38 @@
+[
+    {
+        "content": "<p>Hi everyone. I used Lean to make a suite of tools for evolving, verifying, and visualizing <a href=\"https://en.wikipedia.org/wiki/Sorting_network\">sorting networks</a>. The tool can be found on <a href=\"https://github.com/MichaelMMacLeod/SortingNetworkTools?tab=readme-ov-file#sortingnetworktools\">GitHub</a> (warning: alpha stage; expect some jank.)</p>\n<p>Some Lean-specific highlights:</p>\n<h3>Lean InfoView Integration</h3>\n<p>The <code>#network &lt;network&gt;</code> command displays a visual representation of <code>&lt;network&gt;</code> in the Lean InfoView using the <a href=\"https://lean-lang.org/examples/1900-1-1-widgets/\">Widget API</a>:</p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/B3RQiFUk1fQ7HMsTiNo5MblL/network_command.png\"><img data-original-content-type=\"image/png\" data-original-dimensions=\"1030x423\" src=\"/user_uploads/thumbnail/3121/B3RQiFUk1fQ7HMsTiNo5MblL/network_command.png/840x560.webp\"></a></div><p>I think this is a really cool feature of Lean. It makes development a lot easier since it eliminates the need to manually stringify a network, copy it, paste it into an external visualization command, and then open the output of said command in an image viewer. Instead, you just move your cursor onto <code>#network</code> and immediately see it on the right-hand side.</p>\n<h3>Safe array accesses with no runtime bounds checking</h3>\n<p>Verifying if a network is correct involves <a href=\"https://en.wikipedia.org/wiki/Sorting_network#Zero-one_principle\">completing 2ⁿ tests</a>, where <code>n</code> is the size of the network. I use a technique for running these tests in parallel using bitwise operations, which requires evaluating array access expressions. Through liberal use of <code>grind</code>, I was able to eliminate all superfluous runtime bounds checks while writing only a couple proofs manually. Thank you to the people behind <code>grind</code>; this is a really great tactic! </p>\n<p>... If only we had arrays of unboxed <code>UInt64</code>s: this would make the verification code more or less indistinguishable from an equivalent <code>C/C++</code> version.</p>\n<h3>Stack-safe bottom-up tree folds</h3>\n<p>Converting a sorting network to an SVG (so it can be viewed, e.g., in the InfoView) involves a bottom-up fold on a SVG node tree. Naively implemented, such <code>SVG</code> to <code>String</code> code could lead to stack overflows if the SVG nodes are nested deep enough. To address this, <a href=\"https://github.com/MichaelMMacLeod/SortingNetworkTools/blob/master/SortingNetworkTools/Trampoline.lean\">I created a <code>Trampoline</code> type</a> which stores would-be stack frames on the heap, so non-tail-recursive functions can be run with constant stack space. The fold itself is then <a href=\"https://github.com/MichaelMMacLeod/SortingNetworkTools/blob/master/SortingNetworkTools/SVG.lean#L78\">implemented</a> using a technique borrowed from the <a href=\"https://hackage.haskell.org/package/recursion-schemes\">Haskell package <code>recursion-schemes</code></a>.</p>\n<p>I searched through here and on the web for anyone else who had done something similar (i.e., implemented trampolines or something related to them), but I couldn't find anything. Are my search powers lacking? If there's an existing, similarly general solution for this, I'd love to hear about it.</p>",
+        "id": 535224134,
+        "sender_full_name": "Michael MacLeod",
+        "timestamp": 1755653455
+    },
+    {
+        "content": "<p>If you add a license and star it on github (I did), it will auto build on reservoir</p>",
+        "id": 535334571,
+        "sender_full_name": "Alok Singh",
+        "timestamp": 1755702213
+    },
+    {
+        "content": "<p>Thanks! It has a license, so it should eventually build on Reservoir. I think there's just some lag in Reservoir pulling from GitHub.</p>",
+        "id": 535376510,
+        "sender_full_name": "Michael MacLeod",
+        "timestamp": 1755717624
+    },
+    {
+        "content": "<p>Note that a project also needs to have <a href=\"https://reservoir.lean-lang.org/inclusion-criteria\">at least two stars</a> to be included on Reservoir; I've also starred it so it should be picked up within a day or so.</p>",
+        "id": 535380337,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1755719162
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"730008\">@Michael MacLeod</span> regarding your Trampoline type, I think it's semi-common practice to make a function tail-recursive by describing the heap-allocated stack manually and then taking it as an additional argument. It might be nice to have general machinery for this, though.</p>",
+        "id": 535755095,
+        "sender_full_name": "𝚠𝚘𝚓𝚌𝚒𝚎𝚌𝚑 𝚗𝚊𝚠𝚛𝚘𝚌𝚔𝚒",
+        "timestamp": 1755896307
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"128280\">@𝚠𝚘𝚓𝚌𝚒𝚎𝚌𝚑 𝚗𝚊𝚠𝚛𝚘𝚌𝚔𝚒</span>  Yeah, it's a lot nicer to have a general way of doing, e.g., bottom-up folds on tree structures that don't run the risk of stack overflows. Not having this is kind of like doing programming without <code>map</code> or <code>fold</code> (or imperitive programming without <code>for</code> loops), i.e., resorting to ad-hoc implementations every time one wishes to traverse a data structure in some way.</p>\n<p>When it comes to implemening the general bottom-up fold function, I know of two approaches. The first is the way taken by the <a href=\"https://hackage.haskell.org/package/recursion-schemes-5.2.3/docs/src/Data.Functor.Foldable.html#cata\"><code>recursion-schemes</code> Haskell package</a>, where Haskell's laziness is exploited to achieve stack-safety while still encoding the traversal recursively. The second approach, followed by the <a href=\"https://docs.rs/crate/recursion/latest/source/src/frame.rs#88\"><code>recursion</code> Rust crate</a>, uses heap-allocated stacks (in the way you specified) and loops to implement the fold.</p>\n<p>I actually tried to implement the second way first, that is, I thought that it would be better to write the generic bottom-up fold function via looping on heap-allocated stacks. But I ran into some performance issues, probably due to <code>Nat</code>-based indexing (technically avoidable in Lean) and/or boxed array elements (both of which are absent in Rust). Maybe these could have been somehow resolved. In the end, I decided to just rewrite the code in the Haskell style, with manually encoded laziness via the Trampoline type. This proved to be a lot simpler to implement and was much more efficient.</p>",
+        "id": 535758199,
+        "sender_full_name": "Michael MacLeod",
+        "timestamp": 1755898032
+    }
+]

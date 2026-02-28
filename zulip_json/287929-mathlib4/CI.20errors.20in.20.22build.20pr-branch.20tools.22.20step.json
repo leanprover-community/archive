@@ -1,0 +1,116 @@
+[
+    {
+        "content": "<p>Several PRs are now failing CI in the \"build pr-branch tools\" step, which was added in <a href=\"https://github.com/leanprover-community/mathlib4/pull/26294\">#26294</a>: </p>\n<ul>\n<li><a class=\"message-link\" href=\"/#narrow/channel/144837-PR-reviews/topic/.2326060.20Grassmannians/near/525507281\">#PR reviews &gt; #26060 Grassmannians @ 💬</a> (<a href=\"https://github.com/leanprover-community/mathlib4/actions/runs/15849718974/job/44679933204?pr=26060#step:13:47\">log</a>) </li>\n<li><a href=\"https://github.com/leanprover-community/mathlib4/pull/26244\">#26244</a> (<a href=\"https://github.com/leanprover-community/mathlib4/actions/runs/15849598164/job/44679534053#step:13:54\">log</a>) was on the bors queue but is now blocked due to this. </li>\n</ul>\n<p>Note that since the \"Check {Mathlib, Tactic, Counterexamples, Archive}.lean\" has <code>if: always()</code>, that seems to end up being the last step to fail when this occurs (probably we should do better error-handling there, since the error message doesn't always apply).</p>\n<p>I won't be able to look at this in detail for a few hours, but if someone can figure out what's going on, I might be able to review+merge a fix quickly.</p>\n<p>cc: <span class=\"user-mention\" data-user-id=\"112680\">@Johan Commelin</span></p>",
+        "id": 525509696,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1750769030
+    },
+    {
+        "content": "<p>This is the same error as in <a href=\"#narrow/channel/287929-mathlib4/topic/Failing.20CI/with/525466176\">https://leanprover.zulipchat.com/#narrow/channel/287929-mathlib4/topic/Failing.20CI/with/525466176</a>, right?</p>",
+        "id": 525529821,
+        "sender_full_name": "Anatole Dedecker",
+        "timestamp": 1750774710
+    },
+    {
+        "content": "<p>I think they are distinct issues. That one has something to do with Cache and pops up in the \"Post-Build Step\" job.</p>",
+        "id": 525532474,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1750775430
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/26354\">#26354</a> suffers from it too</p>",
+        "id": 525598040,
+        "sender_full_name": "Vasilii Nesterov",
+        "timestamp": 1750800468
+    },
+    {
+        "content": "<p>Is the reason these tests fail that they are inside <code>landrun</code>?  The analogous tests on the master branch work.</p>",
+        "id": 525600081,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1750801353
+    },
+    {
+        "content": "<p>The error running <code>lake build mathlib_test_executable</code> appears to be</p>\n<div class=\"codehilite\" data-code-language=\"Bash\"><pre><span></span><code>Building<span class=\"w\"> </span>mathlib_test_executable...\ninfo:<span class=\"w\"> </span>plausible:<span class=\"w\"> </span>cloning<span class=\"w\"> </span>https://github.com/leanprover-community/plausible\nerror:<span class=\"w\"> </span>external<span class=\"w\"> </span><span class=\"nb\">command</span><span class=\"w\"> </span><span class=\"s1\">'git'</span><span class=\"w\"> </span>exited<span class=\"w\"> </span>with<span class=\"w\"> </span>code<span class=\"w\"> </span><span class=\"m\">128</span>\n</code></pre></div>\n<p>So, it looks like <code>lake build</code> is setting things up, but then <code>git</code> is unable to... download(?) and produces an error.</p>",
+        "id": 525600530,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1750801564
+    },
+    {
+        "content": "<p>That's probably it... I'd forgotten about landrun. Is there any reasonable way to do the git clone in another step (mediated by e.g. actions/checkout) and then do the actual building in the sandbox?</p>",
+        "id": 525601016,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1750801810
+    },
+    {
+        "content": "<p>There is a <code>name: download dependencies</code> step that has some version of <code>landrun</code>.</p>",
+        "id": 525601286,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1750801958
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"YAML\"><pre><span></span><code><span class=\"w\">      </span><span class=\"p p-Indicator\">-</span><span class=\"w\"> </span><span class=\"nt\">name</span><span class=\"p\">:</span><span class=\"w\"> </span><span class=\"l l-Scalar l-Scalar-Plain\">download dependencies</span>\n<span class=\"w\">        </span><span class=\"c1\"># We need network access to download dependencies</span>\n<span class=\"w\">        </span><span class=\"c1\"># We run this inside landrun, but restrict disk access.</span>\n<span class=\"w\">        </span><span class=\"c1\"># Landrun argument notes:</span>\n<span class=\"w\">        </span><span class=\"c1\"># - we give --rox access to `~/.elan` and `~/actions-runner/_work` (GitHub CI needs this)</span>\n<span class=\"w\">        </span><span class=\"c1\"># - we give --unrestricted-network as we need this to download dependencies</span>\n<span class=\"w\">        </span><span class=\"c1\"># - git needs read only access to `/etc`.</span>\n<span class=\"w\">        </span><span class=\"nt\">shell</span><span class=\"p\">:</span><span class=\"w\"> </span><span class=\"l l-Scalar l-Scalar-Plain\">landrun --unrestricted-network --rox /etc --rox /usr --rw /dev --rox /home/lean/.elan --rox /home/lean/actions-runner/_work --rw pr-branch/.lake/ --env PATH --env HOME --env GITHUB_OUTPUT -- bash -euxo pipefail {0}</span>\n<span class=\"w\">        </span><span class=\"nt\">run</span><span class=\"p\">:</span><span class=\"w\"> </span><span class=\"p p-Indicator\">|</span>\n<span class=\"w\">          </span><span class=\"no\">cd pr-branch</span>\n<span class=\"w\">          </span><span class=\"no\">lake env</span>\n</code></pre></div>",
+        "id": 525601330,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1750801976
+    },
+    {
+        "content": "<p>Maybe we run <code>name: build pr-branch tools (test)</code> with the same setup?</p>",
+        "id": 525601439,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1750802032
+    },
+    {
+        "content": "<p>Should we disable this step for now, while we think of a fix?</p>",
+        "id": 525602614,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1750802652
+    },
+    {
+        "content": "<p>I think a separate step might work, but yes, let's disable the broken step for now: <a href=\"https://github.com/leanprover-community/mathlib4/pull/26379\">#26379</a></p>",
+        "id": 525608209,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1750806108
+    },
+    {
+        "content": "<p>The workflow that was causing this issue has been reverted.  If you had problems, try restarting CI and hopefully it should work.</p>",
+        "id": 525641739,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1750832241
+    },
+    {
+        "content": "<p>Still broken in <a href=\"https://github.com/leanprover-community/mathlib4/pull/26366\">#26366</a>, even after restarting and merging with master.</p>",
+        "id": 525662646,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1750840965
+    },
+    {
+        "content": "<p>Isn't this the failure of the <em>other</em> thread?</p>",
+        "id": 525664661,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1750841634
+    },
+    {
+        "content": "<p>It's not the same error. You're talking about the one from the thread of <a class=\"message-link\" href=\"/#narrow/channel/287929-mathlib4/topic/Failing.20CI/near/525595598\">#mathlib4 &gt; Failing CI @ 💬</a>  (which is still not resolved), not the current one.</p>",
+        "id": 525664668,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1750841637
+    },
+    {
+        "content": "<p>I have not had a chance to look at the other one, but it seems like it might require some <code>lake</code> modification, either in the code, or in the passed arguments.</p>",
+        "id": 525664916,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1750841710
+    },
+    {
+        "content": "<p>Btw, a (good in my opinion) consequence of the new CI, is that merging master should not be necessary to get the \"latest\" CI actions.</p>",
+        "id": 525665075,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1750841755
+    },
+    {
+        "content": "<p>Ah, my bad, sorry!</p>",
+        "id": 525669853,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1750843288
+    }
+]

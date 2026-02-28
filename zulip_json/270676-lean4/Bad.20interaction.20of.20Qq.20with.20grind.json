@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>While writing a tactic that quotes proofs produced by <code>grind</code>, I came across a nasty interaction with quote4. Here is what happens:</p>\n<ol>\n<li>A <code>| ~q(..)</code> pattern match expands into auxiliary code. The code defines a tuple that packages together some data and a flag for whether the pattern matched.</li>\n<li>This tuple persists (as an inaccessible variable) in the local context in which <code>q(by grind)</code> is used to produce a proof term.</li>\n<li><code>grind</code> picks up the tuple and <em>matches on it</em>, resulting in a huge and inefficient proof term (the tuple is completely useless for actually proving the goal).</li>\n</ol>\n<p>Here is an example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Lean</span>\n<span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Qq</span>\n\n<span class=\"kn\">open</span><span class=\"w\"> </span><span class=\"n\">Qq</span>\n\n<span class=\"kn\">axiom</span><span class=\"w\"> </span><span class=\"n\">P</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"kt\">Prop</span>\n\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">abc</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Q</span><span class=\"o\">(</span><span class=\"n\">Nat</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">pf</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Q</span><span class=\"o\">(</span><span class=\"n\">P</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">n</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">MetaM</span><span class=\"w\"> </span><span class=\"n\">Q</span><span class=\"o\">(</span><span class=\"n\">P</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">n</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">match</span><span class=\"w\"> </span><span class=\"n\">pf</span><span class=\"w\"> </span><span class=\"k\">with</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"bp\">~</span><span class=\"n\">q</span><span class=\"o\">(</span><span class=\"bp\">_</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"n\">q</span><span class=\"o\">(</span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">grind</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"c1\">-- q(abc._proof_1 ..)</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"n\">q</span><span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">pf</span><span class=\"o\">)</span>\n\n<span class=\"c\">/-</span><span class=\"cm\"> theorem abc._proof_1 :</span>\n<span class=\"cm\">    ∀ («$n» : Nat) («$x» : Lean.Expr × Bool), P «$n» → P «$n» :=</span>\n<span class=\"cm\">  fun «$n» «$x» «$x_1» =&gt; Prod.casesOn «$x» .. -/</span>\n<span class=\"bp\">#</span><span class=\"n\">print</span><span class=\"w\"> </span><span class=\"n\">abc</span><span class=\"bp\">._</span><span class=\"n\">proof_1</span>\n</code></pre></div>\n<p>One possible fix is to manually clear <code>$x_1</code>, but that's quite clearly fragile and suboptimal. I would be grateful for suggestions on how to properly fix this.</p>\n<ul>\n<li>Is this a bug in Qq which should have hidden this variable better (maybe using some of the 'implementation detail' flags)?</li>\n<li>Is it a bug in <code>grind</code> which destructures garbage auxiliary data?</li>\n</ul>",
+        "id": 531030617,
+        "sender_full_name": "𝚠𝚘𝚓𝚌𝚒𝚎𝚌𝚑 𝚗𝚊𝚠𝚛𝚘𝚌𝚔𝚒",
+        "timestamp": 1753577072
+    },
+    {
+        "content": "<p>This should hopefully have been alleviated by <a href=\"https://github.com/leanprover/lean4/pull/9686\">lean4#9686</a></p>",
+        "id": 532523793,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1754202020
+    },
+    {
+        "content": "<p>Oops, sorry, not yet: someone will need to modify <code>quote4</code> to actually mark its auxiliary hypotheses as <code>isImplementationDetail</code>. Any takers?</p>",
+        "id": 532548606,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1754221819
+    },
+    {
+        "content": "<p>Done in <a href=\"https://github.com/leanprover-community/quote4/pull/95\">quote4#95</a>. I think that's it for the Qq fix, but the core <code>match</code> elaborator doesn't always respect the convention that <code>__x</code> means an impl detail var:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">True</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">  </span><span class=\"k\">match</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"k\">with</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"bp\">__</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"gr\">sorry</span><span class=\"w\"> </span><span class=\"c\">/-</span><span class=\"cm\"> ⊢ True -/</span>\n\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">True</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">  </span><span class=\"k\">match</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"k\">with</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"bp\">__</span><span class=\"n\">x</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"gr\">sorry</span><span class=\"w\"> </span><span class=\"c\">/-</span><span class=\"cm\"> __x x✝ : Nat ⊢ True-/</span>\n</code></pre></div>\n<p>I guess this has to be fixed in Lean.</p>",
+        "id": 532578762,
+        "sender_full_name": "𝚠𝚘𝚓𝚌𝚒𝚎𝚌𝚑 𝚗𝚊𝚠𝚛𝚘𝚌𝚔𝚒",
+        "timestamp": 1754240919
+    },
+    {
+        "content": "<p>Where is that convention established?</p>",
+        "id": 532581207,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1754242539
+    },
+    {
+        "content": "<p>Sorry, I meant '<code>implDetail</code> var', not 'inaccessible'. But I guess in <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.Term.kindOfBinderName#doc\">docs#Lean.Elab.Term.kindOfBinderName</a>.</p>",
+        "id": 532581774,
+        "sender_full_name": "𝚠𝚘𝚓𝚌𝚒𝚎𝚌𝚑 𝚗𝚊𝚠𝚛𝚘𝚌𝚔𝚒",
+        "timestamp": 1754242954
+    },
+    {
+        "content": "<p><code>match</code> seems to use <code>withLocalDecl</code> to add pattern variables to the local context in <code>withPatternVars</code>, and <code>withLocalDecl</code> respects <code>__</code>, so maybe there's some other local context transformation that causes it to forget? Or maybe the name of the local variable is temporarily something synthetic somehow?</p>",
+        "id": 532582189,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754243245
+    },
+    {
+        "content": "<p>I don't think <code>withLocalDecl</code> respects that, though; it just takes a <code>LocalDeclKind</code> argument which defaults to <code>.default</code>. Maybe <code>withPatternVars</code> should be using <code>kindOfBinderName</code>? UPDATE: Hm no, that doesn't do it.</p>",
+        "id": 532582507,
+        "sender_full_name": "𝚠𝚘𝚓𝚌𝚒𝚎𝚌𝚑 𝚗𝚊𝚠𝚛𝚘𝚌𝚔𝚒",
+        "timestamp": 1754243482
+    },
+    {
+        "content": "<p>Oh, sorry, I misremembered, you are correct. The kindOfBinderName logic is in the binder elaboration.</p>\n<p>I'm not sure why using that logic in <code>withPatternVars</code> wouldn't work, that's weird. I don't know much about the structure of the <code>match</code> elaborator though.</p>",
+        "id": 532582830,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754243698
+    },
+    {
+        "content": "<p>Aha, it's <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.Term.ToDepElimPattern.main.unpack#doc\">docs#Lean.Elab.Term.ToDepElimPattern.main.unpack</a>.</p>",
+        "id": 532583373,
+        "sender_full_name": "𝚠𝚘𝚓𝚌𝚒𝚎𝚌𝚑 𝚗𝚊𝚠𝚛𝚘𝚌𝚔𝚒",
+        "timestamp": 1754244073
+    }
+]

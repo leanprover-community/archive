@@ -1,0 +1,188 @@
+[
+    {
+        "content": "<p>I have the following <code>Main.lean</code> with an unnecessary import of some module:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Data</span><span class=\"bp\">.</span><span class=\"n\">RBMap</span>\n\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">main</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">IO</span><span class=\"w\"> </span><span class=\"n\">Unit</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">pure</span><span class=\"w\"> </span><span class=\"o\">()</span>\n</code></pre></div>\n<p>With the import, the compiled executable takes about 50 milliseconds to run; without it, it runs in 3ms.<br>\nThe 50ms runtime seems to appear whenever the imported module is <code>Lean</code> or a submodule.</p>\n<p>Why does this make such a difference? No functions in the imported module are ever used, so I'd expect the produced executables to be very similar if not identical.</p>",
+        "id": 530363481,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1753281698
+    },
+    {
+        "content": "<p>Every <code>initialize</code> in every imported module runs, I believe</p>",
+        "id": 530364173,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1753281892
+    },
+    {
+        "content": "<p>That is correct, all closed terms of all modules are currently eagerly initialized on startup of a binary so the larger your transitive import closure the worse your run time gets.</p>",
+        "id": 530365056,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1753282126
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/channel/270676-lean4/topic/.60import.20Lean.60.20influencing.20executable.20startup.20time/near/530364173\">said</a>:</p>\n<blockquote>\n<p>Every <code>initialize</code> in every imported module runs, I believe</p>\n</blockquote>\n<p>Ah, thanks. The <a href=\"https://lean-lang.org/doc/reference/latest/Elaboration-and-Compilation/#initialization\">docs on <code>initialize</code></a> are pretty short, what is it used for?</p>\n<p><span class=\"user-mention silent\" data-user-id=\"395550\">Henrik Böving</span> <a href=\"#narrow/channel/270676-lean4/topic/.60import.20Lean.60.20influencing.20executable.20startup.20time/near/530365056\">said</a>:</p>\n<blockquote>\n<p>all closed terms of all modules are currently eagerly initialized on startup of a binary so the larger your transitive import closure the worse your run time gets.</p>\n</blockquote>\n<p>That sounds to me like something different, isn't this about closed term extraction?</p>",
+        "id": 530365819,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1753282304
+    },
+    {
+        "content": "<p>(deleted)</p>",
+        "id": 530366144,
+        "sender_full_name": "Cameron Zwarich",
+        "timestamp": 1753282377
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/pull/467\">lean4#467</a></p>",
+        "id": 530366184,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1753282389
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"893179\">Simon Dima</span> <a href=\"#narrow/channel/270676-lean4/topic/.60import.20Lean.60.20influencing.20executable.20startup.20time/near/530365819\">said</a>:</p>\n<blockquote>\n<p>Ah, thanks. The <a href=\"https://lean-lang.org/doc/reference/latest/Elaboration-and-Compilation/#initialization\">docs on <code>initialize</code></a> are pretty short,</p>\n</blockquote>\n<p>These look fairly good to me for describing what initializers do _in the compiler_, but indeed there seems to be no mention of the runtime behavior.</p>",
+        "id": 530366765,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1753282513
+    },
+    {
+        "content": "<p>To summarize that issue: we would replace closed terms with a combo of compile-time evaluated objects that are baked into the <code>DATA</code> segment of the binary and thunked computations that are evaluated once at runtime.  The former do still require some runtime computation (rebasing fixups in the dynamic linker), although there is a feature on macOS we could opt in to to have this done in the kernel on page-in and thus not produce any dirty memory. I'm not aware of something similar on Linux or Windows, but that could just be due to lack of knowledge on my part.</p>",
+        "id": 530367630,
+        "sender_full_name": "Cameron Zwarich",
+        "timestamp": 1753282713
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"893179\">Simon Dima</span> <a href=\"#narrow/channel/270676-lean4/topic/.60import.20Lean.60.20influencing.20executable.20startup.20time/near/530365819\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/channel/270676-lean4/topic/.60import.20Lean.60.20influencing.20executable.20startup.20time/near/530364173\">said</a>:</p>\n<blockquote>\n<p>Every <code>initialize</code> in every imported module runs, I believe</p>\n</blockquote>\n<p>Ah, thanks. The <a href=\"https://lean-lang.org/doc/reference/latest/Elaboration-and-Compilation/#initialization\">docs on <code>initialize</code></a> are pretty short, what is it used for?</p>\n<p><span class=\"user-mention silent\" data-user-id=\"395550\">Henrik Böving</span> <a href=\"#narrow/channel/270676-lean4/topic/.60import.20Lean.60.20influencing.20executable.20startup.20time/near/530365056\">said</a>:</p>\n<blockquote>\n<p>all closed terms of all modules are currently eagerly initialized on startup of a binary so the larger your transitive import closure the worse your run time gets.</p>\n</blockquote>\n<p>That sounds to me like something different, isn't this about closed term extraction?</p>\n</blockquote>\n<p>Every module generates a function <code>initialize_&lt;moduleName&gt;</code> at the C level. This function has three main jobs:</p>\n<ol>\n<li>Evaluated all closed terms of that module</li>\n<li>Run all of the elab level <code>initialize</code>, these are practically used to e.g. create initial states of environment extensions, register trace classes etc. You can grep <code>builtin_initialize</code> to see the variety of stuff they are used for in core.</li>\n<li>Run initializers of every imported module</li>\n</ol>",
+        "id": 530367834,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1753282755
+    },
+    {
+        "content": "<p>Thanks to all, that clears up a lot of confusion!<br>\nWhy is it that <code>import Lean.Data.Array</code> (for example) incurs the same constant run-time penalty as <code>import Lean</code>? I'd expect the former to have much fewer dependencies, and so run much faster.</p>",
+        "id": 530369004,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1753283038
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"bp\">λ</span><span class=\"w\"> </span><span class=\"n\">hyperfine</span><span class=\"w\"> </span><span class=\"c1\">--show-output --warmup 2 --  \"./build/release/stage1/bin/lean test_small.lean\"</span>\n<span class=\"n\">Benchmark</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">./</span><span class=\"n\">build</span><span class=\"bp\">/</span><span class=\"n\">release</span><span class=\"bp\">/</span><span class=\"n\">stage1</span><span class=\"bp\">/</span><span class=\"n\">bin</span><span class=\"bp\">/</span><span class=\"n\">lean</span><span class=\"w\"> </span><span class=\"n\">test_small</span><span class=\"bp\">.</span><span class=\"n\">lean</span>\n<span class=\"w\">  </span><span class=\"n\">Time</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">mean</span><span class=\"w\"> </span><span class=\"bp\">±</span><span class=\"w\"> </span><span class=\"n\">σ</span><span class=\"o\">):</span><span class=\"w\">     </span><span class=\"mf\">145.8</span><span class=\"w\"> </span><span class=\"n\">ms</span><span class=\"w\"> </span><span class=\"bp\">±</span><span class=\"w\">  </span><span class=\"mf\">15.2</span><span class=\"w\"> </span><span class=\"n\">ms</span><span class=\"w\">    </span><span class=\"o\">[</span><span class=\"n\">User</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mf\">83.8</span><span class=\"w\"> </span><span class=\"n\">ms</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">System</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mf\">61.9</span><span class=\"w\"> </span><span class=\"n\">ms</span><span class=\"o\">]</span>\n<span class=\"w\">  </span><span class=\"n\">Range</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">min</span><span class=\"w\"> </span><span class=\"bp\">…</span><span class=\"w\"> </span><span class=\"n\">max</span><span class=\"o\">):</span><span class=\"w\">   </span><span class=\"mf\">121.7</span><span class=\"w\"> </span><span class=\"n\">ms</span><span class=\"w\"> </span><span class=\"bp\">…</span><span class=\"w\"> </span><span class=\"mf\">175.6</span><span class=\"w\"> </span><span class=\"n\">ms</span><span class=\"w\">    </span><span class=\"mi\">24</span><span class=\"w\"> </span><span class=\"n\">runs</span>\n\n<span class=\"n\">chonk</span><span class=\"bp\">.</span><span class=\"n\">lean</span><span class=\"bp\">-</span><span class=\"n\">fro</span><span class=\"bp\">.</span><span class=\"n\">org</span><span class=\"o\">:</span><span class=\"bp\">~/</span><span class=\"n\">lean4</span><span class=\"bp\">|</span><span class=\"n\">hbv</span><span class=\"bp\">/</span><span class=\"n\">remove_rbmap_usage</span>\n<span class=\"bp\">λ</span><span class=\"w\"> </span><span class=\"n\">hyperfine</span><span class=\"w\"> </span><span class=\"c1\">--show-output --warmup 2 --  \"./build/release/stage1/bin/lean test_big.lean\"</span>\n<span class=\"n\">Benchmark</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">./</span><span class=\"n\">build</span><span class=\"bp\">/</span><span class=\"n\">release</span><span class=\"bp\">/</span><span class=\"n\">stage1</span><span class=\"bp\">/</span><span class=\"n\">bin</span><span class=\"bp\">/</span><span class=\"n\">lean</span><span class=\"w\"> </span><span class=\"n\">test_big</span><span class=\"bp\">.</span><span class=\"n\">lean</span>\n<span class=\"w\">  </span><span class=\"n\">Time</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">mean</span><span class=\"w\"> </span><span class=\"bp\">±</span><span class=\"w\"> </span><span class=\"n\">σ</span><span class=\"o\">):</span><span class=\"w\">     </span><span class=\"mf\">559.6</span><span class=\"w\"> </span><span class=\"n\">ms</span><span class=\"w\"> </span><span class=\"bp\">±</span><span class=\"w\">  </span><span class=\"mf\">71.4</span><span class=\"w\"> </span><span class=\"n\">ms</span><span class=\"w\">    </span><span class=\"o\">[</span><span class=\"n\">User</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mf\">358.4</span><span class=\"w\"> </span><span class=\"n\">ms</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">System</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mf\">197.7</span><span class=\"w\"> </span><span class=\"n\">ms</span><span class=\"o\">]</span>\n<span class=\"w\">  </span><span class=\"n\">Range</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">min</span><span class=\"w\"> </span><span class=\"bp\">…</span><span class=\"w\"> </span><span class=\"n\">max</span><span class=\"o\">):</span><span class=\"w\">   </span><span class=\"mf\">461.6</span><span class=\"w\"> </span><span class=\"n\">ms</span><span class=\"w\"> </span><span class=\"bp\">…</span><span class=\"w\"> </span><span class=\"mf\">673.5</span><span class=\"w\"> </span><span class=\"n\">ms</span><span class=\"w\">    </span><span class=\"mi\">10</span><span class=\"w\"> </span><span class=\"n\">runs</span>\n</code></pre></div>\n<p>that does not seem to be the case for me at all?</p>",
+        "id": 530369625,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1753283167
+    },
+    {
+        "content": "<p>oh but that's just type checking the file of course, maybe in an exectuable its different</p>",
+        "id": 530369746,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1753283197
+    },
+    {
+        "content": "<p>I'm compiling a <code>lean_exe</code> target with a minimal lakefile and measuring the runtime of the compiled executable</p>",
+        "id": 530370033,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1753283269
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Array#doc\">docs#Array</a> is not defined in that file, FWIW (edit: but I see that file is very lightweight anyway)</p>",
+        "id": 530370907,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1753283485
+    },
+    {
+        "content": "<p>Ah yes I remember now. The compiler currently eagerly overapproximates the amount of initializers required when you import anything from <code>Lean</code> at all (check EmitC function <code>emitMainFn</code>) for reasons that escape me at the moment.</p>",
+        "id": 530370920,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1753283489
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">env</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">getEnv</span>\n<span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">usesLeanAPI</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">usesModuleFrom</span><span class=\"w\"> </span><span class=\"n\">env</span><span class=\"w\"> </span><span class=\"ss\">`Lean</span>\n<span class=\"n\">emitLn</span><span class=\"w\"> </span><span class=\"s2\">\"char ** lean_setup_args(int argc, char ** argv);\"</span><span class=\"bp\">;</span>\n<span class=\"k\">if</span><span class=\"w\"> </span><span class=\"n\">usesLeanAPI</span><span class=\"w\"> </span><span class=\"k\">then</span>\n<span class=\"w\">   </span><span class=\"n\">emitLn</span><span class=\"w\"> </span><span class=\"s2\">\"void lean_initialize();\"</span>\n<span class=\"k\">else</span>\n<span class=\"w\">   </span><span class=\"n\">emitLn</span><span class=\"w\"> </span><span class=\"s2\">\"void lean_initialize_runtime_module();\"</span><span class=\"bp\">;</span>\n<span class=\"n\">emitLn</span><span class=\"w\"> </span><span class=\"s2\">\"</span>\n</code></pre></div>",
+        "id": 530371035,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1753283519
+    },
+    {
+        "content": "<p>I guess one quick fix would be to move the file above into Std?</p>",
+        "id": 530371211,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1753283569
+    },
+    {
+        "content": "<p>Is there a reason that requires imports from <code>Lean</code> to be handled more carefully than any others?</p>",
+        "id": 530371950,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1753283784
+    },
+    {
+        "content": "<p>Maybe because you need to initialize the kernel, interpreter, etc. when you import <code>Lean</code>?</p>",
+        "id": 530372683,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1753283995
+    },
+    {
+        "content": "<p>And:</p>\n<div class=\"codehilite\" data-code-language=\"C++\"><pre><span></span><code><span class=\"w\">    </span><span class=\"c1\">// Initializing the core libs explicitly is necessary because of references to them other than</span>\n<span class=\"w\">    </span><span class=\"c1\">// via `import`, such as:</span>\n<span class=\"w\">    </span><span class=\"c1\">// * calling exported Lean functions from C++</span>\n<span class=\"w\">    </span><span class=\"c1\">// * calling into native code of the current module from a previous stage when `prefer_native`</span>\n<span class=\"w\">    </span><span class=\"c1\">//   is set</span>\n</code></pre></div>",
+        "id": 530372933,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1753284055
+    },
+    {
+        "content": "<p>So mainly due to interaction of the C++ code and Lean code it seems</p>",
+        "id": 530373158,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1753284112
+    },
+    {
+        "content": "<p>Would an instance of the first bullet point from that comment be the way the <code>main</code> function from  <code>LCNF/Main.lean</code> is exported as <code>lean_lcnf_compile_decls</code> and used as an extern symbol in <code>CoreM.lean</code> ? If I understand correctly that requires the initialization code of <code>LCNF/Main.lean</code> to be run when initializing <code>CoreM</code>, so that <code>compileDeclsImpl</code> in <code>CoreM.lean</code> can run correctly. I guess the assumption is that this sort of C++ trickery can occur anywhere under <code>Lean</code> and so using anything from <code>Lean</code> requires everything to be loaded, whereas anything outside of <code>Lean</code> should not be depend on such behavior?</p>",
+        "id": 530493513,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1753342651
+    },
+    {
+        "content": "<p>Not only that, there is also parts of our C++ code base that actually call back into Lean code, for example because constructing and juggling with expressions is nicer in Lean than in C++.</p>",
+        "id": 530493741,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1753342740
+    },
+    {
+        "content": "<p>I see, thanks. Is the C++ code currently (since new-codegen was activated) just the CLI and kernel, or are there any other bits left there?</p>",
+        "id": 530494637,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1753343056
+    },
+    {
+        "content": "<p>There is also the interpreter and the runtime</p>",
+        "id": 530495745,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1753343429
+    },
+    {
+        "content": "<p>As an adjacent question, the way closed term extraction works is not quite clear to me from the trace output:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">trace</span><span class=\"bp\">.</span><span class=\"n\">Compiler</span><span class=\"bp\">.</span><span class=\"n\">extractClosed</span><span class=\"w\"> </span><span class=\"n\">true</span>\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">trace</span><span class=\"bp\">.</span><span class=\"n\">Compiler</span><span class=\"bp\">.</span><span class=\"n\">result</span><span class=\"w\"> </span><span class=\"n\">true</span>\n\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">idn</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">-&gt;</span><span class=\"w\"> </span><span class=\"n\">Nat</span>\n<span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"mi\">0</span>\n<span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"bp\">+</span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">idn</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"mi\">1</span>\n\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">long</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">_</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Unit</span><span class=\"o\">):</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">idn</span><span class=\"w\"> </span><span class=\"mi\">10</span><span class=\"bp\">_</span><span class=\"mi\">000</span><span class=\"bp\">_</span><span class=\"mi\">000</span>\n</code></pre></div>\n<p>The output for <code>long</code> includes </p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"w\">    </span><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">long</span><span class=\"bp\">._</span><span class=\"n\">closed_0</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">      </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"m\">1</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"mi\">10000000</span><span class=\"bp\">;</span>\n<span class=\"w\">      </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"m\">2</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">idn</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"m\">1</span><span class=\"bp\">;</span>\n<span class=\"w\">      </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"m\">2</span>\n</code></pre></div>\n<p>which is as expected, but the code generated for <code>long</code> itself is</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"w\">    </span><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">long</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"m\">1</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">      </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"m\">2</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"mi\">10000000</span><span class=\"bp\">;</span>\n<span class=\"w\">      </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"m\">3</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">idn</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"m\">2</span><span class=\"bp\">;</span>\n<span class=\"w\">      </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"m\">3</span>\n</code></pre></div>\n<p>and not</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"w\">    </span><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">long</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"m\">1</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">      </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"m\">2</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">long</span><span class=\"bp\">._</span><span class=\"n\">closed_0</span><span class=\"bp\">;</span>\n<span class=\"w\">      </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"m\">2</span><span class=\"bp\">;</span>\n</code></pre></div>\n<p>like I'd expect.<br>\nThe runtime behavior does indicate that the extracted closed term is being used correctly. Maybe the information about closed terms is passed in a different way, which is not printed by <code>trace.Compiler.result</code>, rather than directly replacing them with the name of the extracted definition?</p>",
+        "id": 530506321,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1753346719
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/pull/9336\">lean4#9336</a></p>",
+        "id": 530516377,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1753350118
+    },
+    {
+        "content": "<p>It's printed in a confusing way but if you look at <code>trace.compiler.ir.result</code> you see that at the end, the closed terms <em>are</em> extracted how you'd expect.</p>",
+        "id": 530516477,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1753350155
+    },
+    {
+        "content": "<p>(and the PR above fixes it so it works on nightly)</p>",
+        "id": 530516506,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1753350172
+    },
+    {
+        "content": "<p>Great, thanks! I was using v4.22.0-rc3.</p>",
+        "id": 530516798,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1753350261
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"873547\">Robin Arnez</span> <a href=\"#narrow/stream/270676-lean4/topic/.60import.20Lean.60.20influencing.20executable.20startup.20time/near/530516377\">said</a>:</p>\n<blockquote>\n<p><a href=\"https://github.com/leanprover/lean4/pull/9336\">lean4#9336</a></p>\n</blockquote>\n<p>Apologies for the temporary divergence from sanity here. I would’ve changed it earlier but there was an ominous comment above the code that required a bit of investigation.</p>",
+        "id": 530623523,
+        "sender_full_name": "Cameron Zwarich",
+        "timestamp": 1753381904
+    }
+]

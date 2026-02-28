@@ -1,0 +1,140 @@
+[
+    {
+        "content": "<p>The following is the result of a discussion among the maintainers and reviewers a few months ago, which I am only now managing to disseminate publicly.</p>\n<p>Several years ago, <span class=\"user-mention silent\" data-user-id=\"238446\">Anne Baanen</span> introduced the <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=FunLike#doc\">docs#FunLike</a> class and the associated classes throughout the morphism hierarchy. When this was instituted, the guidelines indicated that for each morphism type <code>FooHom</code>, there should be an associated morphism class <code>FooHomClass</code>. Moreover, it was recommend to add a coercion from a type <code>F</code> satisfying <code>FooHomClass</code> to <code>FooHom</code>. These are still present throughout the library. More recently, we have tried to separate the morphism classes into distinct pieces according to domain (e.g., we don't have <code>ContinuousMonoidHomClass</code> but only <code>ContinuousMapClass</code> and <code>MonoidHomClass</code>), but the coercions have mostly remained in place.</p>\n<p>Unfortunately, these coercions have caused tremendous headaches. To start, Lean often has a hard time inferring all the types involved, so one often has to use type ascriptions to specify. This is inconvenient at best. Secondly, since morphisms are instances of their morphism classes, these coercions can be applied to the morphisms themselves (i.e., you can coerce a <code>RingHom</code> to a <code>RingHom</code>, but <code>f</code> and <code>↑f</code> are not reducibly defeq). This is a bit strange, but in and of itself it wouldn't necessarily cause problems.</p>\n<p>Another issue is that we (and I have certainly been guilty of this before I saw the light) have implemented <em>definitions</em> which take a term of a morphism <em>class</em> (rather than a morphism itself) as a parameter. At first, this seems appealing, but the problem is that doing doesn't really create a single definition, but in some sense it is a definition schema, with one new definition for each instance of the morphism class. For example, since <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=AlgHom#doc\">docs#AlgHom</a> is an instance of <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=RingHomClass#doc\">docs#RingHomClass</a>, and since <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=RingHom.ker#doc\">docs#RingHom.ker</a> takes a term of a <code>RingHomClass</code> as an argument, if <code>f : A →ₐ[R] B</code> is an algebra homomorphism we have both <code>RingHom.ker f</code> and <code>RingHom.ker (↑f : A →+* B)</code>, and these are not trivially equal. Thus we would need additional API to go between them. So, we should restrict definitions to explicit morphisms, instead of morphism classes in order to avoid proliferating definitions.</p>\n<p>Therefore, given a definition <code>Bar</code> that takes <code>FooHom</code> as an argument, a theorem whose <em>statement</em> involves <code>Bar</code> should only ever be written for <code>FooHom</code>s and never <code>FooHomClass</code>es. Indeed in the latter case, the statement would require the coercion from the morphism class to the morphism, thereby making it <em>less</em> general.</p>\n<p>Now, these coercions are not all bad, as they can be useful in proofs. A good example is the proof of <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=AlgEquiv.spectrum_eq#doc\">docs#AlgEquiv.spectrum_eq</a>. The statement says that a term <code>φ</code> of an <code>AlgEquivClass</code> preserves the spectrum, i.e., <code>spectrum R (φ a) = spectrum R a</code>. This statement does <em>not</em> involve a coercion to <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=AlgEquiv#doc\">docs#AlgEquiv</a>, but only the coercion for <code>φ</code> to a function (which is fine). However, the natural proof is to use <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=AlgHom.spectrum_apply_subset#doc\">docs#AlgHom.spectrum_apply_subset</a> to <code>φ</code> (with <code>a</code>) and <code>φ.symm</code> (with <code>φ a</code>). But since <code>φ</code> is an abstract <code>AlgEquiv</code>, not a specific one, we don't have access to <code>φ.symm</code>, but we can coerce <code>φ</code> to an <code>AlgEquiv</code> in the proof and use that instead.</p>\n<p>So, there are four things we need to do as a community to address these problems in Mathlib's morphism hierarchy:</p>\n<ol start=\"0\">\n<li>Don't create any new definitions which take a term of a morphism class as an argument!</li>\n<li>Refactor existing definitions like <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=RingHom.ker#doc\">docs#RingHom.ker</a>, <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=LinearMap.range#doc\">docs#LinearMap.range</a>, etc. so that they take an explicit morphism as an argument, not a morphism class.</li>\n<li>\n<p>Standardize the naming scheme for the declarations that implement the morphism class to morphism coercions. The standardized name should be <code>FooHom.ofClass</code>, which has several benefits:</p>\n<p>+ the name is easy to remember and guess<br>\n  + it matches the existing names we have for the corresponding declarations for subobjects<br>\n  + when Lean expects a <code>FooHom</code>, you can write <code>.ofClass f</code>.</p>\n</li>\n<li>\n<p>Remove the coercion attribute from these <code>FooHom.ofClass</code> declarations, but <em>keep</em> the definitions themselves. it's important that the renaming occurs before removing the attribute to minimize churn and effort at that step. There are already existing PRs trying to do this, but they have been stymied because the other things in this list should happen first.</p>\n</li>\n</ol>\n<p>Note that (1) and (2) above are independent and can happen in parallel, but (3) will be easiest only after (1) and (2) are complete.</p>\n<p>The purpose of removing the coercion attribute from <code>FooHom.ofClass</code> is two-fold: (a) it's not that useful anyway since we often have to provide a type ascription, and (b) keeping it around makes it more likely that we silently break the rules specified above (because Lean inserted a coercion and the user and reviewer didn't notice).</p>",
+        "id": 554383157,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1762537962
+    },
+    {
+        "content": "<p>Note that I have <a href=\"https://github.com/leanprover-community/mathlib4/pull/21031\">#21031</a> open which does all of 1, 2 and 3 together (but is WIP). I would greatly appreciate help on it!</p>",
+        "id": 554384333,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1762538282
+    },
+    {
+        "content": "<p>I highly recommend splitting them. That's seems like it would be nearly impossible to review.</p>",
+        "id": 554384419,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1762538313
+    },
+    {
+        "content": "<p>My goal is to make sure <a href=\"https://github.com/leanprover-community/mathlib4/pull/21031\">#21031</a> passes CI doing all of them, then to split PRs off</p>",
+        "id": 554384548,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1762538348
+    },
+    {
+        "content": "<p>I think it shouldn't be necessary to do it that way though? It should be much easier to do this in a distributed fashion, especially because there are really three separate concerns.</p>",
+        "id": 554385378,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1762538533
+    },
+    {
+        "content": "<p>The reason why I am doing it this way around is that it lets me automatically find which definitions need to be updated in step 1</p>",
+        "id": 554385670,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1762538605
+    },
+    {
+        "content": "<p>Can't we just have a metaprogram to find those? If Loogle let us filter to include only definitions, it would even be possible to use that.</p>",
+        "id": 554386005,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1762538703
+    },
+    {
+        "content": "<p>I've createe the tracking issue <a href=\"https://github.com/leanprover-community/mathlib4/pull/31365\">#31365</a></p>",
+        "id": 554387645,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1762539234
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"197836\">Jireh Loreaux</span> <a href=\"#narrow/channel/287929-mathlib4/topic/Mathlib's.20morphism.20hierarchy/near/554386005\">said</a>:</p>\n<blockquote>\n<p>Can't we just have a metaprogram to find those? If Loogle let us filter to include only definitions, it would even be possible to use that.</p>\n</blockquote>\n<p>Indeed, that's what Breitner and I figured out:</p>\n<ul>\n<li><a href=\"https://loogle.lean-lang.org/?q=%E2%8A%A2+RingHomClass+_+_+_+%E2%86%92+%28_+%3A+Type%29\"><code>⊢ RingHomClass _ _ _ → (_ : Type)</code></a></li>\n</ul>\n<p>This finds all of the definitions using <code>RingHomClass</code>.</p>",
+        "id": 554391667,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1762540508
+    },
+    {
+        "content": "<p>now 5 of these are actually good (tho 2 of these 5 are coercions which will be removed in step 3), so the 8 remaining ones are bad</p>",
+        "id": 554392033,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1762540590
+    },
+    {
+        "content": "<p>And then <a href=\"https://loogle.lean-lang.org/?q=%22Class%22%2C+%E2%8A%A2+FunLike+_+_+_+%E2%86%92+Prop\"><code>\"Class\", ⊢ FunLike _ _ _ → Prop</code></a> reveals 91 hom classes</p>",
+        "id": 554392336,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1762540682
+    },
+    {
+        "content": "<p>if each hom class has 10 definitions then we'll have 910 definitions, and if we refactor one definition a day then we'll be done in 3 years!</p>",
+        "id": 554392761,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1762540827
+    },
+    {
+        "content": "<p>Also, should we publicise this somewhere on the mathlib website? I think it would be helpful to have just a place to store our consensus.</p>",
+        "id": 554398890,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1762542794
+    },
+    {
+        "content": "<p>I think the rule should be specified somewhere, yes, but I would recommend that it appears in the <code>FunLike</code> documentation in Mathlib itself.</p>",
+        "id": 554399367,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1762542945
+    },
+    {
+        "content": "<p>For now I think the tracking issue is fine.</p>",
+        "id": 554399451,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1762542964
+    },
+    {
+        "content": "<p>If this story changes significantly then it would be nice to make sure Mathematics in Lean still says the correct thing. People shouldn’t hesitate to ping me or Jeremy about this if needed.</p>",
+        "id": 554471042,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1762597108
+    },
+    {
+        "content": "<p>A related question: should morphism types depend on the validity of axioms on the types they act on, or just on the existence of laws?<br>\nFor example, should <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=RingHom#doc\">docs#RingHom</a> be defined for <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=NonAssocSemiring#doc\">docs#NonAssocSemiring</a>, as it is now, or shouldn't it be defined whenever we have <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Add#doc\">docs#Add</a>, <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Zero#doc\">docs#Zero</a>, <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Mul#doc\">docs#Mul</a> and <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=One%3F#doc\">docs#One?</a></p>",
+        "id": 554484119,
+        "sender_full_name": "Antoine Chambert-Loir",
+        "timestamp": 1762609754
+    },
+    {
+        "content": "<p>Is it interesting for types with zero one add mul that aren't nonassocsemirings?</p>",
+        "id": 554486944,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1762612450
+    },
+    {
+        "content": "<p>if it isn't, then we're just making the expression bigger</p>",
+        "id": 554487006,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1762612487
+    },
+    {
+        "content": "<p>Something that is coming up in my PR <a href=\"https://github.com/leanprover-community/mathlib4/pull/28141\">#28141</a>: When we have four hom classes A B C D such that A -&gt; B -&gt; D and A -&gt; C -&gt; D are coercions, should we have any lemma about the composition A -&gt; D?</p>",
+        "id": 558812336,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1763815268
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"439483\">@Andrew Yang</span> is arguing that \"yes\" on the basis of discoverability. I personally think that the only people that care are experts for whom discoverability is not a concern. Is this a problem that should be solved by a tactic?</p>",
+        "id": 558812399,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1763815321
+    },
+    {
+        "content": "<p>My claim is that I don't want to remember implementation details such as the preferred path of A to D is <code>A -&gt; B -&gt; D</code> and not <code>A -&gt; C -&gt; D</code> and not <code>A -&gt; D</code>. I think this is still a cognitive cost for expert users and I would happily accept having more lemmas in mathlib as a trade off.</p>",
+        "id": 558812628,
+        "sender_full_name": "Andrew Yang",
+        "timestamp": 1763815530
+    },
+    {
+        "content": "<p>I don't really understand the technicalities of this discussion but I just had to write this for FLT:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span>\n\n<span class=\"kn\">open</span><span class=\"w\"> </span><span class=\"n\">TensorProduct</span>\n\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">AlgebraMap</span><span class=\"bp\">.</span><span class=\"n\">rTensor</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">CommSemiring</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">N</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span>\n<span class=\"w\">    </span><span class=\"o\">{</span><span class=\"n\">P</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">AddCommMonoid</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Semiring</span><span class=\"w\"> </span><span class=\"n\">N</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Semiring</span><span class=\"w\"> </span><span class=\"n\">P</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Module</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"o\">]</span>\n<span class=\"w\">    </span><span class=\"o\">[</span><span class=\"n\">Algebra</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">N</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Algebra</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">P</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">N</span><span class=\"w\"> </span><span class=\"bp\">→ₐ</span><span class=\"o\">[</span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">P</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n<span class=\"w\">    </span><span class=\"n\">N</span><span class=\"w\"> </span><span class=\"bp\">⊗</span><span class=\"o\">[</span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"bp\">→ₛₗ</span><span class=\"o\">[</span><span class=\"n\">f</span><span class=\"bp\">.</span><span class=\"n\">toRingHom</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">P</span><span class=\"w\"> </span><span class=\"bp\">⊗</span><span class=\"o\">[</span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"w\"> </span><span class=\"c1\">-- system won't coerce an algebra map to a ring hom</span>\n<span class=\"w\">  </span><span class=\"bp\">__</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">LinearMap</span><span class=\"bp\">.</span><span class=\"n\">rTensor</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"n\">f</span>\n<span class=\"w\">  </span><span class=\"n\">map_smul'</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">    </span><span class=\"n\">induction</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"k\">with</span>\n<span class=\"w\">    </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">zero</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">simp</span>\n<span class=\"w\">    </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">tmul</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">      </span><span class=\"n\">rw</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">smul_tmul'</span><span class=\"o\">]</span>\n<span class=\"w\">      </span><span class=\"c1\">-- need to get rid of .toFun, but</span>\n<span class=\"w\">      </span><span class=\"c1\">-- change (LinearMap.rTensor M f) _ = _ -- times out with trace I don't understand</span>\n<span class=\"w\">      </span><span class=\"n\">change</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">LinearMap</span><span class=\"bp\">.</span><span class=\"n\">rTensor</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"bp\">.</span><span class=\"n\">toLinearMap</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"bp\">_</span>\n<span class=\"w\">      </span><span class=\"n\">rw</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">LinearMap</span><span class=\"bp\">.</span><span class=\"n\">rTensor_tmul</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">smul_eq_mul</span><span class=\"o\">]</span>\n<span class=\"w\">      </span><span class=\"c1\">-- now need to change f.toLinearMap back to f to apply map_mul</span>\n<span class=\"w\">      </span><span class=\"n\">change</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">⊗ₜ</span><span class=\"o\">[</span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"bp\">_</span>\n<span class=\"w\">      </span><span class=\"n\">rw</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">map_mul</span><span class=\"o\">]</span>\n<span class=\"w\">      </span><span class=\"n\">rfl</span>\n<span class=\"w\">    </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">add</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">simp_all</span>\n<span class=\"w\">  </span><span class=\"o\">}</span>\n</code></pre></div>\n<p>I had no difficulties, as a seasoned user, writing the proof, but it was somehow painful having to change <code>f</code> to <code>f.toLinearMap</code> and back (and also a <code>change</code> timed out which confused me). My impression was that it was <code>SemilinearMapClass.semilinearMap</code> making my life difficult. Am I right in thinking that the refactor suggested in the tracking issue <a href=\"https://github.com/leanprover-community/mathlib4/pull/31365\">#31365</a> would make this easier?</p>",
+        "id": 566527614,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1767699479
+    }
+]

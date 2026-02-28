@@ -1,0 +1,146 @@
+[
+    {
+        "content": "<p>I've been thinking about the way in which <code>rewrite</code> adds side goals due to conditional rewrites to the goal list, and this is a good moment in Lean's development to reflect on the design.</p>\n<p>The short version of this message is that I think it would be an improvement if tactics followed the rule \"primary goals should be pushed to the front, side goals should be appended to the end\".</p>\n<h2>Background</h2>\n<p>Recall that if you have a conditional rewrite theorem <code>thm : p -&gt; a = b</code>, then when you do <code>rewrite [thm]</code> with a goal list <code>g1, g2, g3</code>, you get <code>g1', gp, g2, g3</code>, where <code>gp</code> is the goal for condition <code>p</code>. That is, the main goal is modified and the side goals are inserted just after the main goal.</p>\n<p>This has the nice property that <code>rewrite [thm1, thm2]</code> is equivalent to <code>rewrite [thm]; rewrite [thm2]</code>. (Note that this is why I'm talking about <code>rewrite</code> instead of <code>rw</code>. It's possible for <code>rw [thm]</code> to close the main goal!)</p>\n<p>However, a less-nice property is that <code>rewrite [thm1, thm2]</code> results in <code>g1', gp2, gp1, g2, g3</code>. The side goals are in <em>reverse</em> order with respect to the rewrite order. It's possible to modify the <code>rewrite</code> tactic so that it collects side goals across a full rewrite sequence and then inserts them in the correct order, but then we lose the equivalence between <code>rewrite [thm1, thm2]</code> and <code>rewrite [thm]; rewrite [thm2]</code>.</p>\n<p>If <code>rewrite</code> were to append side goals to the <em>end</em> of the goal list instead, the equivalence would be preserved and the side goals would appear in the natural order; the running example would result in <code>g1', g2, g3, gp1, gp2</code>.</p>\n<h2>Considerations</h2>\n<ol>\n<li>For many projects the difference between inserting side goals vs appending side goals doesn't matter — a common tactic-writing style is to disallow using tactics like <code>rewrite</code> on tactic states with more than one goal (you're expected to focus first). The adaptation cost would be to shuffle around proof blocks for side goals.</li>\n<li>This isn't like <code>constructor</code> or <code>cases</code>, which create new \"primary\" goals. We're interested in what to do about side goals. Presumably they are lesser in importance and you want to get to them at the end, or otherwise use <code>case ... =&gt;</code> to select one and operate on it immediately. (Note about <code>constructor</code>/<code>apply</code>: in some modes you may want to have non-prop \"value\" goals that appear in the types of other goals to be appended to the end. These are like side goals, perhaps.)</li>\n<li>The current behavior keeps related goals contiguous, and appending to the end would disrupt that. I would like to hear if anyone relies on this property. This should not affect projects that adhere to the tactic proof discipline mentioned in 1. (Possibly tactic infotree analysis tools may be affected.)</li>\n<li>I'm considering adding the syntax <code>rewrite [...thms...] by ...tactics...</code>. The idea is that the <code>by</code> block would capture the side goals, to create structured proofs with <code>rewrite</code>. You may think that this would make inserting vs appending an irrelevant point, but appending would mean that side goals appear in the same order, whether or not you use a <code>by</code> clause.</li>\n</ol>",
+        "id": 539429188,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1757873707
+    },
+    {
+        "content": "<h2>Some questions</h2>\n<ul>\n<li>Would \"primary goals should be pushed to the front, side goals should be appended to the end\" be a good general rule? Are there exceptions?</li>\n<li>Ignoring <code>by</code> clauses, would it lead to better or worse proof structures?</li>\n<li>Are there tactics where what constitutes a side goal is too ambiguous to be actionable? For example, some tactics create new goals from <code>?_</code> placeholders in terms. For <code>rewrite</code>, these are effectively side goals, but for <code>refine</code> these are the primary goals.</li>\n<li>Perhaps what constitutes a side goal needs some configurability? One case study is <code>apply</code>, which by default puts any goals from placeholders <em>after</em> the new primary goals. You can get different goal orders depending on if you write <code>apply thm</code> or <code>apply thm ?_</code>!</li>\n</ul>\n<p>I'm interested to hear any other thoughts about this proposed change as well.</p>",
+        "id": 539429194,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1757873709
+    },
+    {
+        "content": "<p>I do have a slight aesthetic aversion to the \"unstructured\" way that <code>rw</code> deals with side goals; it seems to fit in less well in lean 4 than lean 3. I think I'd generally prefer something like your (4) as the preferred solution.</p>\n<p>Side note: it's even more fun when you use <code>rw</code>, in the sense that you can have <code>rw [a, b, c]; rw [d, e, f]</code> which looks like you could merge them, but the first one closes the main goal and the second one deals with a side goal from <code>b</code></p>",
+        "id": 539429719,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1757874239
+    },
+    {
+        "content": "<p>Yeah, having a good story for \"structured <code>rw</code>\" in (4) is the main motivation for this question about what to do about the unstructured case. I think it would be rather awkward if you'd need to change the order of <code>tac1</code> and <code>tac2</code> depending on whether or not you're using the <code>by</code> clause:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">rw</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">a</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">c</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"bp\">·</span><span class=\"w\"> </span><span class=\"n\">tac1</span>\n<span class=\"w\">  </span><span class=\"bp\">·</span><span class=\"w\"> </span><span class=\"n\">tac2</span>\n</code></pre></div>\n<p>(I'm assuming that everyone agrees it would be unacceptable for the <code>by</code> clause goals to come in reverse order!)</p>",
+        "id": 539430443,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1757874829
+    },
+    {
+        "content": "<p>It would be nice if there were some general way to organize and address side goals specifically, possibly by having some extra (optional) organizing information for goals in the tactic state in addition to the goal list; I’m not sure that order within the goal list alone is sufficient to capture the notion of side goals.</p>\n<p>(If that’s on the table, it might also be worth thinking about what tracked information would be necessary to allow deferred goals, as per past discussions, since these could possibly have a common solution.)</p>",
+        "id": 539430549,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1757874921
+    },
+    {
+        "content": "<p>A past relevant discussion: <a href=\"#narrow/channel/287929-mathlib4/topic/.60on_sides.60.20tactic\">discussion about possible syntax for addressing side goals</a>, which itself refers to <a href=\"#narrow/channel/287929-mathlib4/topic/linting.20against.20.22multi-goal.20proofs.22/near/434777231\">this message</a></p>",
+        "id": 539430734,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1757875071
+    },
+    {
+        "content": "<p>Let's not explore deferring goals here. It's a fun route to go down, but it's surprisingly complicated, and it's not clear that it would improve the user experience.</p>\n<p>If you want, you can look into Rocq's \"shelved goal\" system. It adds nontrivial complexity to describing the operations of tactics, and to needing to maintain the shelf through your tactic proof.</p>",
+        "id": 539430798,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1757875125
+    },
+    {
+        "content": "<p>In my experience, <em>most</em> of the time, side goals already appear in a very natural order (I follow pretty strictly the \"only one active goal at a time\").  I very rarely have to rely on <code>apply ... ?_ ...</code> or <code>fapply</code> to massage the order in which side goals are naturally created.</p>",
+        "id": 539431951,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1757876220
+    },
+    {
+        "content": "<p>The main exception for me are indeed long <code>rw</code> chains: their side-goals become tricky to identify.</p>",
+        "id": 539431958,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1757876224
+    },
+    {
+        "content": "<p>I would be very much in favour of keeping side goals in <em>creation order</em> and having them after all the current goals is also a good choice (and maintains the \"goals in creation order\", which I think is a good default).</p>",
+        "id": 539431960,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1757876227
+    },
+    {
+        "content": "<p>I would prefer if side goals came first, and the main goal remains last (speaking about the only relevant mathlib situation, i.e., there is a single main goal before the rewrite). The reason is that, in this way, the side goal can be dealt with right away, with bullets, and then you can resume the main argument, unbulleted. Something like</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"w\">  </span><span class=\"bp\">...</span><span class=\"w\"> </span><span class=\"n\">this</span><span class=\"w\"> </span><span class=\"n\">is</span><span class=\"w\"> </span><span class=\"n\">quite</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">long</span><span class=\"w\"> </span><span class=\"n\">proof</span>\n<span class=\"w\">  </span><span class=\"n\">rw</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">a</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">]</span>\n<span class=\"w\">  </span><span class=\"bp\">·</span><span class=\"w\"> </span><span class=\"n\">one</span><span class=\"w\"> </span><span class=\"n\">or</span><span class=\"w\"> </span><span class=\"n\">two</span><span class=\"w\"> </span><span class=\"n\">lines</span><span class=\"w\"> </span><span class=\"n\">to</span><span class=\"w\"> </span><span class=\"n\">deal</span><span class=\"w\"> </span><span class=\"k\">with</span><span class=\"w\"> </span><span class=\"n\">side</span><span class=\"w\"> </span><span class=\"n\">goal</span><span class=\"w\"> </span><span class=\"n\">of</span><span class=\"w\"> </span><span class=\"n\">a</span>\n<span class=\"w\">  </span><span class=\"bp\">·</span><span class=\"w\"> </span><span class=\"n\">one</span><span class=\"w\"> </span><span class=\"n\">or</span><span class=\"w\"> </span><span class=\"n\">two</span><span class=\"w\"> </span><span class=\"n\">lines</span><span class=\"w\"> </span><span class=\"n\">to</span><span class=\"w\"> </span><span class=\"n\">deal</span><span class=\"w\"> </span><span class=\"k\">with</span><span class=\"w\"> </span><span class=\"n\">side</span><span class=\"w\"> </span><span class=\"n\">goal</span><span class=\"w\"> </span><span class=\"n\">of</span><span class=\"w\"> </span><span class=\"n\">b</span>\n<span class=\"w\">  </span><span class=\"n\">resume</span><span class=\"w\"> </span><span class=\"n\">main</span><span class=\"w\"> </span><span class=\"n\">proof</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">still</span><span class=\"w\"> </span><span class=\"n\">going</span><span class=\"w\"> </span><span class=\"n\">on</span><span class=\"w\"> </span><span class=\"n\">for</span><span class=\"w\"> </span><span class=\"n\">quite</span><span class=\"w\"> </span><span class=\"n\">long</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"k\">with</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">bunch</span><span class=\"w\"> </span><span class=\"n\">of</span><span class=\"w\"> </span><span class=\"n\">other</span><span class=\"w\"> </span><span class=\"n\">rewrites</span>\n</code></pre></div>\n<p>If the side goals were appended to the end, long proofs would become unreadable with a bunch of goals at the end completely unrelated to what came just before. I would probably use <code>rotate_left</code> to move them in this kind of situation</p>",
+        "id": 539432272,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1757876548
+    },
+    {
+        "content": "<p>I never use <code>rw</code> with leaving side goals, so this is a non-problem for me</p>",
+        "id": 539432375,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1757876649
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110050\">@Sébastien Gouëzel</span> Do I understand correctly that (1) moving the goals to the end would enable <code>rotate_left</code>, which is not currently possible with the current behavior where side goals are inserted right after the main goal, and that (2) you're answering this from the perspective of \"what if <code>rw</code> doesn't get <code>by</code> clauses\"? Would you not write it in the following way?</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"w\">  </span><span class=\"bp\">...</span><span class=\"w\"> </span><span class=\"n\">this</span><span class=\"w\"> </span><span class=\"n\">is</span><span class=\"w\"> </span><span class=\"n\">quite</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">long</span><span class=\"w\"> </span><span class=\"n\">proof</span>\n<span class=\"w\">  </span><span class=\"n\">rw</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">a</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">    </span><span class=\"bp\">·</span><span class=\"w\"> </span><span class=\"n\">one</span><span class=\"w\"> </span><span class=\"n\">or</span><span class=\"w\"> </span><span class=\"n\">two</span><span class=\"w\"> </span><span class=\"n\">lines</span><span class=\"w\"> </span><span class=\"n\">to</span><span class=\"w\"> </span><span class=\"n\">deal</span><span class=\"w\"> </span><span class=\"k\">with</span><span class=\"w\"> </span><span class=\"n\">side</span><span class=\"w\"> </span><span class=\"n\">goal</span><span class=\"w\"> </span><span class=\"n\">of</span><span class=\"w\"> </span><span class=\"n\">a</span>\n<span class=\"w\">    </span><span class=\"bp\">·</span><span class=\"w\"> </span><span class=\"n\">one</span><span class=\"w\"> </span><span class=\"n\">or</span><span class=\"w\"> </span><span class=\"n\">two</span><span class=\"w\"> </span><span class=\"n\">lines</span><span class=\"w\"> </span><span class=\"n\">to</span><span class=\"w\"> </span><span class=\"n\">deal</span><span class=\"w\"> </span><span class=\"k\">with</span><span class=\"w\"> </span><span class=\"n\">side</span><span class=\"w\"> </span><span class=\"n\">goal</span><span class=\"w\"> </span><span class=\"n\">of</span><span class=\"w\"> </span><span class=\"n\">b</span>\n<span class=\"w\">  </span><span class=\"n\">resume</span><span class=\"w\"> </span><span class=\"n\">main</span><span class=\"w\"> </span><span class=\"n\">proof</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">still</span><span class=\"w\"> </span><span class=\"n\">going</span><span class=\"w\"> </span><span class=\"n\">on</span><span class=\"w\"> </span><span class=\"n\">for</span><span class=\"w\"> </span><span class=\"n\">quite</span><span class=\"w\"> </span><span class=\"n\">long</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"k\">with</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">bunch</span><span class=\"w\"> </span><span class=\"n\">of</span><span class=\"w\"> </span><span class=\"n\">other</span><span class=\"w\"> </span><span class=\"n\">rewrites</span>\n</code></pre></div>",
+        "id": 539432543,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1757876855
+    },
+    {
+        "content": "<p>Could the behaviour be governed by a <code>sideGoalsFirst</code> option?  I would probably prefer side-goals in creation order, and whether or not they appear after the current main goal or after all currently in scope goals is what the option decides.</p>",
+        "id": 539432604,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1757876920
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/channel/270676-lean4/topic/Design.20of.20tactics.20that.20create.20side.20goals/near/539432543\">said</a>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"w\">  </span><span class=\"bp\">...</span><span class=\"w\"> </span><span class=\"n\">this</span><span class=\"w\"> </span><span class=\"n\">is</span><span class=\"w\"> </span><span class=\"n\">quite</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">long</span><span class=\"w\"> </span><span class=\"n\">proof</span>\n<span class=\"w\">  </span><span class=\"n\">rw</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">a</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">    </span><span class=\"bp\">·</span><span class=\"w\"> </span><span class=\"n\">one</span><span class=\"w\"> </span><span class=\"n\">or</span><span class=\"w\"> </span><span class=\"n\">two</span><span class=\"w\"> </span><span class=\"n\">lines</span><span class=\"w\"> </span><span class=\"n\">to</span><span class=\"w\"> </span><span class=\"n\">deal</span><span class=\"w\"> </span><span class=\"k\">with</span><span class=\"w\"> </span><span class=\"n\">side</span><span class=\"w\"> </span><span class=\"n\">goal</span><span class=\"w\"> </span><span class=\"n\">of</span><span class=\"w\"> </span><span class=\"n\">a</span>\n<span class=\"w\">    </span><span class=\"bp\">·</span><span class=\"w\"> </span><span class=\"n\">one</span><span class=\"w\"> </span><span class=\"n\">or</span><span class=\"w\"> </span><span class=\"n\">two</span><span class=\"w\"> </span><span class=\"n\">lines</span><span class=\"w\"> </span><span class=\"n\">to</span><span class=\"w\"> </span><span class=\"n\">deal</span><span class=\"w\"> </span><span class=\"k\">with</span><span class=\"w\"> </span><span class=\"n\">side</span><span class=\"w\"> </span><span class=\"n\">goal</span><span class=\"w\"> </span><span class=\"n\">of</span><span class=\"w\"> </span><span class=\"n\">b</span>\n<span class=\"w\">  </span><span class=\"n\">resume</span><span class=\"w\"> </span><span class=\"n\">main</span><span class=\"w\"> </span><span class=\"n\">proof</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">still</span><span class=\"w\"> </span><span class=\"n\">going</span><span class=\"w\"> </span><span class=\"n\">on</span><span class=\"w\"> </span><span class=\"n\">for</span><span class=\"w\"> </span><span class=\"n\">quite</span><span class=\"w\"> </span><span class=\"n\">long</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"k\">with</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">bunch</span><span class=\"w\"> </span><span class=\"n\">of</span><span class=\"w\"> </span><span class=\"n\">other</span><span class=\"w\"> </span><span class=\"n\">rewrites</span>\n</code></pre></div>\n<p>For me, this is really great, btw!</p>",
+        "id": 539432664,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1757876988
+    },
+    {
+        "content": "<p>It is currently possible in mathlib to use <code>rotate_left</code>, because there is one single main goal. In this respect, your suggestion does not make a difference. What I am saying is that, if we are changing the <code>rw</code> behavior, we could also consider putting side goals to the front because, to me, it would be an even better behavior. <code>by</code> would be fine for this, but if it's not needed that's even better.</p>",
+        "id": 539432693,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1757877019
+    },
+    {
+        "content": "<p>Just to clarify, would the expectation be that each tactic which creates side goals is expected to re-implement the trailing <code>by</code> syntax? I.e., we <em>don't</em> want a generic combinator or something for handling side goals?</p>",
+        "id": 539432908,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1757877239
+    },
+    {
+        "content": "<p>This situation Sébastien describes is also common for me, both in analysis proofs (e.g. manipulating ENNReal quantities) but also (iirc) in differential geometry. The idiom <code>rw [foo, bar, baz] &lt;;&gt; try assumption</code> specifically to deal with such side goals is somewhat common.</p>",
+        "id": 539433350,
+        "sender_full_name": "Michael Rothgang",
+        "timestamp": 1757877630
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110050\">@Sébastien Gouëzel</span> It's worth mentioning that putting side goals at the front breaks the equivalence between <code>rewrite [a, b, c]</code> and <code>rewrite [a]; rewrite [b]; rewrite [c]</code>. That would also be a very significant breakage; pretty much every proof with a conditional rewrite would need adaptation. I expect that my proposed change has a much smaller impact, at least for mathlib with it's one-main-goal discipline.</p>\n<p>There's reason for <code>by</code> beyond convenience. It gives you a way to act on all produced side goals at once, without needing to figure out how to differentiate the side goals from the main goal. You can do <code>rw [a, b, c] by all_goals assumption</code> and be sure that there are no side goals remaining. In comparison, <code>rw [a, b, c] &lt;;&gt; try assumption</code> can lead to strange states when proofs break.</p>",
+        "id": 539433481,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1757877759
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"548935\">@Thomas Murrills</span> Yes, at least for now. If a generic solution appears one day, we can switch to it (and probably automate the adaptations too). I want to avoid making the tactic metaprogramming API even more complicated without having a lot of evidence for what a general solution ought to be.</p>",
+        "id": 539433731,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1757878007
+    },
+    {
+        "content": "<blockquote>\n<p>reason for <code>by</code> beyond convenience</p>\n</blockquote>\n<p>That sounds like a useful property to have!</p>",
+        "id": 539433794,
+        "sender_full_name": "Michael Rothgang",
+        "timestamp": 1757878058
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span>, yes, the suggestion of bringing side goals to the front is maybe something that could be explored if we were starting from scratch, but with the existing code base the refactor would probably be a nightmare for a pretty mild gain, contrary to your suggestion. Your proposal with the <code>by</code> looks like a good intermediate ground!</p>",
+        "id": 539434502,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1757878752
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/channel/270676-lean4/topic/Design.20of.20tactics.20that.20create.20side.20goals/near/539433731\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> Yes, at least for now.</p>\n</blockquote>\n<p>Makes sense! I'll also clarify my message and mention that I don't necessarily believe strongly that we <em>should</em> have a side-goal combinator; I just wasn't sure what the scope of this discussion was. :)</p>\n<p>(It's possible, after all, that the best approach for other tactics is just to provide a convenient, standard API for those who want to implement trailing <code>by</code> syntax; it's also possible that creating a more generic underlying infrastructure here could be worth it for other, indirect benefits it might enable, like the ability to better organize and display goals in the infoview according to their \"role\". It’s definitely not clear at the moment.)</p>",
+        "id": 539435007,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1757879289
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> I think your statement:</p>\n<blockquote>\n<p>Perhaps what constitutes a side goal needs some configurability?</p>\n</blockquote>\n<p>is potentially valuable. Especially with trying to use <code>grind</code> more lately, I find myself spending more time than I'd like structuring proofs in a way that I can finish with <code>all_goals grind</code>, which can be awkward depending on where something like <code>refine</code> places a goal. If a new best practice is decided upon for working with side goals, I think the docs for <code>grind</code> in the reference manual is one good place to mention it.</p>",
+        "id": 539443985,
+        "sender_full_name": "Chris Henson",
+        "timestamp": 1757890364
+    }
+]

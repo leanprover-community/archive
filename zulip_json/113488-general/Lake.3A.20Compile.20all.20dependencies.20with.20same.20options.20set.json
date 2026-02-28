@@ -1,0 +1,44 @@
+[
+    {
+        "content": "<p>I have a small lake package called <code>leaf</code> which depends on another package, <code>stem</code>. Both are local on my machine, and <code>leaf</code> refers to <code>stem</code> by the filesystem path.</p>\n<p>I want to test compiling <code>leaf</code> with the old and new Lean compilers. If <code>leaf</code> was a standalone package, adding <code>moreLeanArgs = [\"-D compiler.enableNew=false\"]</code> (resp <code>true</code>) to its <code>lakefile.toml</code> would work, I think, but this leads to errors when not set to the default. I think this is because <code>lake</code> is setting the option only for the compilation of <code>leaf</code>, and so <code>stem</code> is compiled using the setting in its own Lakefile, which is incompatible.</p>\n<p>Is there a way to specify options that also apply to the compilation of <code>stem</code> in <code>leaf</code>'s Lakefile? I want to avoid having to change <code>stem</code>'s Lakefile each time.</p>\n<p>Another solution approach I thought about was changing <code>leaf</code>'s <code>lean-toolchain</code> file to use different versions of Lean with the default value of <code>compiler.enableNew</code> set to <code>false</code> resp. <code>true</code>; I hoped this would make Lake recompile <code>stem</code> with the toolchain specified for <code>leaf</code>, but this doesn't seem to work either. Lake outputs</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">warning</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">toolchain</span><span class=\"w\"> </span><span class=\"n\">not</span><span class=\"w\"> </span><span class=\"n\">updated</span><span class=\"bp\">;</span><span class=\"w\"> </span><span class=\"n\">multiple</span><span class=\"w\"> </span><span class=\"n\">toolchain</span><span class=\"w\"> </span><span class=\"n\">candidates</span><span class=\"o\">:</span>\n</code></pre></div>\n<p>but it's not clear to me which toolchain it ends up using.</p>",
+        "id": 524407308,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1750151925
+    },
+    {
+        "content": "<p>If I understand correctly this would also not be a problem if <code>stem</code> wasn't a local package, because in that case <code>stem</code>'s sources would be copied over into <code>leaf</code>'s <code>.lake</code> directory and built there. Does that sound right? Is there a way to get Lake to treat <code>stem</code> as a non-local package?</p>",
+        "id": 524591651,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1750192212
+    },
+    {
+        "content": "<p>I've tried mucking around with <code>require … with</code> and <code>get_config?</code> to enable <code>leaf</code> to tell Lake that it wants <code>stem</code> to be built with specific <code>leanOptions</code>, but with no success so far. <br>\nFrom the messages I'm getting, which look like <code>failed to compile definition, consider marking it as 'noncomputable' because it depends on 'instOfNatNat', and it does not have executable code</code>, I assume that <code>lake</code> is using the Init oleans from my Lean installation, which were compiled with a different value of <code>compiler.enableNew</code>. Is there some way I can tell Lake to recompile everything?</p>",
+        "id": 524665735,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1750239181
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"656225\">@Cameron Zwarich</span>, I assume you must test things between the old and new compiler regularly. What's your workflow for that? I feel like the solutions I'm considering are too complicated, I hope I'm missing something</p>",
+        "id": 524666215,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1750239344
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"893179\">@Simon Dima</span> I use <code>git worktree</code> to make two directories tracking two separate branches and constantly rebuild things. I do have the advantage of an extremely overpowered dev machine.</p>\n<p>Thankfully, the new compiler will probably be enabled by default within the next week, so there won't be much of a need to do this any longer. After that, switching to the old compiler will require a <code>stage0</code> update, similar to testing the new one right now. I suspect that the code will stick around for a short while, but we will also make no real effort to keep it working.</p>",
+        "id": 524696146,
+        "sender_full_name": "Cameron Zwarich",
+        "timestamp": 1750250058
+    },
+    {
+        "content": "<blockquote>\n<p>I use <code>git worktree</code> to make two directories tracking two separate branches and constantly rebuild things.</p>\n</blockquote>\n<p>I'll look into that to see if it helps with my usecase, thanks!</p>\n<blockquote>\n<p>Thankfully, the new compiler will probably be enabled by default within the next week, so there won't be much of a need to do this any longer.</p>\n</blockquote>\n<p>Yay! But alas, I would like to compare both the old and new compiler, which won't become much easier (Though I do look forward to no longer having to wait a few hours every once in a while for the <code>new-codegen</code> branch to build on my extremely underpowered machine, when the next release with the new compiler enabled by default comes out.)</p>\n<p>So is <code>set_option compiler.enableNew</code> only usable for definitions which do not depend on anything defined before the option was set, and there's no good way to get it to apply to everything?</p>",
+        "id": 524697847,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1750250602
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"893179\">@Simon Dima</span> That's basically correct. There are some changes we could've made to make this work better (e.g. have the <code>IR</code> phases use separate environment extensions for storing IR from each compiler), but at the time it was seemed like it was only me testing this, and it would actually slow down the 10+ bootstrap builds I do every day. Apologies if I made the wrong decision a few months ago.</p>\n<p>If you find any interesting codegen differences, please let me know about it. The largest set of issues that I am aware about are due to <code>IR</code> passes having suboptimal behavior related to the increased usage of join points. It is unlikely that all of these will be fixed before enabling the new compiler. Another set is related to inlining heuristics: the old compiler inlines a <em>lot</em> more, and while increasing inlining thresholds can even decrease binary size, there are some perf regression outliers that make it a non-obvious choice. Tuning inlining heuristics is one of the most tedious parts of compiler engineering, and I'd rather leave it for the (hopefully short-term) future where we have support for recursive join points, which will lead to increased usage of inlining over specialization and change the tradeoffs anyways.</p>",
+        "id": 524699657,
+        "sender_full_name": "Cameron Zwarich",
+        "timestamp": 1750251125
+    }
+]

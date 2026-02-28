@@ -1,0 +1,278 @@
+[
+    {
+        "content": "<p>Hi! I was wondering how to instantiate type parameters of a polymorphic inductive <code>Prop</code>, e.g. </p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">inductive</span><span class=\"w\"> </span><span class=\"n\">Eq</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Sort</span><span class=\"w\"> </span><span class=\"n\">u_1</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"kt\">Prop</span><span class=\"w\"> </span><span class=\"kn\">where</span><span class=\"w\"> </span><span class=\"bp\">...</span>\n</code></pre></div>\n<p>I've used <code>getConstInfoInduct</code> to obtain an <code>InductiveVal</code> containing the type of <code>Eq</code>, represented as an <code>Expr</code>. I was wondering if there's a way to \"instantiate\" <code>α</code> to a concrete type like <code>Nat</code>? </p>\n<p>I've tried to use <a href=\"https://leanprover-community.github.io/mathlib4_docs/Lean/Environment.html#Lean.ConstantVal.instantiateTypeLevelParams\">ConstantVal.instantiateTypeLevelParams</a> by doing <code>instantiateValueLevelParams constInfo [mkLevelParam ``Nat]</code>, although that ends up instantiating the Sort parameter <code>u_1</code> as opposed to <code>α</code>. </p>\n<p>Any advice on how to instantiate <code>α</code> would be much appreciated, thanks!</p>",
+        "id": 533179586,
+        "sender_full_name": "Ernest Ng",
+        "timestamp": 1754514461
+    },
+    {
+        "content": "<p>In the end, what you want is to construct the term <code>Expr.app (Expr.const `Eq [levelOne]) (Expr.const `Nat [])</code>. There are a number of ways to do this, depending on the level of generality you're looking for.</p>\n<p>For example, you could do <code>mkAppOptM `Eq #[Expr.const `Nat []]</code>.</p>\n<p>Another approach is to use <code>forallMetaBoundedTelescope</code> with the type of <code>Eq</code> and the number of parameters, then use <code>isDefEq</code> on those parameters with what you want them to be. This incidentally solves for the universe levels too, which is nice.</p>",
+        "id": 533181766,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754515515
+    },
+    {
+        "content": "<p>It'd help to know (1) whether you know which inductive type you want to use ahead of time, or whether you need it to be generic, (2) where are the parameters coming from and why are you instantiating with them, (3) what do you want to do with parameters vs indices (note that <code>Eq</code> has <em>two</em> parameters, not one! The first argument after the colon is promoted to be an index)</p>",
+        "id": 533182029,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754515653
+    },
+    {
+        "content": "<p>Thanks! (I didn't know about <code>mkAppOptM</code> so this is super helpful!)</p>\n<p>For context, I'm working on extending Plausible with the ability to derive generators that only produce random values satisfying some inductively-defined <code>Prop</code>. </p>\n<p>To do this, we provide a command <code>#derive_generator</code> to the user -- here's an example:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"c1\">-- Derives a generator which only produces random lists beginning with 5</span>\n<span class=\"bp\">#</span><span class=\"n\">derive_generator</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">xs</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">List</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">xs</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">5</span><span class=\"w\"> </span><span class=\"bp\">::</span><span class=\"w\"> </span><span class=\"n\">tail</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>Under the hood, the algorithm for deriving the generator needs to analyze the type of the <code>inductive</code> <code>Prop</code>. This works if the inductive Prop is something like <code>BST</code> below in which there are no polymorphic type parameters:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"sd\">/-- `BST lo hi t` describes whether a tree `t` is a Binary Search Tree</span>\n<span class=\"sd\">        containing values strictly within `lo` and `hi` -/</span>\n<span class=\"kn\">inductive</span><span class=\"w\"> </span><span class=\"n\">BST</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">Tree</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"kt\">Prop</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n</code></pre></div>\n<p>However, in the <code>xs = 5 :: tail</code> example above, the inductively-defined Prop is <code>=</code> (<code>Eq</code>), which contains a type parameter <code>α</code>. In the \"call-site\" of <code>Eq</code>, we know that <code>α</code> ought to be instantiated with <code>List Nat</code>, since we are applying <code>Eq</code> to two arguments of type <code>List Nat</code> in the expression <code>xs = 5 :: tail</code> (my command elaborator has access to the type of the arguments <code>xs</code> and <code>5::tail</code>). Using this information, I'd like to instantiate <code>α</code> with <code>List Nat</code>. So to answer your questions:</p>\n<p>(1) I'd like this approach to be generic (to work with any <code>Prop</code> which is defined as an <code>inductive</code>)<br>\n(2) The parameters are coming from user-provided arguments to the <code>Prop</code> </p>\n<p>Hope this context helps!</p>",
+        "id": 533185451,
+        "sender_full_name": "Ernest Ng",
+        "timestamp": 1754517883
+    },
+    {
+        "content": "<p>If you have access to <code>xs = 5 :: tail</code>, then it seems to me that you don't need to instantiate anything: you already have <code>@Eq (List Nat)</code> at the head of the expression.</p>",
+        "id": 533185671,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754518042
+    },
+    {
+        "content": "<p>Is there a typo in the example? Should the body of the <code>fun</code> be <code>∃ tail, xs = 5 :: tail</code>?</p>",
+        "id": 533185791,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754518143
+    },
+    {
+        "content": "<p>Yep, you're right, thanks! The version with <code>∃ tail</code> is how it ought to be interpreted (<code>tail</code> is allowed to be any random <code>List Nat</code>). (Sidenote: this functionality is meant to be a port of Coq QuickChick, and in Coq, the concrete syntax is <code>Derive Generator for (fun xs =&gt; xs = 5 :: tail)</code>, so we've replicated the Coq syntax directly, but perhaps this choice of concrete syntax isn't the best).</p>",
+        "id": 533186045,
+        "sender_full_name": "Ernest Ng",
+        "timestamp": 1754518331
+    },
+    {
+        "content": "<p>I'm using this function to parse the application of the <code>Prop</code> in the body of the <code>fun</code>, and it has trouble recognizing explicit type applications like <code>@Eq (List Nat)</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"sd\">/-- Extracts the name of the induction relation and its arguments</span>\n<span class=\"sd\">    returning the name of the inductive relation as a `TSyntax term` instead of a `Name`,</span>\n<span class=\"sd\">    and the arguments to the `inductive` as an `Array` of `TSyntax term`s . -/</span>\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">deconstructInductiveApplication</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">body</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Term</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">CommandElabM</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">TSyntax</span><span class=\"w\"> </span><span class=\"ss\">`term</span><span class=\"w\"> </span><span class=\"bp\">×</span><span class=\"w\"> </span><span class=\"n\">Array</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">TSyntax</span><span class=\"w\"> </span><span class=\"ss\">`term</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">match</span><span class=\"w\"> </span><span class=\"n\">body</span><span class=\"w\"> </span><span class=\"k\">with</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">indRel</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">args</span><span class=\"o\">:</span><span class=\"n\">term</span><span class=\"bp\">*</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">    </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">indRel</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">args</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">indRel</span><span class=\"o\">:</span><span class=\"n\">ident</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">    </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">indRel</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">#</span><span class=\"o\">[])</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">    </span><span class=\"n\">throwError</span><span class=\"w\"> </span><span class=\"s2\">\"Expected inductive type application\"</span>\n</code></pre></div>\n<p>Perhaps this function isn't the most robust -- it has trouble recognizing notation like the <code>=</code> in <code>5 = x::tail</code>.</p>",
+        "id": 533186232,
+        "sender_full_name": "Ernest Ng",
+        "timestamp": 1754518443
+    },
+    {
+        "content": "<p>Ah, you're making your own term elaboration system from scratch, and your question basically about how do you do that?</p>",
+        "id": 533186350,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754518523
+    },
+    {
+        "content": "<p>It seems to me like it would be easier to simply elaborate the term in your case though</p>",
+        "id": 533186451,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1754518594
+    },
+    {
+        "content": "<p>How about you don't build a term elaboration system from scratch and instead make use of the main elaborator, since that way you get all the bells and whistles that it comes with, like hovers, completions, a well-tested system, etc.</p>\n<p>It seems really not worth the engineering time not to use <code>elabTerm</code>.</p>",
+        "id": 533186455,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754518597
+    },
+    {
+        "content": "<p>I guess that won't give you terms though; the question is what are you using them then for?</p>",
+        "id": 533186478,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1754518616
+    },
+    {
+        "content": "<p>Once you use <code>elabTerm</code>, you can then process the <code>Expr</code> you get.</p>",
+        "id": 533186511,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754518639
+    },
+    {
+        "content": "<p>This is what I meant by the head of the expression will have <code>@Eq (List Nat)</code> — it'll just be there already, so it's not a problem you need to solve.</p>",
+        "id": 533186560,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754518670
+    },
+    {
+        "content": "<p>Ah yes! I wonder if its better to just elaborate the <code>=</code> in <code>5 = x::tail</code> into an explicit application <code>Eq @(List Nat) 5 x::tail</code>. If possible, I'd like to stick to manipulating <code>TSyntax term</code>s instead of <code>Expr</code>, since I'm constructing the code for the generator by building up <code>TSyntax term</code>s (via quotations). (I guess I could always delaborate the <code>Expr</code> back into a <code>TSyntax term</code>, but I wasn't sure if elaborating and subsequently delaborating is bad practice.)</p>",
+        "id": 533186578,
+        "sender_full_name": "Ernest Ng",
+        "timestamp": 1754518684
+    },
+    {
+        "content": "<p>If you need this kind of precise reasoning, then, even if you are constructing <code>Syntax</code>, it's much better to work with <code>Expr</code>s.</p>",
+        "id": 533186632,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754518729
+    },
+    {
+        "content": "<p>It's not delaboration — it's about using the <code>Expr</code>s and all the type inference that gives you to drive constructing whatever it is that you need.</p>",
+        "id": 533186690,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754518781
+    },
+    {
+        "content": "<p>Another reason not to make your own term elaboration system is that it's going to diverge in functionality from the normal one. Users won't be happy that these Lean-like terms aren't actually Lean.</p>",
+        "id": 533186792,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754518856
+    },
+    {
+        "content": "<p>If you want quotation, use <code>Qq</code>. It allows you to write <code>Expr</code>s pretty nicely. The syntax is like this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Qq</span>\n\n<span class=\"kn\">open</span><span class=\"w\"> </span><span class=\"n\">Qq</span>\n\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">test</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Q</span><span class=\"o\">(</span><span class=\"n\">Nat</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Q</span><span class=\"o\">(</span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">q</span><span class=\"o\">(</span><span class=\"bp\">$</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>where <code>Q(x)</code> is basically an <code>Expr</code> but with a type annotation.</p>",
+        "id": 533187015,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1754519029
+    },
+    {
+        "content": "<p>Thanks both! Just to make sure I fully understand you <span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> , are you saying defining a top-level command <code>#derive_generator (fun ... =&gt; ...)</code> and elaborating the command is ill-advised, or are you saying the logic for the elaborator should take the argument supplied to <code>#derive_generator</code> and call <code>elabTerm</code> on it to get an <code>Expr</code>, and subsequently we use the information at the <code>Expr</code>-level to proceed?</p>",
+        "id": 533187045,
+        "sender_full_name": "Ernest Ng",
+        "timestamp": 1754519051
+    },
+    {
+        "content": "<p>Ah yes, we considered using Qq but decided to stick with constructing <code>TSyntax term</code>s since it seems better documented / is easier to construct monadic functions that use <code>do</code>-notation.</p>",
+        "id": 533187111,
+        "sender_full_name": "Ernest Ng",
+        "timestamp": 1754519111
+    },
+    {
+        "content": "<p>I think he means that you shouldn't try to match on term syntax and use <code>elabTerm</code> or variants instead</p>",
+        "id": 533187113,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1754519114
+    },
+    {
+        "content": "<p>The thing about term quotations vs Qq quotations is that Qq is much more predictable</p>",
+        "id": 533187168,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1754519161
+    },
+    {
+        "content": "<p>Yes, I mean use <code>elabTerm</code> on the expression provided to <code>#derive_generator</code>, and then analyze the <code>Expr</code> you get to drive however you construct the generator.</p>",
+        "id": 533187200,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754519182
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"873547\">@Robin Arnez</span> I don't think Qq helps in this context.</p>",
+        "id": 533187267,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754519227
+    },
+    {
+        "content": "<p>make sense, thanks!</p>",
+        "id": 533187317,
+        "sender_full_name": "Ernest Ng",
+        "timestamp": 1754519271
+    },
+    {
+        "content": "<p>Hmm yeah, maybe <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.Term.exprToSyntax#doc\">docs#Lean.Elab.Term.exprToSyntax</a> might help though</p>",
+        "id": 533187380,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1754519327
+    },
+    {
+        "content": "<p>It's basically <code>Expr -&gt; Term</code> but without delaboration</p>",
+        "id": 533187401,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1754519343
+    },
+    {
+        "content": "<p>(it uses metavariables under the hood to make this work)</p>",
+        "id": 533187420,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1754519356
+    },
+    {
+        "content": "<p>But it doesn't work if you actually use it in a top-level command...</p>",
+        "id": 533187479,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1754519406
+    },
+    {
+        "content": "<p>Using <code>elabTerm</code> does mean that implicit quantification is no longer part of it.</p>\n<p>If somehow that's important, there are some alternatives. You could for example choose a different syntax that doesn't look like <code>fun</code>. Maybe</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">derive_generator</span><span class=\"w\"> </span><span class=\"n\">xs</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">List</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">xs</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">5</span><span class=\"w\"> </span><span class=\"bp\">::</span><span class=\"w\"> </span><span class=\"n\">tail</span>\n</code></pre></div>\n<p>and then you scan what's after <code>=&gt;</code> for constants that don't shadow global constants, then replace them with metavariables perhaps (like <code>tail</code> becomes <code>?tail</code>), then <code>elabTerm</code> that, and then abstract the metavariables to get the quantification.</p>\n<p>Or you could decide that</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">derive_generator</span><span class=\"w\"> </span><span class=\"n\">xs</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">List</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"bp\">∃</span><span class=\"w\"> </span><span class=\"n\">tail</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">xs</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">5</span><span class=\"w\"> </span><span class=\"bp\">::</span><span class=\"w\"> </span><span class=\"n\">tail</span>\n</code></pre></div>\n<p>is OK and have special support for <code>Exists</code>.</p>",
+        "id": 533187525,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754519442
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"873547\">Robin Arnez</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Instantiating.20type.20parameters.20of.20a.20polymorphic.20inductive.20typ/near/533187401\">said</a>:</p>\n<blockquote>\n<p>It's basically <code>Expr -&gt; Term</code> but without delaboration</p>\n</blockquote>\n<p>It doesn't work with CommandElabM unfortunately. There's no metavariable context.</p>\n<p>Something you might consider <span class=\"user-mention\" data-user-id=\"920434\">@Ernest Ng</span> is to not have the logic be in CommandElabM, but in TermElabM, and then create a term elaborator that implements it.</p>\n<p>E.g., have the command expand to</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"bp\">...</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">derive_generator</span><span class=\"bp\">%</span><span class=\"w\"> </span><span class=\"n\">xs</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">List</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">xs</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">5</span><span class=\"w\"> </span><span class=\"bp\">::</span><span class=\"n\">tail</span>\n</code></pre></div>\n<p>and then implement <code>derive_generator%</code>. It's more flexible being in <code>TermElabM</code> for this stuff.</p>",
+        "id": 533188019,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754519683
+    },
+    {
+        "content": "<p>Some mathlib deriving handlers define such things. One example is the Fintype handler.</p>",
+        "id": 533188083,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754519721
+    },
+    {
+        "content": "<p>I guess the question is also how you'd expect the derived generator to look like at the end and which parts of that would vary</p>",
+        "id": 533188178,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1754519793
+    },
+    {
+        "content": "<p>Thanks for the suggestions! In the current implementation, the command derives an instance of a typeclass <code>ArbitrarySuchThat</code> -- this typeclass is defined as follows:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"sd\">/-- Generators of `α` such that `P : α -&gt; Prop` holds for all generated values.</span>\n<span class=\"sd\">    Note that these generators may fail, which is why they have type `OptionT Gen α`. -/</span>\n<span class=\"kn\">class</span><span class=\"w\"> </span><span class=\"n\">ArbitrarySuchThat</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">P</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"kt\">Prop</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"n\">arbitraryST</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">OptionT</span><span class=\"w\"> </span><span class=\"n\">Gen</span><span class=\"w\"> </span><span class=\"n\">α</span>\n</code></pre></div>\n<p>so using the current implementation, the command </p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">derive_generator</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">t</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Tree</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">BST</span><span class=\"w\"> </span><span class=\"n\">lo</span><span class=\"w\"> </span><span class=\"n\">hi</span><span class=\"w\"> </span><span class=\"n\">t</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>(using the BST example from above) derives the following typeclass instance</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ArbitrarySuchThat</span><span class=\"w\"> </span><span class=\"n\">Tree</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">t</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">BST</span><span class=\"w\"> </span><span class=\"n\">lo</span><span class=\"w\"> </span><span class=\"n\">hi</span><span class=\"w\"> </span><span class=\"n\">t</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"n\">arbitraryST</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">...</span><span class=\"w\"> </span><span class=\"c1\">-- body of generator emitted</span>\n</code></pre></div>\n<p>Our desire to derive this typeclass instance was why we began with <code>CommandElabM</code>, but I think your suggestion of having the command expand to <code>instance ... := derive_generator% t : tree =&gt; BST lo hi t</code> and sticking to <code>TermElabM</code> for <code>derive_generator%</code> sounds like a better design decision.</p>",
+        "id": 533188396,
+        "sender_full_name": "Ernest Ng",
+        "timestamp": 1754519960
+    },
+    {
+        "content": "<p>It's common for deriving handlers to start in CommandElabM and switch to TermElabM</p>\n<p>Using a term elaborator is just a convenient way to do it, since that way you get to use syntax quotations to make the declaration itself, but still get to create Exprs to build the body as needed.</p>",
+        "id": 533189045,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754520359
+    },
+    {
+        "content": "<p>Another design here is that you have</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">derive_generator</span><span class=\"w\"> </span><span class=\"n\">funExpression</span>\n</code></pre></div>\n<p>expand to</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ArbitrarySuchThat</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"n\">funExpression</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">derive_arbitrary_such_that</span><span class=\"bp\">%</span>\n</code></pre></div>\n<p>and then use the expected type to get the predicate.</p>",
+        "id": 533189142,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754520434
+    },
+    {
+        "content": "<p>That way you're not in the business of elaborating the predicate at all. You do lose a bit of control over elaboration order though doing it this way; if you have <code>derive_arbitrary_such_that%</code> postpone so long as the expected type still has metavariables, then you should be good.</p>",
+        "id": 533189200,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754520477
+    },
+    {
+        "content": "<p>Ah gotcha thanks! When you say \"use the expected type to get the predicate\", do you mean let type inference figure out the type of the hole in <code>ArbitrarySuchThat _ funExpression</code> or something else?</p>",
+        "id": 533189468,
+        "sender_full_name": "Ernest Ng",
+        "timestamp": 1754520716
+    },
+    {
+        "content": "<p>I mean that <code>derive_arbitrary_such_that%</code> can take the expected type, which is an Expr of the form <code>ArbitrarySuchThat t p</code>, and then extract the <code>p</code> argument.</p>",
+        "id": 533189588,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754520812
+    },
+    {
+        "content": "<p>Ah gotcha that makes sense -- thanks!</p>",
+        "id": 533189829,
+        "sender_full_name": "Ernest Ng",
+        "timestamp": 1754521001
+    },
+    {
+        "content": "<p>Here's some of the framework:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Lean</span>\n\n<span class=\"kn\">class</span><span class=\"w\"> </span><span class=\"n\">ArbitrarySuchThat</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">P</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"kt\">Prop</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n\n<span class=\"kn\">open</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"w\"> </span><span class=\"n\">Elab</span><span class=\"w\"> </span><span class=\"n\">Term</span>\n\n<span class=\"kn\">syntax</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">name</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">arbitrarySuchThatStx</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"s2\">\"arbitrary_such_that%\"</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">term</span>\n\n<span class=\"kd\">@[</span><span class=\"n\">term_elab</span><span class=\"w\"> </span><span class=\"n\">arbitrarySuchThatStx</span><span class=\"kd\">]</span>\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">elabArbitrarySuchThat</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">TermElab</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">stx</span><span class=\"w\"> </span><span class=\"n\">expectedType?</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">expectedType</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">tryPostponeIfHasMVars</span><span class=\"w\"> </span><span class=\"n\">expectedType?</span><span class=\"w\"> </span><span class=\"s2\">\"</span><span class=\"se\">\\</span>\n<span class=\"s2\">    Could not elaborate `arbitrary_such_that%`\"</span>\n<span class=\"w\">  </span><span class=\"n\">let_expr</span><span class=\"w\"> </span><span class=\"n\">ArbitrarySuchThat</span><span class=\"w\"> </span><span class=\"n\">ty</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">expectedType</span>\n<span class=\"w\">    </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">throwError</span><span class=\"w\"> </span><span class=\"s2\">\"Expected type must be of the form `ArbitrarySuchThat _ _`\"</span>\n<span class=\"w\">  </span><span class=\"n\">logInfo</span><span class=\"w\"> </span><span class=\"n\">m!</span><span class=\"s2\">\"</span><span class=\"se\">\\</span>\n<span class=\"s2\">    type is{indentExpr ty}</span><span class=\"se\">\\n\\</span>\n<span class=\"s2\">    predicate is{indentExpr p}\"</span>\n<span class=\"w\">  </span><span class=\"n\">throwError</span><span class=\"w\"> </span><span class=\"s2\">\"implementation not finished\"</span>\n\n<span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ArbitrarySuchThat</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">xs</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">List</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"bp\">∃</span><span class=\"w\"> </span><span class=\"n\">tail</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">xs</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">3</span><span class=\"w\"> </span><span class=\"bp\">::</span><span class=\"w\"> </span><span class=\"n\">tail</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">  </span><span class=\"n\">arbitrary_such_that</span><span class=\"bp\">%</span>\n<span class=\"c\">/-</span>\n<span class=\"cm\">type is</span>\n<span class=\"cm\">  List Nat</span>\n<span class=\"cm\">predicate is</span>\n<span class=\"cm\">  fun xs ↦ ∃ tail, xs = 3 :: tail</span>\n<span class=\"cm\">-/</span>\n</code></pre></div>",
+        "id": 533190031,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754521162
+    },
+    {
+        "content": "<p>Thanks, this is very helpful! I'll summarize our discussion to our collaborators / my manager and let them decide if we ought to make this design change to our tool in the short term (my internship is ending soon, so I'm not sure whether I should undertake the command elaborator -&gt; term elaborator refactor now or let my successor handle it).</p>",
+        "id": 533190859,
+        "sender_full_name": "Ernest Ng",
+        "timestamp": 1754521757
+    },
+    {
+        "content": "<p>Here's a bit more processing for illustration:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">open</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"w\"> </span><span class=\"n\">Elab</span><span class=\"w\"> </span><span class=\"n\">Term</span><span class=\"w\"> </span><span class=\"n\">Meta</span>\n\n<span class=\"kd\">@[</span><span class=\"n\">term_elab</span><span class=\"w\"> </span><span class=\"n\">arbitrarySuchThatStx</span><span class=\"kd\">]</span>\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">elabArbitrarySuchThat</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">TermElab</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">stx</span><span class=\"w\"> </span><span class=\"n\">expectedType?</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">expectedType</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">tryPostponeIfHasMVars</span><span class=\"w\"> </span><span class=\"n\">expectedType?</span><span class=\"w\"> </span><span class=\"s2\">\"</span><span class=\"se\">\\</span>\n<span class=\"s2\">    Could not elaborate `arbitrary_such_that%`\"</span>\n<span class=\"w\">  </span><span class=\"n\">let_expr</span><span class=\"w\"> </span><span class=\"n\">ArbitrarySuchThat</span><span class=\"w\"> </span><span class=\"n\">ty</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">expectedType</span>\n<span class=\"w\">    </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">throwError</span><span class=\"w\"> </span><span class=\"s2\">\"Expected type must be of the form `ArbitrarySuchThat _ _`\"</span>\n<span class=\"w\">  </span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">withLocalDeclD</span><span class=\"w\"> </span><span class=\"ss\">`x</span><span class=\"w\"> </span><span class=\"n\">ty</span><span class=\"w\"> </span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">    </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">p'</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"bp\">.</span><span class=\"n\">beta</span><span class=\"w\"> </span><span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">x</span><span class=\"o\">]</span>\n<span class=\"w\">    </span><span class=\"n\">logInfo</span><span class=\"w\"> </span><span class=\"n\">m!</span><span class=\"s2\">\"</span><span class=\"se\">\\</span>\n<span class=\"s2\">      for x : {ty}</span><span class=\"se\">\\n\\</span>\n<span class=\"s2\">      predicate is{indentExpr p'}\"</span>\n<span class=\"w\">    </span><span class=\"c1\">-- Put into WHNF to identify predicate</span>\n<span class=\"w\">    </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">p'</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">whnf</span><span class=\"w\"> </span><span class=\"n\">p'</span>\n<span class=\"w\">    </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"bp\">.</span><span class=\"n\">const</span><span class=\"w\"> </span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">p'</span><span class=\"bp\">.</span><span class=\"n\">getAppFn</span>\n<span class=\"w\">      </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">throwError</span><span class=\"w\"> </span><span class=\"s2\">\"expecting predicate to be a constant application\"</span>\n<span class=\"w\">    </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">ival</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">getConstInfoInduct</span><span class=\"w\"> </span><span class=\"n\">c</span>\n<span class=\"w\">    </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">args</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">p'</span><span class=\"bp\">.</span><span class=\"n\">getAppArgs</span>\n<span class=\"w\">    </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">withParams</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">mkAppN</span><span class=\"w\"> </span><span class=\"n\">p'</span><span class=\"bp\">.</span><span class=\"n\">getAppFn</span><span class=\"w\"> </span><span class=\"n\">args</span><span class=\"o\">[</span><span class=\"mf\">0.</span><span class=\"bp\">..</span><span class=\"n\">ival</span><span class=\"bp\">.</span><span class=\"n\">numParams</span><span class=\"o\">]</span>\n<span class=\"w\">    </span><span class=\"n\">logInfo</span><span class=\"w\"> </span><span class=\"n\">m!</span><span class=\"s2\">\"predicate is {withParams}\"</span>\n<span class=\"w\">  </span><span class=\"n\">throwError</span><span class=\"w\"> </span><span class=\"s2\">\"implementation not finished\"</span>\n\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">pp</span><span class=\"bp\">.</span><span class=\"n\">explicit</span><span class=\"w\"> </span><span class=\"n\">true</span>\n<span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ArbitrarySuchThat</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">xs</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">List</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">xs</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"mi\">3</span><span class=\"o\">])</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">  </span><span class=\"n\">arbitrary_such_that</span><span class=\"bp\">%</span>\n<span class=\"c\">/-</span>\n<span class=\"cm\">for x : List Nat</span>\n<span class=\"cm\">predicate is</span>\n<span class=\"cm\">  @Eq (List Nat) x</span>\n<span class=\"cm\">    (@List.cons Nat (@OfNat.ofNat Nat (nat_lit 3) (instOfNatNat (nat_lit 3))) (@List.nil Nat))</span>\n\n<span class=\"cm\">predicate is @Eq (List Nat) x</span>\n<span class=\"cm\">-/</span>\n</code></pre></div>",
+        "id": 533190901,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754521789
+    },
+    {
+        "content": "<p>Yeah, definitely you should consider the engineering effort and decide what will serve your needs now/later.</p>",
+        "id": 533191027,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754521875
+    },
+    {
+        "content": "<p>Thanks for the second example! Super helpful to see some of the term elaborator infrastructure fleshed-out</p>",
+        "id": 533191097,
+        "sender_full_name": "Ernest Ng",
+        "timestamp": 1754521929
+    }
+]

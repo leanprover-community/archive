@@ -1,0 +1,98 @@
+[
+    {
+        "content": "<p>I am trying to do a rewrite as part of the use of a <code>conv</code> tactic. In particular, I am trying to expand out some places where <code>&amp;&amp;</code> may have been simplified away. The reasons for this are not worth getting into, but suffice to say I am trying to do some metaprogramming and need to put things in a normal form that my tactics expect, so replacing <code>b</code> with <code>true &amp;&amp; b</code> in some circumstances can help me get closer to this normal form. </p>\n<p>However, when I try to rewrite with <code>rw [←Bool.and_true] </code> inside of a <code>conv</code>, Lean tells me that it cannot perform the rewrite because the pattern is a metavariable. If I instead supply the whole goal expression to the rewrite, it works just fine. That is, this example works:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">true</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">conv</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">rw</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"bp\">←</span><span class=\"n\">Bool</span><span class=\"bp\">.</span><span class=\"n\">and_true</span><span class=\"w\"> </span><span class=\"n\">true</span><span class=\"o\">]</span><span class=\"w\">  </span><span class=\"c\">/-</span><span class=\"cm\"> transforms the goal from true = true to true &amp;&amp; true = true &amp;&amp; true -/</span>\n<span class=\"w\">  </span><span class=\"c\">/-</span><span class=\"cm\"> some more stuff -/</span>\n</code></pre></div>\n<p>but this one doesn't:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">true</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">conv</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">rw</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"bp\">←</span><span class=\"n\">Bool</span><span class=\"bp\">.</span><span class=\"n\">and_true</span><span class=\"o\">]</span>\n<span class=\"w\">  </span><span class=\"c\">/-</span><span class=\"cm\"> some more stuff -/</span>\n</code></pre></div>\n<p>I would like to be able to do this rewrite without being having to supply the specific goal expression to the <code>rw [←Bool.and_true]</code>, so that I can package up this normalization step into a tactic that I can perform on arbitrary goals. Is there either a) a way to get the rewrite to work even in the presence of metavariables? or b) a tactic like <code>goal</code> that I can use to pass the goal expression as the argument to my rewrite, like <code>rw [←Bool.and_true goal]</code> or something?</p>",
+        "id": 531969660,
+        "sender_full_name": "Daniel Sainati",
+        "timestamp": 1753930938
+    },
+    {
+        "content": "<p>To get the goal type inside a tactic what I would use is <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.Tactic.getMainGoal#doc\">docs#Lean.Elab.Tactic.getMainGoal</a> followed by <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.MVarId.getType#doc\">docs#Lean.MVarId.getType</a> (or <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.MVarId.getType%27#doc\">docs#Lean.MVarId.getType'</a> depending on context). But in <code>conv</code> that probably wouldn't work.</p>",
+        "id": 532024951,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1753954297
+    },
+    {
+        "content": "<p>Hoping <a href=\"https://en.wikipedia.org/wiki/Ward_Cunningham#Law\">Cunningham's law</a> comes to your rescue :)</p>",
+        "id": 532025042,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1753954325
+    },
+    {
+        "content": "<p>Note also that your question suggest that in <code>example : true := by …</code> the goal is <code>true</code>. It isn’t, since <code>true</code> is not in <code>Prop</code> but <code>Bool</code>. You may need to think about whether you really really want that kind of goal.</p>",
+        "id": 532025739,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1753954516
+    },
+    {
+        "content": "<p>If you really want with goals coerced from <code>Bool</code> like that, you can recover your <code>Bool</code> by pattern matching, and then play with it. Something like</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Lean</span>\n\n<span class=\"kn\">open</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"w\"> </span><span class=\"n\">Elab</span><span class=\"w\"> </span><span class=\"n\">Tactic</span><span class=\"w\"> </span><span class=\"n\">Meta</span><span class=\"w\"> </span><span class=\"n\">Parser</span><span class=\"w\"> </span><span class=\"n\">Tactic</span>\n<span class=\"kn\">elab</span><span class=\"w\"> </span><span class=\"s2\">\"foo\"</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">tactic</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">tgt</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">getMainTarget</span>\n<span class=\"w\">  </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">mkApp3</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">const</span><span class=\"w\"> </span><span class=\"ss\">`Eq</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"bp\">_</span><span class=\"o\">])</span><span class=\"w\">  </span><span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">const</span><span class=\"w\"> </span><span class=\"ss\">`Bool</span><span class=\"w\"> </span><span class=\"o\">[])</span><span class=\"w\"> </span><span class=\"n\">l</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">const</span><span class=\"w\"> </span><span class=\"ss\">``true</span><span class=\"w\"> </span><span class=\"o\">[])</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">tgt</span><span class=\"w\"> </span><span class=\"k\">then</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">s</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">PrettyPrinter</span><span class=\"bp\">.</span><span class=\"n\">delab</span><span class=\"w\"> </span><span class=\"n\">l</span>\n<span class=\"w\">  </span><span class=\"n\">evalTactic</span><span class=\"w\"> </span><span class=\"bp\">&lt;|</span><span class=\"w\"> </span><span class=\"n\">Unhygienic</span><span class=\"bp\">.</span><span class=\"n\">run</span><span class=\"w\"> </span><span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">tactic</span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">rewrite</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"bp\">.</span><span class=\"n\">and_true</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">s</span><span class=\"o\">])</span>\n\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">foo</span>\n<span class=\"w\">  </span><span class=\"gr\">sorry</span>\n</code></pre></div>",
+        "id": 532028131,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1753955206
+    },
+    {
+        "content": "<p>where <code>foo</code> turns the goal <code>b = true</code> into <code>(b &amp;&amp; true) = true</code>.</p>",
+        "id": 532028305,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1753955255
+    },
+    {
+        "content": "<p>You can run the <code>conv</code> tactic <code>apply</code> to apply the theorem to the goal</p>",
+        "id": 532033340,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1753956708
+    },
+    {
+        "content": "<p>Maybe I oversimplified the question by focusing on “tactic” and “<code>rw [← Bool.and_true]</code> doesn’t work” and ignoring the <code>conv</code> part. You can also do</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">elab</span><span class=\"w\"> </span><span class=\"s2\">\"bar\"</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">conv</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">tgt</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">getMainTarget</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">s</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">PrettyPrinter</span><span class=\"bp\">.</span><span class=\"n\">delab</span><span class=\"w\"> </span><span class=\"n\">tgt</span>\n<span class=\"w\">  </span><span class=\"n\">evalTactic</span><span class=\"w\"> </span><span class=\"bp\">&lt;|</span><span class=\"w\"> </span><span class=\"n\">Unhygienic</span><span class=\"bp\">.</span><span class=\"n\">run</span><span class=\"w\"> </span><span class=\"bp\">`</span><span class=\"o\">(</span><span class=\"n\">conv</span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">rw</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"bp\">.</span><span class=\"n\">and_true</span><span class=\"w\"> </span><span class=\"bp\">$</span><span class=\"n\">s</span><span class=\"o\">])</span>\n\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">conv</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">    </span><span class=\"n\">congr</span>\n<span class=\"w\">    </span><span class=\"n\">bar</span>\n<span class=\"w\">  </span><span class=\"gr\">sorry</span>\n</code></pre></div>",
+        "id": 532036734,
+        "sender_full_name": "Patrick Massot",
+        "timestamp": 1753957728
+    },
+    {
+        "content": "<p>Thank you! This is super helpful. To generalize further, is there a way to take the <code>bar</code> tactic you've written here and allow it to take the specific rewrite tactic as an argument? I.e. if I don't always want to rewrite with <code>Bool.and_true</code> and instead want to pass in a specific lemma, like <code>rw_goal_with (← Bool.and_true)</code> in this case, but maybe a different lemma in other cases?</p>",
+        "id": 532063433,
+        "sender_full_name": "Daniel Sainati",
+        "timestamp": 1753965524
+    },
+    {
+        "content": "<p>This works without any metaprogramming</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">conv</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">    </span><span class=\"n\">congr</span>\n<span class=\"w\">    </span><span class=\"n\">apply</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Bool</span><span class=\"bp\">.</span><span class=\"n\">and_true</span><span class=\"w\"> </span><span class=\"bp\">..</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">symm</span>\n<span class=\"w\">  </span><span class=\"gr\">sorry</span>\n</code></pre></div>",
+        "id": 532064299,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1753965760
+    },
+    {
+        "content": "<p>is there a way to not close the goal afterwards? E.g. if i want to follow up the <code>Bool.and_true</code> with a rewrite by <code>Bool.and_comm</code>?</p>",
+        "id": 532066683,
+        "sender_full_name": "Daniel Sainati",
+        "timestamp": 1753966355
+    },
+    {
+        "content": "<p>Just put another <code>conv</code> around it</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">conv</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">    </span><span class=\"n\">congr</span>\n<span class=\"w\">    </span><span class=\"n\">conv</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">apply</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Bool</span><span class=\"bp\">.</span><span class=\"n\">and_true</span><span class=\"w\"> </span><span class=\"bp\">..</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">symm</span>\n<span class=\"w\">    </span><span class=\"n\">conv</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">apply</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Bool</span><span class=\"bp\">.</span><span class=\"n\">and_comm</span><span class=\"w\"> </span><span class=\"bp\">..</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"gr\">sorry</span>\n</code></pre></div>",
+        "id": 532067018,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1753966448
+    },
+    {
+        "content": "<p>I see, so you can't do a sequence of tactics within the same <code>conv</code></p>",
+        "id": 532067112,
+        "sender_full_name": "Daniel Sainati",
+        "timestamp": 1753966480
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"942689\">Daniel Sainati</span> <a href=\"#narrow/channel/113488-general/topic/How.20to.20reference.20the.20goal.20inside.20of.20a.20tactic.3F/near/532067112\">said</a>:</p>\n<blockquote>\n<p>I see, so you can't do a sequence of tactics within the same <code>conv</code></p>\n</blockquote>\n<p>what?</p>",
+        "id": 532067191,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1753966503
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"942689\">Daniel Sainati</span> <a href=\"#narrow/channel/113488-general/topic/How.20to.20reference.20the.20goal.20inside.20of.20a.20tactic.3F/near/532067112\">schrieb</a>:</p>\n<blockquote>\n<p>I see, so you can't do a sequence of tactics within the same <code>conv</code></p>\n</blockquote>\n<p>You can usually but <code>apply</code> terminates a <code>conv</code> sequence.<br>\nYou can also use <code>trans</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">conv</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">    </span><span class=\"n\">congr</span>\n<span class=\"w\">    </span><span class=\"n\">apply</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Bool</span><span class=\"bp\">.</span><span class=\"n\">and_true</span><span class=\"w\"> </span><span class=\"bp\">..</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">symm</span><span class=\"bp\">.</span><span class=\"n\">trans</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Bool</span><span class=\"bp\">.</span><span class=\"n\">and_comm</span><span class=\"w\"> </span><span class=\"bp\">..</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"gr\">sorry</span>\n</code></pre></div>",
+        "id": 532067575,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1753966607
+    },
+    {
+        "content": "<p>Brilliant. This is exactly what I was looking for. Thanks all for the help!</p>",
+        "id": 532067767,
+        "sender_full_name": "Daniel Sainati",
+        "timestamp": 1753966660
+    }
+]

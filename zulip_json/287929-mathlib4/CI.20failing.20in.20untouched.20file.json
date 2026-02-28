@@ -1,0 +1,464 @@
+[
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/actions/runs/21259376489/job/61182695264?pr=33697\">https://github.com/leanprover-community/mathlib4/actions/runs/21259376489/job/61182695264?pr=33697</a><br>\nMy PR adds a new leaf file. However it fails CI with a linter error about lemmas not being in simp normal form. These lemmas are in a random file I haven't touched. Does anyone understand what is going on?</p>",
+        "id": 569614618,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769128616
+    },
+    {
+        "content": "<p>simpNF imports the whole mathlib, then tries to simplify each side of every simp lemma. These simp calls may not time out in the original file the simp lemma is in, but may time out when the whole library is imported, especially if new simp lemmas are introduced or in this case, new instance (from IsRealClosed to IsSemireal). I guess trying to synthesize <code>Field</code> is what makes it time out.</p>",
+        "id": 569615689,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1769129304
+    },
+    {
+        "content": "<p>Hm OK, thanks</p>",
+        "id": 569615774,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769129332
+    },
+    {
+        "content": "<p>I still don't understand what is going on here. The instance that fails times out in the original file as well. <code>simp only</code> works fine. It looks like some other <code>simp</code> lemma which doesn't end up firing has a typeclass synthesis which times out on this branch but not on <code>master</code>.</p>",
+        "id": 569888017,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769274347
+    },
+    {
+        "content": "<p>The offending lemma is <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=FaithfulSMul.ker_algebraMap_eq_bot#doc\">docs#FaithfulSMul.ker_algebraMap_eq_bot</a><br>\nThe <code>FaithfulSMul</code> instance it's looking for doesn't exist! I don't understand what's going on.<br>\nPresumably there's a <code>IsRealClosed</code> -&gt; <code>IsSemireal</code> -&gt; <code>CharZero</code> -&gt; ... -&gt; <code>FaithfulSMul</code> chain that tips typeclass inference over the edge.</p>",
+        "id": 569888224,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769274522
+    },
+    {
+        "content": "<p>But why does <code>simp</code> <em>crash</em> if typeclass inference times out, rather than simply moving on, as normal? Surely not every typeclass problem <code>simp</code> meets is resolved within 20k hbs?</p>",
+        "id": 569889024,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769275230
+    },
+    {
+        "content": "<p>Have you compared profiling simp traces before and after the PR? What was the timing before? Is it one of those unlucky \"this took 19.9k before and 20.1k after\" issues or is this a perfectly reasonable proof which now goes haywire after your PR?</p>",
+        "id": 569892446,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1769278269
+    },
+    {
+        "content": "<p>Not sure how to profile given that the synthesis <em>fails</em></p>",
+        "id": 569909537,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769295981
+    },
+    {
+        "content": "<p>you set up a file with the failing synthesis and you turn on the profiler?</p>",
+        "id": 569909731,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1769296187
+    },
+    {
+        "content": "<p>I will try it<br>\nMaybe I misunderstood something</p>",
+        "id": 569909758,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769296218
+    },
+    {
+        "content": "<p>Sure enough</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span>\n\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">diagnostics</span><span class=\"w\"> </span><span class=\"n\">true</span>\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">diagnostics</span><span class=\"bp\">.</span><span class=\"n\">threshold</span><span class=\"w\"> </span><span class=\"mi\">0</span>\n\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">trace</span><span class=\"bp\">.</span><span class=\"n\">Debug</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">simp</span><span class=\"w\"> </span><span class=\"n\">true</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"w\"> </span><span class=\"n\">ι</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span>\n<span class=\"w\">    </span><span class=\"o\">[</span><span class=\"n\">CommRing</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">CommRing</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"o\">]</span>\n<span class=\"w\">    </span><span class=\"o\">[</span><span class=\"n\">Algebra</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">P</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">Generators</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"w\"> </span><span class=\"n\">ι</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">CommRing</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Algebra</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">e</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"w\"> </span><span class=\"bp\">≃ₐ</span><span class=\"o\">[</span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n<span class=\"w\">    </span><span class=\"n\">RingHom</span><span class=\"bp\">.</span><span class=\"n\">ker</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">algebraMap</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">P</span><span class=\"bp\">.</span><span class=\"n\">ofAlgEquiv</span><span class=\"w\"> </span><span class=\"n\">e</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">Ring</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"gr\">sorry</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">simp</span>\n<span class=\"c1\">-- master: simp made no progress</span>\n<span class=\"c1\">-- #33697: failed to synthesize FaithfulSMul (P.ofAlgEquiv e).Ring T (deterministic) timeout at `typeclass`, maximum number of heartbeats (20000) has been reached</span>\n\n<span class=\"kn\">variable</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"w\"> </span><span class=\"n\">ι</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span>\n<span class=\"w\">    </span><span class=\"o\">[</span><span class=\"n\">CommRing</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">CommRing</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"o\">]</span>\n<span class=\"w\">    </span><span class=\"o\">[</span><span class=\"n\">Algebra</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">P</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">Generators</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"w\"> </span><span class=\"n\">ι</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">CommRing</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Algebra</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">e</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"w\"> </span><span class=\"bp\">≃ₐ</span><span class=\"o\">[</span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"o\">)</span>\n\n<span class=\"bp\">#</span><span class=\"n\">count_heartbeats</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"bp\">#</span><span class=\"n\">synth</span><span class=\"w\"> </span><span class=\"n\">FaithfulSMul</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">P</span><span class=\"bp\">.</span><span class=\"n\">ofAlgEquiv</span><span class=\"w\"> </span><span class=\"n\">e</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">Ring</span><span class=\"w\"> </span><span class=\"n\">T</span>\n<span class=\"c1\">-- master: Used 19452 heartbeats</span>\n<span class=\"c1\">-- #33697: Used 22693 heartbeats</span>\n</code></pre></div>",
+        "id": 569962149,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769355831
+    },
+    {
+        "content": "<p>the synthesis goes on a magical mystery tour of what seems like the entirety of Mathlib<br>\nand indeed what pushes it over the edge of 20k hb is <code>[] IsRealClosed.toIsSemireal ↦ 3</code>, along the chain I described above</p>",
+        "id": 569962243,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769355913
+    },
+    {
+        "content": "<p>so I suppose it's unlucky the way Kevin described</p>",
+        "id": 569962265,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769355937
+    },
+    {
+        "content": "<p>not really sure what to do - surely I can't go on making all my new - perfectly reasonable - instances super low priority - and that won't even help here because we need the TC search to <em>completely fail</em><br>\nsurely something can be done about the magical mystery tour?</p>",
+        "id": 569962382,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769356030
+    },
+    {
+        "content": "<p>Yes, ideally the fix for this is to stop the tour from happening. If you switch off simp tracing and switch on <code>trace.Meta.synthInstance</code> or whatever it's called, can you see where things begin to go pear-shaped?</p>",
+        "id": 569987706,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1769381090
+    },
+    {
+        "content": "<p>We're actively thinking about how to help here. But we <strong>really</strong> need standalone examples of these mystery tours, ideally still reflecting well the actual structure of the search and the current Mathlib design.</p>\n<p>If you have time to investigate making minimizations of examples like this (either manually, or using <a href=\"https://github.com/kim-em/mathlib-minimizer\">https://github.com/kim-em/mathlib-minimizer</a>), that would be really helpful!</p>",
+        "id": 569989109,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1769382799
+    },
+    {
+        "content": "<p>Does changing <code>Field R</code> to <code>CommRing R</code> in <code>IsRealClosed</code> help a little?</p>",
+        "id": 570060853,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1769424894
+    },
+    {
+        "content": "<p>I mean, even if it did, it wouldn't be an acceptable fix, right?</p>",
+        "id": 570061406,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769425042
+    },
+    {
+        "content": "<p>But I'll try all these things next time I get a chance, thanks all!</p>",
+        "id": 570061511,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769425069
+    },
+    {
+        "content": "<p>I don't think it's unacceptable? Many mathlib definitions allow more generality than intended (e.g. <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=MonoidHom#doc\">docs#MonoidHom</a> only requires MulOne, and you don't even have <code>Field</code> in the decl name), and if you're not interested in generalizing the lemmas, just switch back to the Field assumption when stating them.</p>\n<p>You might also consider adding <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=IsField#doc\">docs#IsField</a> as a field of IsRealClosed.</p>",
+        "id": 570062415,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1769425320
+    },
+    {
+        "content": "<p>Because it might lead to a mathematically incorrect definition! I have no idea about the analogous theory over rings. Indeed, we have frequently had to make refactors as a result of this sort of misformalised definition.</p>",
+        "id": 570063996,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769425782
+    },
+    {
+        "content": "<p>but surely if every odd degree polynomial has a root then every polynomial of the form <code>a * X - 1</code> has a root so it's a field after all</p>",
+        "id": 570065544,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1769426292
+    },
+    {
+        "content": "<p>that's a good point<br>\nit would still be a bad formalisation of the definition; it should be a constructor<br>\nI think it's a bad idea to formalise according to essentially arbitrary typeclass inference constraints!<br>\nI will focus on fixing the underlying problem</p>",
+        "id": 570067896,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769427102
+    },
+    {
+        "content": "<p>I don't know what's the tour happening in your case, but notice even synthesizing something as simple as <code>Nonempty</code> can be heavy (goes up to NormedField etc.). The following trace was what prompted me to introduce a dedicated class <code>IsGCDMonoid</code> in <a href=\"https://github.com/leanprover-community/mathlib4/pull/34179\">#34179</a> rather than reusing <code>Nonempty</code>:<br>\n<a href=\"/user_uploads/3121/N0tQza8krDhJc9NUwT2lngah/image.png\">image.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/N0tQza8krDhJc9NUwT2lngah/image.png\" title=\"image.png\"><img data-original-content-type=\"image/png\" data-original-dimensions=\"1314x764\" src=\"/user_uploads/thumbnail/3121/N0tQza8krDhJc9NUwT2lngah/image.png/840x560.webp\"></a></div>",
+        "id": 570075483,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1769429573
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"816344\">Aaron Liu</span> <a href=\"#narrow/channel/287929-mathlib4/topic/CI.20failing.20in.20untouched.20file/near/570065544\">said</a>:</p>\n<blockquote>\n<p>but surely if every odd degree polynomial has a root then every polynomial of the form <code>a * X - 1</code> has a root so it's a field after all</p>\n</blockquote>\n<p>Maybe real closed <em>rings</em> should be defined as \"Every <em>monic</em> odd degree polynomial has a root\" + other stuff?</p>",
+        "id": 570076246,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1769429819
+    },
+    {
+        "content": "<p>This condition is obviously equivalent to the usual definition for fields. My point is that the naive definition not generalizing doesn't mean it's impossible to generalise</p>",
+        "id": 570076497,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1769429892
+    },
+    {
+        "content": "<p>In my opinion, the discussion about the right generality to state this definition in should be largely independent of the typeclass synthesis issue I am having. If my definition of real closed field is genuinely technically infeasible, Mathlib has much bigger problems.</p>",
+        "id": 570079073,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769430573
+    },
+    {
+        "content": "<p>Technically, <code>a * X - 1</code> having a root for all Nonzero <code>a</code> doesn't mean the ring is a field, the ring can still be trivial...</p>",
+        "id": 570079308,
+        "sender_full_name": "Edward van de Meent",
+        "timestamp": 1769430639
+    },
+    {
+        "content": "<p>it's also semireal</p>",
+        "id": 570079352,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1769430653
+    },
+    {
+        "content": "<p>so <code>-1</code> isn't a sum of squares</p>",
+        "id": 570079376,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1769430660
+    },
+    {
+        "content": "<p>Sorry but this is quite a lot of noise to me. Does anybody have any technical suggestions about the typeclass synthesis?</p>",
+        "id": 570079561,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769430716
+    },
+    {
+        "content": "<p>What does your trace look like? Can you generate something like Junyan just posted?</p>",
+        "id": 570079656,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1769430751
+    },
+    {
+        "content": "<p>If you'd like to generalise the definition of real closed fields, I'd really welcome suggestions - at <a href=\"#narrow/channel/287929-mathlib4/topic/Real.20Closed.20Fields.20Project/with/569833432\">this other topic</a></p>",
+        "id": 570079743,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769430778
+    },
+    {
+        "content": "<p>The reason I'm asking about the trace is that when typeclass inference was going nuts when doing integers of number fields, we looked at the traces, saw what the problem was, and fixed it by making a definition irreducible.</p>",
+        "id": 570079790,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1769430791
+    },
+    {
+        "content": "<p>It's possible to add the <code>nolint simpNF</code> attribute but I was told it's the last resort. IMO the 20000-heartbeat threshold for instance synthesis is too low; it only takes a split of a second. We could increase it for the simpNF linter, or globally.<br>\nAnother idea is that Lean could introduce anti-instances to terminate typeclass searches early if the goal is impossible within a particular context. That would massively encourage inclusion of counterexamples in mathlib.</p>",
+        "id": 570086172,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1769432599
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110038\">Kevin Buzzard</span> <a href=\"#narrow/channel/287929-mathlib4/topic/CI.20failing.20in.20untouched.20file/near/569987706\">said</a>:</p>\n<blockquote>\n<p>Yes, ideally the fix for this is to stop the tour from happening. If you switch off simp tracing and switch on <code>trace.Meta.synthInstance</code> or whatever it's called, can you see where things begin to go pear-shaped?</p>\n</blockquote>\n<p>Yeah so: <code>FaithfulSMul R M</code> -&gt; <code>Module.Invertible R M</code> -&gt; <code>Module.FaithfullyFlat R M</code> -&gt; <code>Nontrivial M</code> and <code>Module.Free R M</code><br>\nand then we're off to the races with that <code>Nontrivial M</code> <span aria-label=\"frowning\" class=\"emoji emoji-1f626\" role=\"img\" title=\"frowning\">:frowning:</span></p>",
+        "id": 570216569,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769475868
+    },
+    {
+        "content": "<p>now, a characteristic zero ring is nontrivial, so it's enough to be a real closed field (!) and that tips the synthesis over the edge of a timeout<br>\nbut of course every silly thing like this anywhere in Mathlib gets tried</p>",
+        "id": 570216892,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769476111
+    },
+    {
+        "content": "<p>.</p>",
+        "id": 570216992,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769476173
+    },
+    {
+        "content": "<p>.</p>",
+        "id": 570217023,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769476206
+    },
+    {
+        "content": "<p>.</p>",
+        "id": 570217036,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769476211
+    },
+    {
+        "content": "<p>Oh it gets so much worse: <code>(P.ofAlgEquiv e).Ring</code> can be viewed as a quotient(?) of <code>MvPolynomial ι R</code>, so showing nontriviality can apparently be reduced to showing <code>ι</code> is nontrivial. But <code>ι</code> is just a random type we know literally nothing about! So it does the full search but it can't possibly get anywhere because there are literally zero instances on <code>ι</code>!</p>",
+        "id": 570217355,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769476454
+    },
+    {
+        "content": "<p><a href=\"/user_uploads/3121/VruShjvTCNekftjBz2vhfPc8/image.png\">image.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/VruShjvTCNekftjBz2vhfPc8/image.png\" title=\"image.png\"><img data-original-content-type=\"image/png\" data-original-dimensions=\"778x165\" src=\"/user_uploads/thumbnail/3121/VruShjvTCNekftjBz2vhfPc8/image.png/840x560.webp\"></a></div>",
+        "id": 570217394,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769476489
+    },
+    {
+        "content": "<p>And the <code>Nontrivial (P.ofAlgEquiv e).Ring</code> appears from \"<code>Nontrivial R</code> and <code>PreValuationRing R</code> implies <code>IsLocalRing R</code>\", which comes from \"<code>IsSimpleRing R</code> and <code>Nontrivial M</code> implies <code>FaithfulSMul R M</code>.\" All very silly when you think about it.</p>",
+        "id": 570217946,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769476823
+    },
+    {
+        "content": "<p>I think these instances would fail much faster if <code>Nontrivial</code> appeared <em>last</em> in the list of arguments.</p>",
+        "id": 570217985,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769476849
+    },
+    {
+        "content": "<p>Bad instances: <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Module.FaithfullyFlat.instOfNontrivialOfFree#doc\">docs#Module.FaithfullyFlat.instOfNontrivialOfFree</a>, <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=ValuationRing.isLocalRing#doc\">docs#ValuationRing.isLocalRing</a><br>\nI wonder what would happen if we literally just swapped the arguments?</p>",
+        "id": 570218481,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769477237
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/34475\">#34475</a></p>",
+        "id": 570218794,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769477492
+    },
+    {
+        "content": "<p><code>-- #34475: Used 15502 heartbeats</code><br>\nprogress!</p>",
+        "id": 570222067,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769479623
+    },
+    {
+        "content": "<p><a href=\"https://radar.lean-lang.org/repos/mathlib4/commits/29d848a3f088741805c1916ac90de7f7b53261c5?reference=1beacbb332bbfa921422581a14ae44480a55b7e6\">here's the whole-Mathlib benchmark</a></p>",
+        "id": 570222101,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769479645
+    },
+    {
+        "content": "<p>Also note that I hit the exact same timeout in <a href=\"https://github.com/leanprover-community/mathlib4/pull/34203\">#34203</a>. Sorry for not noticing earlier</p>",
+        "id": 570252586,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1769500412
+    },
+    {
+        "content": "<p>Oh lol well that fixes my original problem (because you added the nolints)<br>\nBut I still want to PR a robust fix for these timeouts<br>\nWhat do people think of my attempt?</p>",
+        "id": 570290487,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769511802
+    },
+    {
+        "content": "<p>The trace still goes on a bit of a tour but it's not as egregious</p>",
+        "id": 570290623,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769511840
+    },
+    {
+        "content": "<p>Your attempt looks very promising indeed</p>",
+        "id": 570309985,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1769517729
+    },
+    {
+        "content": "<p>Hopefully <code>Nontrivial</code> isn't so expensive to (fail to) synthesize though?</p>",
+        "id": 570310094,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1769517762
+    },
+    {
+        "content": "<p>Well it's not just one <code>Nontrivial</code> instance; it's at least 2 and probably more. The trace gets 5x shorter lol.</p>",
+        "id": 570310491,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769517875
+    },
+    {
+        "content": "<p>But yeah it seems relatively expensive!</p>",
+        "id": 570310528,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769517886
+    },
+    {
+        "content": "<p>My opinion is that your PR should be merged, but also we should separately investigate making TC search fail faster on <code>Nontrivial</code></p>",
+        "id": 570310910,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1769518001
+    },
+    {
+        "content": "<p>I'll have a look when I get time to see if the remaining trace can be improved much</p>",
+        "id": 570311106,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769518055
+    },
+    {
+        "content": "<p>I think we should merge <a href=\"https://github.com/leanprover-community/mathlib4/pull/34475\">#34475</a> for now, I made the obvious changes<br>\nedit: doesn't seem to work on latest master, looking into it</p>",
+        "id": 570913948,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769729064
+    },
+    {
+        "content": "<p>For a robust fix I think we might need to encapsulate some defs better; see <a class=\"stream-topic\" data-stream-id=\"287929\" href=\"/#narrow/channel/287929-mathlib4/topic/JacobiZariski.20is.20slow.2E/with/570785499\">#mathlib4 &gt; JacobiZariski is slow.</a></p>",
+        "id": 570914010,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769729105
+    },
+    {
+        "content": "<p>How do I get a typeclass synthesis trace that also tells me how long each step took?</p>",
+        "id": 570923291,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769735305
+    },
+    {
+        "content": "<p>try <code>set_option profiler true</code></p>",
+        "id": 570923993,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1769735910
+    },
+    {
+        "content": "<p>nah that gives me the total time<br>\nI want the time for each bit in the trace<br>\n<a href=\"/user_uploads/3121/nFxmoEpfJh0s7qipeXmBXRkl/image.png\">image.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/nFxmoEpfJh0s7qipeXmBXRkl/image.png\" title=\"image.png\"><img data-original-content-type=\"image/png\" data-original-dimensions=\"665x539\" src=\"/user_uploads/thumbnail/3121/nFxmoEpfJh0s7qipeXmBXRkl/image.png/840x560.webp\"></a></div>",
+        "id": 570924981,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769736645
+    },
+    {
+        "content": "<p>I've seen it in other threads but I don't know the command for it</p>",
+        "id": 570925033,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769736692
+    },
+    {
+        "content": "<p>Proposal : make <code>IsArtinian</code> into a <code>def</code>.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">abbrev</span><span class=\"w\"> </span><span class=\"n\">IsArtinian</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Semiring</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">AddCommMonoid</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Module</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Prop</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">  </span><span class=\"n\">WellFoundedLT</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Submodule</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>There are lots of ways to synthesise well-foundedness, and they take you into category theory and all sorts of other inappropriate parts of the library.</p>",
+        "id": 570925782,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769737214
+    },
+    {
+        "content": "<p><a href=\"/user_uploads/3121/pi5d8JPtXkM6dINfeSyBEoXh/image.png\">image.png</a></p>\n<div class=\"message_inline_image\"><a href=\"/user_uploads/3121/pi5d8JPtXkM6dINfeSyBEoXh/image.png\" title=\"image.png\"><img data-original-content-type=\"image/png\" data-original-dimensions=\"666x816\" src=\"/user_uploads/thumbnail/3121/pi5d8JPtXkM6dINfeSyBEoXh/image.png/840x560.webp\"></a></div>",
+        "id": 570925829,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769737254
+    },
+    {
+        "content": "<p>this change would probably cause a lot of instances to be duplicated, unfortunately</p>",
+        "id": 570926255,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769737504
+    },
+    {
+        "content": "<p>Perhaps</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">trace</span><span class=\"bp\">.</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">synthInstance</span><span class=\"w\"> </span><span class=\"n\">true</span><span class=\"w\"> </span><span class=\"k\">in</span>\n</code></pre></div>\n<p>or</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">trace</span><span class=\"bp\">.</span><span class=\"n\">profiler</span><span class=\"bp\">.</span><span class=\"n\">useHeartbeats</span><span class=\"w\"> </span><span class=\"n\">true</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">trace</span><span class=\"bp\">.</span><span class=\"n\">profiler</span><span class=\"bp\">.</span><span class=\"n\">threshold</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">trace</span><span class=\"bp\">.</span><span class=\"n\">profiler</span><span class=\"w\"> </span><span class=\"n\">true</span><span class=\"w\"> </span><span class=\"k\">in</span>\n</code></pre></div>\n<p>?</p>",
+        "id": 570933864,
+        "sender_full_name": "Snir Broshi",
+        "timestamp": 1769742543
+    },
+    {
+        "content": "<p>First one is what gives me the screenshot I posted</p>",
+        "id": 571027586,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769779591
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"224323\">Junyan Xu</span> <a href=\"#narrow/channel/287929-mathlib4/topic/CI.20failing.20in.20untouched.20file/near/570075483\">said</a>:</p>\n<blockquote>\n<p>I don't know what's the tour happening in your case, but notice even synthesizing something as simple as <code>Nonempty</code> can be heavy (goes up to NormedField etc.). The following trace was what prompted me to introduce a dedicated class <code>IsGCDMonoid</code> in <a href=\"https://github.com/leanprover-community/mathlib4/pull/34179\">#34179</a> rather than reusing <code>Nonempty</code>:<br>\n<a href=\"/user_uploads/3121/N0tQza8krDhJc9NUwT2lngah/image.png\">image.png</a></p>\n</blockquote>\n<p>What profiler settings are you using here? I haven't been able to get the heartbeat count on the left!</p>",
+        "id": 571027752,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769779632
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"400289\">Artie Khovanov</span> <a href=\"#narrow/channel/287929-mathlib4/topic/CI.20failing.20in.20untouched.20file/near/570924981\">said</a>:</p>\n<blockquote>\n<p>nah that gives me the total time<br>\nI want the time for each bit in the trace<br>\n<a href=\"/user_uploads/3121/nFxmoEpfJh0s7qipeXmBXRkl/image.png\">image.png</a></p>\n</blockquote>\n<p>Click on those little triangles to unfold them! (with the profiler on)</p>",
+        "id": 571050887,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1769785048
+    },
+    {
+        "content": "<p>I just used</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">trace</span><span class=\"bp\">.</span><span class=\"n\">profiler</span><span class=\"w\"> </span><span class=\"n\">true</span>\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">trace</span><span class=\"bp\">.</span><span class=\"n\">profiler</span><span class=\"bp\">.</span><span class=\"n\">useHeartbeats</span>\n</code></pre></div>\n<p>which is what Kevin taught me.</p>\n<p>I think it's a good idea to change IsArtianian and perhaps also IsNoetherian; you can refer to <a href=\"https://github.com/leanprover-community/mathlib4/pull/27427\">#27427</a> as an examplar.</p>",
+        "id": 571065358,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1769788536
+    },
+    {
+        "content": "<p>FTR I'm the one responsible for making <code>IsArtinian</code> into an abbrev, mostly as a way to dogfood the then-new <code>WellFoundedLT</code> typeclass: <a href=\"https://github.com/leanprover-community/mathlib4/pull/15797\">#15797</a></p>",
+        "id": 571221708,
+        "sender_full_name": "Violeta Hernández",
+        "timestamp": 1769884987
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=IsNoetherian#doc\">docs#IsNoetherian</a> isn't actually defined as <code>WellFoundedGT (Submodule R M)</code>, it's instead defined as all submodules being finitely generated. I don't know enough ring theory to tell if we could/should do something analogous for <code>IsArtinian</code>.</p>",
+        "id": 571221831,
+        "sender_full_name": "Violeta Hernández",
+        "timestamp": 1769885056
+    },
+    {
+        "content": "<p>The proposal is to change <code>abbrev</code> to <code>class extends</code> ie keep the instance in the good direction but not the bad one</p>",
+        "id": 571221902,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1769885112
+    },
+    {
+        "content": "<p>The good direction being <code>IsArtinian → WellFoundedLT</code>, right?</p>",
+        "id": 571221958,
+        "sender_full_name": "Violeta Hernández",
+        "timestamp": 1769885148
+    },
+    {
+        "content": "<p>Oh yeah thanks, I forgot how IsNoetherian is defined <span aria-label=\"man facepalming\" class=\"emoji emoji-1f926-200d-2642\" role=\"img\" title=\"man facepalming\">:man_facepalming:</span></p>",
+        "id": 571222319,
+        "sender_full_name": "Junyan Xu",
+        "timestamp": 1769885493
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span>\n\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">trace</span><span class=\"bp\">.</span><span class=\"n\">profiler</span><span class=\"w\"> </span><span class=\"n\">true</span>\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">trace</span><span class=\"bp\">.</span><span class=\"n\">profiler</span><span class=\"bp\">.</span><span class=\"n\">useHeartbeats</span><span class=\"w\"> </span><span class=\"n\">true</span>\n\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"w\"> </span><span class=\"n\">ι</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span>\n<span class=\"w\">    </span><span class=\"o\">[</span><span class=\"n\">CommRing</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">CommRing</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"o\">]</span>\n<span class=\"w\">    </span><span class=\"o\">[</span><span class=\"n\">Algebra</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">P</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">Generators</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"w\"> </span><span class=\"n\">ι</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">CommRing</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Algebra</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">e</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"w\"> </span><span class=\"bp\">≃ₐ</span><span class=\"o\">[</span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n<span class=\"w\">    </span><span class=\"n\">RingHom</span><span class=\"bp\">.</span><span class=\"n\">ker</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">algebraMap</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">P</span><span class=\"bp\">.</span><span class=\"n\">ofAlgEquiv</span><span class=\"w\"> </span><span class=\"n\">e</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">Ring</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"gr\">sorry</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">simp</span>\n\n<span class=\"kn\">variable</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"w\"> </span><span class=\"n\">ι</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span>\n<span class=\"w\">    </span><span class=\"o\">[</span><span class=\"n\">CommRing</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">CommRing</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"o\">]</span>\n<span class=\"w\">    </span><span class=\"o\">[</span><span class=\"n\">Algebra</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">P</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">Generators</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"w\"> </span><span class=\"n\">ι</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">CommRing</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Algebra</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">e</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"w\"> </span><span class=\"bp\">≃ₐ</span><span class=\"o\">[</span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">T</span><span class=\"o\">)</span>\n\n<span class=\"bp\">#</span><span class=\"n\">count_heartbeats</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"bp\">#</span><span class=\"n\">synth</span><span class=\"w\"> </span><span class=\"n\">FaithfulSMul</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">P</span><span class=\"bp\">.</span><span class=\"n\">ofAlgEquiv</span><span class=\"w\"> </span><span class=\"n\">e</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">toExtension</span><span class=\"bp\">.</span><span class=\"n\">Ring</span><span class=\"w\"> </span><span class=\"n\">T</span>\n<span class=\"c1\">-- #32984 : 20223 hb</span>\n<span class=\"c1\">-- master : 23311 hb</span>\n</code></pre></div>\n<p>(pasting my test code here for later)</p>",
+        "id": 571490163,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1770053707
+    }
+]

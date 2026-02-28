@@ -1,0 +1,44 @@
+[
+    {
+        "content": "<p>I just ran into a fascinating bug: if you take any of the dozens of lemmas in Mathlib that involve the complex norm function, and use the <code>extract_goal</code> tactic somewhere in the proof, then instead of printing the current goal, it gives a mystery error message:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">Unknown</span><span class=\"w\"> </span><span class=\"n\">constant</span><span class=\"w\"> </span><span class=\"ss\">`_private.Mathlib.Analysis.Complex.Norm</span><span class=\"bp\">.</span><span class=\"m\">0</span><span class=\"bp\">.</span><span class=\"n\">Complex</span><span class=\"bp\">.</span><span class=\"n\">norm_nonneg</span><span class=\"bp\">`</span>\n</code></pre></div>\n<p>The diagnosis seems to be the following: </p>\n<ul>\n<li>As a step in building the <code>NormedAddCommGroup</code> instance on <code>ℂ</code>, there is a private lemma <code>Complex.norm_nonneg</code>, which is flagged as <code>private</code> because it is no longer needed once the instance is complete (the root-level <code>norm_nonneg</code> lemma takes over). </li>\n<li>However, <code>Complex.norm_nonneg</code> is used for one of the fields of the instance <code>Complex.isAbsoluteValueNorm</code>, resulting in a public declaration that relies on a private one (against the rules of the module system).</li>\n<li>For some reason Lean doesn't complain about this at the point where <code>Complex.isAbsoluteValueNorm</code> is declared, but it causes <code>extract_goal</code> to complain if it is used in any later proof where complex numbers occur!</li>\n</ul>\n<p>These mystery errors go away if we make <code>Complex.norm_nonneg</code> public; or if we conceal the use of a private lemma inside a tactic block, changing</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"n\">isAbsoluteValueNorm</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">IsAbsoluteValue</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">‖·‖</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℂ</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">ℝ</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"n\">abv_nonneg'</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">norm_nonneg</span>\n<span class=\"w\">  </span><span class=\"bp\">...</span>\n</code></pre></div>\n<p>to </p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"n\">isAbsoluteValueNorm</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">IsAbsoluteValue</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">‖·‖</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℂ</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">ℝ</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"n\">abv_nonneg'</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">exact</span><span class=\"w\"> </span><span class=\"n\">norm_nonneg</span>\n<span class=\"w\">  </span><span class=\"bp\">...</span>\n</code></pre></div>\n<p>I'm very puzzled about how this is <em>supposed</em> to work.</p>\n<ul>\n<li>Why is it forbidden to use private lemmas as proof fields in <code>def</code>s? I would have expected that since we have proof-irrelevance, in particular it should be irrelevant whether proofs are private or not.</li>\n<li>If it's forbidden to do this in <code>def</code>'s, why is it permitted in <code>instance</code>s? (Edit: maybe Lean allows it if the <code>instance</code> is not data-carrying, i.e. lives in <code>Prop</code> rather than <code>Type*</code>?)</li>\n<li>Why does <code>:= by exact foo</code> work if <code>:= foo</code> does not?</li>\n<li>Why does the error only manifest itself when using <code>extract_goal</code>?</li>\n</ul>",
+        "id": 573900787,
+        "sender_full_name": "David Loeffler",
+        "timestamp": 1771078619
+    },
+    {
+        "content": "<p><code>by exact foo</code> makes the proof private instead of exposing it. That's (half of?) an answer to your 3rd q.<br>\nI hope others can step in with answering the rest.</p>",
+        "id": 574050640,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1771227570
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"112680\">Johan Commelin</span> <a href=\"#narrow/channel/287929-mathlib4/topic/Module.20system.20weirdness/near/574050640\">said</a>:</p>\n<blockquote>\n<p><code>by exact foo</code> makes the proof private instead of exposing it. That's (half of?) an answer to your 3rd q.</p>\n</blockquote>\n<p>Since proofs are definitionally singletons in Lean's logic, what does it mean to \"expose\" a proof? Surely \"revealing that a proof exists without revealing its implementation\" is a meaningless distinction in the presence of proof irrelevance?</p>",
+        "id": 574052007,
+        "sender_full_name": "David Loeffler",
+        "timestamp": 1771228332
+    },
+    {
+        "content": "<p>From the kernel's point of view, yes. But not from the point of view of other parts of the system. Eg, a tactic could inspect what an exposed proof looks like, if I understand correctly.</p>\n<p>(In other words, in theory we could implement a <code>using_the_same_strategy_as myFancyProof</code> tactic.)</p>",
+        "id": 574053256,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1771228929
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"112680\">Johan Commelin</span> <a href=\"#narrow/channel/287929-mathlib4/topic/Module.20system.20weirdness/near/574053256\">said</a>:</p>\n<blockquote>\n<p>(In other words, in theory we could implement a <code>using_the_same_strategy_as myFancyProof</code> tactic.)</p>\n</blockquote>\n<p>But such a tactic would be pretty useless if it couldn't see inside a tactic block, wouldn't it? I mean, if <code>myFancyProof</code> is really all that fancy, it is bound to have a <code>by</code> in it somewhere.</p>",
+        "id": 574055776,
+        "sender_full_name": "David Loeffler",
+        "timestamp": 1771229990
+    },
+    {
+        "content": "<p>Fair enough. It also wasn't a serious idea. Just trying to explain that different parts of the system have different povs on proof irrelevance. There might be better examples out there. But I'm not enough of an expert.</p>",
+        "id": 574057667,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1771230725
+    },
+    {
+        "content": "<p>I think distinguishing between \"exposed\" and \"non-exposed\" even for proofs is a bit silly; but even if that's the design intention here, then something is still wrong, because the <code>IsAbsoluteValue</code> instance is somehow exposing information that should be private (without raising an error in the process).</p>",
+        "id": 574060724,
+        "sender_full_name": "David Loeffler",
+        "timestamp": 1771231874
+    }
+]

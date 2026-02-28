@@ -1,0 +1,116 @@
+[
+    {
+        "content": "<p>PR <a href=\"https://github.com/leanprover-community/mathlib4/pull/29207\">#29207</a> has a diff which is quite hard to understand, but it's not entirely clear to me that there's a lot going on at the end of the day. However the benchmark bot got <a href=\"#narrow/channel/116290-rss/topic/Benchmark.20results.20for.20mathlib4/near/544644455\">very excited</a> about it; in particular, files which are close to the weird JacobiZariski file (nobody understands why it's slow) got magically sped up (one by over 20% and one by over 30%).</p>\n<p>I asked <span class=\"user-mention\" data-user-id=\"387244\">@Yaël Dillies</span> if they could guess an explanation, and one suggestion was that it might be to do with universe metavariables in declarations. I don't really know what these are though; Yael suggested that there was a difference between <code>theorem name (R M) ...</code> and <code>variable (R M) in theorem name ...</code> but I could not see any explicit changes of this form in the PR diff. They also suggested that universe metavariables in mathlib declarations were to be avoided in general and asked whether we could lint for them. This is all beyond my understanding.</p>\n<p>If I weren't so busy on FLT I would love to devote some time into trying to figure out why this corner of mathlib is so weird and slow; there are messages in this story for our community and we've not managed to figure them out yet. My joke PR <a href=\"https://github.com/leanprover-community/mathlib4/pull/21165\">#21165</a> making a JacobiZariski universe-monomorphic sped it up by 60% so at least part of the reason for slowness around here is to do with universes, but I've always been under the vague impression that there are multiple things going on. Is this another one? Can anyone see what's happening and why <a href=\"https://github.com/leanprover-community/mathlib4/pull/29207\">#29207</a> was such a win? Initially I was skeptical about the timing changes reported by the speedcenter but Sebastian Ullrich seemed to be confident that something good had actually happened here. It's just that nobody knows why.</p>",
+        "id": 545989244,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1760969224
+    },
+    {
+        "content": "<p>I too would like to know! Happy to answer questions about the diff</p>",
+        "id": 545991640,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1760969719
+    },
+    {
+        "content": "<p>I took a close look at the performance difference, and I found a surprising reason for the speedup:</p>\n<p>The value of the instance <code>AddMonoidAlgebra.commSemiring</code> has changed into a form that is nicer for unification to deal with. It is now defined as</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"n\">commSemiring</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">CommSemiring</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">MonoidAlgebra</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n</code></pre></div>\n<p>which elaborates to the value</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"o\">{</span><span class=\"w\"> </span><span class=\"n\">toSemiring</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">semiring</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">mul_comm</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">⋯</span><span class=\"w\"> </span><span class=\"o\">}</span>\n</code></pre></div>\n<p>But before <span class=\"user-mention\" data-user-id=\"387244\">@Yaël Dillies</span> 's PR, it was </p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"n\">commSemiring</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">CommSemiring</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">MonoidAlgebra</span><span class=\"w\"> </span><span class=\"n\">k</span><span class=\"w\"> </span><span class=\"n\">G</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">  </span><span class=\"o\">{</span><span class=\"w\"> </span><span class=\"n\">MonoidAlgebra</span><span class=\"bp\">.</span><span class=\"n\">nonUnitalCommSemiring</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">MonoidAlgebra</span><span class=\"bp\">.</span><span class=\"n\">semiring</span><span class=\"w\"> </span><span class=\"k\">with</span><span class=\"w\"> </span><span class=\"o\">}</span>\n</code></pre></div>\n<p>which elaborates to this mess:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"bp\">__</span><span class=\"n\">src</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">nonUnitalCommSemiring</span><span class=\"bp\">;</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"bp\">__</span><span class=\"n\">src_1</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">semiring</span><span class=\"bp\">;</span>\n<span class=\"w\">  </span><span class=\"o\">{</span><span class=\"w\"> </span><span class=\"n\">toNonUnitalSemiring</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">__</span><span class=\"n\">src</span><span class=\"bp\">.</span><span class=\"n\">toNonUnitalSemiring</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">toOne</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">__</span><span class=\"n\">src_1</span><span class=\"bp\">.</span><span class=\"n\">toOne</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">one_mul</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">⋯</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">mul_one</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">⋯</span><span class=\"o\">,</span>\n<span class=\"w\">    </span><span class=\"n\">toNatCast</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">__</span><span class=\"n\">src_1</span><span class=\"bp\">.</span><span class=\"n\">toNatCast</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">natCast_zero</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">⋯</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">natCast_succ</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">⋯</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">npow</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">Semiring</span><span class=\"bp\">.</span><span class=\"n\">npow</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">npow_zero</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">⋯</span><span class=\"o\">,</span>\n<span class=\"w\">    </span><span class=\"n\">npow_succ</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">⋯</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">mul_comm</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">⋯</span><span class=\"w\"> </span><span class=\"o\">}</span>\n</code></pre></div>\n<p>During unification, Lean was checking that <code>AddMonoidAlgebra.commSemiring</code> and <code>AddMonoidAlgebra.semiring</code> give the same semiring. With the new definition, this is immediate. With the old definition, it had to do a lot of unfolding to figure out that the different operations like <code>one</code>, <code>npow</code>, <code>natCast</code> were all definitionally equal.</p>",
+        "id": 546007209,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1760973143
+    },
+    {
+        "content": "<p>Does <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Mathlib.Elab.FastInstance.fastInstance#doc\">docs#Mathlib.Elab.FastInstance.fastInstance</a> convert the latter to the former?</p>",
+        "id": 546011441,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1760973956
+    },
+    {
+        "content": "<p>The only thing that <code>fastInstance%</code> does is unfold things. So no, it doesn't turn the latter into the former. The former is in some sense \"more folded up\".</p>",
+        "id": 546013295,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1760974326
+    },
+    {
+        "content": "<p>No, it tries to infer instances at each step. Or it should. Then it checks we didn't leave the defeq class.</p>",
+        "id": 546013549,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1760974382
+    },
+    {
+        "content": "<p>Ah, you are right, it does turn the latter into the former!</p>",
+        "id": 546014328,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1760974557
+    },
+    {
+        "content": "<p>That's great, because I think that means that we could turn the <code>fast_instance%</code> code into a linter that checks if an instance could be defined in a better way, right?</p>",
+        "id": 546015492,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1760974829
+    },
+    {
+        "content": "<p>Yes</p>",
+        "id": 546015753,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1760974882
+    },
+    {
+        "content": "<p>Does someone know how a linter is supposed to know which new declarations are added by the given command? I don't want to make this an environment linter, because the linter should run in the same environment as where the instance was elaborated. (Otherwise it might suggest defining A in terms of B when B is defined after A)</p>",
+        "id": 546029712,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1760978155
+    },
+    {
+        "content": "<p>If our goal is to run the linter to check for every place where <code>fast_instance%</code> is legal, maybe we should just override <code>where</code> to always use it</p>",
+        "id": 546030298,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1760978310
+    },
+    {
+        "content": "<p>The bad code in this case did not use <code>where</code>, but <code>:= { ... with }</code></p>",
+        "id": 546030737,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1760978420
+    },
+    {
+        "content": "<blockquote>\n<p>Or it should</p>\n</blockquote>\n<p>There are some things that would be nice to catch, like when an instance uses a projection and that uses a crooked instance. </p>\n<p><span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> didn't you try the override at some point? I am skeptical we about wanting to always rerun the defeq checks everytime we hit <code>where</code>. A code suggestion would be great.</p>",
+        "id": 546034713,
+        "sender_full_name": "Matthew Ballard",
+        "timestamp": 1760979378
+    },
+    {
+        "content": "<p>I was more thinking of running such a linter once, to see where the bad instances currently are in Mahtlib. And then see how much performance we can gain from this.</p>",
+        "id": 546035686,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1760979638
+    },
+    {
+        "content": "<p>How would we create the code suggestion if not by running <code>fast_instance%</code> speculatively which runs the same checks?</p>",
+        "id": 546035688,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1760979638
+    },
+    {
+        "content": "<p>Ah indeed, a linter that is not always enabled would work</p>",
+        "id": 546035727,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1760979650
+    },
+    {
+        "content": "<p>As for figuring out which declarations are introduced by a command, the function <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Mathlib.Linter.getNamesFrom#doc\">docs#Mathlib.Linter.getNamesFrom</a> was written precisely with this in mind and to be run from a linter.</p>",
+        "id": 546083261,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1760990702
+    },
+    {
+        "content": "<p>I do not know whether it still works well with <code>Elab.async</code>, since this was when elaboration was still not done in parallel.</p>",
+        "id": 546083420,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1760990739
+    },
+    {
+        "content": "<p>This discovery lead me to try making <a href=\"https://github.com/leanprover-community/mathlib4/pull/30734\">#30734</a>. In that PR I try to remove all patterns of the form <code>mul := (· * ·)</code> in an instance definition, which are unneccessary. This removes over 200 lines of code <em>and</em> speeds up mathlib by 0.63%. And this includes a 12.05% speedup in JacobiZariski!</p>",
+        "id": 546138955,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1761019012
+    }
+]

@@ -1,0 +1,182 @@
+[
+    {
+        "content": "<p>I was fiddling with typeclass priorities and I <a href=\"https://github.com/leanprover-community/mathlib4/pull/34077#issuecomment-3764037999\">found a change</a> which had a positive impact on over 50 files but randomly had a big negative impact on the declaration <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=KaehlerDifferential.mvPolynomialEquiv#doc\">docs#KaehlerDifferential.mvPolynomialEquiv</a> . However there's already something wrong with this declaration; even before my change the kernel is having huge problems with typechecking some auxiliary definitions. Check out this trace on master (obtained by dumping </p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">trace</span><span class=\"bp\">.</span><span class=\"n\">profiler</span><span class=\"bp\">.</span><span class=\"n\">useHeartbeats</span><span class=\"w\"> </span><span class=\"n\">true</span>\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">trace</span><span class=\"bp\">.</span><span class=\"n\">profiler</span><span class=\"w\"> </span><span class=\"n\">true</span>\n</code></pre></div>\n<p>at the top of the file, compiling it on the command line (which takes ages and hammers your machine) and then inspecting the output):</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>info: Mathlib/RingTheory/Kaehler/Polynomial.lean:44:14: [Elab.async] [57765600.000000] Lean.addDecl\n  [Kernel] [57765534.000000] ✅️ typechecking declarations [KaehlerDifferential.mvPolynomialEquiv._proof_1]\ninfo: Mathlib/RingTheory/Kaehler/Polynomial.lean:38:15: [Elab.async] [54494621.000000] Lean.addDecl\n  [Kernel] [54494569.000000] ✅️ typechecking declarations [KaehlerDifferential.mvPolynomialEquiv._proof_2]\ninfo: Mathlib/RingTheory/Kaehler/Polynomial.lean:34:4: [Elab.async] [6230.000000] Lean.addDecl\n  [Kernel] [6177.000000] ✅️ typechecking declarations [KaehlerDifferential.mvPolynomialEquiv._proof_3]\ninfo: Mathlib/RingTheory/Kaehler/Polynomial.lean:34:4: [Elab.async] [49344.000000] Lean.addDecl\n  [Kernel] [49290.000000] ✅️ typechecking declarations [KaehlerDifferential.mvPolynomialEquiv._proof_4]\ninfo: Mathlib/RingTheory/Kaehler/Polynomial.lean:34:4: [Elab.async] [49335.000000] Lean.addDecl\n  [Kernel] [49281.000000] ✅️ typechecking declarations [KaehlerDifferential.mvPolynomialEquiv._proof_5]\n</code></pre></div>\n<p>Most proofs are checked in milliseconds but <code>KaehlerDifferential.mvPolynomialEquiv._proof_1</code> and <code>proof_2</code> take four orders of magnitude more (the timing is in mheartbeats but this is several seconds; weirdly if I don't use heartbeats then I can't find the output in the trace, but I can see orange bars on VSCode sitting on the <code>def</code> long after the proof has compiled, which usually indicates the kernel having some trouble). </p>\n<p><span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span> magically added a <code>-implicitDefEqProofs</code> to a simp call in <a href=\"https://github.com/leanprover-community/mathlib4/pull/33794\">#33794</a> and this saved 77.5G instructions. I think that there are going to be plenty more examples in mathlib (particularly in the harder commutative algebra stuff which is being used in algebraic geometry) where the kernel is having a hard time and some of them might have simple fixes. But I can't find a simple fix for this one: I dumped <code>-implicitDefEqProofs</code> in front of all the simp calls but it didn't seem to fix the problem. Is there a way to understand what's happening here? I ask because my change made many timings better but it doubled the already absurdly long time it took to typecheck these two proofs, which is wrecking my argument for the change :-)</p>",
+        "id": 568614162,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1768682113
+    },
+    {
+        "content": "<p>Do we know which part of the proof the kernel is having a hard time with?  First I would start inserting <code>sorry</code> until it becomes fast.</p>",
+        "id": 568614374,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1768682352
+    },
+    {
+        "content": "<p>Huh! I had assumed that the moment I started putting <code>sorry</code>s in the proof the kernel would just skip typechecking, but you're right, it's still slow even with some sorries in the proofs. Will investigate further.</p>",
+        "id": 568614434,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1768682424
+    },
+    {
+        "content": "<p>well I narrowed it down</p>",
+        "id": 568614897,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1768682978
+    },
+    {
+        "content": "<p>it seems the <code>single</code> branch of the <code>Finsupp.induction_linear</code> is somewhat slow</p>",
+        "id": 568614902,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1768682987
+    },
+    {
+        "content": "<p>There are two things here, right? (1) the proofs are slow (orange bars on the entire proofs) and (2) after the proof has finished, the typechecking is also slow (orange bars just on the <code>def</code> line)</p>\n<p><del>Rather annoyingly, I don't yet see how to see how many heartbeats typechecking is taking without compiling on the command line.</del>(found it in the infoview)</p>",
+        "id": 568614962,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1768683063
+    },
+    {
+        "content": "<p>yes, for now I'm only counting the typechecking after the proof</p>",
+        "id": 568615022,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1768683127
+    },
+    {
+        "content": "<p>by putting it in the web editor and seeing how long the yellow bar remains</p>",
+        "id": 568615041,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1768683150
+    },
+    {
+        "content": "<p>FWIW <code>_proof_1</code> seems to be <code>left_inv</code> and <code>_proof_2</code> is <code>right_inv</code>, perhaps unsurprisingly (note that they're not in this order in the code). I see -- so when I sorried one proof, typechecking of the declaration still took ages because it was still struggling with the other one.</p>",
+        "id": 568615946,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1768684211
+    },
+    {
+        "content": "<p>well I figured out what's slow</p>",
+        "id": 568617115,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1768685305
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Derivation.liftKaehlerDifferential_comp_D#doc\">docs#Derivation.liftKaehlerDifferential_comp_D</a> is a problem for some reason</p>",
+        "id": 568617131,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1768685324
+    },
+    {
+        "content": "<p>when <code>simp</code> uses it to rewrite the goal</p>",
+        "id": 568617139,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1768685332
+    },
+    {
+        "content": "<p>specifically using this lemma to rewrite the goal takes a long time for the kernel to typecheck</p>",
+        "id": 568617241,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1768685429
+    },
+    {
+        "content": "<p>if I rewrite the goal and then go back into the proof and replace the rewriting proof (the proof that the rewritten goal is equal to the original) with <code>sorry</code> then it's fast again</p>",
+        "id": 568617267,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1768685465
+    },
+    {
+        "content": "<p>and if I <code>have</code> the lemma but don't use it to rewrite the goal it's fast again</p>",
+        "id": 568617283,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1768685479
+    },
+    {
+        "content": "<p>so it's probably some typeclass unification or something</p>",
+        "id": 568617301,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1768685503
+    },
+    {
+        "content": "<p>This sort of thing is typically not good:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>                                                                        [] [181487.000000] ✅️ DistribMulAction.toDistribSMul =?= DistribMulAction.toDistribSMul ▼\n                                                                          [delta] [181322.000000] ✅️ DistribMulAction.toDistribSMul =?= DistribMulAction.toDistribSMul ▼\n                                                                            [] [52486.000000] ✅️ CommRing.toCommSemiring.toMonoidWithZero.toMonoid =?= CommRing.toCommSemiring.toMonoidWithZero.toMonoid ▼\n                                                                              [] [52240.000000] ✅️ CommRing.toCommSemiring.toMonoidWithZero.1 =?= CommRing.toCommSemiring.toMonoidWithZero.1 ▼\n                                                                                [] [51573.000000] ✅️ { toMul := CommRing.toCommSemiring.toMul, mul_assoc := ⋯, toOne := CommRing.toCommSemiring.toOne,\n                                                                                      one_mul := ⋯, mul_one := ⋯,\n                                                                                      npow := Semiring.npow,\n                                                                                      npow_zero := ⋯,\n                                                                                      npow_succ :=\n                                                                                        ⋯ } =?= {\n                                                                                      toMul :=\n                                                                                        CommRing.toCommSemiring.toMul,\n                                                                                      mul_assoc := ⋯,\n                                                                                      toOne :=\n                                                                                        CommRing.toCommSemiring.toOne,\n                                                                                      one_mul := ⋯, mul_one := ⋯,\n                                                                                      npow := Semiring.npow,\n                                                                                      npow_zero := ⋯, npow_succ := ⋯ } ▼\n</code></pre></div>",
+        "id": 568617371,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1768685525
+    },
+    {
+        "content": "<p>Ploughing through the simp trace for <code>liftKaehlerDifferential_comp_D</code> with pp.all on, here is something which is taking quite a lot of heartbeats:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>[isDefEq] [815425.000000] ✅️ @Module.{max u u_1, max u_1 u} (@MvPolynomial.{u_1, u} σ R (@CommRing.toCommSemiring.{u} R inst✝))\n                          (@KaehlerDifferential.{u, max u_1 u} R\n                            (@MvPolynomial.{u_1, u} σ R (@CommRing.toCommSemiring.{u} R inst✝)) inst✝\n                            (@MvPolynomial.instCommRingMvPolynomial.{u, u_1} R σ inst✝)\n                            (@MvPolynomial.algebra.{u, u, u_1} R R σ (@CommRing.toCommSemiring.{u} R inst✝)\n                              (@CommRing.toCommSemiring.{u} R inst✝)\n                              (@Algebra.id.{u} R (@CommRing.toCommSemiring.{u} R inst✝))))\n                          (@CommSemiring.toSemiring.{max u u_1}\n                            (@MvPolynomial.{u_1, u} σ R (@CommRing.toCommSemiring.{u} R inst✝))\n                            (@MvPolynomial.commSemiring.{u, u_1} R σ (@CommRing.toCommSemiring.{u} R inst✝)))\n                          (@AddCommGroup.toAddCommMonoid.{max u_1 u}\n                            (@KaehlerDifferential.{u, max u_1 u} R\n                              (@MvPolynomial.{u_1, u} σ R (@CommRing.toCommSemiring.{u} R inst✝)) inst✝\n                              (@MvPolynomial.instCommRingMvPolynomial.{u, u_1} R σ inst✝)\n                              (@MvPolynomial.algebra.{u, u, u_1} R R σ (@CommRing.toCommSemiring.{u} R inst✝)\n                                (@CommRing.toCommSemiring.{u} R inst✝)\n                                (@Algebra.id.{u} R (@CommRing.toCommSemiring.{u} R inst✝))))\n                            (@instAddCommGroupKaehlerDifferential.{max u_1 u, u} R\n                              (@MvPolynomial.{u_1, u} σ R (@CommRing.toCommSemiring.{u} R inst✝)) inst✝\n                              (@MvPolynomial.instCommRingMvPolynomial.{u, u_1} R σ inst✝)\n                              (@MvPolynomial.algebra.{u, u, u_1} R R σ (@CommRing.toCommSemiring.{u} R inst✝)\n                                (@CommRing.toCommSemiring.{u} R inst✝)\n                                (@Algebra.id.{u} R\n                                  (@CommRing.toCommSemiring.{u} R\n                                    inst✝))))) =?= @Module.{max u u_1, max u u_1}\n                          (@MvPolynomial.{u_1, u} σ R (@CommRing.toCommSemiring.{u} R inst✝))\n                          (@KaehlerDifferential.{u, max u u_1} R\n                            (@MvPolynomial.{u_1, u} σ R (@CommRing.toCommSemiring.{u} R inst✝)) inst✝\n                            (@MvPolynomial.instCommRingMvPolynomial.{u, u_1} R σ inst✝)\n                            (@MvPolynomial.algebra.{u, u, u_1} R R σ (@CommRing.toCommSemiring.{u} R inst✝)\n                              (@CommRing.toCommSemiring.{u} R inst✝)\n                              (@Algebra.id.{u} R (@CommRing.toCommSemiring.{u} R inst✝))))\n                          (@CommSemiring.toSemiring.{max u u_1}\n                            (@MvPolynomial.{u_1, u} σ R (@CommRing.toCommSemiring.{u} R inst✝))\n                            (@CommRing.toCommSemiring.{max u u_1}\n                              (@MvPolynomial.{u_1, u} σ R (@CommRing.toCommSemiring.{u} R inst✝))\n                              (@MvPolynomial.instCommRingMvPolynomial.{u, u_1} R σ inst✝)))\n                          (@AddCommGroup.toAddCommMonoid.{max u u_1}\n                            (@KaehlerDifferential.{u, max u u_1} R\n                              (@MvPolynomial.{u_1, u} σ R (@CommRing.toCommSemiring.{u} R inst✝)) inst✝\n                              (@MvPolynomial.instCommRingMvPolynomial.{u, u_1} R σ inst✝)\n                              (@MvPolynomial.algebra.{u, u, u_1} R R σ (@CommRing.toCommSemiring.{u} R inst✝)\n                                (@CommRing.toCommSemiring.{u} R inst✝)\n                                (@Algebra.id.{u} R (@CommRing.toCommSemiring.{u} R inst✝))))\n                            (@instAddCommGroupKaehlerDifferential.{max u u_1, u} R\n                              (@MvPolynomial.{u_1, u} σ R (@CommRing.toCommSemiring.{u} R inst✝)) inst✝\n                              (@MvPolynomial.instCommRingMvPolynomial.{u, u_1} R σ inst✝)\n                              (@MvPolynomial.algebra.{u, u, u_1} R R σ (@CommRing.toCommSemiring.{u} R inst✝)\n                                (@CommRing.toCommSemiring.{u} R inst✝)\n                                (@Algebra.id.{u} R (@CommRing.toCommSemiring.{u} R inst✝)))))\n</code></pre></div>\n<p>The two terms there are almost the same. One difference (occuring throughout the term) is universe ordering: <code>@Module.{max u u_1, max u_1 u})</code> vs <code>@Module.{max u u_1, max u u_1})</code>. The other one is </p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">MvPolynomial</span><span class=\"bp\">.</span><span class=\"n\">commSemiring</span><span class=\"bp\">.</span><span class=\"o\">{</span><span class=\"n\">u</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">u_1</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">σ</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">CommRing</span><span class=\"bp\">.</span><span class=\"n\">toCommSemiring</span><span class=\"bp\">.</span><span class=\"o\">{</span><span class=\"n\">u</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">i</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"bp\">=</span>\n<span class=\"w\">    </span><span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">CommRing</span><span class=\"bp\">.</span><span class=\"n\">toCommSemiring</span><span class=\"bp\">.</span><span class=\"o\">{</span><span class=\"n\">max</span><span class=\"w\"> </span><span class=\"n\">u</span><span class=\"w\"> </span><span class=\"n\">u_1</span><span class=\"o\">}</span>\n<span class=\"w\">      </span><span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">MvPolynomial</span><span class=\"bp\">.</span><span class=\"o\">{</span><span class=\"n\">u_1</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">u</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"n\">σ</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">CommRing</span><span class=\"bp\">.</span><span class=\"n\">toCommSemiring</span><span class=\"bp\">.</span><span class=\"o\">{</span><span class=\"n\">u</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">i</span><span class=\"o\">))</span>\n<span class=\"w\">      </span><span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">MvPolynomial</span><span class=\"bp\">.</span><span class=\"n\">instCommRingMvPolynomial</span><span class=\"bp\">.</span><span class=\"o\">{</span><span class=\"n\">u</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">u_1</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"n\">σ</span><span class=\"w\"> </span><span class=\"n\">i</span><span class=\"o\">))</span>\n</code></pre></div>\n<p>(<code>i = inst✝</code>) embedded in the two terms, and these are equal under <code>with_reducible_and_instances rfl</code> but not under <code>with_reducible rfl</code>. </p>\n<p>Changing <code>(σ : Type*)</code> to <code>(σ : Type u)</code> makes the declaration instant, i.e. all problems magically go away (but presumably this isn't an acceptable change).</p>",
+        "id": 568619930,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1768688506
+    },
+    {
+        "content": "<p>Oh lol, it's one of these: if I add two new universes <code>t</code> and <code>w</code> then <code>(σ : Type w)</code> is slow but <code>(σ : Type t)</code> is super-quick.</p>\n<p>So the problem is that <code>u_1</code> is after <code>u</code> in the alphabet.</p>",
+        "id": 568620043,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1768688660
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110038\">Kevin Buzzard</span> <a href=\"#narrow/channel/287929-mathlib4/topic/KaehlerDifferential.2EmvPolynomialEquiv.20typechecking/near/568619930\">said</a>:</p>\n<blockquote>\n<p>Changing <code>(σ : Type*)</code> to <code>(σ : Type u)</code> makes the declaration instant, i.e. all problems magically go away (but presumably this isn't an acceptable change).</p>\n</blockquote>\n<p>why not</p>",
+        "id": 568620437,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1768689092
+    },
+    {
+        "content": "<p>Changing to <code>Type u</code> is no good because <code>R</code> already has <code>Type u</code> so the definition becomes less general. Changing to <code>Type t</code> maybe has some chance though. Christian Merten tried something like once before and Matt Ballard was not happy with the idea. However I am hoping that this time the extra debugging (thanks a <em>lot</em> for pointing me to the right place) will enable us to get further, although perhaps some people had managed to see this far the last time we discussed this sort of issue. I think Matt's main objection was \"we don't have a clue what is going on so this looks like a dirty hack\" and perhaps now we do.</p>\n<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/34088\">#34088</a></p>",
+        "id": 568621074,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1768689887
+    },
+    {
+        "content": "<p>i suppose this example should go on the same heap as <a href=\"https://github.com/leanprover-community/mathlib4/pull/26018\">#26018</a> ? (the mathlib issue \"Kernel type checking performance depends on lexicographic ordering of universe variables\")</p>",
+        "id": 568621831,
+        "sender_full_name": "Edward van de Meent",
+        "timestamp": 1768690839
+    },
+    {
+        "content": "<p>Yeah it's the same thing in the same part of mathlib. I didn't know there was an issue -- thanks.</p>",
+        "id": 568621915,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1768690916
+    },
+    {
+        "content": "<p>i figured there would be one since we've run into this weird behaviour before, but surprisingly there wasn't one on the lean4 repo...</p>",
+        "id": 568621961,
+        "sender_full_name": "Edward van de Meent",
+        "timestamp": 1768690984
+    },
+    {
+        "content": "<p>indeed it turned out to be reported as a mathlib issue (presumably because a proper MWE for this hasn't been found yet)</p>",
+        "id": 568622012,
+        "sender_full_name": "Edward van de Meent",
+        "timestamp": 1768691059
+    },
+    {
+        "content": "<p>For others: part of this discussion has moved/continued at <a class=\"stream-topic\" data-stream-id=\"270676\" href=\"/#narrow/channel/270676-lean4/topic/kernel.20universe.20normalization.20issue/with/568676330\">#lean4 &gt; kernel universe normalization issue</a></p>",
+        "id": 568737250,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1768808776
+    },
+    {
+        "content": "<p>Let's decide on how to move forward on this issue, at least in Mathlib. I assume (but I would be very happy to be corrected if I'm wrong) that a fix for <a href=\"https://github.com/leanprover/lean4/pull/12102\">lean4#12102</a> is not going to arrive soon. So in the meantime, shall we merge the workaround in <a href=\"https://github.com/leanprover-community/mathlib4/pull/34088\">#34088</a>?</p>\n<p>I would like to argue in favour of merging: if we close <a href=\"https://github.com/leanprover-community/mathlib4/pull/34088\">#34088</a> without merging, the price we pay is noticeably higher build times for each commit changing something upstream, until the slow unification issue is resolved. I find the gains of keeping the status quo quite small: <code>v</code> is not a much weirder name for a universe variable than <code>u</code>. (If we \"accidentally\" got the names in the right alphabetic order in the first place, we would not have wanted to change it to the current form.) And a Mathlib contributor who experiences a slow declaration is generally not immediately after going to look for and find a specific Lean issue and then also be able solve it. If we have multiple places in the source code referring to the same Lean bug, that is easily searchable evidence that we encountered the issue multiple times, and should help prioritizing this issue.</p>\n<p>Also, we have previously merged similar workarounds. (e.g. <a href=\"https://github.com/leanprover-community/mathlib4/pull/26008\">#26008</a>; maybe we should add a link to <a href=\"https://github.com/leanprover/lean4/pull/12102\">lean4#12102</a> in the comment?)</p>",
+        "id": 570109258,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1769438400
+    },
+    {
+        "content": "<p>Yeah, now that we have a minimization and a report upstream, I think it makes sense to merge the workaround.</p>",
+        "id": 570112346,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1769439065
+    },
+    {
+        "content": "<p>I spent a week or so occasionaly trying to save more time but I have now given up and I am happy with <a href=\"https://github.com/leanprover-community/mathlib4/pull/34088\">#34088</a> . I can make another universe change in the changed file which makes it even faster, but it makes another file slower, and if I then try to fix that file then it makes 5 more files slower. One universe name change made JacobiZariski +600G slower. The situation is random and awful. I conjecture that this universe nonsense is one of the reasons JacobiZariski is so bad.</p>\n<p>In case people are wondering why I even care about making the declaration in this PR faster, I think it increases the argument for <a href=\"https://github.com/leanprover-community/mathlib4/pull/34077\">#34077</a> which is what I was really interested in before going down this universe rabbithole.</p>",
+        "id": 571763603,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1770153152
+    },
+    {
+        "content": "<p>Thanks for the experiments! I'll merge <a href=\"https://github.com/leanprover-community/mathlib4/pull/34088\">#34088</a> in 24 hours, unless someone objects.</p>",
+        "id": 571876624,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1770202234
+    }
+]

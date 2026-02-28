@@ -1,0 +1,248 @@
+[
+    {
+        "content": "<p>Following <a href=\"#narrow/channel/287929-mathlib4/topic/.60grind.20ext.60.20and.20universe-level.20metavariable\">#mathlib4 &gt; &#96;grind ext&#96; and universe-level metavariable</a>  and part of the discussion in <a href=\"#narrow/channel/287929-mathlib4/topic/Task.2026.3A.20Replace.20Type.20u.20by.20Type*.20wherever.20possible\">#mathlib4 &gt; Task 26: Replace Type u by Type&#42; wherever possible</a>, a pattern that we used to use a lot in category theory (<code>(C : Type*) [Category C]</code>) turns out to have terrible performances and weird behavior w.r.t automation because of the universe-level metavariable introduced by <code>[Category C]</code>. Instead, one should always specify the universe level explicitly for <code>Category</code> and write something like <code>(C : Type u) [Category.{v} C]</code>, or even <code>(C : Type*) [Category.{v} C]</code>.</p>\n<p>For files that are \"very universe polymorphic\" (usually, stuff dealing with many categories and many functors between them), this means we have to introduce a lot of universes, and not mess up any index when specifying them so as to not inadvertently \"monomorphize\". This makes writing (and reviewing!) that kind of code a bit of a pain.</p>\n<p>It’s been suggested by <span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span> that we should have a <code>Category.{*}</code> syntax, doing the same kind of things that <code>Type*</code> does: as far as I understand, it introduce a hidden \"new\" universe level variable that is <em>not</em> a meta-variable, and use that variable here and only here (so that repeated applications will never \"monomorphize\"). Having this would be nice and fix the problems mentionned above, and potentially speeds up a bit the library if we replace existing <code>(C : Type*) [Category C]</code> with this.</p>\n<p>Of course, this is not only for <code>Category</code>: there are other classes/structures that takes extra universe level parameters (e.g <code>Bicategory</code> takes <em>two</em> extra universe parameters, so writing <code>(B : Type*) [Bicategory.{*, *} B]</code> is also desirable), so if we have this kind of syntax, it should in fact be available for basically any identifier that can take an universe level parameter.</p>\n<p>It seems after that suggestion that no one decided to actually work on this, which is too bad given the massive improvement it would be.</p>\n<p>I’m willing to give it a try, but I’m very much of a beginner with parsers/notations/meta code, so I’m asking here if some meta wizards can at least give me some pointers to help me understand what should be the best way to set this up, etc. </p>\n<p>Of course, I guess a good place to start is <a href=\"https://github.com/leanprover-community/mathlib4/blob/master/Mathlib/Tactic/TypeStar.lean\">the file defining <code>Type*</code></a>, but here the situation is quite different because it introduces <code>Type*</code> as a \"full term\" rather than as something that modifies existing syntaxes, takes valid identifiers as parameters like we’d want for <code>Foo.{*, *}</code>.</p>",
+        "id": 544390506,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1760266257
+    },
+    {
+        "content": "<p>so <code>Category.{*}</code> should elab to <code>Category.{v}</code> every time?</p>",
+        "id": 544391051,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1760266861
+    },
+    {
+        "content": "<p>(because <code>Type*</code> currently makes a different mvar every time it's called)</p>",
+        "id": 544391070,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1760266877
+    },
+    {
+        "content": "<p>No, it should elab to a new different level variable every time (just like <code>Type*</code>).</p>\n<p><code>variable (C D : Type*) [Category.{*} C] [Category.{*} D]</code> would essentially replace</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">universe</span><span class=\"w\"> </span><span class=\"n\">v₁</span><span class=\"w\"> </span><span class=\"n\">v₂</span><span class=\"w\"> </span><span class=\"n\">u₁</span><span class=\"w\"> </span><span class=\"n\">u₂</span>\n<span class=\"kn\">variable</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">C</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"w\"> </span><span class=\"n\">u₁</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">D</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"w\"> </span><span class=\"n\">u₂</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Category</span><span class=\"bp\">.</span><span class=\"o\">{</span><span class=\"n\">v₁</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"n\">C</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Category</span><span class=\"bp\">.</span><span class=\"o\">{</span><span class=\"n\">v₂</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"n\">D</span><span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 544391179,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1760267001
+    },
+    {
+        "content": "<p>but how would Lean know to place the new universe variable (v1 v2) before the existing variables (u1 u2)?</p>",
+        "id": 544391241,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1760267049
+    },
+    {
+        "content": "<p>Right, this is something I did not think about. This does makes things more complicated.</p>\n<p>I guess this would place them in random order. In most situations, that would be fine I guess?<br>\nAFAICT the reason why we put the morphisms levels before objects levels is so that expressions with <em>extra</em> level parameters can put the extra parameters first, i.e if we were to switch the order of <code>u</code> and <code>v</code> in the definition of a category, we’d have to write <code>[Category.{u,v} C]</code> and not just <code>[Category.{v} C]</code>. So for definitions that does not add \"new\" universe levels that can’t be inferred by the instances /types already, it’s probably fine? Arguably, when you do add new universe levels you shouldn’t use <code>Type*</code> or <code>.{*}</code> anyways and be precise.</p>",
+        "id": 544391582,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1760267405
+    },
+    {
+        "content": "<p>(Note that I am asking for pointers specifically because I do not have the answers to all the questions about the thing already!)</p>",
+        "id": 544391671,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1760267477
+    },
+    {
+        "content": "<p>This is a bit complicated, I remember something about universe order (and even alphabetical order) mattering in the <a href=\"#narrow/channel/287929-mathlib4/topic/JacobiZariski.20is.20slow.2E/with/524435617\">JacobiZariski saga</a></p>",
+        "id": 544391957,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1760267715
+    },
+    {
+        "content": "<p>When we write <code>variable (C : Type*) (D: Type*) [Category C] [Category D]</code> already in the infoview the displayed \"names\" of the unverse levels is in the \"wrong order\":</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">C</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"w\"> </span><span class=\"n\">u_1</span>\n<span class=\"n\">D</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"w\"> </span><span class=\"n\">u_2</span>\n<span class=\"n\">inst</span><span class=\"bp\">✝¹</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Category</span><span class=\"bp\">.</span><span class=\"o\">{</span><span class=\"n\">u_3</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">u_1</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"n\">C</span>\n<span class=\"n\">inst</span><span class=\"bp\">✝</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Category</span><span class=\"bp\">.</span><span class=\"o\">{</span><span class=\"n\">u_4</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">u_2</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"n\">D</span>\n</code></pre></div>\n<p>so that if we were \"fine\" with <code>[Category C]</code>, a \"not too smart\" <code>[Category.{*} C]</code>would be fine? I don’t know how much I can trust the infoview with mvars though.</p>",
+        "id": 544392394,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1760268193
+    },
+    {
+        "content": "<p>but wasn't it the case that we noticed <code>[Category C]</code> caused some slowdowns and therefore we switched to <code>[Category.{v} C]</code>?</p>",
+        "id": 544392513,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1760268311
+    },
+    {
+        "content": "<p>My understanding is that the slowdowns here (maybe not in JacobiZariski) are cause by the fact that they're mvars, rather than the order.</p>",
+        "id": 544392793,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1760268594
+    },
+    {
+        "content": "<p>I'm afraid I don't really know a lot about this, I'll wait for someone else to chime in.</p>",
+        "id": 544393281,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1760269015
+    },
+    {
+        "content": "<p>I think we still want to put the morphism universes first</p>",
+        "id": 544393295,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1760269031
+    },
+    {
+        "content": "<p>not necessarily because they're faster</p>",
+        "id": 544393305,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1760269040
+    },
+    {
+        "content": "<p>but maybe we should also find out if it's faster</p>",
+        "id": 544393311,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1760269053
+    },
+    {
+        "content": "<p>Bump. Is there a meta expert who can comment on the feasibility of this? e.g <span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span> who wrote the original <code>Type*</code>?</p>\n<p>A very, very dirty solution would be to not have a general <code>Foo.{*}</code> or <code>Foo.{*,…,*}</code> syntax but only for a few explicitly registered identifiers (<code>Category</code>, <code>Cat</code>, <code>Bicategory</code>, etc.) and then a straight copy-pasting of the code for <code>Type*</code> (for each identifier) may work. This is obviously a lot of duplication and not robust at all.</p>\n<p>A perhaps less dirty solution would be to have an attribute on certain identifiers that \"registers them\" for this kind of syntax (and then we’d tag the declaration for <code>Cat</code>, <code>Category</code>, <code>Bicategory</code> etc.), the attribute would generate the syntax and make it available when registered. I don’t know enough meta to know if this is possible.</p>\n<p>The \"best\" solution would be to be able to declare <code>*</code> as valid syntax in whatever syntax category universes live, and have it being parsed with code similar to <code>Type*</code>. The most naive</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"sd\">/-- error: Unknown attribute `[level_parser]` -/</span>\n<span class=\"bp\">#</span><span class=\"n\">guard_msgs</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"kn\">syntax</span><span class=\"w\"> </span><span class=\"s2\">\"*\"</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">level</span>\n</code></pre></div>\n<p>fails</p>\n<p>The last suggestion is probably ridiculous/might make no sense as is but hopefully I’ll learn something from whoever explains me why it’s ridiculous.</p>",
+        "id": 546187997,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1761039864
+    },
+    {
+        "content": "<p><code>Category*</code> has been requested many times at this point. Here's a PR: <a href=\"https://github.com/leanprover-community/mathlib4/pull/30797\">#30797</a></p>",
+        "id": 546532993,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1761160342
+    },
+    {
+        "content": "<p>Having this is clearly an improvement over having nothing, but I’m slightly worried about the fact that you’re going with the first proposition in my post above, i.e that we basically have to duplicate the code if we want <code>Bicategory*</code> (bicategories have the same issue as categories w.r.t universe mvars), or any other identifier of that kind that might introduce extra universe levels. There doesn’t seem to be that much such identifiers in practice, so perhaps duplication is fine? (I withdraw my wish that <code>Cat</code>should be such an identifier, because we often want <code>(a b : Cat)</code> to mean <code>(a b : Cat.{v_1, u_1})</code> and not <code>(a : Cat.{v_1, u_1})) (b : Cat.{v_2, u_2})</code>, which is what a <code>Cat*</code> would do if it were to mimic <code>Type*</code>.)</p>",
+        "id": 546559424,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1761171359
+    },
+    {
+        "content": "<p>I agree about the duplication issue, but this particular elaborator reorders the universe parameters in some controlled and non-naive way. So I do think it’s worth having this special case (and maybe also the bicategory case)</p>",
+        "id": 546561721,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1761172730
+    },
+    {
+        "content": "<p>I think there’s also <code>Groupoid</code> (which extends <code>Category</code>), but admitedly we use them way less than <code>Category</code> so we can just declare the universe explicitly for <code>Groupoid</code> if this is too much duplication.</p>",
+        "id": 546562168,
+        "sender_full_name": "Robin Carlier",
+        "timestamp": 1761173043
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"286014\">Robin Carlier</span> <a href=\"#narrow/channel/287929-mathlib4/topic/Help.2Fpointers.20wanted.20for.20.60Foo.2E.7B*.2C.20*.7D.60.20syntax/near/546187997\">said</a>:</p>\n<blockquote>\n<p>The last suggestion is probably ridiculous/might make no sense as is but hopefully I’ll learn something from whoever explains me why it’s ridiculous.</p>\n</blockquote>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">initialize</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Parser</span><span class=\"bp\">.</span><span class=\"n\">registerBuiltinDynamicParserAttribute</span><span class=\"w\"> </span><span class=\"ss\">`level_parser</span><span class=\"w\"> </span><span class=\"ss\">`level</span>\n</code></pre></div>\n<p>should fix it</p>",
+        "id": 546575245,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1761182570
+    },
+    {
+        "content": "<p>But it has to be in a different file to the one where you define the syntax</p>",
+        "id": 546575268,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1761182585
+    },
+    {
+        "content": "<p>I've described what <code>Category*</code> does in the PR description of <a href=\"https://github.com/leanprover-community/mathlib4/pull/30797\">#30797</a> . Since there is still the question of whether we even want this special case which orders universes in a particular way, as opposed to a more generic <code>Foo.{*,_,*}</code>, it would be helpful if anyone who has been fed up with universe declarations in category theory could take a look at the description. The test file has some more detailed examples illustrating the behavior.</p>",
+        "id": 546643943,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1761215543
+    },
+    {
+        "content": "<p>Quick note: I did just change the behavior so that <code>(C : Type _) [Category* C]</code> and <code>[Category* (Type _)]</code> now both do work. There was no reason to exclude level mvars in <code>C</code> or its type.</p>",
+        "id": 546650099,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1761217572
+    },
+    {
+        "content": "<p>why is Type part of the syntax?</p>",
+        "id": 546651300,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1761217991
+    },
+    {
+        "content": "<p>What do you mean?</p>",
+        "id": 546651490,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1761218064
+    },
+    {
+        "content": "<p><code>Type</code> seems redundant in the syntax <code>[Category* (Type _)]</code> (what else could it be)</p>",
+        "id": 546651588,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1761218095
+    },
+    {
+        "content": "<p><code>[Category _]</code> would make an expr metavariable for the term, but <code>[Category (Type _)]</code> makes a level metavariable.</p>",
+        "id": 546651837,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1761218170
+    },
+    {
+        "content": "<p>I'll add these as tests:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">section</span>\n\n<span class=\"kn\">variable</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">inst</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Category</span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"o\">]</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">info: inst : Category.{v_1, ?u.985} ?_mvar.987</span>\n<span class=\"sd\">-/</span>\n<span class=\"bp\">#</span><span class=\"n\">guard_msgs</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">info</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"bp\">#</span><span class=\"n\">check</span><span class=\"w\"> </span><span class=\"n\">inst</span>\n\n<span class=\"kn\">variable</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">inst2</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Category</span><span class=\"bp\">*</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"kt\">Type</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"o\">)]</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">info: inst2 : Category.{v_2, ?u.1005} (Type ?u.1007)</span>\n<span class=\"sd\">-/</span>\n<span class=\"bp\">#</span><span class=\"n\">guard_msgs</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">info</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"bp\">#</span><span class=\"n\">check</span><span class=\"w\"> </span><span class=\"n\">inst2</span>\n\n<span class=\"kn\">end</span>\n</code></pre></div>",
+        "id": 546652383,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1761218362
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"243562\">Adam Topaz</span> <a href=\"#narrow/channel/287929-mathlib4/topic/Help.2Fpointers.20wanted.20for.20.60Foo.2E.7B*.2C.20*.7D.60.20syntax/near/546651837\">said</a>:</p>\n<blockquote>\n<p><code>[Category _]</code> would make an expr metavariable for the term, but <code>[Category (Type _)]</code> makes a level metavariable.</p>\n</blockquote>\n<p>i'm suggesting to change the syntax/elab so that <code>[Category* _]</code> make a level mvar</p>",
+        "id": 546652495,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1761218401
+    },
+    {
+        "content": "<p>(did you mean to type with <code>*</code>?)</p>",
+        "id": 546652526,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1761218410
+    },
+    {
+        "content": "<p>wait i'm bit confused</p>",
+        "id": 546652671,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1761218454
+    },
+    {
+        "content": "<p>why would you want to assume an arbitrary category instance on the type <code>Type ?u</code></p>",
+        "id": 546652732,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1761218472
+    },
+    {
+        "content": "<p>we already have one and the homs are functions</p>",
+        "id": 546652756,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1761218480
+    },
+    {
+        "content": "<p><code>Type _</code> is just a convenient way to introduce something with a universe mvar. This is just for testing <code>Category*</code>.</p>",
+        "id": 546652939,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1761218534
+    },
+    {
+        "content": "<p>I don't know what you're suggesting with <code>Category* _</code>.</p>",
+        "id": 546653059,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1761218571
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"sd\">/--</span>\n<span class=\"sd\">info: inst2 : Category.{v_2, ?u.1005} (Type ?u.1007)</span>\n<span class=\"sd\">-/</span>\n</code></pre></div>\n<p>I'm referring to this output, which says to me \"assume an arbitrary category instance on the type <code>Type ?u</code>\"</p>",
+        "id": 546654159,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1761218848
+    },
+    {
+        "content": "<p>ok, I guess you're suggesting that I should overlook that for now</p>",
+        "id": 546654341,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1761218905
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"243562\">Adam Topaz</span> <a href=\"#narrow/channel/287929-mathlib4/topic/Help.2Fpointers.20wanted.20for.20.60Foo.2E.7B*.2C.20*.7D.60.20syntax/near/546652383\">said</a>:</p>\n<blockquote>\n<p><div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"sd\">/--</span>\n<span class=\"sd\">info: inst : Category.{v_1, ?u.985} ?_mvar.987</span>\n<span class=\"sd\">-/</span>\n</code></pre></div><br>\n</p>\n</blockquote>\n<p>should this instead look like <code>Category.{v_1, u_1} ?mvar</code>?</p>",
+        "id": 546654496,
+        "sender_full_name": "Kenny Lau",
+        "timestamp": 1761218938
+    },
+    {
+        "content": "<p>yeah, I should investigate why it looks like <code>?_m</code>.</p>",
+        "id": 546657175,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1761219733
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"243562\">Adam Topaz</span> <a href=\"#narrow/channel/287929-mathlib4/topic/Help.2Fpointers.20wanted.20for.20.60Foo.2E.7B*.2C.20*.7D.60.20syntax/near/546657175\">said</a>:</p>\n<blockquote>\n<p>yeah, I should investigate why it looks like <code>?_m</code>.</p>\n</blockquote>\n<p>fixed</p>",
+        "id": 546661928,
+        "sender_full_name": "Adam Topaz",
+        "timestamp": 1761221057
+    }
+]

@@ -1,0 +1,104 @@
+[
+    {
+        "content": "<p>The Lean core has a handful of types that are equivalent to existing types but have alternate runtime representations. For example, <code>String</code> is equivalent to <code>List Char</code> but has an optimized runtime representation. This feature is implemented by special single-field structures where the constructor and projection are overridden to convert to and from the separate runtime representation. I propose that this feature be extended to users (e.g. library authors).</p>\n<p>Currently, the only way to express this is to use an opaque type and opaque functions to go between the opaque type and the existing type. For the structure trick used by the core types, the reduction and eta laws make it so that round tripping is definitionally the identity (e.g. <code>String.data ∘ .mk = id</code> and <code>.mk ∘ String.data = id</code> hold by <code>rfl</code>). However, when using opaque types, the round trip can only be a propositional equality. While it is possible to work with this limitations for some types, it becomes extremely cumbersome when there are dependent functions out of the opaque type.<br>\nFor example, consider an opaque <code>MySigma</code> type that has the same operations as <code>Sigma α β</code> (<code>mk</code>, <code>fst</code>, <code>snd</code>). While we may have the propositional equality <code>fst (mk x y) = x</code>, we cannot have the propositional equality <code>snd (mk x y) = y</code> since the lhs has type <code>β (fst (mk x y))</code> while the rhs has type <code>β x</code>. Thus, we are forced to either cast or use <code>HEq</code> instead, which makes it harder to work with <code>MySigma</code>. The problem can become even worse if we use a more complicated type.</p>\n<p>I see two approaches to remedy this problem. One is to support overriding the constructor and projection for arbitrary structures, which would require that the compiler check for the presence of overrides instead of only special casing the builtin types.<br>\nThe other approach is to have a single structure that allows for swapping out the representation like</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">structure</span><span class=\"w\"> </span><span class=\"n\">Encoded</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">eqv</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"bp\">≃</span><span class=\"w\"> </span><span class=\"n\">β</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"n\">encode</span><span class=\"w\"> </span><span class=\"bp\">::</span>\n<span class=\"w\">  </span><span class=\"n\">decode</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">α</span>\n</code></pre></div>\n<p>The same way that the compiler recognizes that the runtime representation of <code>String</code> should be string objects and not <code>List Char</code>, the compiler would treat the runtime representation of <code>Encoded</code> as <code>β</code> instead of <code>α</code>, using the functions in the equivalence as the implementations of <code>encode</code> and <code>decode</code>. Using an opaque <code>β</code> and the equivalence implemented by FFI, <code>Encoded</code> would allow custom runtime representations while having <code>encode</code> and <code>decode</code> definitionally round trip to the identity, solving the issue that arises when using <code>opaque</code> by itself.</p>",
+        "id": 525950357,
+        "sender_full_name": "Parth Shastri",
+        "timestamp": 1750958478
+    },
+    {
+        "content": "<p>I believe this is <a href=\"https://github.com/leanprover/lean4/pull/2292\">lean4#2292</a>.</p>",
+        "id": 525951036,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1750958749
+    },
+    {
+        "content": "<p>Is this already possible to do today with <code>@[implemented_by]</code> on the constructor and projection?</p>",
+        "id": 525953628,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1750959821
+    },
+    {
+        "content": "<p>Ah I didn't see that when I searched for existing discussions. In my testing, overriding fields in structures with more than one field also doesn't work, as the compiler emits <code>lean_ctor_get</code> even when the projections are overridden, so it isn't possible today.</p>",
+        "id": 525953851,
+        "sender_full_name": "Parth Shastri",
+        "timestamp": 1750959906
+    },
+    {
+        "content": "<p>There's a fun exception, which is that if you use <code>MutQuot</code> as a name instead of <code>Encoded</code> it will not do trivial structure optimizations</p>",
+        "id": 525954007,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1750959980
+    },
+    {
+        "content": "<p>Only works on the old compiler though</p>",
+        "id": 525954173,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1750960051
+    },
+    {
+        "content": "<p>but yeah the new compiler will definitely be able support this better, although I'd argue <code>@[override_repr β]</code> would be better than <code>@[opaque_repr]</code>, e.g. because of unboxing</p>",
+        "id": 525955396,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1750960621
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/pull/2292\">lean4#2292</a> does seem sufficient to write <code>Encoded</code> as it does more than just inhibit the trivial structure optimization, as the compiler does not normally seem to respect <code>implemented_by</code> or <code>extern</code> on projections. I don't understand the motivation behind inhibiting the <code>(mk x).val = x</code> optimization.</p>",
+        "id": 525955674,
+        "sender_full_name": "Parth Shastri",
+        "timestamp": 1750960745
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"497571\">Parth Shastri</span> <a href=\"#narrow/channel/341532-lean4-dev/topic/Proposal.3A.20Customizable.20runtime.20representations/near/525955674\">schrieb</a>:</p>\n<blockquote>\n<p>motivation behind inhibiting the <code>(mk x).val = x</code> optimization</p>\n</blockquote>\n<p>Which optimization are you referring to?</p>",
+        "id": 525956400,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1750961004
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"497571\">Parth Shastri</span> <a href=\"#narrow/channel/341532-lean4-dev/topic/Proposal.3A.20Customizable.20runtime.20representations/near/525955674\">schrieb</a>:</p>\n<blockquote>\n<p>does seem sufficient to write <code>Encoded</code></p>\n</blockquote>\n<p>It works but we'd certainly want a more complete approach, e.g. error if you try to add an <code>implemented_by</code> or <code>extern</code> to a constructor or projection of a type without such an attribute or making the constructors and projections noncomputable when using such an attribute to prevent misuse. Also specifying which repr to use would probably work better for future plans of unboxing</p>",
+        "id": 525957035,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1750961202
+    },
+    {
+        "content": "<p>I'm referring to the test from <a href=\"https://github.com/leanprover/lean4/pull/2292\">lean4#2292</a>: <a href=\"https://github.com/leanprover/lean4/pull/2292/files#diff-aaf48b1a7816072080ae55e2197fd72215ae78cb586a1bff7db0a2d36283a2f5\">https://github.com/leanprover/lean4/pull/2292/files#diff-aaf48b1a7816072080ae55e2197fd72215ae78cb586a1bff7db0a2d36283a2f5</a></p>",
+        "id": 525957271,
+        "sender_full_name": "Parth Shastri",
+        "timestamp": 1750961264
+    },
+    {
+        "content": "<p>The specific check that <a href=\"https://github.com/leanprover/lean4/pull/2292\">lean4#2292</a> is about is (in the new compiler) this line of code:<br>\n<a href=\"https://github.com/leanprover/lean4/blob/b1a306cf696ead9724e9d3879885d4e119800fe6/src/Lean/Compiler/LCNF/MonoTypes.lean#L55\">https://github.com/leanprover/lean4/blob/b1a306cf696ead9724e9d3879885d4e119800fe6/src/Lean/Compiler/LCNF/MonoTypes.lean#L55</a></p>",
+        "id": 525987584,
+        "sender_full_name": "Cameron Zwarich",
+        "timestamp": 1750976501
+    },
+    {
+        "content": "<p>That's not enough right? Currently even if you don't run into the trivial structure case, you still cannot override projections.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">structure</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span>\n<span class=\"w\">  </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span>\n\n<span class=\"kn\">attribute</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">extern</span><span class=\"w\"> </span><span class=\"s2\">\"S_mk\"</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"bp\">.</span><span class=\"n\">mk</span>\n<span class=\"kn\">attribute</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">extern</span><span class=\"w\"> </span><span class=\"s2\">\"S_x\"</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"bp\">.</span><span class=\"n\">x</span>\n<span class=\"kn\">attribute</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">extern</span><span class=\"w\"> </span><span class=\"s2\">\"S_y\"</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"bp\">.</span><span class=\"n\">y</span>\n\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"bp\">.</span><span class=\"n\">casesOnImp</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">motive</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"n\">s</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">mk</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">motive</span><span class=\"w\"> </span><span class=\"bp\">⟨</span><span class=\"n\">x</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"bp\">⟩</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">motive</span><span class=\"w\"> </span><span class=\"n\">s</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">mk</span><span class=\"w\"> </span><span class=\"n\">s</span><span class=\"bp\">.</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">s</span><span class=\"bp\">.</span><span class=\"n\">y</span>\n<span class=\"kd\">@[</span><span class=\"n\">csimp</span><span class=\"kd\">]</span><span class=\"w\"> </span><span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"bp\">.</span><span class=\"n\">casesOn_eq_casesOnImp</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">@</span><span class=\"n\">casesOn</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"bp\">@</span><span class=\"n\">casesOnImp</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">rfl</span>\n\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">test</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">s</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">S</span><span class=\"bp\">.</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">s</span>\n</code></pre></div>\n<p>Compiling this to C gives </p>\n<div class=\"codehilite\" data-code-language=\"C\"><pre><span></span><code><span class=\"n\">LEAN_EXPORT</span><span class=\"w\"> </span><span class=\"n\">lean_object</span><span class=\"o\">*</span><span class=\"w\"> </span><span class=\"n\">l_test</span><span class=\"p\">(</span><span class=\"n\">lean_object</span><span class=\"o\">*</span><span class=\"w\"> </span><span class=\"n\">x_1</span><span class=\"p\">)</span><span class=\"w\"> </span><span class=\"p\">{</span>\n<span class=\"nl\">_start</span><span class=\"p\">:</span>\n<span class=\"p\">{</span>\n<span class=\"n\">lean_object</span><span class=\"o\">*</span><span class=\"w\"> </span><span class=\"n\">x_2</span><span class=\"p\">;</span>\n<span class=\"n\">x_2</span><span class=\"w\"> </span><span class=\"o\">=</span><span class=\"w\"> </span><span class=\"n\">lean_ctor_get</span><span class=\"p\">(</span><span class=\"n\">x_1</span><span class=\"p\">,</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"p\">);</span>\n<span class=\"n\">lean_inc</span><span class=\"p\">(</span><span class=\"n\">x_2</span><span class=\"p\">);</span>\n<span class=\"k\">return</span><span class=\"w\"> </span><span class=\"n\">x_2</span><span class=\"p\">;</span>\n<span class=\"p\">}</span>\n<span class=\"p\">}</span>\n</code></pre></div>\n<p>showing that <code>extern</code> did not actually work.<br>\nI think the key line is actually <a href=\"https://github.com/leanprover/lean4/blob/b1a306cf696ead9724e9d3879885d4e119800fe6/src/Lean/Compiler/LCNF/ToLCNF.lean#L668\">https://github.com/leanprover/lean4/blob/b1a306cf696ead9724e9d3879885d4e119800fe6/src/Lean/Compiler/LCNF/ToLCNF.lean#L668</a>. It should probably be changed to only reduce the projection if its implementation isn't overridden.</p>",
+        "id": 525993895,
+        "sender_full_name": "Parth Shastri",
+        "timestamp": 1750981950
+    },
+    {
+        "content": "<p>I was just talking about the \"trivial structure\" part of <a href=\"https://github.com/leanprover/lean4/pull/2292\">lean4#2292</a>. To do as you propose, we would probably need to make the change you mentioned as well. We would also need to support <code>casesOn</code> (which is turned into <code>cases</code> at this point) for these types, because we definitely don't want to support <code>implemented_by</code> for <code>casesOn</code>(which is regrettably currently used internally for computed fields).</p>",
+        "id": 525996365,
+        "sender_full_name": "Cameron Zwarich",
+        "timestamp": 1750983939
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"656225\">Cameron Zwarich</span> <a href=\"#narrow/channel/341532-lean4-dev/topic/Proposal.3A.20Customizable.20runtime.20representations/near/525996365\">said</a>:</p>\n<blockquote>\n<p>we definitely don't want to support <code>implemented_by</code> for <code>casesOn</code>(which is regrettably currently used internally for computed fields).</p>\n</blockquote>\n<p>We could just say that computed fields are incompatible with <code>opaque_repr</code>. To my knowledge none of the built in overridden types e.g. <code>UInt64</code>, <code>String</code>, <code>Array</code> (which have the behavior I want <code>@[opaque_repr]</code> to generalize) have computed fields.</p>",
+        "id": 526273808,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751207808
+    },
+    {
+        "content": "<p>If you don't want to override <code>casesOn</code>, then how would you compile them? Would it always unfold to an application of the projections and then the projections are overridden?</p>",
+        "id": 526273859,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751207866
+    },
+    {
+        "content": "<p>My actual use case is to implement coinductives that are represented at runtime by <code>Thunk</code>s. As such, the constructor and projection of the structure would only be needed in automatically generated definitions like the corecursor, which would have their implementations overridden to use <code>Thunk</code>s instead. I could therefore make the constructor and projection <code>private</code>, and not generate <code>casesOn</code> at all since I am manually creating the structure from meta code. Would this currently be sound, or are there any optimizations that look at the type of the field (function in this case) and would cause problems?</p>",
+        "id": 526908047,
+        "sender_full_name": "Parth Shastri",
+        "timestamp": 1751511746
+    }
+]

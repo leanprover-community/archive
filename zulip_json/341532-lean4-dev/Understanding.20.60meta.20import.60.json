@@ -1,0 +1,38 @@
+[
+    {
+        "content": "<p>Hello! I am trying to understand the new <code>meta</code> phase introduced in <a href=\"https://github.com/leanprover/lean4/pull/8660\">lean4#8660</a>. For reference, two constraints are delineated there:</p>\n<ol>\n<li><code>meta</code> declarations may use any local declaration, imported <code>meta</code> declarations, and any <code>meta import</code>ed declarations.</li>\n<li>non-<code>meta</code> declarations may use a non-<code>meta</code> declaration reachable only through non-<code>meta</code> imports.</li>\n</ol>\n<p><code>meta</code> is a marker that can be put on global constants in an environment (as opposed to e.g. a part of the type system for finer-grained specifications like <code>T meta → T</code>). It behaves like so:</p>\n<ul>\n<li>in their own module, constants are <code>meta</code> iff defined via <code>meta def</code></li>\n<li>in downstream modules<ul>\n<li><code>meta import</code>ed constants are always <code>meta</code></li>\n<li><code>import</code>ed constants are <code>meta</code> iff they were <code>meta</code> in the module we're importing from (in particular if that module in turn used <code>meta import</code>, explaining why '<code>meta import</code> is transitive')</li>\n</ul>\n</li>\n</ul>\n<p>(If a constant is both <code>import</code>ed and <code>meta import</code>ed, let's think of it as secretly two constants in the environment.)</p>\n<p>Since <code>meta</code> will be used to avoid importing IR that is not needed at compile-time, let's define another marker <code>has_ir</code> that we put on those constants for which the IR is available (in a given environment). This behaves like so:</p>\n<ul>\n<li>in their own module, all constants are <code>has_ir</code></li>\n<li>in downstream modules, constants are <code>has_ir</code> iff they are <code>meta</code></li>\n</ul>\n<p>We have the restriction that <code>meta def</code>s may only use <code>has_ir</code> constants. This explains constraint 1.</p>\n<p>However, constraint 2 is not explained: there is no obstacle to using a <code>has_ir</code> constant in a non-<code>meta</code> declaration; indeed, it must be possible to do that. From past discussions, I am guessing there is a further meaning to <code>meta</code> along the (somewhat circular) lines of 'exclude this code when compiling an object-level/non-<code>meta</code> executable'. Let's have another marker, <code>non_obj</code>, for that. This exactly coincides with <code>meta</code>:</p>\n<ul>\n<li>in its own module, a constant is <code>non_obj</code> iff it's a <code>meta def</code> (?)</li>\n<li>in downstream modules, constants are <code>non_obj</code> iff they are <code>meta</code></li>\n</ul>\n<p>Overall, we have <code>meta == non_obj</code> and <code>meta =&gt; has_ir</code> (for upstream constants <code>meta == has_ir)</code>.</p>\n<p>There is now a restriction that if a declaration uses a <code>non_obj</code> constant, that declaration must itself be <code>non_obj</code>. This explains constraint 2.</p>\n<p>It also seems to imply constraint 3: non-<code>meta</code> declarations may not use <code>meta</code> declarations <em>in their values</em> (of course tactics and so on can be used to produce the values).</p>\n<p>Now I have a few questions:</p>\n<ul>\n<li>Is this analysis accurate? In particular, will constraint 3 materialize?</li>\n<li>If so, and I did want to include an upstream <code>meta</code> constant in object code, can I \"un-<code>meta</code>\" it? (I can't just do <code>import</code> and <code>meta import</code> if the thing was originally a <code>meta def</code>.)</li>\n<li>If I want to <code>#eval</code> an upstream constant, or do anything else with its IR, do I have to <code>meta import</code> it?</li>\n<li>How will precompilation of tactics fit into this picture? Will every module have two compilation targets, one for object-level code and one for <code>no_obj</code> code?</li>\n</ul>",
+        "id": 523001888,
+        "sender_full_name": "𝚠𝚘𝚓𝚌𝚒𝚎𝚌𝚑 𝚗𝚊𝚠𝚛𝚘𝚌𝚔𝚒",
+        "timestamp": 1749418484
+    },
+    {
+        "content": "<p>Hey Wojciech, thanks for thinking through this :) . I do appreciate feedback.</p>\n<blockquote>\n<p>exclude this code when compiling an object-level/non-<code>meta</code> executable</p>\n</blockquote>\n<p>Right, this goal was not mentioned in the PR.</p>\n<blockquote>\n<p>In particular, will constraint 3 materialize?</p>\n</blockquote>\n<p>Ah, it already is there: <a href=\"https://github.com/leanprover/lean4/pull/8660/files#diff-d8e303a116f08503ab6b9ca0ce6a643d96c94e3dbf9f96cf239589385786c9c9R137\">https://github.com/leanprover/lean4/pull/8660/files#diff-d8e303a116f08503ab6b9ca0ce6a643d96c94e3dbf9f96cf239589385786c9c9R137</a>. This follows from constraints 1 and 2 if you see them as exhaustive, but I see how that may have been unclear.</p>\n<blockquote>\n<p>If so, and I did want to include an upstream <code>meta</code> constant in object code, can I \"un-<code>meta</code>\" it?</p>\n</blockquote>\n<p>You can't. At that point we assume you are working against the intent of the code's author, so you should really work that out with them.</p>\n<blockquote>\n<p>If I want to <code>#eval</code> an upstream constant, or do anything else with its IR, do I have to <code>meta import</code> it?</p>\n</blockquote>\n<p><code>#eval</code> is special cased in the language server, but it will in fact break on the cmdline without <code>meta</code> (you're not using it there anyway, right?)</p>\n<blockquote>\n<p>How will precompilation of tactics fit into this picture? Will every module have two compilation targets, one for object-level code and one for <code>no_obj</code> code?</p>\n</blockquote>\n<p>Likely, yeah. The current approach shouldn't break since it just includes everything but that would be a future refinement.</p>",
+        "id": 523224265,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1749540652
+    },
+    {
+        "content": "<blockquote>\n<p><code>#eval</code> is special cased in the language server, but it will in fact break on the cmdline without <code>meta</code> (you're not using it there anyway, right?)</p>\n</blockquote>\n<p>We sometimes use <code>#guard_msgs in #eval ...</code> for compile-time tests, would those break a <code>lake build</code> in this new system?</p>",
+        "id": 524448696,
+        "sender_full_name": "Alex Keizer",
+        "timestamp": 1750165513
+    },
+    {
+        "content": "<p>Use the correct meta imports then, or don't make that test a <code>module</code> :)</p>",
+        "id": 524616090,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1750208065
+    },
+    {
+        "content": "<p>Hopefully this is a good place for more basic questions too! :) I'm wondering simply how <code>meta import Foo</code> behaves. Does it essentially mark <em>all</em> declarations coming from <code>Foo</code> with <code>meta</code>? (If so, transitively, or not?)</p>\n<p>If so, is the intended design pattern for e.g. files defining tactics to just mark everything as <code>meta def</code>, or to use typical defs but only ever <code>meta import</code> the file? (Or neither?)</p>",
+        "id": 525605503,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1750804320
+    },
+    {
+        "content": "<p>Also, are there any prior discussions on this (or documentation, yet) for better familiarizing myself with the idea behind it?</p>",
+        "id": 525605750,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1750804488
+    }
+]

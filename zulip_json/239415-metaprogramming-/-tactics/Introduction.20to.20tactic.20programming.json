@@ -1,0 +1,686 @@
+[
+    {
+        "content": "<p>Inspired by discussions on BigProof, we wrote an introduction to tactic programming with  <span class=\"user-mention\" data-user-id=\"479299\">@Jovan Gerbscheid</span> , also thanks <span class=\"user-mention\" data-user-id=\"303675\">@Anand Rao Tadipatri</span>  for checking early version.<br>\n<a href=\"https://github.com/mirefek/lean-tactic-programming-guide\">https://github.com/mirefek/lean-tactic-programming-guide</a><br>\nIf you are a Lean user interested in how tactics work, and how you could one day write your own, we would love to hear your feedback!<br>\n(of course we are also curious about critique from experts)</p>",
+        "id": 524164016,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1750033501
+    },
+    {
+        "content": "<p>I was following this tutorial and I had a question: For MetaM, there is a MonadEval instance. This lets me <code>#eval &lt;insert function returning MetaM&gt;</code> and get the result. I can't do the same for <code>TacticM</code> returning functions. What is the reason for this design/implementation decision</p>",
+        "id": 524256060,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750080163
+    },
+    {
+        "content": "<p>For <code>TacticM</code> returning functions, you need to have a tactic state available to execute them, which you don't get with just <code>#eval</code>.</p>",
+        "id": 524261183,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1750081551
+    },
+    {
+        "content": "<p>You could implement <code>MonadEval</code> in principle, perhaps just no one needed it. The intermediate monad between <code>TacticM</code>, and <code>MetaM</code> is <code>Lean.Elab.TermElabM</code>, and it already has <code>MonadEval</code>, so all you would need is to provide the name of the tactic file (can be anonymous), and the list of goals (empty, or all existing unassigned metavariables...), like in the implementation of <a href=\"https://github.com/leanprover/lean4/blob/6741444a63eec253a7eae7a83f1beb3de015023d/src/Lean/Elab/Tactic/Basic.lean#L105\"><code>Lean.Elab.Tactic.run</code></a></p>",
+        "id": 524271023,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1750084507
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"816344\">Aaron Liu</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/524261183\">said</a>:</p>\n<blockquote>\n<p>For <code>TacticM</code> returning functions, you need to have a tactic state available to execute them, which you don't get with just <code>#eval</code>.</p>\n</blockquote>\n<p>Exactly, <code>TacticM</code> is a monad that doesn't have a direct way to spin it up, except by knowing it's a reader and state monad over <code>TermElabM</code>.</p>\n<p>Here's an implementation that uses an empty goal list:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">MonadEval</span><span class=\"w\"> </span><span class=\"n\">TacticM</span><span class=\"w\"> </span><span class=\"n\">TermElabM</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"n\">monadEval</span><span class=\"w\"> </span><span class=\"n\">m</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">m</span><span class=\"w\"> </span><span class=\"bp\">|&gt;.</span><span class=\"n\">run</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"w\"> </span><span class=\"n\">elaborator</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">.</span><span class=\"n\">anonymous</span><span class=\"w\"> </span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"bp\">|&gt;.</span><span class=\"n\">run'</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"w\"> </span><span class=\"n\">goals</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"o\">[]</span><span class=\"w\"> </span><span class=\"o\">}</span>\n</code></pre></div>",
+        "id": 524274808,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1750085622
+    },
+    {
+        "content": "<p>Isn't there an empty/default state?</p>",
+        "id": 524281876,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750087827
+    },
+    {
+        "content": "<p>Oh I see that's what Kyle has written</p>",
+        "id": 524281930,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750087849
+    },
+    {
+        "content": "<p>Could anything go wrong if this MonadEval instance was inferred in the absence of any explicit tactic state?</p>",
+        "id": 524282045,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750087891
+    },
+    {
+        "content": "<p>The issue is that most functions written in <code>TacticM</code> will operate on the main goal (that is, the first element in the list of <code>goals</code>). But we are passing it an empty list here, so it looks to the tactic like all goals are solved.</p>",
+        "id": 524282245,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1750087953
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/524282045\">said</a>:</p>\n<blockquote>\n<p>Could anything go wrong if this MonadEval instance was inferred in the absence of any explicit tactic state?</p>\n</blockquote>\n<p>To see how tactics react without a goal being set, you could try out e.g.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">True</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">trivial</span>\n<span class=\"w\">  </span><span class=\"n\">run_tac</span>\n<span class=\"w\">    </span><span class=\"n\">logInfo</span><span class=\"w\"> </span><span class=\"s2\">\"message1\"</span>\n<span class=\"w\">    </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">goal</span><span class=\"w\"> </span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">getMainGoal</span>\n<span class=\"w\">    </span><span class=\"n\">logInfo</span><span class=\"w\"> </span><span class=\"s2\">\"message2\"</span>\n</code></pre></div>\n<p>it is not a problem to create a new dummy metavariable with some type (e.g. <code>True</code>) and set it as the main goal but for the purpose of <code>#eval</code>, that feels quite arbitrary.</p>\n<p>And just to be clear, the tactic state was set -- as an empty list. Of course, e.g. filling it with <code>sorry</code> would not work.</p>",
+        "id": 524321680,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1750102527
+    },
+    {
+        "content": "<p>I am aware of this since it is one of the first examples in your tutorial <span aria-label=\"sweat smile\" class=\"emoji emoji-1f605\" role=\"img\" title=\"sweat smile\">:sweat_smile:</span></p>",
+        "id": 524331822,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750107109
+    },
+    {
+        "content": "<p>Good, I just wanted to show that it works also after closing the goal (somewhat)</p>",
+        "id": 524331923,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1750107154
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/524282245\">said</a>:</p>\n<blockquote>\n<p>The issue is that most functions written in <code>TacticM</code> will operate on the main goal (that is, the first element in the list of <code>goals</code>). But we are passing it an empty list here, so it looks to the tactic like all goals are solved.</p>\n</blockquote>\n<p>In lean 3, I believe the default tactic state was a single goal proving <code>True</code></p>",
+        "id": 525228347,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1750618689
+    },
+    {
+        "content": "<p>this was used when you used <code>#eval</code> to evaluate some code since back then there was only the <code>tactic</code> monad</p>",
+        "id": 525228371,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1750618727
+    },
+    {
+        "content": "<p>I haven't looked at the Lean file yet, but thank you so much for writing this!</p>",
+        "id": 525568411,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1750787770
+    },
+    {
+        "content": "<p>We should add a link to this here: <a href=\"https://leanprover-community.github.io/learn.html#meta-programming-and-tactic-writing\">https://leanprover-community.github.io/learn.html#meta-programming-and-tactic-writing</a> (please make a PR).</p>",
+        "id": 525568533,
+        "sender_full_name": "Floris van Doorn",
+        "timestamp": 1750787821
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/leanprover-community.github.io/pull/659\">https://github.com/leanprover-community/leanprover-community.github.io/pull/659</a></p>",
+        "id": 525604384,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1750803659
+    },
+    {
+        "content": "<p>I just read through it (note: I didn't work all the exercises). Overall, I liked it, but it is quite introductory, and I really felt the lack of detail sometimes. Also, the prose gets a bit loose after the first bit, so a copyediting pass could help. It did feel like I wasn't really the target audience, since I have more FP experience than the guide seems to require, so maybe a clearer expression of who this is for and what sort of treatment is given could be useful near the top </p>\n<p>(Note: I read this last night, and these are just my opinions from memory the next day. So maybe some of these are already addressed, but didn't impress upon me properly in my one session I spent reading it)</p>",
+        "id": 525625283,
+        "sender_full_name": "neil",
+        "timestamp": 1750818563
+    },
+    {
+        "content": "<p>Thanks for the feedback!</p>\n<p><span class=\"user-mention silent\" data-user-id=\"931836\">neil</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/525625283\">said</a>:</p>\n<blockquote>\n<p>it is quite introductory, and I really felt the lack of detail sometimes</p>\n</blockquote>\n<p>Is there a particular domain that you think would deserve more attention? I would prefer not to extend the guide much, but perhaps we can add pointers.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"931836\">neil</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/525625283\">said</a>:</p>\n<blockquote>\n<p>Also, the prose gets a bit loose after the first bit, so a copyediting pass could help.</p>\n</blockquote>\n<p>We didn't update the document much recently, suggestions for stylistic improvements are welcome.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"931836\">neil</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/525625283\">said</a>:</p>\n<blockquote>\n<p>It did feel like I wasn't really the target audience, since I have more FP experience than the guide seems to require, so maybe a clearer expression of who this is for and what sort of treatment is given could be useful near the top</p>\n</blockquote>\n<p>It is true that the comments in section (1) were targeted at people used to procedural programming. Do you think adding something like this after the content-defining questions would help?</p>\n<blockquote>\n<p>Let us answer them. Each question will have its own chapter.<br>\nIf you are familiar with functional programming, you can skip chapter (1), just check out Lean's procedural features such as <code>return</code>, <code>for .. do</code>, or inlined <code>←</code>. If you are familiar with Lean's theory (proof terms, meta-variables), you can skip chapter (2).</p>\n</blockquote>",
+        "id": 525684161,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1750848412
+    },
+    {
+        "content": "<p>I think it might help to have some non-trivial examples of how to write tactics. But this might be a separate task. Something like a \"how to write your own <code>rw</code> tactic from scratch\", where you start with an elementary version and slowly progress to the real version.</p>",
+        "id": 525688564,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750849961
+    },
+    {
+        "content": "<p>Good suggestion, yes that should be probably a different document. I agree it would showcase much more of the term-digging &amp; unification. I will think about it.</p>",
+        "id": 525691024,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1750850920
+    },
+    {
+        "content": "<p>One inconvenience for writing a tutorial about <code>rw</code> is that its behaviour may soon change on bound variables. <span class=\"user-mention\" data-user-id=\"306601\">@Kyle Miller</span>, could you say what the plan is for the way <code>rw</code> will work when rewriting terms with bound variables? <span class=\"user-mention\" data-user-id=\"133339\">@Mirek Olšák</span> and I had two ideas for what proof term might be generated by a more advanced <code>rw</code> tactic. Will it be one of these two?</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">g</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">g</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">refine</span><span class=\"w\"> </span><span class=\"bp\">@</span><span class=\"n\">Eq</span><span class=\"bp\">.</span><span class=\"n\">mp</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">g</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">_</span>\n<span class=\"w\">    </span><span class=\"o\">(</span><span class=\"n\">congrArg</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"o\">)</span>\n<span class=\"w\">      </span><span class=\"o\">(</span><span class=\"n\">funext</span><span class=\"w\"> </span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">funext</span><span class=\"w\"> </span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">add_comm</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">g</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"o\">)))</span><span class=\"w\"> </span><span class=\"bp\">?_</span>\n\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">g</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">g</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">refine</span><span class=\"w\"> </span><span class=\"bp\">@</span><span class=\"n\">Eq</span><span class=\"bp\">.</span><span class=\"n\">mp</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">g</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">_</span>\n<span class=\"w\">    </span><span class=\"o\">(</span><span class=\"n\">congrArg</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">g</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"o\">)</span>\n<span class=\"w\">      </span><span class=\"o\">(</span><span class=\"n\">funext</span><span class=\"w\"> </span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">funext</span><span class=\"w\"> </span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">add_comm</span><span class=\"w\"> </span><span class=\"n\">y</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"bp\">?_</span>\n</code></pre></div>",
+        "id": 525748716,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1750868324
+    },
+    {
+        "content": "<p>I hope it doesn't change</p>",
+        "id": 525748893,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1750868373
+    },
+    {
+        "content": "<p>Really? I think the failure of <code>rw [Nat.add_comm]</code> on the above example is quite clearly more of a bug than a feature.</p>",
+        "id": 525749170,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1750868470
+    },
+    {
+        "content": "<p>It explicitly skips bound variables in the code, so clearly it's intentional</p>",
+        "id": 525749335,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1750868532
+    },
+    {
+        "content": "<p>The rough idea <span class=\"user-mention\" data-user-id=\"479299\">@Jovan Gerbscheid</span> is that it will do the rewrite and then do a post-hoc congruence construction, the specifics of which can depend on a number of factors. If <code>congrArg</code> works, great; if using <code>funext</code> in conjunction with <code>congrArg</code> works, great; but in general it might do other things too, like make use of proof irrelevance to iron out \"motive not type correct\" errors, or take a <code>simp</code>-like congruence lemma approach to navigate to particular locations that have nontrivial dependencies.</p>",
+        "id": 525749521,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1750868584
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/525748716\">said</a>:</p>\n<blockquote>\n<p>One inconvenience for writing a tutorial about <code>rw</code> is that its behaviour may soon change on bound variables.</p>\n</blockquote>\n<p>I don't think there's any harm in having tutorials that show how to make simple tactics. Someone could make a nice <code>rw</code>-lite, without any of the occs logic, one that just uses <code>kabstract</code>, makes a motive, and creates a proof with <code>congrArg</code>.</p>\n<p>It's a good introduction to what motives are about, which isn't specific to rw.</p>",
+        "id": 525750093,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1750868763
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"816344\">@Aaron Liu</span> We'll keep the current <code>rw</code> around in some form. It's nice having low-level tactics that you can understand completely (so long as you understand motives!), but it's very clear that the limitations of <code>rw</code> have been a stumbling block for Lean users forever. When someone uses <code>rw</code>, they're not thinking about motives, they have a rewrite they want to do. The system should make it possible to \"just\" rewrite. It's also long been confusing how <code>simp</code> can do rewrites that <code>rw</code> can't too.</p>",
+        "id": 525750848,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1750869007
+    },
+    {
+        "content": "<p>Of course, I don't want to explain full scale of <code>rw</code> / <code>simp</code>. It was rather \"Let's start by looking at the proof term that <code>rw</code> produces.\", or having a comment that the approach of <code>rw</code> doesn't work under binders, and I wanted to know if such would become soon outdated.</p>",
+        "id": 525750863,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1750869011
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"133339\">@Mirek Olšák</span> Motives will never be outdated. A tutorial with a simple <code>kabstract</code>-based algorithm would be great.</p>\n<p>By the way, it's not about not working under binders; this is a very-often-repeated simplified version of the actual limitation. It's that rw can't rewrite subexpressions that contain bound variables. This limitation is because of <code>kabstract</code>.</p>\n<p>A more advanced tutorial would then go into how <code>kabstract</code> works, then make a version of it that <em>can</em> match subexpressions that have bound variables by using MetaM and abstracting local fvars in the match, and then implement an improved <code>rw</code> using the <code>funext</code> term that <span class=\"user-mention\" data-user-id=\"479299\">@Jovan Gerbscheid</span> mentions.</p>",
+        "id": 525751622,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1750869287
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"133339\">@Mirek Olšák</span> : Partially my motivation in asking for such a tutorial is to have a resource where one can learn the computer science that goes behind a seemingly elementary tactic like <code>rw</code></p>",
+        "id": 525901483,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750943500
+    },
+    {
+        "content": "<p>In addition, effective metaprogramming requires learning quite a bit of the API and understanding some reasoning principles to guide good implementations. <code>rw</code> is just a good Trojan horse to sneak this in without too much conceptual complexity at the user level.</p>",
+        "id": 525901692,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750943554
+    },
+    {
+        "content": "<p>This doesn't necessarily require the most recent and advanced version of <code>rw</code> to be explained. Just a fairly sophisticated version, starting from an elementary one</p>",
+        "id": 525901791,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750943595
+    },
+    {
+        "content": "<p>Not sure what computer science you have in mind, so far I wrote <a href=\"https://github.com/mirefek/lean-tactic-programming-guide/blob/custom_simp_rw/CustomSimpRw.lean\">some explanation</a> about the difference between <code>simp</code> and <code>rw</code>.</p>",
+        "id": 525902297,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1750943740
+    },
+    {
+        "content": "<p>Subexpression matching</p>",
+        "id": 525902437,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750943779
+    },
+    {
+        "content": "<p>normalisation</p>",
+        "id": 525902545,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750943813
+    },
+    {
+        "content": "<p>substitution with the proof of correctness  (How congruence, Eq.subst, etc get used).</p>",
+        "id": 525902796,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750943881
+    },
+    {
+        "content": "<p>Basically this could take off where the equality section of <a href=\"https://leanprover.github.io/theorem_proving_in_lean4/\">#tpil</a> leaves the story</p>",
+        "id": 525902895,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750943907
+    },
+    {
+        "content": "<p>Even computer scientists don't usually go through very deep PL theory courses at the undergrad level (depending on where they study and what courses they choose)</p>",
+        "id": 525903490,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750944051
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/525902437\">said</a>:</p>\n<blockquote>\n<p>Subexpression matching</p>\n</blockquote>\n<p>It composes of two parts</p>\n<ul>\n<li>traversing a term (nothing \"deep\" really)</li>\n<li>matching (there is actually theory behind general unification)</li>\n</ul>\n<blockquote>\n<p>normalisation</p>\n</blockquote>\n<p>There is a bunch of theory about term rewriting (Knuth-Bendix, etc.) that Lean's <code>simp</code> doesn't care about -- it is up to the library writer to tag the correct &amp; correctly oriented lemmas. <code>rw</code> is even more basic.</p>\n<blockquote>\n<p>substitution with the proof of correctness  (How congruence, Eq.subst, etc get used).</p>\n</blockquote>\n<p>Check out the draft I linked above.</p>",
+        "id": 525903619,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1750944080
+    },
+    {
+        "content": "<p>lean cares about certain basic kinds of normalisation,  most prominently whnf</p>",
+        "id": 525904010,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1750944179
+    },
+    {
+        "content": "<p>Yes, on the other hand, there is no proving around that -- kernel just checks that two terms are equal up to beta-reduction. I was not planning to focus on that much...</p>",
+        "id": 525904618,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1750944362
+    },
+    {
+        "content": "<p>You can check out the implementation of <code>Lean.Meta.whnfImp</code>, it looks quite readable.</p>",
+        "id": 525907405,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1750945144
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"466334\">@Shreyas Srinivas</span> The custom <code>rw</code>  implementation / tutorial is now <a href=\"https://github.com/mirefek/lean-tactic-programming-guide/blob/custom_simp_rw/CustomSimpRw.lean\">available</a> in the branch <code>custom_simp_rw</code>. Let me know if it is what you imagined, and if it makes sense to merge to the main branch as a follow-up intermediate text.</p>",
+        "id": 528125542,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1752166784
+    },
+    {
+        "content": "<p>At a cursory glance it looks very good. I might get a chance to play with it in the next seven days and give better feedback</p>",
+        "id": 528147357,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1752175965
+    },
+    {
+        "content": "<p>One suggestion: Don't get into <code>simp</code> before getting a basic version of <code>rw</code> running</p>",
+        "id": 528370006,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1752250064
+    },
+    {
+        "content": "<p>Let <code>rw</code> be the first self-contained goal</p>",
+        "id": 528370129,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1752250099
+    },
+    {
+        "content": "<p>Another thing. It might really help to give some simper examples to manually perform rewrites with in the beginning. I find that when I want to understand an algorithm, working it out on some examples first helps. In these examples, you would first have users construct term mode proofs of increasing complexity. You would be introducing all the equality lemmas that we rewrite with, and increasing the complexity of expressions we rewrite under. Tactics are not easy. A little bit of slow cooking in term mode can motivate tactics much better. Also, tactics are ultimately about constructing <code>Expr</code>s</p>",
+        "id": 528370833,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1752250329
+    },
+    {
+        "content": "<p>why is this if statement not directly placed inside the <code>match</code> arm inside <code>myAbstract</code>?</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"bp\">!</span><span class=\"n\">e</span><span class=\"bp\">.</span><span class=\"n\">hasLooseBVars</span><span class=\"w\"> </span><span class=\"k\">then</span><span class=\"w\">  </span><span class=\"c1\">-- we cannot rewrite a subterm containing a variable bound in `e`</span>\n<span class=\"w\">    </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">isDefEq</span><span class=\"w\"> </span><span class=\"n\">e</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"k\">then</span><span class=\"w\">  </span><span class=\"c1\">-- check if already `a` is already the root</span>\n<span class=\"w\">      </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"n\">mkBVar</span><span class=\"w\"> </span><span class=\"n\">offset</span><span class=\"w\">  </span><span class=\"c1\">-- replace with bvar</span>\n</code></pre></div>\n<p>it would also help to provide an explanation of the <code>update&lt;insertExprConstructor&gt;</code> functions here. What they do and why we are using them.</p>",
+        "id": 528371662,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1752250700
+    },
+    {
+        "content": "<p>Another quibble, when I <code>#print kabstract</code> it shows me a completely different function where it looks like all the bvars have been constructed and the abstraction is being built. This seems to correspond to your <code>abstractToMapping</code> whereas your <code>myAbstract</code> seems to correspond to <code>Expr.abstract</code></p>",
+        "id": 528372460,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1752251022
+    },
+    {
+        "content": "<p>The comments don’t reflect that. </p>\n<p>I have read upto the beginning of section 2. I would suggest moving <code>simp</code> and <code>simp_rw</code> to a separate file and have some exercises on <code>rw</code>to keep it self contained.  For example adding the <code>occ</code> argument for <code>rw</code>might be a good exercise.</p>",
+        "id": 528374128,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1752251758
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/528372460\">said</a>:</p>\n<blockquote>\n<p>Another quibble, when I <code>#print kabstract</code> it shows me a completely different function where it looks like all the bvars have been constructed and the abstraction is being built. This seems to correspond to your <code>abstractToMapping</code> whereas your <code>myAbstract</code> seems to correspond to <code>Expr.abstract</code></p>\n</blockquote>\n<p>No, <code>kabstract</code> doesn't build the lambda, it corresponds to <code>myAbstract</code>. Its definition is a little more complicated because it can be provided with a position where to perform the rewrite, so it must count occurrences. I would not try to print a function to understand it, I would rather recommend to look at the definition in the library, or to test it.</p>",
+        "id": 528401878,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1752265518
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/528371662\">said</a>:</p>\n<blockquote>\n<p>why is this if statement not directly placed inside the <code>match</code> arm inside <code>myAbstract</code>?</p>\n<p><div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"bp\">!</span><span class=\"n\">e</span><span class=\"bp\">.</span><span class=\"n\">hasLooseBVars</span><span class=\"w\"> </span><span class=\"k\">then</span><span class=\"w\">  </span><span class=\"c1\">-- we cannot rewrite a subterm containing a variable bound in `e`</span>\n<span class=\"w\">    </span><span class=\"k\">if</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">isDefEq</span><span class=\"w\"> </span><span class=\"n\">e</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"k\">then</span><span class=\"w\">  </span><span class=\"c1\">-- check if already `a` is already the root</span>\n<span class=\"w\">      </span><span class=\"n\">return</span><span class=\"w\"> </span><span class=\"n\">mkBVar</span><span class=\"w\"> </span><span class=\"n\">offset</span><span class=\"w\">  </span><span class=\"c1\">-- replace with bvar</span>\n</code></pre></div><br>\n</p>\n</blockquote>\n<p>Besides <code>← isDefEq e a</code> being often a better than pure equality check, you cannot match against a variable, for example even this doesn't work.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">  </span><span class=\"k\">match</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"k\">with</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">true</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">false</span>\n</code></pre></div>",
+        "id": 528402553,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1752265875
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/528371662\">said</a>:</p>\n<blockquote>\n<p>it would also help to provide an explanation of the <code>update&lt;insertExprConstructor&gt;</code> functions here. What they do and why we are using them.</p>\n</blockquote>\n<p>Ctrl-click, and you will see what it does.</p>",
+        "id": 528403172,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1752266202
+    },
+    {
+        "content": "<p>I thought that for an intermediate tutorial, it makes sense to leave figuring easy things such as this one for the reader.</p>",
+        "id": 528403342,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1752266313
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/528374128\">said</a>:</p>\n<blockquote>\n<p>I have read up to the beginning of section 2. I would suggest moving <code>simp</code> and <code>simp_rw</code> to a separate file and have some exercises on <code>rw</code>to keep it self contained. For example adding the <code>occ</code> argument for <code>rw</code>might be a good exercise.</p>\n</blockquote>\n<p>Thanks, I will consider splitting <code>simp</code> into another file. The annoying part is that rewriting a quantified equality is again related to both <code>rw</code> and <code>simp</code>. But I agree that an exercise for implementing occurence count on your own is a good exercise, and the file is getting quite long &amp; heavy.</p>",
+        "id": 528404092,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1752266776
+    },
+    {
+        "content": "<p>For <code>simp</code>, it might be worth splitting into two to have some space to expand on generating specialized congruence lemmas (though your approach to only support app congruences that can be achieved with <code>congr</code>/<code>congrArg</code>/<code>congrFun</code> is fine too for a tutorial version! <code>simp</code> gets pretty far with just these; that said, you need to make sure you're not creating some type incorrect terms here, and that the type isn't changing from the LHS to the RHS)</p>",
+        "id": 528405102,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1752267363
+    },
+    {
+        "content": "<p>Originally, I thought of supporting only <code>app</code> with <code>congr</code>, and explain how to add other later. Then I thought that doing it all together also with <code>implies_congr</code>, and <code>forall_congr</code> from the start doesn't make too much difference. If I split <code>simp</code> into a separate file, I might again start with only supporting <code>congr</code>.</p>",
+        "id": 528410873,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1752270758
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466334\">Shreyas Srinivas</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/528374128\">said</a>:</p>\n<blockquote>\n<p>The comments don’t reflect that. </p>\n<p>I have read upto the beginning of section 2. I would suggest moving <code>simp</code> and <code>simp_rw</code> to a separate file and have some exercises on <code>rw</code>to keep it self contained.  For example adding the <code>occ</code> argument for <code>rw</code>might be a good exercise.</p>\n</blockquote>\n<p>I split it into two files -- <code>CustomRw.lean</code> &amp; <code>CustomSimp.lean</code> with the idea of <code>rw</code> being the first part, and <code>simp</code> second. I keep the combined file there too so far but planning to remove it if we agree this is better.</p>",
+        "id": 528482396,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1752351481
+    },
+    {
+        "content": "<p>I think just splitting the file and importing the rw into simp for simp_rw is better.</p>",
+        "id": 528484833,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1752354711
+    },
+    {
+        "content": "<p>Tutorials work best when they are in byte sized chunks</p>",
+        "id": 528484848,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1752354729
+    },
+    {
+        "content": "<p>Now, I split it in a way that doesn't have a Lean-dependency (so I don't import, importing is a bit annoying). Do you think the current split is not pedagogically ideal?</p>",
+        "id": 528486388,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1752357115
+    },
+    {
+        "content": "<p>The <code>rw</code> / <code>simp</code> is now in the main <a href=\"https://github.com/mirefek/lean-tactic-programming-guide\">tutorial</a>. I think concept-wise it can stay this way but it might need some fixes (feedback still welcome)</p>",
+        "id": 528936749,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1752611386
+    },
+    {
+        "content": "<p>I was reviewing this tutorial properly when I discovered a UX trick to get lean to give you good type errors for term mode proofs, and so allow programming with holes.  Experts might know it already, but it might be useful for newcomers: The idea is to insert <code>()</code> for each hole. Lean will complain that you are giving a value of type <code>unit</code> where you should be giving a value of type <code>...</code> which is the correct type. Suppose the type is a function type, then you give it a <code>fun x y z =&gt; ()</code>, then the type error gets updated. and one can repeat this ad infinitum</p>",
+        "id": 533124332,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754493081
+    },
+    {
+        "content": "<p>Now if only there was a code action to look at the type errors and insert these terms with these \"holes\"</p>",
+        "id": 533124484,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754493126
+    },
+    {
+        "content": "<p>hopefully not ad infinitum and only until you solve the problem</p>",
+        "id": 533124523,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754493136
+    },
+    {
+        "content": "<p>yeah, but you know what I mean. I think I have done this before with tpil and mpil last year, but not much afterwards. Lean usually gives you terrible error messages if you are in term mode in a proof.</p>",
+        "id": 533124690,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754493181
+    },
+    {
+        "content": "<p>It parses upto the next declaration.</p>",
+        "id": 533124729,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754493189
+    },
+    {
+        "content": "<p>If you use braces, you again get bad metavariable containing error messages</p>",
+        "id": 533124780,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754493202
+    },
+    {
+        "content": "<p>I just insert <code>sorry</code> and look at the expected type</p>",
+        "id": 533124787,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754493204
+    },
+    {
+        "content": "<p>sometimes if the errors are especially tricky I will start putting <code>:)</code></p>",
+        "id": 533124864,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754493224
+    },
+    {
+        "content": "<p>This trick only works because <code>()</code> is the unit element, but it can also contain terms as brackets so one just has to insert new stuff inside the brackets.</p>",
+        "id": 533124877,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754493227
+    },
+    {
+        "content": "<p>because <code>()</code> is a complete term, the type is determined to be <code>Unit</code> and lean can stop parsing further, and give a decent error message.</p>",
+        "id": 533125110,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754493297
+    },
+    {
+        "content": "<p>For what it is worth, I think that writing term mode proofs is a good introduction to metaprogramming.</p>",
+        "id": 533125213,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754493334
+    },
+    {
+        "content": "<p>when I am writing a term, I usually indeed leave <code>()</code>, or <code>_</code>.</p>",
+        "id": 533125257,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1754493350
+    },
+    {
+        "content": "<p>I don't understand the trick; using <code>()</code> can easily change how things elaborate due to the way types propagate. Using <code>_</code> is more neutral, and it reports the type in the error message. You can use <code>?_</code> if you want to avoid unification accidentally assigning it. These seem like a better choice over <code>()</code>. What am I missing about the UI for <code>_</code>/<code>?_</code>?</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"o\">()</span>\n<span class=\"c\">/-</span><span class=\"cm\">               ~~~~~~</span>\n<span class=\"cm\">failed to synthesize</span>\n<span class=\"cm\">  HAdd Nat Unit Nat</span>\n<span class=\"cm\">-/</span>\n\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"bp\">_</span>\n<span class=\"c\">/-</span><span class=\"cm\">                   ~</span>\n<span class=\"cm\">don't know how to synthesize placeholder</span>\n<span class=\"cm\">context:</span>\n<span class=\"cm\">⊢ Nat</span>\n<span class=\"cm\">-/</span>\n</code></pre></div>",
+        "id": 533126090,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754493635
+    },
+    {
+        "content": "<p>I took this example from the tutorial. See how in the <code>()</code> case you get localised error messages while with <code>_</code> you get a big global error message.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"c1\">-- it should look similar to</span>\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"kt\">Prop</span><span class=\"o\">),</span>\n<span class=\"w\">  </span><span class=\"o\">(</span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">),</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">  </span><span class=\"o\">(</span>\n<span class=\"w\">    </span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"n\">h</span><span class=\"w\"> </span><span class=\"n\">hp</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">Eq</span><span class=\"bp\">.</span><span class=\"n\">mpr</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"o\">()</span><span class=\"w\"> </span><span class=\"o\">()))</span>\n<span class=\"w\">  </span><span class=\"o\">)</span>\n\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"kt\">Prop</span><span class=\"o\">),</span>\n<span class=\"w\">  </span><span class=\"o\">(</span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">),</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">  </span><span class=\"o\">(</span>\n<span class=\"w\">    </span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"n\">h</span><span class=\"w\"> </span><span class=\"n\">hp</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">@</span><span class=\"n\">Eq</span><span class=\"bp\">.</span><span class=\"n\">mpr</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 533127028,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754494001
+    },
+    {
+        "content": "<p>The localised error message is more readable than the big global error on the entire body of <code>fun</code>. That's the UX I am after</p>",
+        "id": 533127397,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754494116
+    },
+    {
+        "content": "<p>when would you even have <code>@Eq.mpr</code>?</p>",
+        "id": 533127439,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754494131
+    },
+    {
+        "content": "<p>I took it from the tutorial which starts with an <code>Eq.mpr</code> and decided to write all arguments explicitly to start with.</p>",
+        "id": 533127567,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754494171
+    },
+    {
+        "content": "<p>well you've taken a wrong turn somewhere because <code>@Eq.mpr Nat</code> is already wrong and I think the latter error message is a lot more helpful in telling me that</p>",
+        "id": 533127719,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754494221
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"816344\">Aaron Liu</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/533127439\">said</a>:</p>\n<blockquote>\n<p>when would you even have <code>@Eq.mpr</code>?</p>\n</blockquote>\n<p>Let's not ask that here. It's illustrating a point, and it's not fair to ask that an illustration be optimal code on its own.</p>",
+        "id": 533127838,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754494250
+    },
+    {
+        "content": "<p>The original proof was already in the code. I just took it apart from inside out for building this example and then added the explicit @:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"kt\">Prop</span><span class=\"o\">),</span>\n<span class=\"w\">  </span><span class=\"o\">(</span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">),</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"n\">h_eq</span><span class=\"w\"> </span><span class=\"n\">h_finish</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">  </span><span class=\"n\">Eq</span><span class=\"bp\">.</span><span class=\"n\">mpr</span><span class=\"w\"> </span><span class=\"o\">(</span>\n<span class=\"w\">    </span><span class=\"n\">congrArg</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">X</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">h_eq</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"o\">)</span>\n<span class=\"w\">    </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"o\">(</span><span class=\"n\">Eq</span><span class=\"bp\">.</span><span class=\"n\">mpr</span><span class=\"w\"> </span><span class=\"o\">(</span>\n<span class=\"w\">    </span><span class=\"n\">congrArg</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">h_eq</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">)</span>\n<span class=\"w\">    </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"n\">h_finish</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 533128170,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754494352
+    },
+    {
+        "content": "<p>Ok, I see what you mean <span class=\"user-mention\" data-user-id=\"466334\">@Shreyas Srinivas</span>. Putting in a wrong term with a concrete type can help localize errors, in a way that neither <code>_</code>, <code>?_</code>, nor <code>sorry</code> can.</p>",
+        "id": 533128208,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754494367
+    },
+    {
+        "content": "<p>yes that's the point</p>",
+        "id": 533128361,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754494423
+    },
+    {
+        "content": "<p>in this case I think you <em>don't</em> want a localized error because the entire term has the wrong type anyways, so even if you fix the local errors you will still have to deal with the type mismatch</p>",
+        "id": 533128462,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754494451
+    },
+    {
+        "content": "<p>There's the proviso that <code>()</code> might cause other errors, which is worth keeping in mind, and there's no way to fix that.</p>",
+        "id": 533128510,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754494469
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"816344\">@Aaron Liu</span> Yes, that's an error, but if you're building up a term you might not be finished creating the terms that it will eventually sit within.</p>",
+        "id": 533128589,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754494498
+    },
+    {
+        "content": "<p>but sometimes it is useful to localize your errors and to do that maybe <code>()</code> can be helpful (I haven't tried it so I wouldn't know)</p>",
+        "id": 533128632,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754494510
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"816344\">Aaron Liu</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/533128462\">said</a>:</p>\n<blockquote>\n<p>in this case I think you <em>don't</em> want a localized error because the entire term has the wrong type anyways, so even if you fix the local errors you will still have to deal with the type mismatch</p>\n</blockquote>\n<p>That's not the point. I just built the quickest example I could to show my point. If one wants to program with proof holes in term mode, I think that's basically necessary for type errors to be localised. Whether this is a style lean should encourage is a different matter, but it has its uses.</p>",
+        "id": 533128690,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754494539
+    },
+    {
+        "content": "<p>I wouldn't say it's necessary, since I have built terms without doing this and without much trouble either</p>",
+        "id": 533128839,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754494593
+    },
+    {
+        "content": "<p>I am thinking of a more systematic approach here. Of course one can build term mode proofs without editor assistance as well.</p>",
+        "id": 533128918,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754494620
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"816344\">@Aaron Liu</span> What if the term just hasn't gotten to a relevant <code>|&gt;</code> yet and Shreyas wants to get the Eq.mpr term right first?</p>",
+        "id": 533128931,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754494624
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/533128931\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"816344\">Aaron Liu</span> What if the term just hasn't gotten to a relevant <code>|&gt;</code> yet and Shreyas wants to get the Eq.mpr term right first?</p>\n</blockquote>\n<p>you could <code>have</code>???</p>",
+        "id": 533129058,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754494668
+    },
+    {
+        "content": "<p>I could have shown a better example I admit. But it was just easier to delete a subterm tree and show how different terms work as holes w.r.t the error messages we get</p>",
+        "id": 533129166,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754494703
+    },
+    {
+        "content": "<p>But why should he need to write <code>have</code> just to get some localized type errors? Maybe he doesn't want <code>have</code> in the final term.</p>",
+        "id": 533129213,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754494722
+    },
+    {
+        "content": "<p>do the <code>:)</code> then</p>",
+        "id": 533129293,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754494749
+    },
+    {
+        "content": "<p>Also, in this context, the purpose of building up these maximally explicit terms (maximal upto human convenience) is to show what we will later be building with tactics.</p>",
+        "id": 533129389,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754494784
+    },
+    {
+        "content": "<p>Be careful with the line of thought \"I can do this unassisted so what's the problem?\" It's very easy to get into a situation where we don't realize all the nonsense we're doing to work around issues because we are capable and able to navigate the system. There might be workarounds (e.g. using <code>have</code>, using <code>:)</code>) but that doesn't mean they are <em>solutions</em> that we can say are the obvious things that others <em>should</em> do (rather than <em>could</em> do). We need to take a critical eye toward the system.</p>",
+        "id": 533129595,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1754494853
+    },
+    {
+        "content": "<p>Which then gave me the idea that if we had localised errors like we get here with <code>()</code>, then maybe we could automate the process of opening up the brackets and putting the cursor in there, along with a type hint.</p>",
+        "id": 533129599,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754494854
+    },
+    {
+        "content": "<p>Maybe the key takeaway is that a special symbol for holes that produces localised errors is a nice thing to have.</p>",
+        "id": 533129880,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754494938
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/533129595\">said</a>:</p>\n<blockquote>\n<p>Be careful with the line of thought \"I can do this unassisted so what's the problem?\" It's very easy to get into a situation where we don't realize all the nonsense we're doing to work around issues because we are capable and able to navigate the system. There might be workarounds (e.g. using <code>have</code>, using <code>:)</code>) but that doesn't mean they are <em>solutions</em> that we can say are the obvious things that others <em>should</em> do (rather than <em>could</em> do). We need to take a critical eye toward the system.</p>\n</blockquote>\n<p>My point is that <em>there are many solutions</em> to this problem already and sometimes it's not a problem</p>",
+        "id": 533129979,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1754494969
+    },
+    {
+        "content": "<p>What's special about the unit symbol is that it can be trivially turned into brackets by putting terms into it since it consists of two delimiters when converted into brackets. So lean stops reading past the closing brackets both when <code>()</code> is the unit term and when <code>(&lt;term&gt;)</code> are supplied as the body of the def</p>",
+        "id": 533130376,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754495097
+    },
+    {
+        "content": "<p>The closest symbol combination I can think of that would serve this role without being the unit element is <code>(_)</code>. Currently it doesn't count as a term so the global error message issue still exists.</p>",
+        "id": 533131172,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754495331
+    },
+    {
+        "content": "<p>Let me know if there is a conclusion about what tip I should write to the text. To me, it feels a bit inconclusive so far. In the meantime, I at least added a <a href=\"https://github.com/mirefek/lean-tactic-programming-guide/blob/main/CustomRw.lean#L103-L108\">tip on filling</a> <code>match ... with</code></p>",
+        "id": 533151252,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1754501518
+    },
+    {
+        "content": "<p>Will do. I think some of the text can be phrased in a more complete and simple manner.</p>",
+        "id": 533151405,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754501578
+    },
+    {
+        "content": "<p>I meant regarding <code>()</code>, but general feedback is of course also very welcome.</p>",
+        "id": 533151613,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1754501672
+    },
+    {
+        "content": "<p>Especially, if you can make it more complete, and simpler at the same time -- these requirements usually compete. <span aria-label=\"slight smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"slight smile\">:slight_smile:</span></p>",
+        "id": 533151960,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1754501828
+    },
+    {
+        "content": "<p>I think the _ issue is less an issue with the tutorial. It’s more about 1. Giving lean users a tip. 2. Feedback to the lean devs</p>",
+        "id": 533152182,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1754501930
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"133339\">Mirek Olšák</span> <a href=\"#narrow/channel/239415-metaprogramming-.2F-tactics/topic/Introduction.20to.20tactic.20programming/near/533151252\">schrieb</a>:</p>\n<blockquote>\n<p>Let me know if there is a conclusion about what tip I should write to the text. To me, it feels a bit inconclusive so far. In the meantime, I at least added a <a href=\"https://github.com/mirefek/lean-tactic-programming-guide/blob/main/CustomRw.lean#L103-L108\">tip on filling</a> <code>match ... with</code></p>\n</blockquote>\n<p>Well, there's also <a href=\"https://github.com/leanprover-community/batteries/pull/1307\">batteries#1307</a> now</p>",
+        "id": 533154099,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1754502833
+    },
+    {
+        "content": "<p>Interesting, I just tried on lean 4 web, and it didn't work, let me try again</p>",
+        "id": 533154284,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1754502907
+    },
+    {
+        "content": "<p>It is not yet in the main release, right?</p>",
+        "id": 533154446,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1754502972
+    },
+    {
+        "content": "<p>Well, it landed 2 hours ago</p>",
+        "id": 533154474,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1754502983
+    },
+    {
+        "content": "<p>ok cool, then I update the Lean version, and remove the \"hack\" again</p>",
+        "id": 533155473,
+        "sender_full_name": "Mirek Olšák",
+        "timestamp": 1754503405
+    }
+]

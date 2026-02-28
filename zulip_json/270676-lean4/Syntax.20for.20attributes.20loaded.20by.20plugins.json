@@ -1,0 +1,80 @@
+[
+    {
+        "content": "<p>Most often the fact that plugins do not load syntax is not an issue, but attribute syntax provides an example of where an interaction can occur.</p>\n<p>Let's say I've loaded an attribute <code>@[plugin_attr]</code> via plugin (either defined in the plugin itself or one of its dependencies). The attribute is still initialized and its <code>add</code> field is applied to the attribute syntax. However, because the <code>syntax (name := pluginAttr) \"plugin_attr\" : attr</code> syntax was not added, the syntax fed to <code>add</code> is merely of kind <code>Attr.simple</code>, not <code>plugin_attr</code>. This means that a typical <code>match stx with | `(attr| plugin_attr) =&gt; ...</code> in <code>add</code> fails, yielding an <code>internal exception</code> when <code>Elab.throwUnsupportedSyntax</code> is used, as is typical. (Note: <code>elabAttr</code> has special handling for <code>Attr.simple</code> which identifies the relevant extension and feeds the syntax to its <code>add</code> in the first place.)</p>\n<p>I'm not sure if the right approach here is to somehow load the meta phase of plugins (which might be more possible now than before thanks to the module system?), special-case attribute syntax when loading, modify <code>attr</code> antiquotations somehow, or, perhaps most likely...just deal with the internal exception messages, since plugins are not widespread (yet!). But thought I'd bring it up! :)</p>\n<p>Here's an example package (<a href=\"/user_uploads/3121/tapkw95B7j4XSrycIGSVEMfh/OutletPkg-2.zip\">OutletPkg 2.zip</a>), and some code logging the differing attribute syntax between an attribute from a plugin and one loaded in the ordinary way:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">module</span>\n\n<span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">OutletPkg</span><span class=\"bp\">.</span><span class=\"n\">Basic</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">info: input syntax: (Attr.simple `plugin_attr [])</span>\n<span class=\"sd\">---</span>\n<span class=\"sd\">info: failed to match</span>\n<span class=\"sd\">-/</span>\n<span class=\"bp\">#</span><span class=\"n\">guard_msgs</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"kd\">@[</span><span class=\"n\">plugin_attr</span><span class=\"kd\">]</span>\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">foo</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"mi\">4</span>\n\n<span class=\"sd\">/--</span>\n<span class=\"sd\">info: input syntax: (regular_attr \"regular_attr\")</span>\n<span class=\"sd\">---</span>\n<span class=\"sd\">info: regular attr success!</span>\n<span class=\"sd\">-/</span>\n<span class=\"bp\">#</span><span class=\"n\">guard_msgs</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"kd\">@[</span><span class=\"n\">regular_attr</span><span class=\"kd\">]</span>\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">bar</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"mi\">4</span>\n</code></pre></div>",
+        "id": 564072254,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1765899528
+    },
+    {
+        "content": "<p>This looks like a misuse of plugins. If something is required for successful elaboration of a file, it should be an import. Could you un-XY?</p>",
+        "id": 564074963,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1765900161
+    },
+    {
+        "content": "<p>Sure! (I don't actually want to add attributes via plugin; I just want to avoid confusing errors.)</p>\n<p>I'm experimenting with making Mathlib.Init (or at least the linter parts of it) a plugin. However, the new MathlibInit plugin requires Batteries, which means that batteries needs to be statically linked to the new plugin (see <a class=\"stream-topic\" data-stream-id=\"270676\" href=\"/#narrow/channel/270676-lean4/topic/Load.20plugin.20during.20build.3F/with/564048357\">#lean4 &gt; Load plugin during build?</a>) (or dynamically linked in mathlib). However, this means that we see the internal exception on <code>@[nolint _]</code>s even when Batteries is not imported. I anticipate this would be a similar situation for any other plugin with dependencies—possibly for my actual, non-experimental use case as well (elaboration-aware refactoring utilities).</p>\n<p>Maybe the solution is to somehow avoid feeding it to the plugin and have a typical unexpected attribute error, then? <span aria-label=\"thinking\" class=\"emoji emoji-1f914\" role=\"img\" title=\"thinking\">:thinking:</span></p>",
+        "id": 564076367,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1765900489
+    },
+    {
+        "content": "<p>What's wrong with importing linters?</p>",
+        "id": 564077312,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1765900708
+    },
+    {
+        "content": "<p>For one, we want them to apply library-wide, which means we need to make sure Mathlib.Init is imported in every file; plugins seem like a cleaner approach.</p>\n<p>But this is just an experiment to stress-test plugins, ultimately; my actual use case is executing temporarily-active library-wide elaboration aware refactoring utilities via plugin. :)</p>",
+        "id": 564078522,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1765900970
+    },
+    {
+        "content": "<p>Also, I imagine this would be an issue for any plugin with dependencies, right?</p>",
+        "id": 564079251,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1765901135
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> <a href=\"#narrow/channel/270676-lean4/topic/Syntax.20for.20attributes.20loaded.20by.20plugins/near/564078522\">said</a>:</p>\n<blockquote>\n<p>For one, we want them to apply library-wide, which means we need to make sure Mathlib.Init is imported in every file; plugins seem like a cleaner approach.</p>\n</blockquote>\n<p>But here \"library-wide\" means \"anything not upstream of the linter definitions\", right? So it's nontrivial either way and one viewpoint here could be that this should be a <code>shake</code> concern, like any other import management.</p>\n<blockquote>\n<p>Also, I imagine this would be an issue for any plugin with dependencies, right?</p>\n</blockquote>\n<p>Yes; one could expect that the <code>meta initialize</code>s used to register attributes and so on should only be activated when <em>building</em> the plugin, not when <em>running</em> it. Separation of build-time and run-time generated code like this is the last remaining major goal of the module system that I will focus on next quarter.</p>",
+        "id": 564080154,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1765901345
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110024\">Sebastian Ullrich</span> <a href=\"#narrow/channel/270676-lean4/topic/Syntax.20for.20attributes.20loaded.20by.20plugins/near/564080154\">said</a>:</p>\n<blockquote>\n<p>But here \"library-wide\" means \"anything not upstream of the linter definitions\", right?</p>\n</blockquote>\n<p>Only technically; we carefully bottleneck through Mathlib.Init, and have linters to ensure that Mathlib.Init is imported in every file that is not a dependency of Mathlib.Init. That is, it already more or less functions like a separate library used as a plugin for the rest of mathlib.</p>",
+        "id": 564080530,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1765901430
+    },
+    {
+        "content": "<p>Also, I'm a bit surprised that loading linters as plugins is (apparently?) not envisioned as a primary use for plugins! (Or is it?) What <em>is</em> the intended use of plugins, if not initializing linters and environment extensions?</p>",
+        "id": 564081063,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1765901571
+    },
+    {
+        "content": "<p>(By the way: downstream repos also take advantage of the <code>mathlibStandardSet</code> of linters. I imagine it would be easier for them to simply add a <code>MathlibInit</code> plugin to their library rather than making sure each of their files imports Mathlib.Init!)</p>",
+        "id": 564083899,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1765902329
+    },
+    {
+        "content": "<p>One more adjacent thought: a plugin model could hypothetically be useful in providing e.g. temporary, convenient, interactive hash commands everywhere in a library without needing imports. (Of course, this is not supported at the moment.) This conflicts a bit with the notion that file elaboration shouldn't depend on plugins, but having library-specific \"development tools\" at your fingertips without having to add imports would be really nice.</p>",
+        "id": 564085391,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1765902720
+    },
+    {
+        "content": "<p>I think with plugins a barely-used, undocumented feature, we shouldn't bother trying to use them to do things that already work (e.g. Mathlib.Init) \"better\". If they are necessary for a new, signficant feature, sure, let's endure the cost of making plugins a viable tool.</p>",
+        "id": 564158590,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1765934430
+    },
+    {
+        "content": "<p>I totally agree. :) Pluginizing Mathlib.Init is (only) an experiment to assess the limitations (and pitfalls) of plugins themselves, which can otherwise be hard to encounter in simpler cases. In principle, it \"makes sense\" for Mathlib.Init to be a plugin, but for sure—actually making it one would only be a good idea if/once plugins are streamlined, predictable, and reliable.</p>\n<p>P.S. There's a demo—not <em>ergonomically</em> at library scale yet—of what I'm working on that motivates this investigation into plugins at <a class=\"stream-topic\" data-stream-id=\"287929\" href=\"/#narrow/channel/287929-mathlib4/topic/Demo.20.28Skimmer.29.3A.20replacing.20deprecated.20declarations/with/564104762\">#mathlib4 &gt; Demo (Skimmer): replacing deprecated declarations</a>, plus some discussion of the requirements here that make plugins useful for, well, plugging in such tools. :)</p>",
+        "id": 564159024,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1765934865
+    }
+]

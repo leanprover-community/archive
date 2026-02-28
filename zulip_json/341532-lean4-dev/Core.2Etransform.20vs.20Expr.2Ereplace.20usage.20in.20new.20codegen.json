@@ -1,0 +1,92 @@
+[
+    {
+        "content": "<p>The new compiler performs a number of transformations on the input expression such as</p>\n<ul>\n<li>inlining auxiliary matchers</li>\n<li>inlining <code>macro_inline</code> functions</li>\n<li>removing <code>._unsafe_rec</code> from function names</li>\n<li>performing the registered <code>csimp</code> replacements.</li>\n</ul>\n<p>The first three are done in <code>LCNF/ToDecl.lean</code>, just once before the expression is passed to <code>toLCNF</code>, and use <code>Core.transform</code> (or <code>Meta.transform</code>, which looks like essentially the same thing) to traverse and rewrite the expression. The <code>csimp</code> replacements are done inside <code>toLCNF</code> via <code>CSimp.replaceConstants</code>, which uses <code>Expr.replace</code> for the rewriting logic. I have some questions:</p>\n<ul>\n<li>What exactly does <code>Expr.replace</code> do? From the little I can glean from the C++ implementation it looks like a lower-powered version of the <code>transform</code> functions, and so it should perform the replacements \"in depth\". Is <code>replace f e</code> equivalent to <code>transform e (fun e =&gt; pure match f e with | .none =&gt; .continue | .some e' =&gt; .done e')</code>?</li>\n<li>Is there a specific reason for performing the <code>csimp</code> replacements \"at the leaf level\" in <code>ToLCNF.lean</code>, instead of running them once on the whole expression in <code>ToDecl</code> like <code>macroInline</code> et al.?</li>\n</ul>",
+        "id": 523294860,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1749562862
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"656225\">@Cameron Zwarich</span>, you're probably the specialist regarding this code</p>",
+        "id": 523963749,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1749826934
+    },
+    {
+        "content": "<p>Apologies for the late reply. I had something partially written up and then got sidetracked making progress on enabling the new compiler by default (hopefully next week).</p>\n<p>The main reason for using <code>CSimp.replaceConstants</code> in the new compiler is that it was already there and used by the old compiler. After we switch to the new compiler, we'll go back and revisit all of these, and move any dependencies on C++ functions to Lean functions (either existing or ported) instead.</p>\n<blockquote>\n<ul>\n<li>What exactly does <code>Expr.replace</code> do? From the little I can glean from the C++ implementation it looks like a lower-powered version of the <code>transform</code> functions, and so it should perform the replacements \"in depth\". Is <code>replace f e</code> equivalent to <code>transform e (fun e =&gt; pure match f e with | .none =&gt; .continue | .some e' =&gt; .done e')</code>?</li>\n</ul>\n</blockquote>\n<p>That seems about right. It also looks like it uses a different caching strategy (pointer equality vs. structural equality).</p>\n<blockquote>\n<ul>\n<li>Is there a specific reason for performing the <code>csimp</code> replacements \"at the leaf level\" in <code>ToLCNF.lean</code>, instead of running them once on the whole expression in <code>ToDecl</code> like <code>macroInline</code> et al.?</li>\n</ul>\n</blockquote>\n<p>I don't think there's any reason because it seemed like the simplest thing to do at the time. One constant gets replaced by another, so why not do it at the constant level rather than the expr or decl level? Does this ordering of transformations cause some deleterious effects somehow?</p>",
+        "id": 523966223,
+        "sender_full_name": "Cameron Zwarich",
+        "timestamp": 1749827754
+    },
+    {
+        "content": "<blockquote>\n<p>Apologies for the late reply. I had something partially written up and then got sidetracked making progress on enabling the new compiler by default (hopefully next week).</p>\n</blockquote>\n<p>No problem at all, I'm thankful for the work you're doing and the helpful answers!</p>\n<blockquote>\n<p>I don't think there's any reason because it seemed like the simplest thing to do at the time. One constant gets replaced by another, so why not do it at the constant level rather than the expr or decl level? Does this ordering of transformations cause some deleterious effects somehow?</p>\n</blockquote>\n<p>I don't know of any bad effects, I just found it confusing when looking at it for the first time for a number of small reasons.</p>\n<ul>\n<li><code>macroInline</code>, <code>inlineMatchers</code> and <code>removeUnsafeRecNames</code> seem like a similar kind of thing to <code>CSimp.replaceConstants</code> -- expression transformations that apply various rewritings to special constants -- so I think I would have expected them to all happen at the same spot in <code>ToDecl</code>.</li>\n<li><code>replaceConstants</code> doesn't use the features of the <code>ToLCNF.M</code> monad to run, and I think it would make the code's organization simpler to have the big <code>where</code> block for <code>toLCNF</code> only contain the logic/processing which needs to be there; I guess this is similar to the previous point, separating \"preparing the Expr for conversion to LCNF\" from \"converting a prepared Expr to LCNF\".</li>\n<li><code>CSimp.replaceConstants</code> has its own logic to traverse an Expr in order to find the places where it should rewrite; using it within a larger process that does its own Expr traversal feels strange, since then the whole \"rewrite in depth\" power of <code>replaceConstants</code> isn't needed when it's just called on expressions of the shape <code>.const ..</code>.</li>\n<li>Due to the way information is passed between the various <code>visitAsdf</code> functions in <code>toLCNF</code>, the result of the <code>replaceConstants</code> call in <code>visitApp</code> is lost when control passes to <code>visitAppDefaultConst</code> and so <code>replaceConstants</code> needs to be called again on the same argument, which again feels a bit strange.</li>\n</ul>\n<p>To be clear, I'm trying to describe why I was confused here, not to make a normative judgement on how the code should be written; it ain't broke, so \"it was the simplest thing to do\"  is a perfectly satisfying explanation of why the code is what it is :)</p>",
+        "id": 523977201,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1749831883
+    },
+    {
+        "content": "<blockquote>\n<p>After we switch to the new compiler, we'll go back and revisit all of these, and move any dependencies on C++ functions to Lean functions (either existing or ported) instead.</p>\n</blockquote>\n<p>Does that mean that on medium-term timescales the entire way from a Lean source file to a compiled-to-C file will be entirely done by code written in Lean, with only the kernel (and maybe the logic for the <code>lean</code> CLI) remaining in C++?</p>",
+        "id": 523977844,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1749832126
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"893179\">Simon Dima</span> <a href=\"#narrow/channel/341532-lean4-dev/topic/Core.2Etransform.20vs.20Expr.2Ereplace.20usage.20in.20new.20codegen/near/523294860\">said</a>:</p>\n<blockquote>\n<ul>\n<li>What exactly does <code>Expr.replace</code> do?</li>\n</ul>\n</blockquote>\n<p>You can find a reference implementation here: <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Expr.replaceNoCache#doc\">docs#Lean.Expr.replaceNoCache</a> (minus the pointer-based caching)</p>\n<p>It's different from <code>Core.transform</code> in one significant way, which is that <code>Core.transform</code> processes <code>.app</code> chains differently. While <code>Expr.replace</code> shows each <code>app</code> to the function (so it sees all prefixes of an application), <code>Core.transform</code> uses <code>Expr.withApp</code> to skip to the function and arguments immediately.</p>",
+        "id": 523980091,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1749833022
+    },
+    {
+        "content": "<p>Practically, it's not very different. I'd imagine that <code>Expr.replace</code> is faster than <code>Core.transform</code> for simpler replacements (like replacing constants), but I haven't measured anything. For tasks like \"replace all n-argument replacements of f\", I think <code>Core.transform</code> saves a little bit of quadratic complexity (with <code>Expr.replace</code> you have to look back n apps on each app to see if it's a match).</p>",
+        "id": 523981420,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1749833573
+    },
+    {
+        "content": "<p>Since you mention <code>Meta.transform</code>: that one is <em>very</em> different. It manages local contexts as it enters bindings, guaranteeing that each expression you see has all its bvars instantiated as local variables. That means you can use <code>inferType</code>/<code>isDefEq</code>/<code>whnf</code>, etc. when computing replacements.</p>\n<p>You can't use <code>Meta.transform</code> for doing csimp replacement, since the transformation can produce terms that are no longer type correct. Type correctness can easily depend on the exact definition of the functions being applied.</p>",
+        "id": 523981971,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1749833790
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/channel/341532-lean4-dev/topic/Core.2Etransform.20vs.20Expr.2Ereplace.20usage.20in.20new.20codegen/near/523981971\">said</a>:</p>\n<blockquote>\n<p>You can't use <code>Meta.transform</code> for doing csimp replacement, since the transformation can produce terms that are no longer type correct. Type correctness can easily depend on the exact definition of the functions being applied.</p>\n</blockquote>\n<p>That seems like a good reason to do csimp replacements as late as possible then, since <code>toLCNF</code> does use <code>MetaM</code> for type inference quite a bit!</p>\n<p>Actually, removing the <code>_unsafe_rec</code> suffix from every name is also a nontrivial transformation of terms with respect to typing. Can we be sure that it's safe to do that and keep using <code>Meta</code> functions afterwards?</p>",
+        "id": 523982908,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1749834107
+    },
+    {
+        "content": "<p>Going slightly off topic (edit: I guess with your last message, it's still on topic after all!): It would be nice if csimp lemmas could be more conditional (e.g. to replace a function with a function that's best suited for the given types; perhaps there's a much better algorithm if the types are hashable for instance). That needs some Meta computation, but there's that type incorrectness problem.</p>\n<p>One trick there is to have something like</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">csimpReplace</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">orig</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"n\">new</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">orig</span>\n</code></pre></div>\n<p>and then the csimp transformation could replace a whole expression <code>x</code> with <code>x'</code> by first replacing it with <code>csimpReplace x x'</code>, and then later having a pass that actually replaces it with <code>x'</code>.</p>",
+        "id": 523982926,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1749834114
+    },
+    {
+        "content": "<p>Rephrasing to make sure I get it: using that you could at some point run a pass that annotates the expression tree with information about csimp replacements to be performed later, in a way that preserves typeability and doesn't require any other state since the information is stored in the <code>Expr</code>. That's neat!</p>",
+        "id": 523985080,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1749834957
+    },
+    {
+        "content": "<p>My intuitive solution would have been along the line of inserting casts; everywhere the type of some term depends on <code>orig</code> and changes via the replacement, casting along the equality between <code>orig</code> and <code>_new</code>  should be able to fix that, and would later be compiled to a no-op<br>\nI wouldn't want to have to implement that, though <span aria-label=\"sweat smile\" class=\"emoji emoji-1f605\" role=\"img\" title=\"sweat smile\">:sweat_smile:</span></p>",
+        "id": 523985733,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1749835212
+    },
+    {
+        "content": "<p>Yes, inserting casts is tricky business!</p>\n<p>One example: Consider <code>let x := v; b</code> and the type <code>T</code> of <code>b</code> depends on the value of <code>v</code> to be type correct. If you have a rewrite <code>v = v'</code>, how do you cast <code>b</code>? The normal way to create a cast, using <code>Eq.rec</code>,  needs <code>fun x =&gt; T</code> to be type correct (\"motive not type correct\"), but, worse, <code>x</code> might not even appear in <code>T</code> directly. As far as I know, the only things you can do are (1) say that <code>v</code> cannot be rewritten (except by definitional equalities) or (2) zeta reduce to <code>b[x:=v]</code> and ignore such <code>let</code>s entirely.</p>",
+        "id": 523989889,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1749837028
+    },
+    {
+        "content": "<blockquote>\n<p>Does that mean that on medium-term timescales the entire way from a Lean source file to a compiled-to-C file will be entirely done by code written in Lean, with only the kernel (and maybe the logic for the <code>lean</code>CLI) remaining in C++?</p>\n</blockquote>\n<p>After enabling the new compiler, the only things remaining in C++ will be the kernel (which includes some pieces of the shared data structures like <code>Expr</code>) and some utility functions that the new compiler relies upon. I think it should be very easy to rewrite all of the latter in Lean, so we're talking about a timeframe of a few weeks to a few months I think.</p>",
+        "id": 524002626,
+        "sender_full_name": "Cameron Zwarich",
+        "timestamp": 1749842750
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"893179\">Simon Dima</span> <a href=\"#narrow/channel/341532-lean4-dev/topic/Core.2Etransform.20vs.20Expr.2Ereplace.20usage.20in.20new.20codegen/near/523982908\">said</a>:</p>\n<blockquote>\n<p>Actually, removing the <code>_unsafe_rec</code> suffix from every name is also a nontrivial transformation of terms with respect to typing. Can we be sure that it's safe to do that and keep using <code>Meta</code> functions afterwards?</p>\n</blockquote>\n<p><span class=\"user-mention\" data-user-id=\"656225\">@Cameron Zwarich</span>, what do you think, could there be cases where <code>removeUnsafeRecNames</code> breaks typing because something relies on a definitional equality involving a recursive function?</p>",
+        "id": 524207037,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1750063562
+    }
+]

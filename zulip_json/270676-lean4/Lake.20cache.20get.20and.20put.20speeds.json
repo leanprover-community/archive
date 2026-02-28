@@ -1,0 +1,62 @@
+[
+    {
+        "content": "<p>Currently, <code>lake cache put</code> and <code>lake cache get</code> iterate over all artifacts and send curl requests one by one to the s3 bucket. While this works, even assuming upload speeds are unlimited, it would take <code>latency * number of files</code> seconds to upload. This means that, for instance, uploading recent mathlib to a lake cache with a bucket in the US from an EU country takes around 17 minutes just for pure latency (using 130ms as latency, a number I took off the internet, not meant to be exact). In practice, I have <code>lake cache put</code> taking 90 minutes when putting a recent mathlib commit even with high upload speeds due to authentication + signing time. The same latency calculation is true for lake cache get, but empirically lake cache get is a lot closer to 17 min as there is no authentication overhead.</p>\n<p>As repos grow, users of <code>cache put</code> / <code>cache get</code> spend an increasingly long time waiting for cache results.</p>\n<p>To mitigate this, one could expose a <code>--num-threads</code> option on <code>lake cache put</code> and <code>get</code>, and internally sending <code>num-threads</code> curl requests / HTTP get requests in parallel.<br>\nAlternatively, one could rely on <code>LEAN_NUM_THREADS</code> as a way to bottleneck not sending too many requests in parallel.</p>\n<p>I assume the major beneficiaries of this feature will be users with their own lake cache, which is admittedly not too frequently used yet, but becomes increasingly relevant for large formalization projects, which we are seeing more and more of. <br>\nAlso, the currently very slow speed is for sure a reason to be hesitant to use lake cache get and put in the first place, so I hope this could help with adoption.</p>\n<p>On the downside, this would make the Caching uploading logic a bit more complex, as one would have to adjust <code>uploadArtifacts</code> and <code>downloadArtifacts</code> to have logic to submit exactly num-threads tasks at a time. In case <code>LEAN_NUM_THREADS</code> is used to limit concurrency instead, the map would only change slightly to use pure tasks and wait for all of them to finish.</p>\n<p>Is this still a feature worth adding?</p>",
+        "id": 566055662,
+        "sender_full_name": "Simon Sorg",
+        "timestamp": 1767358836
+    },
+    {
+        "content": "<p><a class=\"stream-topic\" data-stream-id=\"287929\" href=\"/#narrow/channel/287929-mathlib4/topic/lake.20exe.20cache.20get.20very.20slow/with/562859300\">#mathlib4 &gt; lake exe cache get very slow</a></p>",
+        "id": 566057912,
+        "sender_full_name": "Snir Broshi",
+        "timestamp": 1767360399
+    },
+    {
+        "content": "<p>FWIW I disagree with the calculation <code>latency * number of files</code>, as a file ≠ a single packet, but agree with the conclusion of threads</p>",
+        "id": 566058066,
+        "sender_full_name": "Snir Broshi",
+        "timestamp": 1767360515
+    },
+    {
+        "content": "<p>Are you sure this isn't multithreaded already?</p>",
+        "id": 566058173,
+        "sender_full_name": "Snir Broshi",
+        "timestamp": 1767360582
+    },
+    {
+        "content": "<p>(Oh yeah totally, sorry, it was only a very poor lower bound)</p>\n<blockquote>\n<p><a href=\"#narrow/channel/287929-mathlib4/topic/lake.20exe.20cache.20get.20very.20slow/with/562859300\">mathlib4 &gt; lake exe cache get very slow</a></p>\n</blockquote>\n<p>This is extremely cool, but it's done on Mathlib's caching, not Lake's. I believe there's also value in doing this for lake.</p>",
+        "id": 566058205,
+        "sender_full_name": "Simon Sorg",
+        "timestamp": 1767360601
+    },
+    {
+        "content": "<blockquote>\n<p>Are you sure this isn't multithreaded already?</p>\n</blockquote>\n<p><a href=\"https://github.com/leanprover/lean4/blob/4eb5b5776da2c386e0808e8844abb2b6eec0a8e3/src/lake/Lake/Config/Cache.lean#L441C12-L441C27\">https://github.com/leanprover/lean4/blob/4eb5b5776da2c386e0808e8844abb2b6eec0a8e3/src/lake/Lake/Config/Cache.lean#L441C12-L441C27</a><br>\nThis fn takes the full list from the mappings, and is then mapping uploading over them, but there is no task spawning inside the map fn anywhere, so I believe this is single-threading, though note I am not too familiar with threading in Lean (yet).</p>",
+        "id": 566058453,
+        "sender_full_name": "Simon Sorg",
+        "timestamp": 1767360762
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"766274\">Simon Sorg</span> <a href=\"#narrow/channel/270676-lean4/topic/Lake.20cache.20get.20and.20put.20speeds/near/566058205\">said</a>:</p>\n<blockquote>\n<p>(Oh yeah totally, sorry, it was only a very poor lower bound)</p>\n<blockquote>\n<p><a href=\"#narrow/channel/287929-mathlib4/topic/lake.20exe.20cache.20get.20very.20slow/with/562859300\">mathlib4 &gt; lake exe cache get very slow</a></p>\n</blockquote>\n<p>This is extremely cool, but it's done on Mathlib's caching, not Lake's. I believe there's also value in doing this for lake.</p>\n</blockquote>\n<p>Are you sure? Isn't <code>lake exe cache</code> a wrapper around <code>lake cache</code>? They're currently trying to optimize leangz, so as long as Lake's cache also uses it, it applies there too</p>",
+        "id": 566059039,
+        "sender_full_name": "Snir Broshi",
+        "timestamp": 1767361125
+    },
+    {
+        "content": "<p>From what I can tell on <code>lake exe cache get</code> it has its own curl command that is parallelised here: <a href=\"https://github.com/leanprover-community/mathlib4/blob/master/Cache/Requests.lean#L379\">https://github.com/leanprover-community/mathlib4/blob/master/Cache/Requests.lean#L379</a></p>",
+        "id": 566060027,
+        "sender_full_name": "Simon Sorg",
+        "timestamp": 1767361741
+    },
+    {
+        "content": "<p>Yeah, <code>lake exe cache</code> predates <code>lake cache</code></p>",
+        "id": 566061837,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1767362858
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"766274\">Simon Sorg</span> <a href=\"#narrow/channel/270676-lean4/topic/Lake.20cache.20get.20and.20put.20speeds/near/566055662\">said</a>:</p>\n<blockquote>\n<p>Also, the currently very slow speed is for sure a reason to be hesitant to use lake cache get and put in the first place, so I hope this could help with adoption.</p>\n</blockquote>\n<p>Honestly, I am little suprised people adopting <code>lake cache</code> already! I expected people to start exploring it after it saw some use in the Lean core or Mathlib (and there was more information on how to use it). You are correct, <code>lake cache get</code> / <code>lake cache put</code> are currently prohibitively slow for general use. This is something I am planning to fix in the coming quarter.</p>",
+        "id": 566127616,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1767420567
+    }
+]

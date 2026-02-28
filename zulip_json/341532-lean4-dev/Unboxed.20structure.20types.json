@@ -1,0 +1,110 @@
+[
+    {
+        "content": "<p>It would be nice if inductive types with only one constructor (such as <code>Prod</code> and structures) could be represented unboxed in the runtime and passed to/returned from functions without allocating on the heap and following a pointer. It looks like the <a href=\"https://github.com/leanprover/lean4/blob/master/src/Lean/Compiler/IR/Basic.lean#L49-L87\"><code>.struct</code> constructor of <code>IRType</code></a> is intended for this purpose, but it seems unused currently.</p>\n<p>Of course, structs can't be passed unboxed everywhere, since polymorphic functions need values to have the same size whatever their type (though I do wonder whether the <a href=\"https://github.com/leanprover/lean4/blob/master/src/Lean/Compiler/LCNF/Specialize.lean\"><code>specialize</code></a> pass monomorphizes polymorphic functions called on statically-known types, which would increase the number of places where struct unboxing is possible).</p>\n<p><span class=\"user-mention\" data-user-id=\"656225\">@Cameron Zwarich</span>, I assume you've already considered this. How desirable/realistic would it be to implement?</p>",
+        "id": 526555226,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1751359108
+    },
+    {
+        "content": "<p>This is one of the two big things that I'm focusing on in the compiler this quarter (the other one being join point improvements like recursive join points, making all passes be more optimistic with respect to join points, etc.). The simplest form is returning a simple structure; it gets a bit more complicated if you consider other inductive types or throw parameters in as well.</p>\n<p>I'm actually doing a bit of a warm-up exercise and attempting another optimization mentioned in the <code>IR</code> comments. There are both <code>object</code> and <code>tobject</code> types, but at the moment we only use <code>object</code>. The original intent was that <code>tobject</code> would represent a value that is either an object pointer or a tagged scalar, and <code>object</code> would represent a value that is definitely an object pointer. This was never implemented, and we actually made everything <code>object</code> but with <code>tobject</code> semantics. If we did this correctly, we could use <code>lean_inc_ref</code>/<code>lean_dec_ref</code> directly on <code>object</code>, while using the current <code>lean_inc</code>/<code>lean_dec</code> on <code>tobject</code>.</p>",
+        "id": 526613907,
+        "sender_full_name": "Cameron Zwarich",
+        "timestamp": 1751377918
+    },
+    {
+        "content": "<p>The distinction being that <code>lean_inc</code> always checks whether its argument is a shifted-and-lsb-tagged scalar or a pointer, and that <code>lean_inc_ref</code> omits that check?</p>",
+        "id": 526616067,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1751378536
+    },
+    {
+        "content": "<blockquote>\n<p>This is one of the two big things that I'm focusing on in the compiler this quarter</p>\n</blockquote>\n<p>Would that also include passing fixed-width integer types as regular C <code>uintN_t</code> instead of shifting-and-tagging (which <code>lean.h</code> seems to be calling <code>lean_box</code> and <code>lean_unbox</code>)?</p>",
+        "id": 526621824,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1751380163
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"893179\">Simon Dima</span> <a href=\"#narrow/channel/341532-lean4-dev/topic/Unboxed.20structure.20types/near/526621824\">schrieb</a>:</p>\n<blockquote>\n<blockquote>\n<p>This is one of the two big things that I'm focusing on in the compiler this quarter</p>\n</blockquote>\n<p>Would that also include passing fixed-width integer types as regular C <code>uintN_t</code> instead of shifting-and-tagging (which <code>lean.h</code> seems to be calling <code>lean_box</code> and `lean_unbox)?</p>\n</blockquote>\n<p>This should already be done..?</p>",
+        "id": 526622020,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1751380218
+    },
+    {
+        "content": "<p>To be exact, <code>UInt8</code> etc. values in return types and parameters are represented as <code>uint8_t</code> and are read from/written to inductives using <code>lean_ctor_get_uint8</code> / <code>lean_ctor_set_uint8</code> etc.</p>",
+        "id": 526622506,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1751380358
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"873547\">Robin Arnez</span> <a href=\"#narrow/channel/341532-lean4-dev/topic/Unboxed.20structure.20types/near/526622506\">said</a>:</p>\n<blockquote>\n<p>To be exact, <code>UInt8</code> etc. values in return types and parameters are represented as <code>uint8_t</code> and are read from/written to inductives using <code>lean_ctor_get_uint8</code> / <code>lean_ctor_set_uint8</code> etc.</p>\n</blockquote>\n<p>I've seen <a href=\"https://lean-lang.org/doc/reference/latest/The-Type-System/Inductive-Types/#inductive-types-ffi\">https://lean-lang.org/doc/reference/latest/The-Type-System/Inductive-Types/#inductive-types-ffi</a> which seems to be describing the latter part of what you're saying (fixed-width integer types in constructor arguments), but if I'm reading <a href=\"https://lean-lang.org/doc/reference/latest/The-Type-System/Inductive-Types/#inductive-types-runtime-special-support\">https://lean-lang.org/doc/reference/latest/The-Type-System/Inductive-Types/#inductive-types-runtime-special-support</a> right, it says that standalone <code>UInt32</code> et al are shifted-and-tagged.</p>",
+        "id": 526624002,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1751380754
+    },
+    {
+        "content": "<p>By the way, is there an inconsistency in terminology between the names of functions in the C runtime and the docs? The latter link refers to shifting-and-tagging as a way of storing small scalar values \"unboxed\", which seems to imply that \"boxed\" means \"behind a pointer\" in the reference, but <code>lean_box</code> and <code>lean_unbox</code> are exactly about doing and undoing this encoding</p>",
+        "id": 526625212,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1751381098
+    },
+    {
+        "content": "<p>That's really misleading documentation. <code>UInt8</code>, …, <code>UInt64</code>, <code>Int8</code>, …, <code>Int64</code>, and <code>USize</code> are always represented as <code>uint8_t</code>, <code>uint16_t</code> etc in parameters and return values. Only when they need to be boxed (e.g. to put them into <code>Array</code>s / <code>List</code>s) they are represented as a <code>(x &lt;&lt; 1) &amp; 1</code> or a pointer. In other words, the first few sentences describe what happens when you have a generic data structure and store a fixed-length integer in it.</p>",
+        "id": 526625953,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1751381322
+    },
+    {
+        "content": "<p><a href=\"https://lean-lang.org/doc/reference/latest/Basic-Types/Fixed-Precision-Integers/#fixed-ints\">https://lean-lang.org/doc/reference/latest/Basic-Types/Fixed-Precision-Integers/#fixed-ints</a> seems to have the correct information on this then</p>",
+        "id": 526628562,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1751381984
+    },
+    {
+        "content": "<p>Pinging <span class=\"user-mention\" data-user-id=\"354934\">@David Thrane Christiansen</span>, since the confusing bit was introduced <a href=\"https://github.com/leanprover/reference-manual/commit/9ec7d8c798106da194e0773bbbdb7b2ebf056fc7\">here</a>.<br>\nI think it would also make sense to add \"boxed\" as a tech term to the reference, since it's not immediately obvious what it means.</p>",
+        "id": 526635426,
+        "sender_full_name": "Simon Dima",
+        "timestamp": 1751383929
+    },
+    {
+        "content": "<p>I think this is a clash of nomenclatures; \"boxed\" is frequently used outside lean to talk about introducing a pointer indirection</p>",
+        "id": 526640135,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751385495
+    },
+    {
+        "content": "<p>lean has \"boxing\" that sometimes but not always introduces a pointer indirection</p>",
+        "id": 526640526,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1751385616
+    },
+    {
+        "content": "<p>Thanks for catching this. I added \"boxed\" as a hyperlinkable term, removed the incorrect text, and added a cross-reference to the correct text from where the incorrect text was.</p>\n<p>Much appreciated!</p>",
+        "id": 526736878,
+        "sender_full_name": "David Thrane Christiansen",
+        "timestamp": 1751441433
+    },
+    {
+        "content": "<p>I actually have a related naming problem now that I’m working on the IR code. Some inductive types that are enum-like get converted to an actual scalar type like <code>u8</code> (actually, that’s the only one due to the constructor limit). We also have other inductive types where some constructors are represented as tagged scalars (which are “boxed” in the sense mentioned above). The code currently calls these “scalar” constructors, but it is a bit confusing given the inductive types that actually get converted to scalars.</p>\n<p>Another confusing naming distinction is the difference between <code>object</code> and <code>tobject</code>. The <code>t</code> stands for “tagged” (referring to the tagged or boxed scalar values mentioned before), but all objects have a tag stored in them. I would like to introduce a third thing (<code>taggedScalar</code> or the like) so that <code>tobject</code> is the lattice join of <code>object</code> and this new thing. This would simplify some analyses and make them more type-directed.</p>\n<p>Does anyone have a better naming scheme for all of these concepts?</p>",
+        "id": 526923611,
+        "sender_full_name": "Cameron Zwarich",
+        "timestamp": 1751523030
+    },
+    {
+        "content": "<p>I've been curious actually, does Lean box (i.e store on the heap) all of its structs. That's what Java does, and the Java devs regard it as a huge mistake (which is why Valhalla exists as a project)</p>",
+        "id": 537177546,
+        "sender_full_name": "Srayan Jana",
+        "timestamp": 1756765115
+    },
+    {
+        "content": "<p>Okay going through this channel and reading it a bit more, it seems that even though stuff like Strings are represented in the code as Linked List of Chars, they are infact an array of chars.</p>\n<p>But, there isn't a way to force Lean to make your struct unboxed?</p>",
+        "id": 537177997,
+        "sender_full_name": "Srayan Jana",
+        "timestamp": 1756765473
+    },
+    {
+        "content": "<p>I can't say for the specific motivations in the case of Lean, but the general motivation for this memory representation in functional programming languages is to have a unified representation of all values at runtime, which is required if you want to support polymorphic functions without having to monomorphise them (and in the case of polymorphic recursion, the set of concrete types that a function will be instantiated with may be nontrivial/undecidable to compute). </p>\n<p>Consider: <code>def id (a: A) : A</code> if types could have variable sizes (if structs were unboxed), then you'd have to generate multiple versions of <code>id</code> which take all possible sizes of values (monomorphise it). With the boxing of structs, runtime values all take the same size, so handling polymorphic functions are easy.</p>",
+        "id": 560957374,
+        "sender_full_name": "Kiran",
+        "timestamp": 1764463707
+    }
+]

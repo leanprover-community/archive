@@ -1,0 +1,86 @@
+[
+    {
+        "content": "<p>I've found that the <code>lean-regex</code> library runs about 7–10x slower than the equivalent Rust implementation (depending on the benchmark). While I don't expect Lean to match Rust, I'd like to narrow the gap as much as possible. I've profiled and fixed some bottlenecks, but I'm running out of ideas, so I'd love to get advice on optimization strategies.  </p>\n<h2>Findings so far</h2>\n<ul>\n<li>The hottest function is <a href=\"https://github.com/pandaman64/lean-regex/blob/1b6bc90c4017c77248b77b729b63091007f97cc4/regex/Regex/VM/Basic.lean#L58\"><code>εClosure</code></a>, as expected.  </li>\n<li>Array linearity issues are resolved.  </li>\n<li>Inlining some functions in <code>εClosure</code> gave mixed results.  </li>\n</ul>\n<p>An interesting observation is that functions like <code>lean_dec_ref_cold</code>, <code>mi_free</code>, <code>lean_dec_ref</code>, and <code>mi_malloc_small</code> dominate the inverted stack profile. Does this suggest I should focus on reducing allocations, or is this just a general Lean performance characteristic?</p>\n<p>Example stack trace: <a href=\"https://share.firefox.dev/47VeUkD\">https://share.firefox.dev/47VeUkD</a></p>\n<p>I'd appreciate any inputs. Thanks!</p>",
+        "id": 537472720,
+        "sender_full_name": "pandaman",
+        "timestamp": 1756905000
+    },
+    {
+        "content": "<blockquote>\n<ul>\n<li>Array linearity issues are resolved.</li>\n</ul>\n</blockquote>\n<p>One thing that is quite clear is that in <code>Regex.BufferStrategy.lam_0</code> you have a non linearity on some array as you are calling <code>fset</code> but get a call to <code>lean_copy_expand_array</code>, that should be fixed to become linear and will as a consequence likely drop some of the allocation traffic along the way.</p>\n<p>If after that you still see such high allocation traffic I would suggest to figure out what the objects you are allocating so much are and whether you can reduce pressure on the allocator somehow.</p>",
+        "id": 537479970,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1756907130
+    },
+    {
+        "content": "<p>Thank you for taking a look!</p>\n<p>The BufferStrategy one is resulting from a copy-on-write path, and it's expected. Sorry for not mentioning this.</p>\n<p>Does Lean have Lean-level memory profiler? I wonder what's the best way to track allocations.</p>",
+        "id": 537484135,
+        "sender_full_name": "pandaman",
+        "timestamp": 1756908320
+    },
+    {
+        "content": "<p>Rust's regex crate is quite optimized, it uses simd and quite a few other tricks.</p>",
+        "id": 537562033,
+        "sender_full_name": "Thales Fragoso",
+        "timestamp": 1756938102
+    },
+    {
+        "content": "<p>I know. It's more than 1000 times faster than my implementation and I don't plan to match that<span aria-label=\"joy\" class=\"emoji emoji-1f602\" role=\"img\" title=\"joy\">:joy:</span> What I'm comparing with is [regex-lite] (<a href=\"https://docs.rs/regex-lite/latest/regex_lite/\">https://docs.rs/regex-lite/latest/regex_lite/</a>), which doesn't have many optimizations and uses the standard NFA simulation. Sorry for the confusion.</p>",
+        "id": 537565671,
+        "sender_full_name": "pandaman",
+        "timestamp": 1756940870
+    },
+    {
+        "content": "<p>My 2-cents: <span aria-label=\"smiley\" class=\"emoji emoji-1f603\" role=\"img\" title=\"smiley\">:smiley:</span></p>\n<p>Is Lean-regex written in Lean?</p>\n<p>If so is there any reason not to use some fast regex library dll behind the scenes. (Much like big-integers in Lean are not written in Lean but use an external library and are converted to and from this for calculations?). Yes, this would add extra unproven code. But aren't we already past that point?</p>\n<p>Or is the problem in converting things to and from regex expressions.</p>\n<p>IDK. Sorry that was more like 1-cents worth <span aria-label=\"pensive\" class=\"emoji emoji-1f614\" role=\"img\" title=\"pensive\">:pensive:</span></p>",
+        "id": 537576798,
+        "sender_full_name": "Mr Proof",
+        "timestamp": 1756950427
+    },
+    {
+        "content": "<p>Yes, and the code is verified correct with respect to a formal semantics in Lean (to a reasonable extent). That's the point of the project and why I'm asking how to speed up Lean code.</p>",
+        "id": 537582354,
+        "sender_full_name": "pandaman",
+        "timestamp": 1756955381
+    },
+    {
+        "content": "<p>Anyway, I think the next action is to figure out which part is allocating the most. Thank you for the insights and feel free to write if you have any ideas!</p>",
+        "id": 537584875,
+        "sender_full_name": "pandaman",
+        "timestamp": 1756957494
+    },
+    {
+        "content": "<p><a href=\"https://github.com/pandaman64/lean-regex/compare/dae19400bab3d2706d9f97487f39408dd364375a...26f86f09d355e6137a1c44542121eb6d4505f62a\">Unbundling a structure</a> helped a bit because it reduced the allocation involving the packing/unpacking of the structure. </p>\n<p><code>MIMALLOC_SHOW_STATS=1</code> was helpful. The optimized program showed </p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">heap</span><span class=\"w\"> </span><span class=\"n\">stats</span><span class=\"o\">:</span><span class=\"w\">     </span><span class=\"n\">peak</span><span class=\"w\">       </span><span class=\"n\">total</span><span class=\"w\">     </span><span class=\"n\">current</span><span class=\"w\">       </span><span class=\"n\">block</span><span class=\"w\">      </span><span class=\"n\">total</span><span class=\"bp\">#</span>\n<span class=\"w\">  </span><span class=\"n\">reserved</span><span class=\"o\">:</span><span class=\"w\">     </span><span class=\"mf\">1.0</span><span class=\"w\"> </span><span class=\"n\">GiB</span><span class=\"w\">     </span><span class=\"mf\">1.0</span><span class=\"w\"> </span><span class=\"n\">GiB</span><span class=\"w\">     </span><span class=\"mf\">1.0</span><span class=\"w\"> </span><span class=\"n\">GiB</span>\n<span class=\"w\"> </span><span class=\"n\">committed</span><span class=\"o\">:</span><span class=\"w\">     </span><span class=\"mf\">1.0</span><span class=\"w\"> </span><span class=\"n\">GiB</span><span class=\"w\">     </span><span class=\"mf\">1.0</span><span class=\"w\"> </span><span class=\"n\">GiB</span><span class=\"w\">   </span><span class=\"mf\">967.1</span><span class=\"w\"> </span><span class=\"n\">MiB</span>\n<span class=\"w\">     </span><span class=\"n\">reset</span><span class=\"o\">:</span><span class=\"w\">     </span><span class=\"mi\">0</span>\n<span class=\"w\">    </span><span class=\"n\">purged</span><span class=\"o\">:</span><span class=\"w\">    </span><span class=\"mf\">56.8</span><span class=\"w\"> </span><span class=\"n\">MiB</span>\n<span class=\"w\">   </span><span class=\"n\">touched</span><span class=\"o\">:</span><span class=\"w\">    </span><span class=\"mf\">64.2</span><span class=\"w\"> </span><span class=\"n\">KiB</span><span class=\"w\">    </span><span class=\"mf\">64.2</span><span class=\"w\"> </span><span class=\"n\">KiB</span><span class=\"w\">   </span><span class=\"bp\">-</span><span class=\"mf\">23.6</span><span class=\"w\"> </span><span class=\"n\">MiB</span>\n</code></pre></div>\n<p>while the unoptimized one resulted in</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">heap</span><span class=\"w\"> </span><span class=\"n\">stats</span><span class=\"o\">:</span><span class=\"w\">     </span><span class=\"n\">peak</span><span class=\"w\">       </span><span class=\"n\">total</span><span class=\"w\">     </span><span class=\"n\">current</span><span class=\"w\">       </span><span class=\"n\">block</span><span class=\"w\">      </span><span class=\"n\">total</span><span class=\"bp\">#</span>\n<span class=\"w\">  </span><span class=\"n\">reserved</span><span class=\"o\">:</span><span class=\"w\">     </span><span class=\"mf\">1.0</span><span class=\"w\"> </span><span class=\"n\">GiB</span><span class=\"w\">     </span><span class=\"mf\">1.0</span><span class=\"w\"> </span><span class=\"n\">GiB</span><span class=\"w\">     </span><span class=\"mf\">1.0</span><span class=\"w\"> </span><span class=\"n\">GiB</span>\n<span class=\"w\"> </span><span class=\"n\">committed</span><span class=\"o\">:</span><span class=\"w\">     </span><span class=\"mf\">1.0</span><span class=\"w\"> </span><span class=\"n\">GiB</span><span class=\"w\">     </span><span class=\"mf\">1.0</span><span class=\"w\"> </span><span class=\"n\">GiB</span><span class=\"w\">   </span><span class=\"mf\">986.0</span><span class=\"w\"> </span><span class=\"n\">MiB</span>\n<span class=\"w\">     </span><span class=\"n\">reset</span><span class=\"o\">:</span><span class=\"w\">     </span><span class=\"mi\">0</span>\n<span class=\"w\">    </span><span class=\"n\">purged</span><span class=\"o\">:</span><span class=\"w\">    </span><span class=\"mf\">38.0</span><span class=\"w\"> </span><span class=\"n\">MiB</span>\n<span class=\"w\">   </span><span class=\"n\">touched</span><span class=\"o\">:</span><span class=\"w\">    </span><span class=\"mf\">64.2</span><span class=\"w\"> </span><span class=\"n\">KiB</span><span class=\"w\">    </span><span class=\"mf\">64.2</span><span class=\"w\"> </span><span class=\"n\">KiB</span><span class=\"w\">   </span><span class=\"bp\">-</span><span class=\"mf\">32.2</span><span class=\"w\"> </span><span class=\"n\">MiB</span>\n</code></pre></div>\n<p>If we believe what Claude Sonnet said, the <code>-23.6MiB</code> part corresponds to the amount of deallocated memory (which should equal to the allocated memory during the run), so it's a 26.7% reduction in allocation.</p>\n<p>Across the benchmarks, it got 5-10% faster, but it's not as large as I hoped <span aria-label=\"sweat smile\" class=\"emoji emoji-1f605\" role=\"img\" title=\"sweat smile\">:sweat_smile:</span></p>",
+        "id": 539750202,
+        "sender_full_name": "pandaman",
+        "timestamp": 1758024111
+    },
+    {
+        "content": "<p>I went further to reduce the allocation when <a href=\"https://github.com/pandaman64/lean-regex/commit/5e1e6c62d055a08de3dddf88c65b78856a28b5e7\">the algorithm pops an element from the stack immediately after pushing the element</a>, but it regerssed by 30% <span aria-label=\"smiling face with tear\" class=\"emoji emoji-1f972\" role=\"img\" title=\"smiling face with tear\">:smiling_face_with_tear:</span> It's quite tricky to make it fast...</p>",
+        "id": 539750951,
+        "sender_full_name": "pandaman",
+        "timestamp": 1758024329
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"395416\">@pandaman</span> Products with more than 2 elements (e.g., <code>a x b x c</code>) are represented as pairs of pairs, so you should likely refactor the <code>εClosure</code> result into a proper  3-field <code>structure</code> to reduce allocations.</p>",
+        "id": 540139633,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1758166430
+    },
+    {
+        "content": "<p>You could futhure optimize the result by making it an <code>inductive</code> (rather than a <code> structure</code>) with the <code>Option</code> field unbundled (e.g., have one constructor with the <code>matched</code> value and without it). However this may or may not improve performance based on how often the code coverts to/from the <code>Option</code> representation.</p>",
+        "id": 540139884,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1758166593
+    },
+    {
+        "content": "<p>Thank you for the insights! The product representation is a good callout and might explain the slowdown in <a href=\"#narrow/channel/113488-general/topic/How.20to.20speed.20up.20Lean.20programs/near/539750951\">this version</a>, as it returns a four-element product in the hottest function.<br>\nThe Option return value comes from the argument which is already an Option, so it might not be beneficial. Maybe I should consider using a sentinel value instead of Option to get rid of one indirection.</p>",
+        "id": 540442596,
+        "sender_full_name": "pandaman",
+        "timestamp": 1758284670
+    },
+    {
+        "content": "<p>Introducing <code>structure</code> instead of triples ended up improving the throughput by 3-20%. Thank you!</p>\n<p><a href=\"https://github.com/pandaman64/lean-regex/pull/131\">https://github.com/pandaman64/lean-regex/pull/131</a></p>",
+        "id": 541455880,
+        "sender_full_name": "pandaman",
+        "timestamp": 1758806259
+    }
+]

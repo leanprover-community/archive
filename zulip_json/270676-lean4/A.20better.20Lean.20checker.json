@@ -1,0 +1,602 @@
+[
+    {
+        "content": "<p>I’ve written about this in a few places, but just to make it more central, I’ve gathered my thoughts in one place.</p>",
+        "id": 516560099,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581468
+    },
+    {
+        "content": "<p>Lean is a great piece of software with incredible correctness guarantees, but we also know it can be easily “tricked”.  The DeepSeek case was one very subtle example (hopefully fixed), but it is as simple as this to trick Lean:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">local</span><span class=\"w\"> </span><span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"n\">instNatAdd</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Add</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">⟨</span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">mul</span><span class=\"bp\">⟩</span>\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">foo</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"mi\">1</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span><span class=\"w\"> </span><span class=\"n\">rfl</span>\n</code></pre></div>\n<p>This will pass <code>lake build</code>, <code>lean4checker</code>, <code>#print axioms foo</code>, and even <code>#check foo</code> and <code>#print foo</code> will show the <code>1 + 0 = 0</code>.  (<strong>This isn't a kernel/soundness bug</strong>, but at the same time, the officially supported tools don't catch it.) As we get more Lean written by AI trained by reinforcement learning, it could easily find exploits like this and learn to repeatedly apply them.  Also, as Lean becomes a greater standard for correctness used in more industrial settings, we need better assurance guarantees.</p>",
+        "id": 516560113,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581480
+    },
+    {
+        "content": "<p>Luckily, we already have two such tools: <span class=\"user-mention\" data-user-id=\"110596\">@Rob Lewis</span>'s  <a href=\"https://github.com/robertylewis/lean4-autograder-main\">autograder</a> and <span class=\"user-mention\" data-user-id=\"776090\">@GasStationManager</span> 's <a href=\"https://github.com/GasStationManager/SafeVerify\">SafeVerify</a>.   But they are not officially supported by Lean and may rely on buggy components.</p>",
+        "id": 516560126,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581486
+    },
+    {
+        "content": "<p>I’d like to propose that Lean adopt something like the above tools, but which would be backed up by officially supported components slightly extending Lean’s kernel, <code>lean4checker</code>, and <code>Lean4Lean</code>.  It should support these three use cases:</p>",
+        "id": 516560135,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581494
+    },
+    {
+        "content": "<ul>\n<li><strong>It should check term proofs.</strong> Like <code>lean4checker</code> and <code>Lean4Lean</code>, it should check exported proofs in a trusted kernel.</li>\n</ul>",
+        "id": 516560141,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581502
+    },
+    {
+        "content": "<ul>\n<li><strong>It should track the axioms used.</strong>  In <a class=\"stream-topic\" data-stream-id=\"270676\" href=\"/#narrow/channel/270676-lean4/topic/Checking.20axioms.20with.20leanchecker/with/515616623\">#lean4 &gt; Checking axioms with leanchecker</a>  <span class=\"user-mention\" data-user-id=\"310045\">@Eric Wieser</span>  proposed that <code>lean4checker</code> have a flag checking that a proof only uses the three good axioms.  I propose something slightly broader.  It should be able to tell you for each declaration which axioms are used in the proof.  There are legitimate uses for axioms and Lean supports them so people use them (even when maybe they aren’t the best thing). For example, the recent CombiBench benchmark uses axioms in some of its problems. (This tool should not rely on <code>#print axioms</code> or <code>Lean.collectAxioms</code> as those are user-interface code with possible bugs.  That is, unless these tools are elevated to the status of the kernel and this tool can trace an axiom from the beginning of the proof.)</li>\n</ul>",
+        "id": 516560154,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581511
+    },
+    {
+        "content": "<ul>\n<li><strong>It should compare a candidate proof to a reference term.</strong> It should take the same declaration by name in both a candidate and reference export and make sure the old and new versions have the same type.  This way, we can check a proof in an adversarial setting, where one party writes a reference theorem in Lean (either as a sorry stub or with a reference proof), and an untrusted agent can supply a proof. Obviously, this would only be useful if the reference term was correct.  That would involve it being written independently from the solution, extensively tested for correctness, and (ideally) manually inspected at the expression term-level for correctness.  But if it is correct, then this tool would be able to check the proof for correctness without fear of the above exploits, or bugs in the user interface Lean code.  It could be used for evaluating AI agents, grading students, judging competitions, and rewarding bounties for solved proofs.  Also, it would be good for automated applications, where one is automatically proving thousands of theorems (like in the equational project or in industrial applications).  In such cases, you want to be sure all the found proofs are correct (especially if you have an AI agent involved).  Here are three specific use cases, in increasing challenge of supporting (but if only the first case is supported, that would be very helpful):<ul>\n<li>Take a reference theorem statement and verify a candidate proof, where the Lean code may contain many new lemmas, new definitions, and even new meta code.  We have to check that such new code wouldn’t change the target theorem type.  (I worry there would be challenges in practice like type-class resolution giving different-but-definitionally-equivalent types between the reference and candidate.  I also worry about variables.)</li>\n<li>Take both a stubbed definition <code>D</code> and a stubbed theorem <code>T</code> about <code>D</code>, fill in that definition and the proof of the theorem about that definition.  This might be a lot more complicated.   How does one verify that the theorem <code>T</code> is the “same” if the definition <code>D</code> changes from <code>:= sorry</code> to the actual definition body?  (Also, variables affect definitions even more than theorems.)  But this is also very relevant for lots of benchmarks.  For example, math competition problems where the user has to supply an answer as well as proof, or verified-code examples where one has to write code according to specification(s).</li>\n<li>For a blueprint-like project with sorry lemmas, check that a theorem is solved relative to existing sorry lemmas in the library, but not using additional sorries.</li>\n</ul>\n</li>\n</ul>",
+        "id": 516560158,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581521
+    },
+    {
+        "content": "<p>The largest difference between my proposal and <span class=\"user-mention\" data-user-id=\"110596\">@Rob Lewis</span>'s  <a href=\"https://github.com/robertylewis/lean4-autograder-main\">autograder</a> and <span class=\"user-mention\" data-user-id=\"776090\">@GasStationManager</span> 's <a href=\"https://github.com/GasStationManager/SafeVerify\">SafeVerify</a> is that it would be officially supported by Lean. By that I mean the following (although I understand this is ambitious):</p>",
+        "id": 516560212,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581530
+    },
+    {
+        "content": "<ul>\n<li>There should be an officially supported FRO version, like <code>lean4checker</code>, and it should be the canonical tool to check correctness.</li>\n</ul>",
+        "id": 516560220,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581535
+    },
+    {
+        "content": "<ul>\n<li>There should be a spec like there (sort of) is already with external type checkers, so people can build their own reimplementations (including formally verified versions).</li>\n</ul>",
+        "id": 516560228,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581541
+    },
+    {
+        "content": "<ul>\n<li>This spec would be added to <span class=\"user-mention\" data-user-id=\"228466\">@Chris Bailey</span>'s  <a href=\"https://ammkrn.github.io/type_checking_in_lean4/\">Type Checking in Lean 4</a> (or similar).</li>\n</ul>",
+        "id": 516560238,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581546
+    },
+    {
+        "content": "<ul>\n<li>It would be in the scope for <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>'s <code>Lean4Lean</code> creating a verified version following the spec, (which I think wouldn’t be adding much to that project, just the ability to trace axioms and compare theorem statements)</li>\n</ul>",
+        "id": 516560255,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581560
+    },
+    {
+        "content": "<ul>\n<li>It should be secure.  It shouldn't have known exploits using tactics, macros, or other user code.  (Yes, someone can mess up the reference theorem term or a hacker could modify the lean exporter code or the lean4checker code, but short of those sorts of things, no exploits.)  (If the tool is extra cautious and gives a few false negatives for cases it can't support, that is fine, but no false positives.)</li>\n</ul>",
+        "id": 516560260,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581566
+    },
+    {
+        "content": "<ul>\n<li>If this ever fails, where it says a theorem is solved relative to a reference type using only a certain set of axioms, but it is not (because the proof actually uses an extra axiom or the types don’t actually match), then it should be treated like a kernel bug (even if it isn’t technically in the kernel), i.e. something people are shocked about and the FRO quickly fixes.</li>\n</ul>",
+        "id": 516560269,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581572
+    },
+    {
+        "content": "<ul>\n<li>Extra paranoid users may not trust this code (unless it is formally verified in <code>Lean4Lean</code> and then only up to their trust in the full TCB stack), but they will at least recognize this covers most of the worries they care about.   To increase their assurance, they could use several external checkers and/or help <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> complete the Lean4Lean project.</li>\n</ul>",
+        "id": 516560277,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581577
+    },
+    {
+        "content": "<ul>\n<li>Someone should feel reasonably safe to use this for adversarial situations like AI-generated proofs, proof bounties, and checking a gigantic Lean library.  (Nothing will ever completely replace human introspection, but this will come close.)</li>\n</ul>",
+        "id": 516560283,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581583
+    },
+    {
+        "content": "<p>The motivation for my suggesting this is as follows:</p>",
+        "id": 516560289,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581588
+    },
+    {
+        "content": "<ul>\n<li>It is hard to know right now what is the <em>right</em> way to check adversarial Lean code.  In the recent DeepSeek bug, there have been many claims that they should have used <code>lean4checker</code>, but that would not have been sufficient since it doesn't check that the theorem even exists in the export.  The emerging consensus, is that we need something like the tool I propose.</li>\n</ul>",
+        "id": 516560301,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581594
+    },
+    {
+        "content": "<ul>\n<li>It was previously believed that the only way for a theorem to be skipped by the kernel or transformed into something else was for someone to write metaprogramming code in front of the theorem, but the DeepSeek bug showed that bad things can happen just with regular everyday tactics inside a proof, nothing too suspicious.  Sure, the proof was a bit vacuous looking and used <code>apply?</code>, but what if the next bug is triggered by a powerful tactic like <code>grind</code> or <code>aesop</code>?  And what if instead of not adding the theorem to the environment, it transformed the theorem term into something else?  There would be little or no way for a human to manually inspect such a proof to see if it was suspicious, vs. the automation just being really good.</li>\n</ul>",
+        "id": 516560306,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581600
+    },
+    {
+        "content": "<ul>\n<li>For tools like <code>#print axioms</code>, it is unclear if they should be considered part of the trusted-computing base of Lean. Some say they are, and others consider them to be less integral, mere convenience tools that shouldn’t be trusted.  We need agreement on what the trusted computing base of Lean even is.</li>\n</ul>",
+        "id": 516560317,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581606
+    },
+    {
+        "content": "<ul>\n<li>Automated proofs, using both AI and symbolic methods, are going to get more common.  There is much talk of building large libraries of mathematics with AI, and of using AI to formally verify software and hardware.  We want to make sure Lean plays well with AI and that we have backup plans to prevent AI from reward-hacking Lean too much.  (“Reward hacking” is a technical term here.  I don't mean to imply that the AI will have a devious conscious plan, but something more like the DeepSeek bug where a bug can be found just by randomly trying out millions of things in Lean, and then the model learns to repeatedly exploit whatever it finds that works.)</li>\n</ul>",
+        "id": 516560323,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581611
+    },
+    {
+        "content": "<ul>\n<li>People occasionally mention using Lean for a bounty system or as a way to verify highly critical software.  This seems like an opportunity for bad human actors to submit bad proofs.  It would be good to get ahead of this.</li>\n</ul>",
+        "id": 516560329,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746581613
+    },
+    {
+        "content": "<blockquote>\n<p>This might be a lot more complicated. How does one verify that the theorem <code>T</code> is the “same” if the definition <code>D</code> changes from <code>:= sorry</code> to the actual definition body?</p>\n</blockquote>\n<p>I think this is actually fine; the type of definition <code>D</code> hasn't changed. Of course the meaning of the theorem <code>T </code>will change (and possibly be false) depending on the body of the definition. But that is the intended behavior for these use cases. In fact this is the format for the code-with-proof challenges on the <a href=\"http://www.codeproofarena.com:8000/\">Code with Proof Arena</a> website, which is currently backed by SafeVerify as judging backend. (I expect the same applies to autograder, though have not tested.)</p>",
+        "id": 516569384,
+        "sender_full_name": "GasStationManager",
+        "timestamp": 1746587390
+    },
+    {
+        "content": "<p>Broadly I agree that ideally there should be an \"officially supported\" Lean proof checking tool. I imagine it would not be hard to get the AI labs to support such an effort by the FRO. A safe proof checker is essential for anything involving potentially AI-submitted proofs (that is why I worked on SafeVerify in the first place). Now with the recent deepseek example this becomes even more obvious: without such a safe checking component,  no one would be able to reliably train prover models using RL.</p>",
+        "id": 516571922,
+        "sender_full_name": "GasStationManager",
+        "timestamp": 1746589023
+    },
+    {
+        "content": "<p>On the more technical question of what needs to be checked. (Disclaimer: I am not an expert; more qualified people should jump in here.) I am basing most of my information from the discussions in this <a href=\"#narrow/channel/113488-general/topic/Code.20with.20Proofs.3A.20the.20Arena/with/482500649\">older thread</a>: It seems like much of the hard work has been done by lean4checker and its underlying library Environment.replay, which protects against manipulations of the environment. What remains are some relatively easy checks on the \"clean\" versions of the submitted theorems after the replay:</p>\n<ul>\n<li>making sure the target and submitted theorems/defs (are present and) have matching types</li>\n<li>inspect the axioms to make sure nothing besides the standard ones are added.</li>\n</ul>\n<p>This is what I was aiming for in SafeVerify though was done pretty clumsily. Nevertheless it covers all potential exploits that I am aware of.</p>\n<p>Beyond this, the needs may diverge depending on use case. I was focusing on coding tasks, so wanted to make sure the submitted functions are actually \"executable\". I couldn't find a robust solution in Lean and ended up with the hack of banning the keywords <code>uncomputable</code> and<code>implemented_by</code>... Suggestions are welcome on more robust approaches!</p>",
+        "id": 516577059,
+        "sender_full_name": "GasStationManager",
+        "timestamp": 1746592453
+    },
+    {
+        "content": "<p>The chapter on trust in the <em>Type Checking in Lean 4</em> book seems relevant: <a href=\"https://ammkrn.github.io/type_checking_in_lean4/trust/trust.html\">https://ammkrn.github.io/type_checking_in_lean4/trust/trust.html</a>, in particular the part about Pollack Consistency.</p>",
+        "id": 516582484,
+        "sender_full_name": "Niels Voss",
+        "timestamp": 1746595784
+    },
+    {
+        "content": "<p>It's important to remember that Lean metacode is capable of arbitrary code execution, so running a Lean file could give you a virus. In theory, someone could make a Lean file which gives you a virus that modifies the behavior of Lean to always accept certain proofs. This could even be done under the guise of \"fixing\" the Lean installation, similar to how some python programs modify the python installation or pip install packages from within the script.</p>",
+        "id": 516583691,
+        "sender_full_name": "Niels Voss",
+        "timestamp": 1746596568
+    },
+    {
+        "content": "<p>So, under the most extreme circumstances, the proof will need to be checked on a separate \"trusted\" machine which is distinct from the \"work\" machine that actually runs the tactics to generate the proof. In any case, it seems nearly impossible to trust everything about Lean, since even the behavior of <code>#print axioms</code> can be modified. There was another thread (I can't remember which) in which someone suggested that going forward, Lean will need to be seen not as a proof checker, but as a proof compiler.</p>",
+        "id": 516584311,
+        "sender_full_name": "Niels Voss",
+        "timestamp": 1746597001
+    },
+    {
+        "content": "<p>To solve the problem of misleading definitions in external checkers, we could imagine a hypothetical <code>load_proof_from_file</code> tactic which takes a zip files of <code>.olean</code>s and uses them to prove the given statement. Then, if you say wanted to verify the finished proof of FLT, you could compile it using your untrusted \"work\" computer, zip up all the oleans and send them over to the \"trusted\" computer, and then from the trusted computer have Lean execute:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span><span class=\"w\"> </span><span class=\"n\">flt</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">),</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">≠</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"bp\">≠</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"bp\">≠</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"mi\">3</span><span class=\"w\"> </span><span class=\"bp\">≤</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"bp\">^</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"bp\">^</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">≠</span><span class=\"w\"> </span><span class=\"n\">c</span><span class=\"bp\">^</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"kd\">by</span>\n<span class=\"w\">    </span><span class=\"n\">load_proof_from_file</span><span class=\"w\"> </span><span class=\"s2\">\"flt_blob.zip\"</span>\n</code></pre></div>\n<p>Your trusted codebase would now include core Lean and <code>load_proof_from_file</code>, but doesn't need anything else.</p>",
+        "id": 516586028,
+        "sender_full_name": "Niels Voss",
+        "timestamp": 1746597920
+    },
+    {
+        "content": "<p>Basically, my understanding of your question is that you are looking for an officially supported tool which is like <code>lean4checker</code> but a little bit more powerful in the sense that we should be able to make reasonable assertions about what the environment contains after replaying. It seems to me that the most practical way to achieve this is if <code>lean4checker</code> were upgraded to have some sort of system where you can provide a single command for it to run after replaying the environment, which will let you do something like the <code>flt</code> example above.</p>",
+        "id": 516587301,
+        "sender_full_name": "Niels Voss",
+        "timestamp": 1746598604
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"776090\">GasStationManager</span> <a href=\"#narrow/channel/270676-lean4/topic/A.20better.20Lean.20checker/near/516577059\">said</a>:</p>\n<blockquote>\n<p>Beyond this, the needs may diverge depending on use case. I was focusing on coding tasks, so wanted to make sure the submitted functions are actually \"executable\". I couldn't find a robust solution in Lean and ended up with the hack of banning the keywords <code>uncomputable</code> and<code>implemented_by</code>... Suggestions are welcome on more robust approaches!</p>\n</blockquote>\n<p>Unfortunately, my understanding is that verifying the behavior of compiled Lean code is orders of magnitude harder than verifying proofs written in Lean. I'm pretty sure that doing so perfectly is effectively impossible right now. If you want to be sure that the semantics of Lean programs are correct, you have to trust</p>\n<ul>\n<li>Every single <code>@implemented_by</code> and <code>@extern</code> clause in the entire library. This includes a ton of code marked <code>unsafe</code>. For example, <code>MLList</code> depends on an <code>unsafe</code> inductive type, which I <em>think</em> is consistent, but it does mean that we are relying on the computational properties of <code>unsafe</code> code. Also, all external C++ code needs to be pure. There are hundreds of these throughout Lean, and I think it's very unlikely that they are all completely correct. And unlike axioms, these aren't even tracked.</li>\n<li>The Lean compiler and the C compiler. There was a bug a few months ago where the C compiler was optimizing out an infinite loop, which led to undefined behavior. Lean's compiler is much more complicated than Lean's kernel and is way more likely to have bugs.</li>\n</ul>",
+        "id": 516589165,
+        "sender_full_name": "Niels Voss",
+        "timestamp": 1746599527
+    },
+    {
+        "content": "<p>As a direct example of how this is problematic, suppose you gave a homework assignment which was to create a computer program which given a natural number <code>n</code>, returned a prime greater than <code>n</code>. (Basically, a constructive version of the proof of the infinitude of primes.) A student who doesn't feel like writing an actual computer program can use a nonconstructive proof by contradiction to prove something like <code>Nonempty {f : Nat -&gt; Nat // forall n, ... }</code>. Then they can use the <code>partial</code> keyword to get a function of type <code>{f : Nat -&gt; Nat // forall n, ... }</code> by setting it to loop forever, and now they have a program of the desired type and properties which doesn't use <code>noncomputable</code>, even though it's a useless program. If this is fine by you, then there's no reason to ban <code>noncomputable</code> in the first place.</p>",
+        "id": 516590596,
+        "sender_full_name": "Niels Voss",
+        "timestamp": 1746600236
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"521331\">Niels Voss</span> <a href=\"#narrow/channel/270676-lean4/topic/A.20better.20Lean.20checker/near/516583691\">said</a>:</p>\n<blockquote>\n<p>It's important to remember that Lean metacode is capable of arbitrary code execution, so running a Lean file could give you a virus. In theory, someone could make a Lean file which gives you a virus that modifies the behavior of Lean to always accept certain proofs. This could even be done under the guise of \"fixing\" the Lean installation, similar to how some python programs modify the python installation or pip install packages from within the script.</p>\n</blockquote>\n<p>This is a separate issue from the correctness one I have in mind, but certainly one that Lean is going to have to deal with in the future (possibly after a painful incident).  Just opening a Lean file can lead to arbitrarily running code.  I remember where I was when the <a href=\"https://en.wikipedia.org/wiki/ILOVEYOU\">ILOVEYOU</a> virus came out in 2000!</p>",
+        "id": 516633399,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746613087
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"521331\">Niels Voss</span> <a href=\"#narrow/channel/270676-lean4/topic/A.20better.20Lean.20checker/near/516584311\">said</a>:</p>\n<blockquote>\n<p>So, under the most extreme circumstances, the proof will need to be checked on a separate \"trusted\" machine which is distinct from the \"work\" machine that actually runs the tactics to generate the proof. In any case, it seems nearly impossible to trust everything about Lean, since even the behavior of <code>#print axioms</code> can be modified. There was another thread (I can't remember which) in which someone suggested that going forward, Lean will need to be seen not as a proof checker, but as a proof compiler.</p>\n</blockquote>\n<p>Yes, I'm focused more on the \"proof compiler\" aspect of Lean here where once the term proof is generated, then it is checked in something like a new-and-improved <code>lean4checker</code> (ideally on a separate computer than generated the proof, yes!). I'm also suggesting <code>#print axioms</code> wouldn't be needed as the final source of trust, but would be replaced by a better axiom-checking functionality in this new-and-improved <code>lean4checker</code>.</p>",
+        "id": 516634615,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746613506
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"521331\">@Niels Voss</span> I'm not sure I see the point of the <code>load_proof_from_file</code> functionality.  I was thinking more of the main check of correctness happening apart from Lean, in something more like <code>lean4checker</code>, but with the added support of comparing a compiled/exported candidate proof to a compiled/exported theorem statement.  Full Lean wouldn't be part of the trusted computing base (except so far as it is used to generate the target theorem statement).  This <code>load_proof_from_file</code> could be useful, however, for avoiding dangerous side effects of an untrusted Lean program, and for getting greater assurance that the whole process round-trips.</p>",
+        "id": 516636476,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746614100
+    },
+    {
+        "content": "<p>And to be clear, what I'm proposing is very practical, and not theoretical, basically as practical as <code>lean4checker</code> if not more so.  The fact that two people have already built working prototypes shows how much it is needed.  (I suspect there are industrial users already using Lean with Alpha-Proof-like AI as a form of ATP for industrial problems.  A system like this could be very valuable to them.) Moreover, this design of having both a candidate term proof and reference type spec is the design of <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>'s trust-conscious and underrated <a href=\"https://github.com/digama0/mm0\">MM0</a> project.</p>",
+        "id": 516639776,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746615150
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"521331\">Niels Voss</span> <a href=\"#narrow/channel/270676-lean4/topic/A.20better.20Lean.20checker/near/516590596\">said</a>:</p>\n<blockquote>\n<p>Then they can use the <code>partial</code> keyword to get a function of type <code>{f : Nat -&gt; Nat // forall n, ... }</code> by setting it to loop forever, and now they have a program of the desired type and properties which doesn't use <code>noncomputable</code>, even though it's a useless program.</p>\n</blockquote>\n<p>You don't even need <code>partial</code>.  Just use <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Nat.find#doc\">docs#Nat.find</a> to get the minimal <code>n</code> satisfying some property (if you have an existence proof).</p>",
+        "id": 516643209,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746616204
+    },
+    {
+        "content": "<p>Nat.find at least seems to emit computable code. There is the issue of computational complexity, which is important and needs to be addressed by building on top of the base proof checking. The problem with <code>partial</code> is that it could be used to provide infinite loops that satisfy the type requirement. That's why for my use case I've been also banning <code>partial</code> and <code>unsafe</code> (though only in the submitted file). In my case I'm trusting all imports because the submission is a single file.</p>",
+        "id": 516666092,
+        "sender_full_name": "GasStationManager",
+        "timestamp": 1746621976
+    },
+    {
+        "content": "<p>There's a lot here, but one initial thought is that the proposal assumes a degree of commonality among the mentioned use cases that may not exist. The degree of confidence/correctness sought can become time and resource intensive as projects get large (see mathlib); full environment replay is suitable  for checking components of a paper, claims of high profile results, etc. It's not suitable for integration in an AI training loop or as an automatic grader on a leetcode style website.</p>\n<p>My sense is that the AI users are going to have a very high degree of variability in their demands based on how they want to structure, train, and pay for their model, and (this is admittedly more speculative) that those demands will take precedence over adherence to/use of a one size fits all tool any time there's a conflict.</p>\n<p>It's not clear to me even after skimming the deepseek thread whether the actual problem is just that their reported results are wrong, or whether the model being able to fool itself  is actually having a significant negative effect on the training and making the model worse.</p>",
+        "id": 516740919,
+        "sender_full_name": "Chris Bailey",
+        "timestamp": 1746642054
+    },
+    {
+        "content": "<p>The model is worse in that it occasionally outputs a \"proof\" that is not a valid proof. It has likely learned to use the same technique in similar situations. Given the correct feedback from a more robust proof checker, it could have learned the correct way to prove.</p>\n<p>What this incident made me appreciate is that due to the nature of RL, once a model finds an exploitable bug in the proof checker, it will use it to maximize its reward, which is the number of theorems proved. And if the proof checker has a flaw, with sufficient exploration the model is likely to find it. For better or worse, the proof checker defines the reward function, which in turn determines the quality of the learned policy.</p>\n<p>Personally, I am worried that one day a model finds an exploit that is not caught until it got deployed into a production environment. It would be able to claim to prove that its code does A, while the code actually does B. It would be able to execute arbitrary code, while enjoying a \"trusted\" status. If that sounds far-fetched, to me it is less far-fetched than I thought a week ago.</p>",
+        "id": 516785832,
+        "sender_full_name": "GasStationManager",
+        "timestamp": 1746663054
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"776090\">GasStationManager</span> <a href=\"#narrow/channel/270676-lean4/topic/A.20better.20Lean.20checker/near/516785832\">said</a>:</p>\n<blockquote>\n<p>Personally, I am worried that one day a model finds an exploit that is not caught until it got deployed into a production environment. It would be able to claim to prove that its code does A, while the code actually does B. It would be able to execute arbitrary code, while enjoying a \"trusted\" status. If that sounds far-fetched, to me it is less far-fetched than I thought a week ago.</p>\n</blockquote>\n<p>Verifying the behavior of programs should be considered a completely separate problem than verifying proofs, as it is so much more difficult. Right now, I would not trust proofs that a Lean program behaves correctly, especially not in an adversarial situation.</p>",
+        "id": 516786597,
+        "sender_full_name": "Niels Voss",
+        "timestamp": 1746663593
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"776090\">GasStationManager</span> <a href=\"#narrow/channel/270676-lean4/topic/A.20better.20Lean.20checker/near/516785832\">said</a>:</p>\n<blockquote>\n<p>The model is worse in that it occasionally outputs a \"proof\" that is not a valid proof. It has likely learned to use the same technique in similar situations. Given the correct feedback from a more robust proof checker, it could have learned the correct way to prove.</p>\n</blockquote>\n<p>That part I got, but it wasn't clear whether it did the second part (exploiting the loophole) enough during training to make the resulting model much worse than the initially reported results suggested, or whether the spotted  issues with sorry/apply were only occasionally present, and the underlying model was more or less as advertised. It's interesting that it apparently didn't learn to exploit this guaranteed winning move everywhere.</p>",
+        "id": 516788438,
+        "sender_full_name": "Chris Bailey",
+        "timestamp": 1746664745
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"228466\">@Chris Bailey</span>, those are good points.  As far as levels of correctness vs resources, I totally agree about that tradeoff.  Currently for checking that a proof is correct Lean has roughly four levels:</p>\n<ul>\n<li>Front end: Editor, LSP, or REPL.  This is the most buggy since it has parallelism and other real-world concerns.  But for the most part it is sufficient.</li>\n<li>Build system (with cached oleans): This still is suseptable to bugs and metaprogramming hacks, but is very reliable</li>\n<li>Build system (with cached oleans) exported to lean4checker: (I think I have this right that lean4lean can use cached oleans.)  This is a sweet middle ground of speed and reliability.  It would only fail if there was an error in the cache or a soundness issue in the kernel.</li>\n<li>Build system (no caching) exported to lean4checker: This is the gold standard, but slow and expensive.  Only run this occasionally.</li>\n</ul>",
+        "id": 516788773,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746664938
+    },
+    {
+        "content": "<p>I imagine the same rough levels (more or less) for the new things I want to add to the kernel (like checking axioms, checking that the final type is as expected, and even just that a proof of a given declaration even exists).  Starting from the other end:</p>\n<ul>\n<li>Build system (no caching) exported to the checker: This would replay everything from the beginning.  It is mostly already built in lean4checker, but it would keep track of axioms and if terms are the same (either exactly or definitionally) across exports.  Yes, it is slow, but it is the gold standard for “soundness” of the system, and it is mathematically precise enough to go in Lean4Lean.</li>\n<li>Build system (with caching) exported to the checker: This would be the sweet spot.  I think it would be fast enough for a lot of applications, and (as long as the adversarial agent had no ability to change the cache) it would be almost as secure as the former.</li>\n<li>Build system: Not sure what this would look like or if we need anything special at this level.</li>\n<li>Front end: This would be a set of tools which mimic the checker as much as possible, but is more seceptible to bugs and hacks.  This could be written by either the FRO or by end users (building on existing work like <code>#print axioms</code>, SafeVerify and autograder).</li>\n</ul>",
+        "id": 516788800,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746664959
+    },
+    {
+        "content": "<p>The front end would be the first line of defense.  Then as resources allow given the need one would revert to slower but more secure methods.  If the checker with cached oleans is fast enough it would be good for a lot of applications, including AI training and Leet code judging.  The full checker run from the beginning would be reserved for nightly (or weekly) sanity checks and for checking final results.</p>",
+        "id": 516788812,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746664973
+    },
+    {
+        "content": "<p>If a more secure level contradicts a less secure level, then that would either signal a bug, or a way an agent can exploit Lean in the front end (using metaprogramming).  That would have to be dealt with at that level (maybe by disabling access to features like <code>debug.skipKernelTC</code>).  But right now we have no secure kernel-like thing to act as a backup and that is what is most needed.</p>",
+        "id": 516788835,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746664987
+    },
+    {
+        "content": "<blockquote>\n<p>It's not clear to me even after skimming the deepseek thread whether the actual problem is just that their reported results are wrong, or whether the model being able to fool itself is actually having a significant negative effect on the training and making the model worse.</p>\n</blockquote>\n<p>I think it is probably both.  But at the same time, we know it could be a lot worse.  For example if an RL agent discoveres <code>debug.skipKernelTC</code> it would quickly lead to collapse (and we wouldn’t even know about it since the developers wouldn’t release such a broken model <span aria-label=\"grinning\" class=\"emoji emoji-1f600\" role=\"img\" title=\"grinning\">:grinning:</span>.)  (Ocassionally you see posts by AI developers who are suprised to discover that <code>sorry</code> has synonyms, presumably because it lead to collapse of their training. <span aria-label=\"grinning\" class=\"emoji emoji-1f600\" role=\"img\" title=\"grinning\">:grinning:</span>).  However, more subtle bugs like this one can get through without the developers noticing and isn’t clear what effect or danger they have.  It certainly erodes trust.  Already people are saying we shouldn’t use AI in Lean because you cannot trust that the results will be correct (even after being checked by Lean).  I’m worried I’m to blame for that message.  It isn’t the message I wanted to convey.</p>",
+        "id": 516788843,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746664996
+    },
+    {
+        "content": "<p>Also, getting back to the extensions to Lean4checker that I have in mind, the more I think about it, it wouldn’t be difficult to create.  Much easier than writing a kernel, and it would run much faster all things being equal.</p>",
+        "id": 516789269,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746665288
+    },
+    {
+        "content": "<p>I think the test of whether my Lean4Checker addition suggestions are feasible is to write the following in Lean code:</p>\n<ul>\n<li>A tool that traverses the exact same structures used by Lean4Checker, but which outputs which axioms are used for each declaration.  Can it be made fast?  (It isn't doing any type checking, just traversing.)</li>\n<li>A tool that takes two extractions meant for Lean4Checker, one with a sorry theorem and one with that same theorem filled in (and a bunch of stuff in front of that theorem), then compares the signatures to make sure they are the same theorem.</li>\n<li>A tool that does the previous one but also allows for definitions used in the final theorem statement to be <code>sorry</code> in the first extraction and filled in with the second extraction.</li>\n</ul>\n<p>In short, can we do everything that SafeVerify does, but at the kernel level?  I have to admit that I'm not so familiar with the code of Lean4Checker or SafeVerify, and if I was maybe all this would be obvious.</p>",
+        "id": 517362903,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746971636
+    },
+    {
+        "content": "<p><a href=\"https://github.com/GasStationManager/SafeVerify\">SafeVerify</a> already does most of this. However, SafeVerify is written for \"leanprover/lean4:v4.14.0-rc2\", so I would have to check if it is compatible with the more recent Lean versions.</p>",
+        "id": 517376134,
+        "sender_full_name": "Justin Asher",
+        "timestamp": 1746981204
+    },
+    {
+        "content": "<p>You should assume it isn't</p>",
+        "id": 517376475,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1746981463
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"780541\">@Justin Asher</span> You have a typo in the URL: <a href=\"https://github.com/GasStationManager/SafeVerify\">https://github.com/GasStationManager/SafeVerify</a></p>",
+        "id": 517379586,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746983742
+    },
+    {
+        "content": "<p>As for whether SafeVerify has the needed functionality, I think it does, but it doesn't have the safety guarantees that other tools have, like Lean4Checker, Lean4Lean, and external checkers.  These are all very minimal code that works just with the expression terms and are written with safety at the forefront.  SafeVerify is more user-level.  So what I'm proposing is that we need to make a version of the following tools with SafeVerify features:</p>\n<ul>\n<li>Lean4Checker: a simple CLI one can run to detect environment hacking <strong>without having to worry about user-interface bugs</strong>, which Lean4Checker doesn't really do since there are lots of hacks and exploits it doesn't cover (if I understand correctly) like the recent DeepSeek bug (which wasn't in the kernel), using local typeclass instances, changing the command <code>theorem</code>, etc.</li>\n<li>Lean4Lean: same as above, but formally proved to be correct</li>\n<li>external checkers: have a spec or examples that others can copy to write their own checkers</li>\n</ul>",
+        "id": 517379674,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746983796
+    },
+    {
+        "content": "<p>I'm worried that SafeVerify is susceptible to user-facing bugs in Lean.  For example, in its axiom checker which uses the same code as <code>#print axioms</code>. I could be mistaken, but my understanding is that in the past, there have been various bugs where <code>#print axioms</code> doesn't print the right axioms. But they aren't at the level of soundness bugs.  They are just front-end bugs.  And I've exchanged messages here with a mathlib maintainer who doesn't consider <code>#print axioms</code> to be a part of Lean's soundness guarantees (although I was being very annoying at the time, so it might have been in reaction to that).  It seems like it shouldn't be relied on at the most secure kernel level used by something like <code>Lean4checker</code>.  One should just directly loop over the proof term to find the axioms.  (And if that is what print axioms does, why does it have bugs sometimes?)  (It is probably fine if the user-facing SafeVerify uses it if it is faster than looping over proof terms, but there should be a backup.)</p>",
+        "id": 517379828,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746983918
+    },
+    {
+        "content": "<p>I'm less sure how the other parts of SafeVerify work, but it would be good to have it looked over more closely so we know if it is free of bugs.  It isn't much code.</p>",
+        "id": 517379855,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746983949
+    },
+    {
+        "content": "<p>The other thing I'm asking for is a standard of what it means to check a proof, especially one generated by an untrusted agent.  The current standard seems to be to run <code>Lean4Checker</code> and do <code>#print axioms</code>, which can miss important bugs and environment hacking cases.  If the standard is run SafeVerify, that would probably be ok (after it is looked over).  We just need to know it will be maintained, and there is agreement in the community that this is the standard.</p>",
+        "id": 517380939,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746984899
+    },
+    {
+        "content": "<p>Do you know why the <code>#print axioms</code> command was not working properly? Do you have a link to a GitHub issue, for instance, or a Zulip chat thread? I want to read up on this first.</p>",
+        "id": 517383058,
+        "sender_full_name": "Justin Asher",
+        "timestamp": 1746986645
+    },
+    {
+        "content": "<p>The two I know about are <a class=\"stream-topic\" data-stream-id=\"270676\" href=\"/#narrow/channel/270676-lean4/topic/.23print.20axioms.20does.20not.20report.20sorry/with/515566581\">#lean4 &gt; #print axioms does not report sorry</a> and <a class=\"stream-topic\" data-stream-id=\"270676\" href=\"/#narrow/channel/270676-lean4/topic/soundness.20bug.3A.20native_decide.20leakage/with/395967589\">#lean4 &gt; soundness bug: native_decide leakage</a>.  In both cases, the proofs wouldn't have passed Lean4Checker, but at least on the user end, <code>#print axioms</code> gave a misleading result.  If there was some assurance the only way <code>#print axioms</code> could be wrong was if the proof was also wrong and wouldn't pass <code>Lean4Checker</code>, that would be better.  I'm not sure if that is generally accepted.</p>",
+        "id": 517383664,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1746987195
+    },
+    {
+        "content": "<p>Re: print axioms, from looking at the code (CollectAxioms) it is recursively going into terms to check for axioms, which seems to be the right way. As for why it sometimes has bugs, I'm not sure; one of the issues linked above seems to be about which version of environment to search in. </p>\n<p>In SafeVerify,  CollectAxioms is called on the environment after Environment.replay, which is lean4checker's backend. It's more robust than straight #print axioms since it protects against environment manipulations.</p>\n<p>As for the question of whether some or all of these functionality can be done in kernel,  I don't know. I do share the sentiment that there should be an official definition of what is an acceptable proof, and an official way to check it.</p>",
+        "id": 517408159,
+        "sender_full_name": "GasStationManager",
+        "timestamp": 1747009210
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"631691\">@Thomas Zhu</span> You expressed some worry that SafeVerify (or the autograder) uses CollectAxioms.  Do you still feel that way after the above message?  (Link to your reservation: <a class=\"message-link\" href=\"/#narrow/channel/219941-Machine-Learning-for-Theorem-Proving/topic/DeepSeek-Prover.20V2/near/515828365\">#Machine Learning for Theorem Proving &gt; DeepSeek-Prover V2 @ 💬</a>)</p>",
+        "id": 517408579,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747009661
+    },
+    {
+        "content": "<p>I don't think it's a good idea to be discouraging use of CollectAxioms. As written it is correct AFAIU, although it has weird behavior around some kind of malformed environments. That is, it reports axioms correctly assuming that the kernel would construct the environment</p>",
+        "id": 517410679,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747011535
+    },
+    {
+        "content": "<p>The issue of <code>collectAxioms</code> is described and fixed in <a href=\"https://github.com/leanprover/lean4/pull/8214\">lean#8214</a>. Basically, before this PR but after a change in asynchronous elaboration (i.e. in Lean v4.19.0) it silently ignores any constant in the environment but not kernel environment, so it could falsely ignore axioms if a previous error introduces this. This does not make SafeVerify invalid: the previous error would not have passed the kernel anyway. <del>However, the concern I have is if in the future another exploit can suppress this error message.</del> (Edit: sorry, I didn't understand how SafeVerify works)</p>\n<p>Personally I think that Lean should make sure <code>collectAxioms</code> and hence <code>#print axioms</code> is sound, in that if <code>collectAxioms c = #[a1, ..., an]</code> for a constant <code>c : C</code> and axioms <code>ai : Ai</code>, then <code>A1 → ... → An → C</code> is inhabited without assuming any axioms. I also think that <code>collectAxioms</code> looks sound after <a href=\"https://github.com/leanprover/lean4/pull/8214\">lean#8214</a>, but this should also be verified (i.e. something like this: 1. <code>collectAxioms</code> elevated to the kernel, and the use of user-defined axioms to the metatheory; or 2. restricting lean4checker to only accept the 3 standard axioms, and a way to construct <code>c' : A1 → ... → An → C</code> for a theorem <code>c : C</code> that depends on axioms <code>Quot.sound, propext, Classical.choice, a1, ..., an</code>, and <code>c'</code> can then be checked by lean4checker).</p>",
+        "id": 517410707,
+        "sender_full_name": "Thomas Zhu",
+        "timestamp": 1747011571
+    },
+    {
+        "content": "<p>To avoid environment malformedness issues you need something like Environment.replay which is what lean4checker / lean4lean use</p>",
+        "id": 517410709,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747011572
+    },
+    {
+        "content": "<p>Ok, so if the environment is good (i.e. comes from Environment.replay, which is also what SafeVerify uses), then it is as trustworthy as the Lean kernel?</p>",
+        "id": 517410815,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747011635
+    },
+    {
+        "content": "<p>I can't say I have audited the part to do with kernel.environment, this is a recent development, but I don't have a reason to distrust it</p>",
+        "id": 517410867,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747011702
+    },
+    {
+        "content": "<p>Can it be added to Lean4Lean?</p>",
+        "id": 517410886,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747011718
+    },
+    {
+        "content": "<p>what's the interface design there?</p>",
+        "id": 517410941,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747011732
+    },
+    {
+        "content": "<p>You should come up with a proposal that can fit into lean4checker and lean4lean workflows</p>",
+        "id": 517410988,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747011779
+    },
+    {
+        "content": "<p>One thing I should mention: lean isn't great at handling multiple environments which are not in an ancestry relation. So your proposal up thread to \"compare\" environments between one with a sorry and one without sounds difficult. It would be easier to have the proof be an extension of the theorem statement environment</p>",
+        "id": 517411146,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747011919
+    },
+    {
+        "content": "<p>SafeVerify does this, but maybe it is unsound.  That would be good to know.</p>",
+        "id": 517411178,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747011956
+    },
+    {
+        "content": "<p>i.e.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">RiemannHypothesis</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Prop</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">...</span>\n\n<span class=\"c1\">-- later</span>\n\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">rh_proof</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">RiemannHypothesis</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">...</span>\n</code></pre></div>",
+        "id": 517411256,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747011982
+    },
+    {
+        "content": "<p>you don't need any fancy additions to lean to be able to express this, the only thing is that you need to identify <code>rh_proof</code> and <code>RiemannHypothesis</code> and say \"I assert that one has the type of the other\"</p>",
+        "id": 517411338,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747012050
+    },
+    {
+        "content": "<p>Because you are totally right that checking that an .olean is well formed on its own is no good since it could just be empty</p>",
+        "id": 517411466,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747012168
+    },
+    {
+        "content": "<p>That does sound like a good first approximation, but it also wouldn't fit into a lot of real-world use cases.</p>",
+        "id": 517411538,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747012206
+    },
+    {
+        "content": "<p>it's certainly a minimalistic approach. What are you thinking of that wouldn't work with this?</p>",
+        "id": 517411604,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747012279
+    },
+    {
+        "content": "<p>If the type check was up to defeq then you wouldn't need <code>rh_proof</code> to literally refer to <code>RiemannHypothesis</code>, and the two could even be in separate files</p>",
+        "id": 517411703,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747012340
+    },
+    {
+        "content": "<p>I don't like having the statement expressed using <code>sorry</code> though, that makes it a bit too easy to solve the proof by referring to the sorry theorem</p>",
+        "id": 517411735,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747012370
+    },
+    {
+        "content": "<p>One doesn't typically train AI models to produce theorems of <code>theorem rh_proof: RiemanHypothesis</code> where the theorem is just a single Prop constant.  Similarly, with grading students.   Maybe filling in blueprints is more like this, so if Lean had more of a common and highly used standard for saying \"fill this in for me\", then I could see this workflow using that.</p>",
+        "id": 517411779,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747012416
+    },
+    {
+        "content": "<p>Also, does this cover the case of filling in a definition and a theorem about that definition?</p>",
+        "id": 517411795,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747012437
+    },
+    {
+        "content": "<p>As mentioned, the proof doesn't have to literally use the prop constant</p>",
+        "id": 517411844,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747012456
+    },
+    {
+        "content": "<p>but it does have to be re-typable as using it</p>",
+        "id": 517411852,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747012464
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"115715\">Jason Rute</span> <a href=\"#narrow/channel/270676-lean4/topic/A.20better.20Lean.20checker/near/517411795\">said</a>:</p>\n<blockquote>\n<p>Also, does this cover the case of filling in a definition and a theorem about that definition?</p>\n</blockquote>\n<p>You could do that by bundling things into a structure or sigma type</p>",
+        "id": 517411885,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747012500
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/270676-lean4/topic/A.20better.20Lean.20checker/near/517411852\">said</a>:</p>\n<blockquote>\n<p>but it does have to be re-typable as using it</p>\n</blockquote>\n<p>Is this easy?  Can I take a proof of:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">foo</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">&lt;</span><span class=\"n\">stmt</span><span class=\"w\"> </span><span class=\"n\">of</span><span class=\"w\"> </span><span class=\"n\">rh</span><span class=\"w\"> </span><span class=\"n\">hypothesis</span><span class=\"bp\">&gt;</span>\n</code></pre></div>\n<p>and automatically turn it into:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">foo</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">RiemannHypothesis</span>\n</code></pre></div>\n<p>easily at the code syntax level?</p>",
+        "id": 517411929,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747012550
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/270676-lean4/topic/A.20better.20Lean.20checker/near/517411885\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"115715\">Jason Rute</span> <a href=\"#narrow/channel/270676-lean4/topic/A.20better.20Lean.20checker/near/517411795\">said</a>:</p>\n<blockquote>\n<p>Also, does this cover the case of filling in a definition and a theorem about that definition?</p>\n</blockquote>\n<p>You could do that by bundling things into a structure or sigma type</p>\n</blockquote>\n<p>That gets really awkward really fast.</p>",
+        "id": 517411987,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747012582
+    },
+    {
+        "content": "<p>If you have</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">RiemannHypothesis</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">&lt;</span><span class=\"n\">stmt</span><span class=\"w\"> </span><span class=\"n\">of</span><span class=\"w\"> </span><span class=\"n\">rh</span><span class=\"w\"> </span><span class=\"n\">hypothesis</span><span class=\"bp\">&gt;</span>\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">foo</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">&lt;</span><span class=\"n\">stmt</span><span class=\"w\"> </span><span class=\"n\">of</span><span class=\"w\"> </span><span class=\"n\">rh</span><span class=\"w\"> </span><span class=\"n\">hypothesis</span><span class=\"bp\">&gt;</span>\n</code></pre></div>\n<p>then it's easy to ask the kernel to check that <code>foo : RiemannHypothesis</code></p>",
+        "id": 517411996,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747012603
+    },
+    {
+        "content": "<p>I agree that it's not great. It doesn't handle universes very well at all</p>",
+        "id": 517412036,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747012659
+    },
+    {
+        "content": "<p>you can't just bundle a universe polymorphic definition into a subtype</p>",
+        "id": 517412050,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747012676
+    },
+    {
+        "content": "<p>Again, I'm curious if the current SafeVerify (which I think handles these cases more naturally) or autograder are sound, or if they run into problems in practice with comparing two separate environments (the problems that <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> is mentioning).</p>",
+        "id": 517412163,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747012755
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> do you think you could come up with an example that breaks SafeVerify?</p>",
+        "id": 517412395,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747012932
+    },
+    {
+        "content": "<p>It seems like it would be hard to write a spec for SafeVerify</p>",
+        "id": 517412398,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747012935
+    },
+    {
+        "content": "<p>Good question.  I assumed it was that the second environment had to have at least the same constants as the first and the types have to be the same (where same means then have the same construction tree in the environment (save for filling in sorries in the first environment).  But I haven't thought about it as much.  Maybe there is an obvious problem here.</p>",
+        "id": 517412631,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747013138
+    },
+    {
+        "content": "<p>I should clarify, the readme is a reasonable description of behavior. I mean a formal spec, sufficient to convince someone that the result is sound and actually implies some theorem is proved</p>",
+        "id": 517412732,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747013217
+    },
+    {
+        "content": "<p>I was trying to outline one. :) But I agree. Without a formal agreement one can't talk about correctness.</p>",
+        "id": 517412865,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747013299
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"115715\">Jason Rute</span> <a href=\"#narrow/channel/270676-lean4/topic/A.20better.20Lean.20checker/near/517412395\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> do you think you could come up with an example that breaks SafeVerify?</p>\n</blockquote>\n<p>It looks pretty good, but one thing I spotted is that it trusts the imports of the target file. So if my submission contains an import on another file under my control then I can put whatever I want in there (both malicious code and also just malformed declarations) and they will not be checked</p>",
+        "id": 517413772,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747013998
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"776090\">@GasStationManager</span>, if we want to verify that the imports are the same, would it be as easy as recursing through them as well?  Or I think olean’s have a hash or something that could be used to stop recursing (if we trust them).  If a file is new, it would have to be recursed.</p>",
+        "id": 517423503,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747021913
+    },
+    {
+        "content": "<p>Also, <span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> is asking really good questions about workflows and the exact logic spec we have in mind.  I feel like I don’t want to take that question lightly since it probably matters a lot for the design of practical tools and user workflows, not just in AI benchmarking but for user facing tools, and connecting with the common Lean blueprint workflow.</p>",
+        "id": 517423860,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1747022173
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> Yes that is a good point. For my <a href=\"https://github.com/GasStationManager/CodeProofTheArena\">current use case</a> I was trusting the imports because  the submission is via the web, which the system then saves as a single temporary file into a fixed Lean installation. </p>\n<p>For multi file submissions, where a main file imports the other modules, I guess the right thing would be to replay the \"local\" imports. Like what <code>lean4checker --fresh</code> does but perhaps have a whitelist of trusted imports (e.g. Mathlib) that do not have to be replayed?</p>",
+        "id": 517610211,
+        "sender_full_name": "GasStationManager",
+        "timestamp": 1747069602
+    },
+    {
+        "content": "<p>it's fine if you want to not check imports if this is part of a distributed checking process (you have to check the imports in a separate invocation and in the given invocation you can assume that check has already happened)</p>",
+        "id": 517610667,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747069717
+    },
+    {
+        "content": "<p>but you have to take care not to run untrusted code at initialization time</p>",
+        "id": 517610731,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747069739
+    },
+    {
+        "content": "<p>I can put untrusted code in <code>initialize</code> blocks in an upstream file and it will get executed when you try to set up the initial environment for the downstream file</p>",
+        "id": 517610864,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1747069780
+    }
+]
