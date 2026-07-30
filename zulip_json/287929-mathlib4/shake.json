@@ -148,5 +148,539 @@
         "id": 572541492,
         "sender_full_name": "Sebastian Ullrich",
         "timestamp": 1770478181
+    },
+    {
+        "content": "<p>I've started working on a run of <code>lake shake --fix</code> on mathlib4 in <a href=\"https://github.com/leanprover-community/mathlib4/pull/37807\">#37807</a>. The first thing that jumps out at me is all of the additions of <code>meta import Mathlib.Tactic.Attr.Register</code>. I guess we could get these to go away by adding a public import somewhere low in the import hierarchy, but this would undo <a href=\"https://github.com/leanprover-community/mathlib4/pull/32541\">#32541</a> by <span class=\"user-mention\" data-user-id=\"387244\">@Yaël Dillies</span> which made it private. I'm guessing something has changed in <code>shake</code> since the last successful full run in <a href=\"https://github.com/leanprover-community/mathlib4/pull/34511\">#34511</a>? </p>\n<p>I'm still getting up to speed on <code>shake</code> so I don't know enough to know what we should do here -- any guidance would be welcome!</p>",
+        "id": 584291399,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1775673343
+    },
+    {
+        "content": "<p>It's okay if you undo my PR, it was experimental</p>",
+        "id": 584365515,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1775714177
+    },
+    {
+        "content": "<p>I took a look at why the import in Mathlib.Algebra.Algebra.Subalgebra.Rank appeared: it is because the file uses the <code>nontriviality</code> tactic which at some point runs <code>simp [nontriviality, ...]</code> and <code>@[nontriviality]</code> is defined in Attr.Register. Now usually this is just how tactic programming works: you have to think not only about the imports that make your tactic elaborate but also the ones that allow your tactic to run successfully in other modules, which you should add as public imports of your tactic. It is only through an implementation detail of simp attributes that you are allowed to refer to them without actually having the module in question imported (directly or via transitive public imports), like you would have to with most other named references in Lean. Shake does not know about this edge case and my recommendation would be not to rely on it in the implementation of <code>nontriviality</code> either, by declaring such a public import:</p>\n<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"gd\">--- a/Mathlib/Tactic/Nontriviality/Core.lean</span>\n<span class=\"gi\">+++ b/Mathlib/Tactic/Nontriviality/Core.lean</span>\n<span class=\"gu\">@@ -7,6 +7,7 @@ module</span>\n\n<span class=\"w\"> </span>public meta import Qq.MetaM\n<span class=\"w\"> </span>public import Mathlib.Logic.Nontrivial.Basic -- shake: keep (tactic dependency)\n<span class=\"gi\">+public import Mathlib.Tactic.Attr.Register -- shake: keep (tactic dependency)</span>\n<span class=\"w\"> </span>public meta import Mathlib.Tactic.ToDual\n</code></pre></div>\n<p>Note the other shake-kept import that already exists for the reason I mentioned.</p>\n<p>This does additionally make sure that the modules being able to access the <code>nontriviality</code> tactic also can use the <code>@[nontriviality]</code> attribute without further imports, which only seems consistent to me.</p>",
+        "id": 584427554,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1775734413
+    },
+    {
+        "content": "<p>I haven't checked yet whether that would get rid of all the new imports or whether there are similar cases in other metaprograms</p>",
+        "id": 584427658,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1775734445
+    },
+    {
+        "content": "<p>I should also mention that I've considered a change to Shake that would make it discard new imports it thinks are necessary but that evidently were not necessary to elaborate the current state of the module, which would be the case here. My fear was that this could obscure Shake bugs we want to fix though this is a first case where it would improve Shake's output while not being related to a clear bug in Shake.</p>",
+        "id": 584428488,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1775734709
+    },
+    {
+        "content": "<p>Thanks! To make sure I understand what qualifies as a bug: if <code>shake --fix</code> makes a change to imports and afterwards mathlib does not compile, that should be minimized and reported, right?</p>",
+        "id": 584438261,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1775737350
+    },
+    {
+        "content": "<p>Definitely, yes! Problems in the other direction like above are report-worthy as well, it just turns out in this specific case that likely Lean rather than Shake should be changed, but in a nontrivial way for not much benefit outside of Shake</p>",
+        "id": 584438694,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1775737464
+    },
+    {
+        "content": "<p>Just curious: I notice that the effects of <em>any</em> initializer seem to ignore import visibility barriers, and so we e.g. propagate linters and can use attributes even when not properly imported (and you can tell the attribute is not properly imported by the docstring not appearing on hover for <code>@[foo]</code> :) ).</p>\n<p>Is this the way you mean lean (maybe) should be changed? And is it good practice to design import hierarchies \"expecting\" that initializers are just going to disregard visibility, or should we \"pretend\" they respect it, so to speak? :) (For attributes it seems to make sense to want them publicly imported to preserve hovers; for things like linters it maybe is useful that they see through visibility barriers!)</p>",
+        "id": 584540409,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1775768534
+    },
+    {
+        "content": "<p>We cannot restrict further what initializers are run as metaprogramming code downstream may depend on them. We can only ensure on a case-by-case level that their side effects affect elaboration in well-scoped ways, by changing how the data they generated is being used. This may include moving some concepts like custom attributes away from being based on initializers in the first place.</p>",
+        "id": 584623263,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1775811098
+    },
+    {
+        "content": "<p>I'm unclear what's going on here. My understanding is that <code>shake</code> used to run automatically but no longer does, and our imports aren't well minimised any more? Does <code>#min_imports</code> work with the module system? I was moving stuff to a new file just now and <code>#min_imports</code> found a -50 imports that had just been sitting there.</p>",
+        "id": 584792874,
+        "sender_full_name": "Artie Khovanov",
+        "timestamp": 1775877378
+    },
+    {
+        "content": "<p>Yes, that's more or less the case. I'm in the process of minimizing some bugs in <code>shake</code>; after those are reported, I'll clean up a PR with \"good\" suggestions from <code>shake</code> and then we can add it to our CI again.</p>",
+        "id": 584792985,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1775877533
+    },
+    {
+        "content": "<p>OK, I've reported <a href=\"https://github.com/leanprover/lean4/pull/13417\">lean#13417</a> where <code>shake</code> removes imports needed for <code>inferInstanceAs</code>: repro repo <a href=\"https://github.com/bryangingechen/shake-bug-inferInstanceAs\">here</a>.</p>\n<p>I also found some unused <code>open</code>s where <code>shake</code> breaks the build related to <a href=\"https://github.com/leanprover/lean4/pull/12832\">lean#12832</a>. I'll make a separate post requesting a linter for this sort of thing.</p>",
+        "id": 585644080,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1776255280
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/38569\">#38569</a> contains:</p>\n<ul>\n<li>2 <code>shake: keep</code> / import changes for tactic dependencies (including <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span>'s suggestion above)</li>\n<li>5 <code>shake: keep</code> comments required until <a href=\"https://github.com/leanprover/lean4/pull/13417\">lean#13417</a> is fixed.</li>\n</ul>\n<p>After this is merged we can try running <code>shake --fix</code> (with all the usual options), and if that seems to work well we can set up shake in CI.</p>",
+        "id": 591056575,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1777273525
+    },
+    {
+        "content": "<p><del>#38605 is a fresh run of <code>lake shake --add-public --keep-implied --keep-prefix --fix</code>. I haven't looked at the changes yet and probably won't have a chance until tomorrow. Extra eyes on this would be appreciated!</del> (edit: it was broken so I've opened <a href=\"https://github.com/leanprover-community/mathlib4/pull/38611\">#38611</a> with some more fixes)</p>\n<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/38608\">#38608</a> adds a weekly workflow that runs the above command and creates a PR with the results.</p>",
+        "id": 591281297,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1777352591
+    },
+    {
+        "content": "<p>Is it possible to run in PRs on changed files (like <code>#min_imports</code> but hopefully is more reliable), or is it too expensive?</p>",
+        "id": 591281929,
+        "sender_full_name": "Snir Broshi",
+        "timestamp": 1777353064
+    },
+    {
+        "content": "<p>Can you explain the shake workflow being weekly versus the previous design (commented out <a href=\"https://github.com/leanprover-community/mathlib4/blob/e120fe83a7bbe62d4d550394668230db8c6677b3/.github/workflows/build_template.yml#L502-L508\">here</a>) of having it run during PRs? Is this temporary until there's a feel for if all the kinks have been worked out of the new <code>shake</code>?</p>",
+        "id": 591281948,
+        "sender_full_name": "Chris Henson",
+        "timestamp": 1777353084
+    },
+    {
+        "content": "<p>(I think Snir's question is basically the same, they got posted almost simultaneously...)</p>",
+        "id": 591282624,
+        "sender_full_name": "Chris Henson",
+        "timestamp": 1777353520
+    },
+    {
+        "content": "<p>It takes a few minutes to run on all of mathlib locally which I thought would be too much to add to every push. There's also still <a href=\"https://github.com/leanprover/lean4/pull/13417\">lean#13417</a> which I don't want to make PR authors have to deal with (though it seems to be a fairly rare).</p>",
+        "id": 591283003,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1777353808
+    },
+    {
+        "content": "<p>Hmm, I feel like the tradeoff of a weekly PR is the changes shake makes get separated from the usual review process. If they come in a large batch, it seems less likely that you get the same reviewer familiar with the module noticing any unusual <code>shake</code> behavior or missing <code>shake: keep*</code> comments.</p>",
+        "id": 591284014,
+        "sender_full_name": "Chris Henson",
+        "timestamp": 1777354489
+    },
+    {
+        "content": "<p>Yes, I agree. Maybe there are still some ways to speed up <code>shake</code> that I'm not aware of.</p>\n<p>In any case it looks like the build on <a href=\"https://github.com/leanprover-community/mathlib4/pull/38605\">#38605</a> failed, so there are still some issues with <code>shake</code> to look into...</p>",
+        "id": 591284757,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1777355042
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/38611\">#38611</a> contains some more fixes discovered from the build failure on <a href=\"https://github.com/leanprover-community/mathlib4/pull/38605\">#38605</a>.</p>",
+        "id": 591298615,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1777361059
+    },
+    {
+        "content": "<p>\"a few minutes\" doesn't sound too bad to me to always run. Though if it could be sped up, that'd be good as well</p>",
+        "id": 591312802,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1777365125
+    },
+    {
+        "content": "<p>OK, I tried again at <a href=\"https://github.com/leanprover-community/mathlib4/pull/38691\">#38691</a>, and this time I ran the command with <code>time</code> when creating the PR and got:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>$ time lake shake --add-public --keep-implied --keep-prefix --fix --explain &gt; explain.txt\n185.00s user 36.86s system 57% cpu 6:23.47 total\n</code></pre></div>\n<p>6 minutes was a bit annoying to wait for locally and tacking 6 minutes onto every single build seems like a lot; maybe I'm more impatient than others though.</p>\n<p>Now that this is green, I'd appreciate extra reviews on the import changes.</p>",
+        "id": 591674708,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1777430856
+    },
+    {
+        "content": "<p>By the way, is <code>shake --fix</code> supposed to be idempotent? I ran it again on the same branch (with the same parameters) and got a few more changes (all changing <code>meta import</code> to <code>import</code>). cc: <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span></p>\n<p>I've opened a new draft with those changes at <a href=\"https://github.com/leanprover-community/mathlib4/pull/38694\">#38694</a>. The relevant commit is <a href=\"https://github.com/leanprover-community/mathlib4/commit/8dcfa7aea0c474a04bc47060fc82590c3c95d6e6\">here</a>.</p>",
+        "id": 591674739,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1777430877
+    },
+    {
+        "content": "<p>Does it also take 6 minutes when the end result is doing no changes? Because if it's only 1 minute to verify \"no changes necessary\" then adding it to CI will usually hit that fast path.</p>",
+        "id": 591675389,
+        "sender_full_name": "Snir Broshi",
+        "timestamp": 1777431427
+    },
+    {
+        "content": "<p>Yep, now that the build on <a href=\"https://github.com/leanprover-community/mathlib4/pull/38694\">#38694</a> has finished, I ran it a third time and got roughly the same timings, with 0 suggestions:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>$ time lake shake --add-public --keep-implied --keep-prefix --fix --explain &gt; explain3.txt\n184.49s user 39.58s system 54% cpu 6:49.39 total\n</code></pre></div>",
+        "id": 591680480,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1777435494
+    },
+    {
+        "content": "<p>Yes, that's definitely too long to put on every CI build, unfortunately.</p>",
+        "id": 591683038,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1777437164
+    },
+    {
+        "content": "<p>IIRC, near the end of mathlib3, linting alone took almost one hour. Times have changed...</p>",
+        "id": 591729211,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1777453647
+    },
+    {
+        "content": "<p>Shake takes 1min30s on my machine while <code>lint</code> takes 2min30s, can we run these in parallel? Shake's parallelism is bursty I believe because it only uses it for initial per-module data collection, not sure about lint...</p>",
+        "id": 591835006,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1777477903
+    },
+    {
+        "content": "<p>We've talked about splitting the test and lint steps into a separate job before, maybe it's time to revisit that.</p>\n<p>BTW, I'm working on a minimization of shake's non-idempotency; if you're already looking at it I can stop though.</p>",
+        "id": 591842783,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1777479771
+    },
+    {
+        "content": "<p>I haven't yet, that would be very helpful!</p>",
+        "id": 591842913,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1777479804
+    },
+    {
+        "content": "<p>I believe GitHub wanted to implement step-level parallelism \"before mid 2026\". A bash-level solution may not be too hard either.</p>",
+        "id": 591843057,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1777479849
+    },
+    {
+        "content": "<p>Is the 6min shake time measured on the CI build servers? (with 96 cores)</p>",
+        "id": 591867913,
+        "sender_full_name": "Snir Broshi",
+        "timestamp": 1777486925
+    },
+    {
+        "content": "<p>(it's not the build servers that had 48/96 cores/threads, but the radar servers. The build servers are significantly smaller.)</p>",
+        "id": 591905231,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1777499228
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"123965\">Bryan Gin-ge Chen</span> <a href=\"#narrow/channel/287929-mathlib4/topic/shake/near/585644080\">said</a>:</p>\n<blockquote>\n<p>OK, I've reported <a href=\"https://github.com/leanprover/lean4/pull/13417\">lean#13417</a> where <code>shake</code> removes imports needed for <code>inferInstanceAs</code>: repro repo <a href=\"https://github.com/bryangingechen/shake-bug-inferInstanceAs\">here</a>.</p>\n</blockquote>\n<p>Should be addressed in <a href=\"https://github.com/leanprover/lean4/pull/13579\">lean4#13579</a>... bit hard to test in vivo. I don't know if looking at only the head instance is too optimistic :/</p>",
+        "id": 592317282,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1777653100
+    },
+    {
+        "content": "<p>With lots of help from Opus 4.7, I've opened <a href=\"https://github.com/leanprover/lean4/pull/13599\">lean#13599</a> which records the non-idempotency issue. The corresponding repro repo is <a href=\"https://github.com/bryangingechen/shake-bug-meta-import-flip\">here</a>.</p>\n<p>I'll try and test out <a href=\"https://github.com/leanprover/lean4/pull/13579\">lean#13579</a> on the <code>inferInstanceAs</code> repo in a bit.</p>",
+        "id": 592359155,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1777668166
+    },
+    {
+        "content": "<p>Using <code>leanprover/lean4-pr-releases:pr-release-13579-4ddb8d9</code>, I can confirm that running <code>lake shake</code> in the <code>inferInstanceAs</code> repo no longer suggests any changes. <span aria-label=\"tada\" class=\"emoji emoji-1f389\" role=\"img\" title=\"tada\">:tada:</span></p>",
+        "id": 592375946,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1777677441
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"123965\">Bryan Gin-ge Chen</span> <a href=\"#narrow/channel/287929-mathlib4/topic/shake/near/592359155\">said</a>:</p>\n<blockquote>\n<p>With lots of help from Opus 4.7, I've opened <a href=\"https://github.com/leanprover/lean4/pull/13599\">lean#13599</a> which records the non-idempotency issue. The corresponding repro repo is <a href=\"https://github.com/bryangingechen/shake-bug-meta-import-flip\">here</a>.</p>\n</blockquote>\n<p>Perfect, thanks! This turned out to have the same root cause as the issue discussed somewhere above of the language server allowing more attribute uses than the cmdline. In <a href=\"https://github.com/leanprover/lean4/pull/13613\">lean4#13613</a> I added a guard against such indirect uses that should prevent both issues, feel free to sanity-check the Mathlib fallout. In <a href=\"https://github.com/leanprover/lean4/pull/13629\">lean4#13629</a> I go one step further and move custom attributes from <code>initialize</code> to a new <code>@[attribute]</code>, which should furthermore help with eliminating the mentioned \"orphan attribute applications\" that lead to unfortunate conservative approximations in shake.</p>",
+        "id": 592693717,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1777888332
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/pull/13613\">lean4#13613</a> is merged, adding 4 new imports to Mathlib to uphold the new invariant. For the second PR, here is a sketch how <code>@[attribute]</code> can be used to remove almost all attribute orphan uses from Mathlib: <a href=\"https://github.com/leanprover-community/mathlib4-nightly-testing/compare/lean-pr-testing-13629...Kha:mathlib4:feat/attribute-decl-migration\">https://github.com/leanprover-community/mathlib4-nightly-testing/compare/lean-pr-testing-13629...Kha:mathlib4:feat/attribute-decl-migration</a>. Mostly this just means moving the attribute declaration from the module declaring the env ext (which as before cannot be in the same file as the applications) to the module with the applications, only for <code>@[bound]</code> uses were a bit more scattered</p>",
+        "id": 593252845,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1778072794
+    },
+    {
+        "content": "<p>The automated workflow is now running and seems to work: <a href=\"#narrow/channel/428973-nightly-testing/topic/Mathlib.20.60shake.20--fix.60\">#nightly-testing &gt; Mathlib &#96;shake --fix&#96;</a> </p>\n<p>Though I guess we don't have the fixes mentioned above yet, so perhaps we should wait for our toolchain to be updated before we merge any PRs from the bot?</p>",
+        "id": 593783605,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1778245643
+    },
+    {
+        "content": "<p>While I'm fixing the workflow in <a href=\"https://github.com/leanprover-community/mathlib4/pull/39085\">#39085</a>, is it worth changing the workflow to also run <code>shake --fix</code> on <code>MathlibTest</code>, <code>Archive</code>, <code>Counterexamples</code>?</p>",
+        "id": 593801927,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1778250279
+    },
+    {
+        "content": "<p>OK, I've added the extra modules to <a href=\"https://github.com/leanprover-community/mathlib4/pull/39085\">#39085</a>.</p>",
+        "id": 593852776,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1778264000
+    },
+    {
+        "content": "<p>I am going through a period of removing technical debt and generally tidying up FLT; recently <del>claude</del>I have added docstrings to every definition and module docstrings to every file, for example. Shaking is something that's getting to the top of my list. Will I be able to shake FLT at some point in the near future? I have recently modulized it.</p>",
+        "id": 593856526,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1778265219
+    },
+    {
+        "content": "<p>I hope so! You could actually try it now and see what happens; there are a few bugs, but they were pretty rare in mathlib so maybe they won't be triggered in FLT.</p>",
+        "id": 593860510,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1778266546
+    },
+    {
+        "content": "<p>How do I do it?</p>",
+        "id": 593861225,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1778266807
+    },
+    {
+        "content": "<p>From the <code>FLT</code> directory, <code>lake build</code> and then <code>lake shake</code> to see the suggestions, or <code>lake shake --fix</code> to apply them directly.</p>",
+        "id": 593862537,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1778267183
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>error: Lean exited with code 1\nSome required targets logged failures:\n- FLT.DedekindDomain.FiniteAdeleRing.IsDirectLimitRestricted\n- FLT.NumberField.Padics.RestrictedProduct\n- FLT.Mathlib.Topology.Algebra.RestrictedProduct.TopologicalSpace\n- FLT.Mathlib.Topology.Algebra.Module.ModuleTopology\n- FLT.Basic.FreyPackage\n- FLT.Mathlib.GroupTheory.Index\n- FLT.Deformations.RepresentationTheory.Etale\n- FLT.Deformations.Categories\n- FLT.DedekindDomain.AdicValuation\n- FLT.Patching.Algebra\n- FLT.Patching.Module\nerror: build failed\n</code></pre></div>\n<p>What are the likely causes of all the failures? Maybe I'll try and investigate.</p>",
+        "id": 593871665,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1778270446
+    },
+    {
+        "content": "<p>Example errors:<br>\n1) <code>open scoped TensorProduct</code> leads to</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">unknown</span><span class=\"w\"> </span><span class=\"kn\">namespace</span><span class=\"w\"> </span><span class=\"ss\">`TensorProduct</span><span class=\"bp\">`</span>\n</code></pre></div>\n<p>(fixed with <code>import Mathlib</code> then <code>#check TensorProduct</code> then <code>import Mathlib.LinearAlgebra.TensorProduct.Defs</code>)</p>\n<p>2) <code>[Module.FinitePresentation A M]</code> leads to</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">Unknown</span><span class=\"w\"> </span><span class=\"n\">constant</span><span class=\"w\"> </span><span class=\"ss\">`Module.FinitePresentation</span><span class=\"bp\">`</span>\n</code></pre></div>\n<p>(attempted to fix with <code>import Mathlib</code>, leading to)</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">Unknown</span><span class=\"w\"> </span><span class=\"n\">constant</span><span class=\"w\"> </span><span class=\"ss\">`Module.FinitePresentation</span><span class=\"bp\">`</span>\n\n<span class=\"n\">Note</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">A</span><span class=\"w\"> </span><span class=\"n\">public</span><span class=\"w\"> </span><span class=\"n\">declaration</span><span class=\"w\"> </span><span class=\"ss\">`Module.FinitePresentation</span><span class=\"bp\">`</span><span class=\"w\"> </span><span class=\"n\">exists</span><span class=\"w\"> </span><span class=\"n\">but</span><span class=\"w\"> </span><span class=\"n\">is</span><span class=\"w\"> </span><span class=\"n\">imported</span><span class=\"w\"> </span><span class=\"n\">privately</span><span class=\"bp\">;</span><span class=\"w\"> </span><span class=\"n\">consider</span><span class=\"w\"> </span><span class=\"n\">adding</span><span class=\"w\"> </span><span class=\"ss\">`public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">Module</span><span class=\"bp\">.</span><span class=\"n\">FinitePresentation</span><span class=\"bp\">`.</span>\n</code></pre></div>\n<p>(and then fixed with <code>public import Mathlib.Algebra.Module.FinitePresentation</code>).</p>\n<p>3) <code>open scoped Pointwise</code> leads to</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">unknown</span><span class=\"w\"> </span><span class=\"kn\">namespace</span><span class=\"w\"> </span><span class=\"ss\">`Pointwise</span><span class=\"bp\">`</span>\n</code></pre></div>\n<p>This one is more annoying. Attempted fix: <code>import Mathlib</code> and then <code>#check Pointwise</code> and then I get <code>Unknown identifier `Pointwise` </code> :-/ so now I don't actually know what to import to fix this or how to find out :-( I see <code>open scoped Pointwise</code> in mathlib but if I right-click on things I get sent to <code>BuiltinCommand.lean</code> in core :-(</p>\n<p>I'm just explaining what's happening in practice, I hope this is helpful. I'll press on.</p>",
+        "id": 593873663,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1778271120
+    },
+    {
+        "content": "<p>there is no declaration <code>Pointwise</code>, the <code>Pointwise</code> namespace is only used to scope some instances in</p>",
+        "id": 593875259,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1778271691
+    },
+    {
+        "content": "<p>so you should find where those instances are</p>",
+        "id": 593875443,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1778271742
+    },
+    {
+        "content": "<p>Yeah I'm beginning to get the hang of it now. You get things working with <code>public import Mathilb</code>, you #synth the instance which now fires and then you <code>public import</code> the file which has it.</p>\n<p>So does this mean that <code>shake</code> doesn't work yet? Or are these technical problems which are really hard to solve and this extra work is expected?</p>",
+        "id": 593875790,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1778271879
+    },
+    {
+        "content": "<p>I don't really understand all this <code>public</code> business. <code>FLT.Deformations.Categories</code> fails now, with an error <code>failed to synthesize instance of type class\n  IsLocalHom (algebraMap 𝓞 (ResidueField 𝓞))</code>. But if I <code>#synth</code> this it works just fine, and it finds an instance in FLT, in a file which is imported but not public imported. I change the import to <code>public import</code> and the problem goes away. This presumably is expected behaviour?</p>",
+        "id": 593876387,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1778272067
+    },
+    {
+        "content": "<p>maybe there's settings for <code>shake</code> you can tweak</p>",
+        "id": 593876660,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1778272164
+    },
+    {
+        "content": "<p>1+3) These might be <a href=\"https://github.com/leanprover/lean4/pull/12832\">lean#12832</a>, basically if you want to run <code>shake --fix</code>  you have to make sure there are no <code>open</code>ed namespaces which are unused since <code>shake</code> doesn't track them.</p>\n<p>2) Not sure about this without looking carefully, but it could be <a href=\"https://github.com/leanprover/lean4/pull/13417\">lean#13417</a>.</p>",
+        "id": 593879033,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1778273047
+    },
+    {
+        "content": "<p>Nearly done. Most annoying fix so far: shaken FLT failed to synthesize <code>SecondCountableTopology (v.adicCompletion K)</code>. Couldn't for the life of me syntheize it in the shaken files. Had to clone a fresh FLT and synth it there; then tried to use the explicit instance in shaken FLT but it needed <code>SeparableSpace (v.adicCompletion K)</code> which shaken FLT couldn't do either, so back to fresh FLT, which synthesized it, again used the explicit instance in shaken FLT and it failed because it couldn't synthesize <code>Countable K</code>, again went back to fresh FLT and found the instance in an <code>import</code>ed file in FLT which needed to be <code>public import</code>ed and now it's working.</p>",
+        "id": 593882027,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1778274170
+    },
+    {
+        "content": "<p>Rather surprised to see</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Analysis</span><span class=\"bp\">.</span><span class=\"n\">SpecialFunctions</span><span class=\"bp\">.</span><span class=\"n\">Gamma</span><span class=\"bp\">.</span><span class=\"n\">Basic</span>\n<span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Data</span><span class=\"bp\">.</span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">Factorial</span><span class=\"bp\">.</span><span class=\"n\">DoubleFactorial</span>\n<span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">NumberTheory</span><span class=\"bp\">.</span><span class=\"n\">ArithmeticFunction</span><span class=\"bp\">.</span><span class=\"n\">Misc</span>\n<span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">NormNum</span><span class=\"bp\">.</span><span class=\"n\">NatFactorial</span>\n</code></pre></div>\n<p>added to the bottom of <code>FLT.lean</code> (note that these are not files in the <code>FLT</code> project!). Do I just remove them?</p>",
+        "id": 593886888,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1778276229
+    },
+    {
+        "content": "<p>Came across <a href=\"https://github.com/leanprover-community/mathlib4/pull/39102\">#39102</a>, is this PR not made redundant by <code>shake</code>?</p>",
+        "id": 593935766,
+        "sender_full_name": "Violeta Hernández",
+        "timestamp": 1778303991
+    },
+    {
+        "content": "<p>I guess it's an interesting test to check :-)</p>",
+        "id": 593948063,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1778311358
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"123965\">Bryan Gin-ge Chen</span> <a href=\"#narrow/channel/287929-mathlib4/topic/shake/near/593801927\">said</a>:</p>\n<blockquote>\n<p>While I'm fixing the workflow in <a href=\"https://github.com/leanprover-community/mathlib4/pull/39085\">#39085</a>, is it worth changing the workflow to also run <code>shake --fix</code> on <code>MathlibTest</code>, <code>Archive</code>, <code>Counterexamples</code>?</p>\n</blockquote>\n<p>I'd be a bit hesitant to shake tests... for one I dont think you gain anything from doing it, do you?</p>",
+        "id": 594020274,
+        "sender_full_name": "Jon Eugster",
+        "timestamp": 1778359302
+    },
+    {
+        "content": "<p>It can make testing quicker if less rebuilding needs to be done. But sometimes a test is testing that something works under specific imports, so we shouldn't reduce the imports blindly.</p>",
+        "id": 594022020,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1778360484
+    },
+    {
+        "content": "<p>Thanks, I've removed <code>MathlibTest</code>.</p>",
+        "id": 594027587,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1778364500
+    },
+    {
+        "content": "<p>Does that mean <a href=\"https://github.com/leanprover-community/mathlib4/blob/d9694e37437f9a5cb6f81f8b25c4c754b398e213/MathlibTest/BasicFiles/TacticCommon.lean#L34-L37\">this check</a> is redundant? I think previous shakes (e.g. <a href=\"https://github.com/leanprover-community/mathlib4/pull/32731\">#32731</a>) did change imports in tests.</p>",
+        "id": 594074150,
+        "sender_full_name": "Snir Broshi",
+        "timestamp": 1778398923
+    },
+    {
+        "content": "<p>I'm not sure, but from what I can tell in <a href=\"https://github.com/leanprover-community/mathlib4/pull/32731\">#32731</a> the shake run was in <a href=\"https://github.com/leanprover-community/mathlib4/pull/32731/changes/97d378ea29872efa0580bb44f04536cc3d89be34\">this commit on Mathlib</a> and the commits afterwards changing the imports <a href=\"https://github.com/leanprover-community/mathlib4/pull/32731/changes/7dd8ec1718fbfd75dc456ea8da8525cea7ae39a7\">of Archive and Counterexamples</a>, and then <a href=\"https://github.com/leanprover-community/mathlib4/pull/32731/changes/4f5fa22112e67cbcceb1652ec3bce1e98da87d06\">MathlibTest</a> were manual fixes, not performed by <code>shake --fix</code>, but I could be wrong? cc: <span class=\"user-mention\" data-user-id=\"110024\">@Sebastian Ullrich</span></p>",
+        "id": 594446504,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1778550684
+    },
+    {
+        "content": "<p>Yes. Any library not included in the shake may need manual fixes afterwards (without <code>--keep-public</code>)</p>",
+        "id": 594489514,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1778570371
+    },
+    {
+        "content": "<p>I just ran <code>lake shake</code> on current mathlib <code>master</code> (commit <code>48f66c08147e2b164b1ccf8bb636292dd2c53bd4</code> to be precise) and piped the output to a file; it was 7.2 megabytes long (21k lines). Is this expected? Start and end:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Tactic/Linter/DirectoryDependency.lean:\n  remove #[public meta import Lean.Elab.Command, public import Lean.Message]\n  add #[import Lean.Message]\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Tactic/Linter/Header.lean:\n  remove #[public meta import Lean.Elab.ParseImportsFast, public import Lean.Parser.Module, public import Mathlib.T\nactic.Linter.DirectoryDependency]\n  add #[import Mathlib.Tactic.Linter.DirectoryDependency, import Lean.Parser.Module.Syntax]\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Tactic/AdaptationNote.lean:\n  remove #[import Mathlib.Tactic.Linter.Header]\n  add #[import Lean.Meta.TryThis]\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Tactic/Lemma.lean:\n  add #[import Lean.Parser.Command]\n...\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Util/LongNames.lean:\n  remove #[public import Mathlib.Init]\n  add #[import Mathlib.Init]\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Util/Simp.lean:\n  remove #[public meta import Lean.Meta.Tactic.Simp.Types, public import Mathlib.Init, public import Qq]\n  add #[public import Qq.Macro, import Mathlib.Init]\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Util/SleepHeartbeats.lean:\n  remove #[public import Mathlib.Init]\n  add #[import Mathlib.Init]\n</code></pre></div>\n<p>The reason I ask is that <a href=\"https://github.com/leanprover-community/mathlib4/pull/39263\">#39263</a> tidies up a typeclass inference route (avoiding Euclidean domains when going from Fields to CommRings) and a question was raised about whether this would have any effect on reducing imports of the Euclidean domain file. I now realise that I don't know how to test this.</p>",
+        "id": 594788825,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1778662762
+    },
+    {
+        "content": "<p>You need to reuse the same cmdline args as in previous shakes. By the way, there is also an <code>--only</code> option now to shake a single module... which is missing from <code>--help</code> as I just realized</p>",
+        "id": 594789418,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1778662910
+    },
+    {
+        "content": "<p>Poking around in <code>.github/workflows/shake.yaml</code> I find </p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>lake shake --add-public --keep-implied --keep-prefix --fix --explain &gt; explain.txt 2&gt;&amp;1\n</code></pre></div>\n<p>so I tried</p>\n<div class=\"codehilite\" data-code-language=\"Bash\"><pre><span></span><code>$<span class=\"w\"> </span>lake<span class=\"w\"> </span>shake<span class=\"w\"> </span>--add-public<span class=\"w\"> </span>--keep-implied<span class=\"w\"> </span>--keep-prefix<span class=\"w\"> </span>&gt;<span class=\"w\"> </span>shake_output.txt\n</code></pre></div>\n<p>and I still have 833 lines, starting and ending</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Tactic/AdaptationNote.lean:\n  remove #[import Mathlib.Tactic.Linter.Header]\n  add #[public import Lean.Meta.TryThis]\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Tactic/Linter/DocString.lean:\n  remove #[import Std.Data.Iterators]\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Lean/Elab/InfoTree.lean:\n  remove #[public import Batteries.Tactic.Lint.Misc, public import Batteries.Tactic.Lint.Basic]\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Tactic/Linter/Style.lean:\n  add #[public import Lean.Parser.Module]\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Util/ParseCommand.lean:\n  add #[public import Lean.Parser.Term]\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Tactic/Translate/Core.lean:\n  add #[public meta import Mathlib.Tactic.Translate.Reorder]\n...\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Topology/Compactness/CountablyCompact.lean:\n  remove #[import Mathlib.Data.Fintype.Pigeonhole]\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Topology/Instances/ENNReal/ENatENNReal.lean:\n  remove #[public import Mathlib.Topology.Instances.ENNReal.Lemmas]\n  add #[public import Mathlib.Topology.MetricSpace.Bounded, public import Mathlib.Data.EReal.Operations, public import Mathlib.Topolog\ny.Algebra.InfiniteSum.Order, public import Mathlib.Algebra.Order.Module.Field, public import Mathlib.Topology.Order.Real]\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Topology/Sheaves/Points.lean:\n  remove #[public import Mathlib.Topology.Sheaves.Sheaf]\n  add #[public import Mathlib.CategoryTheory.Sites.Spaces, public import Mathlib.Topology.Sheaves.Presheaf]\n/media/buzzard/ExternalSSD1TB/lean-projects/mathlib4_master/Mathlib/Topology/Spectral/ConstructibleTopology.lean:\n  remove #[public import Mathlib.Topology.Spectral.Basic, public import Mathlib.Topology.JacobsonSpace, public import Mathlib.Data.Set\n.Card]\n  add #[public import Mathlib.Topology.Sober, public import Mathlib.Topology.Spectral.Prespectral, public import Mathlib.Tactic.Bound.\nInit]\n</code></pre></div>\n<p>Am I still doing it wrong or is this expected? </p>\n<p>Oh, maybe shake only runs once a week?</p>",
+        "id": 594791485,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1778663467
+    },
+    {
+        "content": "<p>We haven't had a fully successful run of shake on <code>master</code> yet in a while due to various issues (detailed in my older posts above). Right now my plan is:</p>\n<ul>\n<li>someone merges <a href=\"https://github.com/leanprover-community/mathlib4/pull/39085\">#39085</a> (containing some fixes to the automated workflow)</li>\n<li>trigger a manual run and hopefully it builds on the first try</li>\n<li>review the suggestions and merge if they make sense</li>\n</ul>",
+        "id": 594829996,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1778673610
+    },
+    {
+        "content": "<p>That PR seems reasonable to me. Would e.g. <span class=\"user-mention\" data-user-id=\"321459\">@Damiano Testa</span> like to take a final look?</p>",
+        "id": 594833145,
+        "sender_full_name": "Michael Rothgang",
+        "timestamp": 1778674198
+    },
+    {
+        "content": "<p>Side note: <code>--explain</code> is not documented in the help output of shake.</p>",
+        "id": 594833220,
+        "sender_full_name": "Michael Rothgang",
+        "timestamp": 1778674211
+    },
+    {
+        "content": "<p>I delegated the PR!</p>",
+        "id": 594836129,
+        "sender_full_name": "Damiano Testa",
+        "timestamp": 1778674807
+    },
+    {
+        "content": "<p>BTW I ran <code>shake</code> on a private repo (the formalising Annals one) and it did something and then I ran it again and it did some more. My understanding is that this is still expected? But maybe we should shake mathlib thoroughly?</p>\n<p>The reason I'm thinking about shake right now is this comment <a class=\"message-link\" href=\"/#narrow/channel/287929-mathlib4/topic/We.20need.20to.20talk.20about.20Euclidean.20Domains/near/594764643\">#mathlib4 &gt; We need to talk about Euclidean Domains @ 💬</a> which is not in some sense a big deal (any superfluous imports will be removed eventually) but I still thought it was an interesting experiment, given that Euclidean domains have been (perhaps unnecessarily) imported across field theory ever since mathlib4 was born.</p>",
+        "id": 594842330,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1778675780
+    },
+    {
+        "content": "<p>The nonidempotency issue might be <a href=\"https://github.com/leanprover/lean4/pull/13599\">lean#13599</a>, which should be fixed in the next (?) lean release.</p>",
+        "id": 594843449,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1778675974
+    },
+    {
+        "content": "<p>After a few rounds of fixes, the workflow is now working again (it turns out we can't shake <code>Archive</code> and <code>Counterexamples</code> yet because they haven't been made into modules). If any maintainers are around, <a href=\"https://github.com/leanprover-community/mathlib4/pull/39320\">#39320</a> should be a quick merge (it keeps <code>shake</code> from removing a <code>Mathlib.Tactic.Linter.Header</code> import I added when I moved <code>AdaptationNote</code> up the import graph last week).</p>",
+        "id": 594940143,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1778700838
+    },
+    {
+        "content": "<p>OK, good news, the auto-generated shake PR <a href=\"https://github.com/leanprover-community/mathlib4/pull/39155\">#39155</a> has passed CI. I skimmed the changes briefly and didn't see any strange patterns, but I'm also not familiar with what the imports \"should\" look like, so extra eyes would be appreciated.</p>\n<p>I'm still hesitant to merge this since as far as I know the import fixes from <a href=\"https://github.com/leanprover/lean4/pull/13613\">lean4#13613</a> (addressing shake non-idempotency) haven't been backported to <code>master</code> yet, so running <code>shake</code> again might flag more changes.</p>",
+        "id": 594983783,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1778718734
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"gd\">- public import Mathlib.NumberTheory.NumberField.Completion.FinitePlace</span>\n<span class=\"gi\">+ public import Mathlib.CategoryTheory.Category.Init</span>\n<span class=\"gi\">+ public import Mathlib.Combinatorics.Matroid.Init</span>\n<span class=\"gi\">+ public import Mathlib.MeasureTheory.Integral.Bochner.Basic</span>\n<span class=\"gi\">+ public import Mathlib.Tactic.Positivity</span>\n</code></pre></div>\n<p>in Mathlib/NumberTheory/NumberField/FinitePlaces.lean looks pretty fishy to me.<br>\nWhy should this file need</p>\n<ul>\n<li>Category Theory</li>\n<li>Matroids</li>\n<li>Bochner Integrals ?</li>\n</ul>\n<p>EDIT: It turns out that this is a deprecated module. See below.</p>",
+        "id": 595053768,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1778754395
+    },
+    {
+        "content": "<p>Also, it doesn't seem to adhere to the convention \"first <code>public import</code>s, then an empty line, then plain <code>import</code>s\".</p>",
+        "id": 595053907,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1778754460
+    },
+    {
+        "content": "<p>The <code>explain</code> output for that file (available via the \"explain.txt\" link at the bottom of the PR body) only reads:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"bp\">/</span><span class=\"n\">home</span><span class=\"bp\">/</span><span class=\"n\">runner</span><span class=\"bp\">/</span><span class=\"n\">work</span><span class=\"bp\">/</span><span class=\"n\">mathlib4</span><span class=\"bp\">/</span><span class=\"n\">mathlib4</span><span class=\"bp\">/</span><span class=\"n\">Mathlib</span><span class=\"bp\">/</span><span class=\"n\">NumberTheory</span><span class=\"bp\">/</span><span class=\"n\">NumberField</span><span class=\"bp\">/</span><span class=\"n\">FinitePlaces</span><span class=\"bp\">.</span><span class=\"n\">lean</span><span class=\"o\">:</span>\n<span class=\"w\">  </span><span class=\"n\">remove</span><span class=\"w\"> </span><span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">NumberTheory</span><span class=\"bp\">.</span><span class=\"n\">NumberField</span><span class=\"bp\">.</span><span class=\"n\">Completion</span><span class=\"bp\">.</span><span class=\"n\">FinitePlace</span><span class=\"o\">]</span>\n<span class=\"w\">  </span><span class=\"n\">add</span><span class=\"w\"> </span><span class=\"bp\">#</span><span class=\"o\">[</span><span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">MeasureTheory</span><span class=\"bp\">.</span><span class=\"n\">Integral</span><span class=\"bp\">.</span><span class=\"n\">Bochner</span><span class=\"bp\">.</span><span class=\"n\">Basic</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Combinatorics</span><span class=\"bp\">.</span><span class=\"n\">Matroid</span><span class=\"bp\">.</span><span class=\"n\">Init</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">Positivity</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">CategoryTheory</span><span class=\"bp\">.</span><span class=\"n\">Category</span><span class=\"bp\">.</span><span class=\"n\">Init</span><span class=\"o\">]</span>\n</code></pre></div>",
+        "id": 595077740,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1778764191
+    },
+    {
+        "content": "<p>Looking through the diff (not exhaustively) I found a few points I'd like to mention.</p>\n<ul>\n<li>Deprecated modules should be left alone (the <code>import</code> there is for redirection).</li>\n<li>Formatting should be preserved (alphabetical order, first <code>public import</code>,  then <code>import</code>).</li>\n<li>I would think that many <code>public</code> imports need not be public, in particular when these are <code>Tactic</code> modules. Does <code>shake</code> try to figure out whether <code>public</code> imports can be demoted? I would expect that this is where the most relevant potential performance gains are.</li>\n</ul>\n<p>Spot-checking <a href=\"https://tqft.net/mathlib4files/Mathlib/NumberTheory/Bernoulli\">file#Mathlib/NumberTheory/Bernoulli</a>, it appears that the current (in the PR)</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">BigOperators</span><span class=\"bp\">.</span><span class=\"n\">Field</span>\n<span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">GCDMonoid</span><span class=\"bp\">.</span><span class=\"n\">FinsetLemmas</span>\n<span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">Field</span><span class=\"bp\">.</span><span class=\"n\">GeomSum</span>\n<span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Data</span><span class=\"bp\">.</span><span class=\"n\">Nat</span><span class=\"bp\">.</span><span class=\"n\">Choose</span><span class=\"bp\">.</span><span class=\"n\">Bounds</span>\n<span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">RingTheory</span><span class=\"bp\">.</span><span class=\"n\">PowerSeries</span><span class=\"bp\">.</span><span class=\"n\">Exp</span>\n<span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">FieldTheory</span><span class=\"bp\">.</span><span class=\"n\">Finite</span><span class=\"bp\">.</span><span class=\"n\">Basic</span>\n<span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">RingTheory</span><span class=\"bp\">.</span><span class=\"n\">ZMod</span><span class=\"bp\">.</span><span class=\"n\">UnitsCyclic</span>\n<span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">NumberTheory</span><span class=\"bp\">.</span><span class=\"n\">Padics</span><span class=\"bp\">.</span><span class=\"n\">PadicNumbers</span>\n<span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">NormNum</span><span class=\"bp\">.</span><span class=\"n\">GCD</span>\n<span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">Order</span><span class=\"bp\">.</span><span class=\"n\">Star</span><span class=\"bp\">.</span><span class=\"n\">Basic</span>\n</code></pre></div>\n<p>can be reduced to</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">RingTheory</span><span class=\"bp\">.</span><span class=\"n\">PowerSeries</span><span class=\"bp\">.</span><span class=\"n\">Exp</span>\n\n<span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">BigOperators</span><span class=\"bp\">.</span><span class=\"n\">Field</span>\n<span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Algebra</span><span class=\"bp\">.</span><span class=\"n\">GCDMonoid</span><span class=\"bp\">.</span><span class=\"n\">FinsetLemmas</span>\n<span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">FieldTheory</span><span class=\"bp\">.</span><span class=\"n\">Finite</span><span class=\"bp\">.</span><span class=\"n\">Basic</span>\n<span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">NumberTheory</span><span class=\"bp\">.</span><span class=\"n\">Padics</span><span class=\"bp\">.</span><span class=\"n\">PadicNumbers</span>\n</code></pre></div>\n<p>(Found by manually removing public imports/replacing by plain imports and checking for error messages.)</p>\n<p>This is actually what I would hope <code>shake</code> can achieve.</p>",
+        "id": 595079849,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1778764893
+    },
+    {
+        "content": "<p>Let's not scope creep the public → private changes before shake is up and running reliably</p>",
+        "id": 595080468,
+        "sender_full_name": "Ruben Van de Velde",
+        "timestamp": 1778765073
+    },
+    {
+        "content": "<p>The reason for that is likely the additional shake flags used currently, feel free to try without them and with <code>--only</code> and maybe start a new thread on that</p>",
+        "id": 595082449,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1778765683
+    },
+    {
+        "content": "<p>I posted the <code>explain</code> output under the PR comments that weren't about formatting. I'm not sure how informative they are without knowing the internals of <code>shake</code> though.</p>",
+        "id": 595092611,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1778768808
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479359\">Michael Stoll</span> <a href=\"#narrow/channel/287929-mathlib4/topic/shake/near/595053768\">said</a>:</p>\n<blockquote>\n<p>EDIT: It turns out that this is a deprecated module. See below.</p>\n</blockquote>\n<p><a href=\"https://github.com/leanprover/lean4/pull/13740\">lean#13740</a> should help with this in the future (edit: I assumed this was a case of a deprecated module using <code>shake: keep-all</code> as was established at some point but does not appear to be done consistently anymore)</p>",
+        "id": 595263152,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1778838004
+    },
+    {
+        "content": "<p>I'm experimenting with <code>shake --keep-implied --keep-prefix --fix</code>. When I get Mathlib to build, I'll open another thread to report on it.</p>",
+        "id": 595264957,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1778838611
+    },
+    {
+        "content": "<p>See <a class=\"message-link\" href=\"/#narrow/channel/287929-mathlib4/topic/shake.20without.20--add-public/near/595349216\">#mathlib4 &gt; shake without --add-public @ 💬</a> .</p>",
+        "id": 595349283,
+        "sender_full_name": "Michael Stoll",
+        "timestamp": 1778863213
+    },
+    {
+        "content": "<p>I had Claude track down what was going wrong in the latest automated <code>shake</code> PR: <a href=\"https://github.com/leanprover-community/mathlib4/pull/40343\">#40343</a>; there were 3 required <code>shake: keep</code> comments for which I've opened PRs, listed below, and one bug in <code>shake</code>, reported at <a href=\"https://github.com/leanprover/lean4/pull/14427\">lean#14427</a>, with <a href=\"https://github.com/bryangingechen/shake-public-meta-def-demoted\">minimization repo</a>.</p>",
+        "id": 611203650,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1784259859
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/41805\">#41805</a> chore(Tactic/Algebra): pin Lemmas import with <code>shake: keep</code></p>",
+        "id": 611203678,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1784259883
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/41806\">#41806</a> chore(AlgebraicGeometry/Sites): pin ModuleCat imports with <code>shake: keep</code> (already merged, thanks!)</p>",
+        "id": 611203712,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1784259905
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/41807\">#41807</a> chore(Tactic/NormNum): pin Lean.Elab.Tactic.Try import with <code>shake: keep</code></p>",
+        "id": 611203748,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1784259934
     }
 ]

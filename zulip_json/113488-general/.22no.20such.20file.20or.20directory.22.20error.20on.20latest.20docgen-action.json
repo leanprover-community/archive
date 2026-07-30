@@ -1,0 +1,248 @@
+[
+    {
+        "content": "<p>Recently I've met \"no such file or directory\" error in the CI of our project <a href=\"https://github.com/acmepjz/lean-iwasawa/actions/runs/23801292972/job/69362156015\">https://github.com/acmepjz/lean-iwasawa/actions/runs/23801292972/job/69362156015</a></p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>error: no such file or directory (error code: 4294967294)\n  file: /home/runner/work/lean-iwasawa/lean-iwasawa/docbuild/.lake/build/doc/style.css\n</code></pre></div>\n<p>I assume that there are problems in docgen-action@main. How can I fix it? Should I stick to a fixed version of docgen-action?</p>",
+        "id": 583015004,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1775043622
+    },
+    {
+        "content": "<p>This should be <a href=\"https://github.com/leanprover/doc-gen4/pull/354\">fixed</a> in newer versions of doc-gen4 (v4.28.0 or newer). On an older version, you can create an empty <code>references.bib</code> file in your repository root directory to fix the bug.</p>",
+        "id": 583070243,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1775057319
+    },
+    {
+        "content": "<p>Note that I'm using latest git version (<code>main</code>) so the fix you mentioned should be already there. Besides, it complains that some <code>style.css</code> is missing, not <code>references.bib</code>.</p>",
+        "id": 583086978,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1775061625
+    },
+    {
+        "content": "<p>Oh right, sorry for misreading! Still, this looks more like a bug in doc-gen4 (the Lean library) than the docgen-action (the code that runs this in your Github CI). I'll try and take a more detailed look tomorrow.</p>",
+        "id": 583220487,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1775122019
+    },
+    {
+        "content": "<p>I tried to reproduce the error but it doesn't seem to happen on my machine...</p>\n<p>One fix to try: remove the dependency on <code>doc-gen4</code> main branch from the <code>lakefile.toml</code>. I noticed you are depending on the <code>main</code> branch, but that version is for a newer Lean release than your project. This might be causing the issues?</p>\n<p>To remove the dependency, delete the <code>[[require]]</code> block:</p>\n<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"w\"> </span>name = \"checkdecls\"\n<span class=\"w\"> </span>git = \"https://github.com/PatrickMassot/checkdecls.git\"\n\n<span class=\"gd\">-[[require]]</span>\n<span class=\"gd\">-name = \"«doc-gen4»\"</span>\n<span class=\"gd\">-git = \"https://github.com/leanprover/doc-gen4\"</span>\n<span class=\"gd\">-rev = \"main\"</span>\n<span class=\"gd\">-</span>\n<span class=\"w\"> </span>[[require]]\n<span class=\"w\"> </span>name = \"mathlib\"\n<span class=\"w\"> </span>scope = \"leanprover-community\"\n</code></pre></div>\n<p>and then run <code>lake update doc-gen4</code>. After committing and pushing the new version of <code>lakefile.toml</code> and <code>lake-manifest.json</code>, maybe the issue is fixed?</p>",
+        "id": 583487643,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1775233308
+    },
+    {
+        "content": "<p>I suspect it was a cache corruption when running docgen-action. Because recent build failure ends with the following log:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>✖ [7457/7457] Replaying Iwasawalib/Iwasawalib:docs\n</code></pre></div>\n<p>I tried to disable the cache but I put <code>use-github-cache: false</code> to the wrong place, disabled the cache for lean-action but docgen-action still used the cache. Let me try to fix it. Will come back if there are any progress.</p>",
+        "id": 583509936,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1775243706
+    },
+    {
+        "content": "<p>Seems that docgen-action does not support <code>use-github-cache: false</code> option... Maybe someone could add it, similar to that in <a href=\"https://github.com/leanprover/lean-action/blob/main/action.yml\">https://github.com/leanprover/lean-action/blob/main/action.yml</a></p>\n<div class=\"codehilite\" data-code-language=\"YAML\"><pre><span></span><code><span class=\"w\">    </span><span class=\"p p-Indicator\">-</span><span class=\"w\"> </span><span class=\"nt\">uses</span><span class=\"p\">:</span><span class=\"w\"> </span><span class=\"l l-Scalar l-Scalar-Plain\">actions/cache/restore@v4</span>\n<span class=\"w\">      </span><span class=\"nt\">if</span><span class=\"p\">:</span><span class=\"w\"> </span><span class=\"l l-Scalar l-Scalar-Plain\">${{ inputs.use-github-cache == 'true' }}</span>\n</code></pre></div>",
+        "id": 583511122,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1775244362
+    },
+    {
+        "content": "<p>OK, it fixed by clear the corresponding cache manually. Thank you.</p>",
+        "id": 583895178,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1775522960
+    },
+    {
+        "content": "<p>Unfortunately, the same error persists when the cache is present. <a href=\"https://github.com/acmepjz/lean-iwasawa/actions/runs/24128077192/job/70397519958\">https://github.com/acmepjz/lean-iwasawa/actions/runs/24128077192/job/70397519958</a> I assume that the css file is not packed into the cache? <span aria-label=\"dizzy\" class=\"emoji emoji-1f635\" role=\"img\" title=\"dizzy\">:dizzy:</span></p>",
+        "id": 584221830,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1775653783
+    },
+    {
+        "content": "<p>Ooh, we indeed do not add <code>style.css</code> to the cache. That could explain the issue. Could you try switching <code>docgen-action</code> to the <code>try-caching-css</code> branch (<a href=\"https://github.com/leanprover-community/docgen-action/pull/29\">docgen-action#29</a>) and see if that fixes the issue?</p>",
+        "id": 584223430,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1775654211
+    },
+    {
+        "content": "<p>Thanks, I'll do it now. Note that in order to test it, I need to clear the cache manually, do a build without cache, then build again with cache. The whole process will run up to 6 hours.</p>",
+        "id": 584229376,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1775655737
+    },
+    {
+        "content": "<p>Ouch, I am sorry for putting you through all that!</p>",
+        "id": 584236679,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1775657535
+    },
+    {
+        "content": "<p>No, it's not working. It still complains missing the same file <code>/home/runner/work/lean-iwasawa/lean-iwasawa/docbuild/.lake/build/doc/style.css</code>. That's strange.</p>",
+        "id": 584298195,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1775675990
+    },
+    {
+        "content": "<p>Same issue here : <a href=\"https://github.com/Shreyas4991/Algolean/actions/runs/24108316993/job/70345801462#step:6:1\">https://github.com/Shreyas4991/Algolean/actions/runs/24108316993/job/70345801462#step:6:1</a></p>",
+        "id": 584308376,
+        "sender_full_name": "Shreyas Srinivas",
+        "timestamp": 1775679848
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"366779\">Jz Pan</span> <a href=\"#narrow/channel/113488-general/topic/.22no.20such.20file.20or.20directory.22.20error.20on.20latest.20docgen-action/near/584229376\">said</a>:</p>\n<blockquote>\n<p>Thanks, I'll do it now. Note that in order to test it, I need to clear the cache manually, do a build without cache, then build again with cache. The whole process will run up to 6 hours.</p>\n</blockquote>\n<p>Just a little trick, FWIW: the <code>docgen-action</code> cache key includes the hash of <code>references.bib</code>, so if you add that file and tweak it, it should result in a cache miss without invalidating the rest of the build.</p>",
+        "id": 584319888,
+        "sender_full_name": "Marcelo Lynch",
+        "timestamp": 1775684362
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"238446\">Anne Baanen</span> <a href=\"#narrow/channel/113488-general/topic/.22no.20such.20file.20or.20directory.22.20error.20on.20latest.20docgen-action/near/584223430\">said</a>:</p>\n<blockquote>\n<p>Ooh, we indeed do not add <code>style.css</code> to the cache. That could explain the issue. Could you try switching <code>docgen-action</code> to the <code>try-caching-css</code> branch (<a href=\"https://github.com/leanprover-community/docgen-action/pull/29\">docgen-action#29</a>) and see if that fixes the issue?</p>\n</blockquote>\n<p><span class=\"user-mention\" data-user-id=\"238446\">@Anne Baanen</span>  unfortunately this won't work as is, you need to run <code>npm install &amp;&amp; npm run bundle</code> to regenerate <code>dist/index.js</code> which is the real thing running. I created a PR against your branch as I can't push directly to the repo (<a href=\"https://github.com/leanprover-community/docgen-action/pull/30\">docgen-action#30</a>)</p>",
+        "id": 584320351,
+        "sender_full_name": "Marcelo Lynch",
+        "timestamp": 1775684612
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"366779\">@Jz Pan</span> if you wanna try switching to my fork's version of the action you could try that and see what happens, or wait until we can incorporate that change in the real repo</p>",
+        "id": 584320471,
+        "sender_full_name": "Marcelo Lynch",
+        "timestamp": 1775684684
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"439514\">Marcelo Lynch</span> <a href=\"#narrow/channel/113488-general/topic/.22no.20such.20file.20or.20directory.22.20error.20on.20latest.20docgen-action/near/584320471\">said</a>:</p>\n<blockquote>\n<p><span class=\"user-mention silent\" data-user-id=\"366779\">Jz Pan</span> if you wanna try switching to my fork's version of the action you could try that and see what happens, or wait until we can incorporate that change in the real repo</p>\n</blockquote>\n<p>OK let me try.</p>",
+        "id": 584362924,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1775712336
+    },
+    {
+        "content": "<p><a href=\"https://github.com/acmepjz/lean-iwasawa/actions/runs/24180129247/job/70570707820\">https://github.com/acmepjz/lean-iwasawa/actions/runs/24180129247/job/70570707820</a> It complains on another missing file:</p>\n<div class=\"codehilite\" data-code-language=\"Text only\"><pre><span></span><code>error: no such file or directory (error code: 4294967294)\n  file: /home/runner/work/lean-iwasawa/lean-iwasawa/docbuild/.lake/build/doc/favicon.svg\n</code></pre></div>\n<p>Maybe it's not a good idea to put all of these static files to cache (since the list of them may change later). Do you think it's possible to ask <code>doc-gen</code> to copy the static files again regardless of the existence of cache or not?</p>",
+        "id": 584416854,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1775731028
+    },
+    {
+        "content": "<p>I have to admit I don't know the internals of the action, I am surprised something depends on the stuff being  in the cache at all, as the cache should only be an incrementality mechanism (namely: why does it work when the cache is absent and not when it's \"partially absent\" like this?). I'll wait on <span class=\"user-mention\" data-user-id=\"238446\">@Anne Baanen</span> to comment, but I might take a closer look at the code when I get a chance</p>",
+        "id": 584531783,
+        "sender_full_name": "Marcelo Lynch",
+        "timestamp": 1775765224
+    },
+    {
+        "content": "<p>Heads up that I am hitting this error too in add-combi: <a href=\"https://github.com/YaelDillies/add-combi/actions/runs/24249610625/job/70805066718\">https://github.com/YaelDillies/add-combi/actions/runs/24249610625/job/70805066718</a></p>",
+        "id": 584705920,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1775836056
+    },
+    {
+        "content": "<p>have you tried purging the cache and retrying the action? That seemed to help somewhat on the Noperthedron project, though we now seeing other problems (<a href=\"https://github.com/leanprover-community/docgen-action/issues/28\">https://github.com/leanprover-community/docgen-action/issues/28</a>).</p>",
+        "id": 584713645,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1775838498
+    },
+    {
+        "content": "<blockquote>\n<p>OK, it fixed by clear the corresponding cache manually. Thank you.<br>\n...<br>\nUnfortunately, the same error persists when the cache is present. </p>\n</blockquote>\n<p>(Oh, I should have read the full conversation before asking)</p>",
+        "id": 584714035,
+        "sender_full_name": "David Renshaw",
+        "timestamp": 1775838621
+    },
+    {
+        "content": "<p>Where can I find the purging cache option?</p>",
+        "id": 584714498,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1775838765
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"387244\">Yaël Dillies</span> <a href=\"#narrow/channel/113488-general/topic/.22no.20such.20file.20or.20directory.22.20error.20on.20latest.20docgen-action/near/584714498\">said</a>:</p>\n<blockquote>\n<p>Where can I find the purging cache option?</p>\n</blockquote>\n<p>Go to your GitHub project page -&gt; \"Actions\" tab on the top -&gt; \"Caches\" tab on the left -&gt; Delete the appropriate cache.</p>",
+        "id": 584715599,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1775839098
+    },
+    {
+        "content": "<p>Please note this subtlety about the GitHub action cache: if the <code>path</code> parameter changes, even if the key is the same, it will be a cache miss: see <a href=\"https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#cache-key-matching\">[1]</a>, <a href=\"https://github.com/actions/cache#cache-version\">[2]</a>. So changing to these different versions of the action which are changing that parameter will result in a cache miss on the first run, no matter what.</p>",
+        "id": 584767628,
+        "sender_full_name": "Marcelo Lynch",
+        "timestamp": 1775860612
+    },
+    {
+        "content": "<p>I don't think this is very sustainable, but I added more assets (the files mentioned in the lakefile) in my private version of the action (<a href=\"https://github.com/marcelolynch/docgen-action/commit/79882c846b08d86d4d877631198260d3340dc4f5\">https://github.com/marcelolynch/docgen-action/commit/79882c846b08d86d4d877631198260d3340dc4f5</a>), if anyone cares to try it</p>",
+        "id": 584768668,
+        "sender_full_name": "Marcelo Lynch",
+        "timestamp": 1775861168
+    },
+    {
+        "content": "<p>Thank you! Let me try.</p>",
+        "id": 584797393,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1775882257
+    },
+    {
+        "content": "<p>I think it works: <a href=\"https://github.com/acmepjz/lean-iwasawa/actions/runs/24283271129/job/70908396957\">https://github.com/acmepjz/lean-iwasawa/actions/runs/24283271129/job/70908396957</a> although the doc build pass still rebuilds a lot of existing files.</p>",
+        "id": 584961895,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1775922330
+    },
+    {
+        "content": "<p>So what is the actual fix?</p>",
+        "id": 585027444,
+        "sender_full_name": "Jeremy Tan",
+        "timestamp": 1775991881
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"598052\">Jeremy Tan</span> <a href=\"#narrow/channel/113488-general/topic/.22no.20such.20file.20or.20directory.22.20error.20on.20latest.20docgen-action/near/585027444\">said</a>:</p>\n<blockquote>\n<p>So what is the actual fix?</p>\n</blockquote>\n<p>Change the <code>blueprint.yml</code> according to <a href=\"https://github.com/acmepjz/lean-iwasawa/commit/caf4b8db0415bb4fff83bd846a94f6c968111c92\">https://github.com/acmepjz/lean-iwasawa/commit/caf4b8db0415bb4fff83bd846a94f6c968111c92</a></p>",
+        "id": 585037478,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1776001788
+    },
+    {
+        "content": "<p>That worked: <a href=\"https://github.com/Parcly-Taxel/Redhill/actions/runs/24311045770/job/70980632390\">https://github.com/Parcly-Taxel/Redhill/actions/runs/24311045770/job/70980632390</a></p>",
+        "id": 585052296,
+        "sender_full_name": "Jeremy Tan",
+        "timestamp": 1776015191
+    },
+    {
+        "content": "<p>I have not worked on this part of doc-gen so I am guessing at the solution. Since the problem goes away if we erase all caches, maybe the issue is we're caching too much? For example, Lake could see that one of the static files is available so it stops generating the rest, causing doc-gen to break. But I can't find in the lakefile where it decides which files to generate (and so which file(s) should not be present for the static files to be regenerated), so it's hard to say for sure.</p>",
+        "id": 585122722,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1776066824
+    },
+    {
+        "content": "<p>Maybe some traces file defined in <code>lakefile.lean</code> but I cannot decipher what is done in <a href=\"https://github.com/leanprover/doc-gen4/blob/2c96309e0de1b916d1a0b74c8119fddc7bf7da51/lakefile.lean#L324\">https://github.com/leanprover/doc-gen4/blob/2c96309e0de1b916d1a0b74c8119fddc7bf7da51/lakefile.lean#L324</a></p>",
+        "id": 585126637,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1776068073
+    },
+    {
+        "content": "<p>What happens is all the static files are generated in one go, but Lake does not understand this: we need to pretend we are generating them one by one based on creating empty \"marker files\". These are then checked by comparing with a \"manifest file\" and somewhere this process goes wrong? I think?</p>",
+        "id": 585127190,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1776068243
+    },
+    {
+        "content": "<p>What if we don't cache the marker file? Will it rebuild all individual pages which are already cached?</p>\n<p>Seems that currently we use a single sqlite db file to store the page information, which is IMO not cachable: any partial edit on a few pages will change the whole db file.</p>",
+        "id": 585127871,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1776068447
+    },
+    {
+        "content": "<blockquote>\n<p>Will it rebuild all individual pages which are already cached?</p>\n</blockquote>\n<p>This defeats the purpose of cache, i.e. we only rebuild modified pages since the last cache. But seems that currently the cache for docgen-action does not work well; it almost always rebuild large part of pages even if they are not modified.</p>",
+        "id": 585128183,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1776068550
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"366779\">Jz Pan</span> <a href=\"#narrow/channel/113488-general/topic/.22no.20such.20file.20or.20directory.22.20error.20on.20latest.20docgen-action/near/583511122\">said</a>:</p>\n<blockquote>\n<p>Seems that docgen-action does not support <code>use-github-cache: false</code> option... Maybe someone could add it, similar to that in <a href=\"https://github.com/leanprover/lean-action/blob/main/action.yml\">https://github.com/leanprover/lean-action/blob/main/action.yml</a></p>\n<p><div class=\"codehilite\" data-code-language=\"YAML\"><pre><span></span><code><span class=\"w\">    </span><span class=\"p p-Indicator\">-</span><span class=\"w\"> </span><span class=\"nt\">uses</span><span class=\"p\">:</span><span class=\"w\"> </span><span class=\"l l-Scalar l-Scalar-Plain\">actions/cache/restore@v4</span>\n<span class=\"w\">      </span><span class=\"nt\">if</span><span class=\"p\">:</span><span class=\"w\"> </span><span class=\"l l-Scalar l-Scalar-Plain\">${{ inputs.use-github-cache == 'true' }}</span>\n</code></pre></div><br>\n</p>\n</blockquote>\n<p>This was added in <a href=\"https://github.com/leanprover-community/docgen-action/pull/31\">docgen-action#31</a>, it should at least get rid of failures if more people encounter this. I'll continue to investigate this issue this week.</p>",
+        "id": 585244289,
+        "sender_full_name": "Marcelo Lynch",
+        "timestamp": 1776100800
+    },
+    {
+        "content": "<p>Thank you! I'll use <a href=\"https://github.com/marcelolynch/docgen-action/commit/79882c846b08d86d4d877631198260d3340dc4f5\">https://github.com/marcelolynch/docgen-action/commit/79882c846b08d86d4d877631198260d3340dc4f5</a> for a temporary workaround, and waiting for the bug being fixed.</p>",
+        "id": 585264601,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1776107541
+    },
+    {
+        "content": "<p>I've merged Marcelo's workaround <a href=\"https://github.com/leanprover-community/docgen-action/pull/30\">docgen-action#30</a> into the main branch for now, while we try to figure out the root cause.</p>",
+        "id": 585415885,
+        "sender_full_name": "Anne Baanen",
+        "timestamp": 1776170814
+    },
+    {
+        "content": "<p>Unfortunately, the fix <a href=\"https://github.com/marcelolynch/docgen-action/commit/79882c846b08d86d4d877631198260d3340dc4f5\">https://github.com/marcelolynch/docgen-action/commit/79882c846b08d86d4d877631198260d3340dc4f5</a> makes project-specific doc pages 404, which is also reported in <a href=\"https://github.com/leanprover-community/docgen-action/issues/28#issuecomment-4246752894\">https://github.com/leanprover-community/docgen-action/issues/28#issuecomment-4246752894</a></p>",
+        "id": 585573366,
+        "sender_full_name": "Jz Pan",
+        "timestamp": 1776232414
+    }
+]

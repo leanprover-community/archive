@@ -1,0 +1,80 @@
+[
+    {
+        "content": "<p>I noticed that the module system effectively treats <code>@[inline]</code> as <code>@[expose]</code> for definitions imported as meta, in the sense of not necessarily requiring a <code>public meta import</code> to use these definitions in public meta definitions downstream.</p>\n<p>I <em>think</em> I see why; my question here is not whether that's expected, but what the criterion is that a metaprogrammer should check in order to determine if a given declaration's import needs to be <code>public meta</code> or just <code>meta</code> on the basis of this declaration appearing in a <code>public meta</code> definition. (I'm working on tooling to adjust imports.)</p>\n<p>Example:</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n<p>code</p>\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<p>Module <code>Foo</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">module</span>\n\n<span class=\"c1\">-- set_option trace.Compiler.inferVisibility true -- see below</span>\n<span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">baz</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">true</span>\n<span class=\"kd\">@[</span><span class=\"n\">inline</span><span class=\"kd\">]</span><span class=\"w\"> </span><span class=\"n\">public</span><span class=\"w\"> </span><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">bazInlined</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">true</span>\n</code></pre></div>\n<p>Separate module:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">module</span>\n\n<span class=\"n\">meta</span><span class=\"w\"> </span><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Foo</span>\n\n<span class=\"n\">meta</span><span class=\"w\"> </span><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">foo</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">baz</span>\n<span class=\"sd\">/--</span>\n<span class=\"sd\">error: Invalid public `meta` definition `bar`, `baz` is not accessible here; consider adding `public meta import Foo`</span>\n<span class=\"sd\">-/</span>\n<span class=\"bp\">#</span><span class=\"n\">guard_msgs</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"n\">public</span><span class=\"w\"> </span><span class=\"n\">meta</span><span class=\"w\"> </span><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">bar</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">foo</span>\n\n<span class=\"c\">/-</span><span class=\"cm\">! But, if we use `bazInlined` tagged with `@[inline]`: -/</span>\n\n<span class=\"n\">meta</span><span class=\"w\"> </span><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">fooWithInline</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">bazInlined</span>\n<span class=\"c1\">-- No error</span>\n<span class=\"n\">public</span><span class=\"w\"> </span><span class=\"n\">meta</span><span class=\"w\"> </span><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">barWithInline</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">fooWithInline</span>\n</code></pre></div>\n</div></div>\n<p>What follows is my attempt to figure out what I could check:</p>\n<p>I see <code>isTemplateLike</code> which seems to govern this, and allows this on bases other than inlinability. E.g. replacing <code>@[inline]</code> with <code>@[specialize]</code> yields the same behavior. </p>\n<p>Chasing references, this then seems to be referenced in <code>shouldExportBody</code>, and in turn in <code>markDeclPublicRec</code>, which modifies a (non-persistent) env extension inspectable via <code>isDeclTransparent</code>. (<code>set_option trace.Compiler.inferVisibility true</code> is informative here!) <em>That</em> environment extension affects what ends up in two extensions that seem to hold code, whose meanings I don't understand yet (<code>baseExt</code> and <code>monoExt</code>). In particular, the <code>value</code> of the <code>Decl</code> stored here is an <code>.extern</code> when not transparent.</p>\n<p>So we have (in the downstream module) <code>(← getBaseDecl? ``baz).map (·.value) matches some (.extern { entries := [.opaque] })</code>, whereas <code>(← getBaseDecl? ``bazInlined).map (·.value) matches some (.code _)</code>. So, if we need this declaration in a <code>public meta</code> position while its import was only <code>meta import</code>ed, this approach would say \"now check if you have <code>.code</code> anyway, and if so, this declaration can be in e.g. a <code>public meta</code> position without its import being <code>public</code> (only <code>meta</code>).\"</p>\n<p>But I'm really out of the area where I understand what invariants should hold about things like <code>.code</code> and <code>.extern</code> and whether I'm checking the right thing. :) Is there a better approach? This feels like quite a workaround.</p>",
+        "id": 612418696,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1784829567
+    },
+    {
+        "content": "<p>Does it make sense to have that kind of complex logic in more places than just shake? I'd rather like not to</p>",
+        "id": 612419849,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1784829843
+    },
+    {
+        "content": "<p>Yeah, I'm working on <code>#find_home</code> (figure out where you can move a declaration) and <code>#min_imports</code>, which used to exist (and be quite useful!) but have been broken since the module system arrived.</p>",
+        "id": 612420069,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1784829909
+    },
+    {
+        "content": "<p>(Note, <code>#min_imports</code> is effectively \"shake on a single file\", and indeed is unnecessary if we could run shake on a single file. But we get it more or less for free if we have <code>#find_home</code>, which is the more important feature.)</p>",
+        "id": 612420433,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1784830041
+    },
+    {
+        "content": "<p>You can always compute an overapproximation and then run shake :)</p>",
+        "id": 612421440,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1784830315
+    },
+    {
+        "content": "<p>Indeed, I could probably conservatively insist on <code>public meta</code> import, but it does put me into a strange situation where the imports I claim are necessary are possibly not actually even provided yet by the imports in the actual file. <span aria-label=\"sweat smile\" class=\"emoji emoji-1f605\" role=\"img\" title=\"sweat smile\">:sweat_smile:</span></p>",
+        "id": 612421503,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1784830333
+    },
+    {
+        "content": "<p>Interestingly, I think this exposes a bug in shake? <span aria-label=\"eyes\" class=\"emoji emoji-1f440\" role=\"img\" title=\"eyes\">:eyes:</span> (Maybe you already know about it, I'm not sure!) Shake <em>always</em> suggests weakening to <code>meta import</code> in the above example, even in the case where <code>public meta import</code> is necessary. (Or at least, deemed necessary by the checks. For all I know hypothetically the checks could be wrong, as I'm not exactly sure how lean ferries IR around!)</p>",
+        "id": 612426185,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1784831633
+    },
+    {
+        "content": "<p>If you're comfortable opening a zip: <a href=\"/user_uploads/3121/BMQClPdnubnKTcRaNMGvIek4/shake-test.zip\">shake-test.zip</a></p>\n<p>Or, if you want the modules:</p>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n<p>code</p>\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<h3><code>ShakeTest.Source</code></h3>\n<div class=\"codehilite\"><pre><span></span><code>module\n\npublic def baz : Bool := true\n</code></pre></div>\n<h3><code>ShakeTest.Use</code></h3>\n<div class=\"codehilite\"><pre><span></span><code>module\n\npublic meta import ShakeTest.Source\n\nmeta def foo : Bool := baz\n\npublic meta def bar : Bool := foo\n</code></pre></div>\n</div></div>\n<p><code>lake build &amp;&amp; lake shake --fix &amp;&amp; lake build</code> fails there. The issue seems to be laundering the reference through a private <code>meta</code> def.</p>",
+        "id": 612427378,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1784832006
+    },
+    {
+        "content": "<p>Is this the same as <a href=\"https://github.com/leanprover/lean4/pull/14427\">lean#14427</a>? (mentioned earlier at <a class=\"stream-topic\" data-stream-id=\"287929\" href=\"/#narrow/channel/287929-mathlib4/topic/shake/with/611203748\">#mathlib4 &gt; shake</a>)</p>",
+        "id": 612427925,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1784832157
+    },
+    {
+        "content": "<p>Aha! Looks like it :)</p>",
+        "id": 612427985,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1784832181
+    },
+    {
+        "content": "<p>Yep, that's it.</p>",
+        "id": 612428017,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1784832191
+    },
+    {
+        "content": "<p>Yep that one is on my short-term todo list. Also medium-term we should be able to get rid of this specific <code>@[inline]</code> restriction</p>",
+        "id": 612432486,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1784833773
+    },
+    {
+        "content": "<p>By the way, as another edge case: I noticed that meta constants can be used in non-meta types and vice-versa without erroring directly, since <code>checkMeta</code> only ever checks the IR value in which they've been erased.</p>\n<p>It seems fairly unlikely to me that you would be able to actually get non-sorried code in which shake produced an incorrect recommendation due to this in practice (usually importing what you need to construct an element of that type would also import the type itself at the same phase)...but for the sake of probing the edge case, if <code>Foo</code> is non-meta and imported plainly, we have e.g. <code>meta def x : (fun _ b =&gt; b) Foo Bool := true</code> being accepted while shake suggests changing <code>Foo</code>'s <code>import</code> to <code>meta import</code>.</p>",
+        "id": 612833558,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1785084895
+    }
+]

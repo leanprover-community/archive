@@ -1,0 +1,26 @@
+[
+    {
+        "content": "<p>Hi, I'm curious about the representation of Lean's strings. They're constructed in a similar fashion to Lean's dynamic arrays: with an object header, followed by a length, followed by a capacity, followed by the string data -- which is additionally null-terminated.</p>\n<p><img alt=\"image.png\" class=\"inline-image\" data-original-content-type=\"image/png\" data-original-dimensions=\"887x211\" data-original-src=\"/user_uploads/3121/sdG-m62Oz-z8DB8ujBSmbKJh/image.png\" src=\"/user_uploads/thumbnail/3121/sdG-m62Oz-z8DB8ujBSmbKJh/image.png/840x560.webp\"></p>\n<p>Why did Lean go with this representation over a more standard \"fat pointer\" representation like Rust, where you instead have a pointer/capacity/length on the stack and a raw array of bytes on the heap? And what is the null byte used for? I assume to ease C FFI? Furthermore, why does Lean go with this representation for its dynamic arrays, too? I'm also curious what parts of Lean's representation are allocated on the stack vs. on the heap, and what any strings / dynamic arrays that wind up allocated on the heap (I assume at least some are, if not all) look like.</p>",
+        "id": 609332605,
+        "sender_full_name": "JJ",
+        "timestamp": 1783634920
+    },
+    {
+        "content": "<p>Nothing is stored on the stack at the moment apart from raw integer values, boxed integer values, and pointers to allocated values. The idea of storing a <code>lean_string</code> like a Rust <code>String</code> doesn't really match up. In Rust terms Lean objects are all implicitly wrapped in a (slightly fancier) <code>Arc&lt;UnsafeCell&lt;T&gt;&gt;</code> and as such live on the heap. There is an exception to be noted for ground literals wich can be extracted to live in <code>.rodata</code> or live as <code>OnceCell&lt;T&gt;</code> type of objects.</p>\n<p>One can make a bunch of arguments for why this is reasonable, I think the three most important ones are:</p>\n<ol>\n<li>Most Lean strings do not just remain local objects within a stack frame, they get stored into other structures, put through FFI boundaries, module boundaries and of course also returned. Doing all of these with stack objects is not easy. You also incur potential performance penalties by e.g. allocating the heap wrapper for the same object repeatedly etc. Note that it's not possible to  say we just  monomorphize the type that we put the string into and then store the size inline in that type instead of allocating a new heap data structure. This is because unlike in rust we cannot do monomorphization of types in Lean. This also means we cannot in general monomorphize functions and might thus have to heap allocate the string when passing it to e.g. <code>id</code> to match the ABI.</li>\n<li>What do you do about the reference counting? If we put <code>m_header</code> onto the heap next to <code>m_data</code> like so (<code>m_header</code> | <code>m_data</code>) and manage the meta data on the stack, what do we do when we need to heap allocate the value? Currently the runtime assumes that all runtime managed memory starts with an <code>m_header</code> so where do the heap allocated capacity etc. go? We can't put them infront of <code>m_header</code>, we can't put them between the two because that requires a realloc and we definitely can't put them behind the two because we don't know how long <code>m_data</code> actually is. We also cannot just leave <code>m_data</code> on the heap without the header because of course it might be referenced from multiple stack locations (maybe even concurrently!) and we need to know when to free it. The only solution I can see would be to allocate a separately reference counted meta data structure for the string which seems pretty unnecessary to me. After all, for most strings the metadata and actual data will die at the same time so we just manage two objects for no reason.</li>\n<li>You do get a slight performance benefit for small strings because accessing any component of the header should also bring a good chunk of your string (the first 32 or 96 bytes depending on how eager your machine is with cache line fetching) into cache instead of having to go and dereference another pointer </li>\n</ol>\n<p>The NUL byte is indeed there for easier C interopt, however it is not guaratneed that <code>m_data</code> is actually NUL free.</p>",
+        "id": 609336221,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1783637121
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"395550\">Henrik Böving</span> <a href=\"#narrow/channel/270676-lean4/topic/design.20decisions.20around.20the.20representation.20of.20strings/near/609336221\">said</a>:</p>\n<blockquote>\n<p>Nothing is stored on the stack at the moment</p>\n</blockquote>\n<p>Is this something that could change in the future? Are there any plans or ideas to make that work?</p>",
+        "id": 609509230,
+        "sender_full_name": "Francisco Giordano",
+        "timestamp": 1783704916
+    },
+    {
+        "content": "<p>There are plans to store more things on the stack but for the reasons outlined above its not going to be the string meta data</p>",
+        "id": 609510226,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1783705171
+    }
+]

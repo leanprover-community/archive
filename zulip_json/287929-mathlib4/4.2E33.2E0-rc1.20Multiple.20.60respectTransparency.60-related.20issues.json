@@ -1,0 +1,284 @@
+[
+    {
+        "content": "<p>I got a bit nerd-sniped this morning. While fixing a merge conflict I found that a newly introduced <code>set_option backward.isDefEq.respectTransparency false in</code> causing my merge conflict was unnecessary (e.g. it built fine without it.) It was introduced in the 4.33.0-rc1 bump PR <a href=\"https://github.com/leanprover-community/mathlib4/pull/41779\">#41779</a> yesterday, this added a new <code>backward.isDefEq.respectTransparency.types</code> option and 4.5k new <code>set_option</code>s for it. It also added 1.5k <code>set_option</code>s for the non-<code>.types</code> variant. While sampling a number of these I found that quite a few appeared unnecessary (e.g. deleting them didn't break the build.) I decided to investigate a bit.</p>\n<p>On a hunch I found <code>scripts/rm_set_option.py</code> that looks for and deletes <code>set_option</code>s and running it found and deleted 3k <code>set_option</code>s in mathlib. HOWEVER, I then found that the resulting output didn't build. Indeed, it looks like this script runs automatically once a week and tries to auto-merge the resulting changes after CI, but it has been failing for the past 3 weeks due to build failures: <a href=\"https://github.com/leanprover-community/mathlib4/pull/41136\">#41136</a></p>\n<p>I then also found that in the 4.33.0-rc1 adaption PR (this is noted by <span class=\"user-mention\" data-user-id=\"221653\">@Paul Reichert</span> in <a class=\"message-link\" href=\"/#narrow/channel/113488-general/topic/backward.2EisDefEq.2ErespectTransparency/near/606659393\">#general &gt; backward.isDefEq.respectTransparency @ 💬</a>) that about ~250 adaption notes were added in the bump PR like the following:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">adaptation_note</span>\n<span class=\"sd\">/-- `respectTransparency.types true` changes the auto-generated lemmas' signature -/</span>\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">backward</span><span class=\"bp\">.</span><span class=\"n\">isDefEq</span><span class=\"bp\">.</span><span class=\"n\">respectTransparency</span><span class=\"bp\">.</span><span class=\"n\">types</span><span class=\"w\"> </span><span class=\"n\">false</span><span class=\"w\"> </span><span class=\"k\">in</span>\n</code></pre></div>\n<p>However, <code>scripts/rm_set_option.py</code> is unaware of these so it will happily delete that <code>set_option</code> (and then the resulting PR will be automatically merged once the script is fixed.)</p>\n<p>So long story short:</p>\n<ol>\n<li>FRO seems to have been too liberal marking theorems with <code>set_option</code> in the bump PR.</li>\n<li>The tooling to remove these automatically appears to be broken and I haven't tracked down why.</li>\n<li>If it starts working, it will actually silently delete <code>set_option</code>s we should probably keep.</li>\n</ol>\n<p>In case anyone wants to investigate, running the <code>rm_set_option</code> script takes hours and you can download the output of my run <a href=\"https://github.com/vlad902/mathlib4/tree/rm-setopt\">here</a> in case you're planning to take a look. <a href=\"https://github.com/vlad902/mathlib4/tree/rm-setopt2\">This</a> branch undoes any changes to any files with the adaptation notes. Builds take forever so it's taking me a long time to gather information.</p>",
+        "id": 611128727,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1784223675
+    },
+    {
+        "content": "<p><code>scripts/set_option_utils.py</code> indicates that the tool tries to skip <code>set_option X &lt;value&gt; in -- ...</code> lines. Sounds like it needs to be more conservative (cc <span class=\"user-mention\" data-user-id=\"110087\">@Kim Morrison</span> as the author)</p>\n<p>This doesn't seem to be widely known, e.g. <a href=\"https://github.com/leanprover-community/mathlib4/pull/41151\">#41151</a> added a</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"c1\">-- The option makes `simps` produce the correct lemmas</span>\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">backward</span><span class=\"bp\">.</span><span class=\"n\">isDefEq</span><span class=\"bp\">.</span><span class=\"n\">respectTransparency</span><span class=\"w\"> </span><span class=\"n\">false</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"sd\">/-- Restricting scalars along the identity is isomorphic to the identity. -/</span>\n<span class=\"kd\">@[</span><span class=\"n\">simps!</span><span class=\"kd\">]</span>\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">restrictScalarsId'</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">CommRing</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"bp\">→+*</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">hf</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"bp\">.</span><span class=\"n\">id</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n</code></pre></div>\n<p>which then gets deleted by the script. (though maybe it should also be updated to <code>.types</code> since it matches that pattern?)</p>",
+        "id": 611131897,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1784224406
+    },
+    {
+        "content": "<p>(I actually suspect that that PR may be why the CI started failing but I can't confirm that yet)</p>",
+        "id": 611132723,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1784224613
+    },
+    {
+        "content": "<p>Actually I now suspect it was <a href=\"https://github.com/leanprover-community/mathlib4/pull/36572\">#36572</a> that caused CI to break, via this addition to <code>IsLimit.lean</code>. However, this was given an adaptation note in the 4.33.0-rc1 bump PR (though the change from <a href=\"https://github.com/leanprover-community/mathlib4/pull/41151\">#41151</a> was not)</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"c1\">-- The `set_option` is needed to make reassoc generate the right theorem</span>\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">backward</span><span class=\"bp\">.</span><span class=\"n\">isDefEq</span><span class=\"bp\">.</span><span class=\"n\">respectTransparency</span><span class=\"w\"> </span><span class=\"n\">false</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"kd\">@[</span><span class=\"n\">to_dual</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">attr</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">reassoc</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">attr</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">simp</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">reorder</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"n\">hd</span><span class=\"w\"> </span><span class=\"n\">d</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"n\">ι_map</span><span class=\"kd\">]</span>\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">map_π</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">F</span><span class=\"w\"> </span><span class=\"n\">G</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">J</span><span class=\"w\"> </span><span class=\"bp\">⥤</span><span class=\"w\"> </span><span class=\"n\">C</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Cone</span><span class=\"w\"> </span><span class=\"n\">F</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">d</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Cone</span><span class=\"w\"> </span><span class=\"n\">G</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">hd</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">IsLimit</span><span class=\"w\"> </span><span class=\"n\">d</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">F</span><span class=\"w\"> </span><span class=\"bp\">⟶</span><span class=\"w\"> </span><span class=\"n\">G</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">j</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">J</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n</code></pre></div>",
+        "id": 611141165,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1784227107
+    },
+    {
+        "content": "<p>Actually, the adaptation note may be kind of bad, the change is</p>\n<div class=\"codehilite\" data-code-language=\"Diff\"><pre><span></span><code><span class=\"gd\">--- The `set_option` is needed to make reassoc generate the right theorem</span>\n<span class=\"gd\">-set_option backward.isDefEq.respectTransparency false in</span>\n<span class=\"gi\">+#adaptation_note</span>\n<span class=\"gi\">+/-- `respectTransparency.types true` changes the auto-generated lemmas' signature -/</span>\n<span class=\"gi\">+set_option backward.isDefEq.respectTransparency.types false in</span>\n</code></pre></div>",
+        "id": 611141244,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1784227135
+    },
+    {
+        "content": "<p>Thanks for digging into this! I would be happy to review / merge fixes to the rm_set_option script / workflow.</p>",
+        "id": 611141413,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1784227204
+    },
+    {
+        "content": "<p>(bad in the sense that it's not clear if we ALSO need it for reassoc)</p>",
+        "id": 611141431,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1784227214
+    },
+    {
+        "content": "<p>Note that some adaptation notes were also added of the form so the eventual fix should also be able to handle them.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"bp\">#</span><span class=\"n\">adaptation_note</span>\n<span class=\"sd\">/--</span>\n<span class=\"sd\">`mapIsoWhiskerRight`'s `simps` theorems were formulated in simp normal form under</span>\n<span class=\"sd\">`respectTransparency.types true`. We use `respectTransparency.types false` here because these</span>\n<span class=\"sd\">lemmas fail to match without this annotation.</span>\n<span class=\"sd\">Suggested way forward: Decide what the correct signatures of the `mapIsoWhiskerRight` lemmas</span>\n<span class=\"sd\">are, then update this proof accordingly.</span>\n<span class=\"sd\">-/</span>\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">backward</span><span class=\"bp\">.</span><span class=\"n\">isDefEq</span><span class=\"bp\">.</span><span class=\"n\">respectTransparency</span><span class=\"bp\">.</span><span class=\"n\">types</span><span class=\"w\"> </span><span class=\"n\">false</span><span class=\"w\"> </span><span class=\"k\">in</span>\n</code></pre></div>",
+        "id": 611143122,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1784227808
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"123965\">Bryan Gin-ge Chen</span> <a href=\"#narrow/channel/287929-mathlib4/topic/4.2E33.2E0-rc1.20Multiple.20.60respectTransparency.60-related.20issues/near/611141413\">said</a>:</p>\n<blockquote>\n<p>Thanks for digging into this! I would be happy to review / merge fixes to the rm_set_option script / workflow.</p>\n</blockquote>\n<p>I've already spent too much time on this so I am going to leave the script change (looking for <code>#adaptation_notes</code> and <code>--</code> comments) to someone else. But I would like to finish understanding the root causes.</p>",
+        "id": 611152599,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1784231223
+    },
+    {
+        "content": "<p>There is a single change I need to make to make Mathlib finish building with set_options deleted, I need to add</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"c1\">--- a/Mathlib/CategoryTheory/Monoidal/Cartesian/Over.lean</span>\n<span class=\"bp\">+++</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"bp\">/</span><span class=\"n\">Mathlib</span><span class=\"bp\">/</span><span class=\"n\">CategoryTheory</span><span class=\"bp\">/</span><span class=\"n\">Monoidal</span><span class=\"bp\">/</span><span class=\"n\">Cartesian</span><span class=\"bp\">/</span><span class=\"n\">Over</span><span class=\"bp\">.</span><span class=\"n\">lean</span>\n<span class=\"bp\">@@</span><span class=\"w\"> </span><span class=\"bp\">-</span><span class=\"mi\">140</span><span class=\"o\">,</span><span class=\"mi\">6</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"mi\">140</span><span class=\"o\">,</span><span class=\"mi\">7</span><span class=\"w\"> </span><span class=\"bp\">@@</span><span class=\"w\"> </span><span class=\"kn\">lemma</span><span class=\"w\"> </span><span class=\"n\">rightUnitor_inv_left_fst</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Y</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Over</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n<span class=\"w\">     </span><span class=\"o\">(</span><span class=\"n\">ρ_</span><span class=\"w\"> </span><span class=\"n\">Y</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">inv</span><span class=\"bp\">.</span><span class=\"n\">left</span><span class=\"w\"> </span><span class=\"bp\">≫</span><span class=\"w\"> </span><span class=\"n\">pullback</span><span class=\"bp\">.</span><span class=\"n\">fst</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"mi\">𝟙</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">𝟙</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">   </span><span class=\"n\">limit</span><span class=\"bp\">.</span><span class=\"n\">lift_π</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"bp\">_</span>\n\n<span class=\"bp\">+</span><span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">backward</span><span class=\"bp\">.</span><span class=\"n\">isDefEq</span><span class=\"bp\">.</span><span class=\"n\">respectTransparency</span><span class=\"bp\">.</span><span class=\"n\">types</span><span class=\"w\"> </span><span class=\"n\">false</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"w\"> </span><span class=\"kd\">@[</span><span class=\"n\">reassoc</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">attr</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">simp</span><span class=\"o\">)</span><span class=\"kd\">]</span>\n<span class=\"w\"> </span><span class=\"kn\">lemma</span><span class=\"w\"> </span><span class=\"n\">rightUnitor_inv_left_snd</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Y</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Over</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n<span class=\"w\">     </span><span class=\"o\">(</span><span class=\"n\">ρ_</span><span class=\"w\"> </span><span class=\"n\">Y</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">inv</span><span class=\"bp\">.</span><span class=\"n\">left</span><span class=\"w\"> </span><span class=\"bp\">≫</span><span class=\"w\"> </span><span class=\"n\">pullback</span><span class=\"bp\">.</span><span class=\"n\">snd</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"mi\">𝟙</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">Y</span><span class=\"bp\">.</span><span class=\"n\">hom</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n</code></pre></div>\n<p>so that <code>isCommMonObj_of_isProper_of_isIntegral_tensorObj_of_isAlgClosed</code> builds downstream (otherwise a simp fails on the second to last line). I am sure someone knows what this has to do with <code>respectTransparency</code> but I don't. Anyways, it seems bad that <code>rm_set_option</code> would delete this line and change the underlying theory without realizing it.</p>",
+        "id": 611153200,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1784231447
+    },
+    {
+        "content": "<p>I think the only things left to do are 1) figure out the root cause of why we need the <code>set_option</code> above, 2) someone actually patching the script, and 3) <span class=\"user-mention\" data-user-id=\"479299\">@Jovan Gerbscheid</span> maybe you want to add your <code>reassoc</code> comment back from above? (also maybe this is related to my issue above so you can offer some advice? :)</p>",
+        "id": 611154024,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1784231740
+    },
+    {
+        "content": "<p>Thanks for noticing that these <code>set_options</code> are being auto-removed by <code>rm_set_option.py</code>; I wasn't aware that there are special conventions for preventing pruning by an automated script! Regarding the superfluous options, this was a change I worked on for a long time; I believe some fixes I added later might have resolved some of the initial problems, making some options obsolete.</p>\n<p>Which of the <code>set_option</code>s do you mean when you say you want to know why it is needed? Update: Oh, you mean <code>rightUnitor_inv_left_snd</code>? I can take a look.</p>",
+        "id": 611154492,
+        "sender_full_name": "Paul Reichert",
+        "timestamp": 1784231920
+    },
+    {
+        "content": "<p>The reason is the same as for the options with an adaptation note, and this one should probably also have gotten such a note. <code>reassoc</code> internally uses <code>simp</code> to simplify its LHS. But if the codomain of the first functor and the domain of the second functor are not definitionally equal at <em>implicit</em> transparency, then <code>comp_assoc</code> cannot be applied by simp, and so the lemma gets the wrong signature.</p>\n<p>We can confirm with <code>set_option trace.Meta.Tactic.simp true</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"o\">[</span><span class=\"n\">Meta</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">simp</span><span class=\"bp\">.</span><span class=\"n\">unify</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"n\">Category</span><span class=\"bp\">.</span><span class=\"n\">assoc</span><span class=\"o\">:</span><span class=\"mi\">1000</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">failed</span><span class=\"w\"> </span><span class=\"n\">to</span><span class=\"w\"> </span><span class=\"n\">unify</span>\n<span class=\"w\">      </span><span class=\"o\">(</span><span class=\"bp\">?</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"bp\">≫</span><span class=\"w\"> </span><span class=\"bp\">?</span><span class=\"n\">g</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">≫</span><span class=\"w\"> </span><span class=\"bp\">?</span><span class=\"n\">h</span>\n<span class=\"w\">    </span><span class=\"k\">with</span>\n<span class=\"w\">      </span><span class=\"o\">(</span><span class=\"n\">Hom</span><span class=\"bp\">.</span><span class=\"n\">left</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">ρ_</span><span class=\"w\"> </span><span class=\"n\">Y</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">inv</span><span class=\"w\"> </span><span class=\"bp\">≫</span><span class=\"w\"> </span><span class=\"n\">pullback</span><span class=\"bp\">.</span><span class=\"n\">snd</span><span class=\"w\"> </span><span class=\"n\">Y</span><span class=\"bp\">.</span><span class=\"n\">hom</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"mi\">𝟙</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"o\">))</span><span class=\"w\"> </span><span class=\"bp\">≫</span><span class=\"w\"> </span><span class=\"n\">h</span>\n</code></pre></div>\n<p>In this case, unifying the codomain of the first and domain of the second functor means solving <code>[implicit] (Y ⊗ 𝟙_ (Over X)).left ⟶ X =?= Limits.pullback Y.hom (𝟙 X) ⟶ X</code>.</p>\n<p>Enabling a linter helps to diagnose:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">linter</span><span class=\"bp\">.</span><span class=\"n\">tacticCheckInstances</span><span class=\"w\"> </span><span class=\"n\">true</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"kn\">set_option</span><span class=\"w\"> </span><span class=\"n\">backward</span><span class=\"bp\">.</span><span class=\"n\">isDefEq</span><span class=\"bp\">.</span><span class=\"n\">respectTransparency</span><span class=\"bp\">.</span><span class=\"n\">types</span><span class=\"w\"> </span><span class=\"n\">false</span><span class=\"w\"> </span><span class=\"k\">in</span>\n<span class=\"kd\">@[</span><span class=\"n\">reassoc</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">attr</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">simp</span><span class=\"o\">)</span><span class=\"kd\">]</span>\n<span class=\"kn\">lemma</span><span class=\"w\"> </span><span class=\"n\">rightUnitor_inv_left_snd</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Y</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Over</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n<span class=\"w\">    </span><span class=\"o\">(</span><span class=\"n\">ρ_</span><span class=\"w\"> </span><span class=\"n\">Y</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">inv</span><span class=\"bp\">.</span><span class=\"n\">left</span><span class=\"w\"> </span><span class=\"bp\">≫</span><span class=\"w\"> </span><span class=\"n\">pullback</span><span class=\"bp\">.</span><span class=\"n\">snd</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"mi\">𝟙</span><span class=\"w\"> </span><span class=\"n\">X</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">Y</span><span class=\"bp\">.</span><span class=\"n\">hom</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">  </span><span class=\"n\">limit</span><span class=\"bp\">.</span><span class=\"n\">lift_π</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"bp\">_</span>\n</code></pre></div>\n<p>Indeed, the linter warns about the lemma generated by <code>reassoc</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">generated</span><span class=\"w\"> </span><span class=\"kn\">lemma</span><span class=\"w\"> </span><span class=\"n\">CategoryTheory</span><span class=\"bp\">.</span><span class=\"n\">Over</span><span class=\"bp\">.</span><span class=\"n\">rightUnitor_inv_left_snd_assoc</span><span class=\"w\"> </span><span class=\"n\">is</span><span class=\"w\"> </span><span class=\"n\">not</span><span class=\"w\"> </span><span class=\"n\">type</span><span class=\"bp\">-</span><span class=\"n\">correct</span><span class=\"w\"> </span><span class=\"k\">at</span><span class=\"w\"> </span><span class=\"bp\">`.</span><span class=\"n\">implicit</span><span class=\"bp\">`</span><span class=\"w\"> </span><span class=\"n\">transparency</span><span class=\"bp\">;</span><span class=\"w\"> </span><span class=\"n\">consider</span><span class=\"w\"> </span><span class=\"n\">marking</span><span class=\"w\"> </span><span class=\"n\">some</span><span class=\"w\"> </span><span class=\"n\">of</span><span class=\"w\"> </span><span class=\"n\">the</span><span class=\"w\"> </span><span class=\"n\">following</span><span class=\"w\"> </span><span class=\"n\">as</span><span class=\"w\"> </span><span class=\"bp\">`</span><span class=\"kd\">@[</span><span class=\"n\">implicit_reducible</span><span class=\"kd\">]</span><span class=\"bp\">`</span><span class=\"o\">:</span>\n<span class=\"w\">  </span><span class=\"n\">getLimitCone</span>\n<span class=\"w\">  </span><span class=\"n\">Quiver</span><span class=\"bp\">.</span><span class=\"n\">Hom</span>\n<span class=\"w\">  </span><span class=\"n\">tensorUnit</span>\n<span class=\"w\">  </span><span class=\"n\">pullbackConeEquivBinaryFan</span>\n<span class=\"w\">  </span><span class=\"n\">CategoryStruct</span><span class=\"bp\">.</span><span class=\"n\">id</span>\n<span class=\"w\">  </span><span class=\"n\">limit</span><span class=\"bp\">.</span><span class=\"n\">cone</span>\n\n<span class=\"n\">Note</span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">This</span><span class=\"w\"> </span><span class=\"n\">linter</span><span class=\"w\"> </span><span class=\"n\">can</span><span class=\"w\"> </span><span class=\"n\">be</span><span class=\"w\"> </span><span class=\"n\">disabled</span><span class=\"w\"> </span><span class=\"k\">with</span><span class=\"w\"> </span><span class=\"ss\">`set_option</span><span class=\"w\"> </span><span class=\"n\">linter</span><span class=\"bp\">.</span><span class=\"n\">tacticCheckInstances</span><span class=\"w\"> </span><span class=\"n\">false</span><span class=\"bp\">`</span>\n</code></pre></div>\n<p>In this case, the definitions that need to be implicit-reducible for this to work turn out to be <code>pullbackConeEquivBinaryFan</code> and <code>limit.cone</code>, because these need to be unfolded in order to compute the domain and codomain objects mentioned above.</p>",
+        "id": 611160152,
+        "sender_full_name": "Paul Reichert",
+        "timestamp": 1784233850
+    },
+    {
+        "content": "<p>OK, I'm not qualified to propose what the right change maybe for the category theory library, but I opened <a href=\"https://github.com/leanprover-community/mathlib4/pull/41837\">#41837</a> to add that adaptation note so that it won't be casually deleted in the future. Then the only thing remaining is to update the script and this workflow will start working again. Thanks for looking into it!</p>",
+        "id": 611163598,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1784235153
+    },
+    {
+        "content": "<p>So I had a look at fixing this again. I updated the rm_set_option.py script and ran it over night and the resulting build <em>almost</em> succeeded, except it failed in a file that just landed yesterday due to a lemma in Over.lean again. There are a number of other <code>@[reassoc]</code> lemmas that were having their <code>set_option</code> removed and I was able to verify that every <code>_assoc</code> lemma type signature in that file changes if it has <code>set_option</code> removed. Claude wrote a 10 line script that pretty prints all decls with <code>_assoc</code> in the namespace after importing Mathlib and a found another couple of differences after <code>rm_set_option</code> ran. This makes me a bit nervous because probably there other are cases silently hanging around that may get deleted in the future without anyone noticing (or perhaps this CI job will break again and no one will notice that).</p>\n<p>Interestingly, at least one of these changes occurs after deleting a <code>set_option backward.isDefEq.respectTransparency false in</code> that was added in the original 4.29.0-rc1 bump so this has silently been a problem this entire time.</p>",
+        "id": 612043940,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1784698133
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/41996\">#41996</a> adds more <code>#adaptation_note</code>s to that one file.</p>",
+        "id": 612046193,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1784698820
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/41997\">#41997</a> updates <code>rm_set_option.py</code> to ignore preceding comments/adaptation notes</p>",
+        "id": 612046637,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1784698958
+    },
+    {
+        "content": "<p>Question for our metaprogramming experts: Is there something we should modify in <code>reassoc</code> here to keep more of these from popping up? (Is someone already looking at this?)</p>",
+        "id": 612145139,
+        "sender_full_name": "Bryan Gin-ge Chen",
+        "timestamp": 1784729593
+    },
+    {
+        "content": "<p>Now that we have <code>implicit_reducible</code> separate from <code>instance_reducible</code>, I would hope that we can work on fixing these cases where <code>reassoc</code> fails, rather than needing the <code>set_option</code>s.</p>\n<p>Either way, it would probably be possible to have <code>reassoc</code> always try with and without <code>respectTransparency</code>, and if they are different then give a linter warning. I'm not sure though if this linter would give false positives.</p>",
+        "id": 612152558,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1784731425
+    },
+    {
+        "content": "<p>I had a go at removing some <code>set_option</code> by using <code>implicit_reducible</code> in category theory in <a href=\"https://github.com/leanprover-community/mathlib4/pull/42161\">#42161</a>. This removes a couple hundred <code>set_option</code>, and also reduces the number of <code>set_option</code> that are needed to make <code>reassoc</code> generate correct theorems.</p>",
+        "id": 613088875,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1785195609
+    },
+    {
+        "content": "<p>Right now I'm looking at somewhat difficult-to-remove annotations in <code>UniversalFactorizationRing</code> and <code>MFDeriv.Basic</code>. Just in case somebody is considering them, don't waste time on these right now. I need to diagnose what's going on there and perhaps a toolchain-level fix is needed for those.</p>",
+        "id": 613229979,
+        "sender_full_name": "Paul Reichert",
+        "timestamp": 1785252730
+    },
+    {
+        "content": "<p>In <code>MFDeriv.Basic</code>, there are definitely some ugly defeq abuses, especially in the definition of the derivative (I know because I wrote them :-). The fix should probably be at the Mathlib level, not in core: the level of defeq abuse here is too much. The correct fix would probably be to insert some identification between the tangent space and the model space, as a continuous linear equiv, and compose with these to avoid the abuses. You said that we shouldn't waste time on thse, so I won't implement that, but if you think a proper fix may help here don't hesitate to ask!</p>",
+        "id": 613246240,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1785257249
+    },
+    {
+        "content": "<p>(Tangentially relevant: <a href=\"https://github.com/leanprover-community/mathlib4/pull/42038\">#42038</a> and <a href=\"https://github.com/leanprover-community/mathlib4/pull/42034\">#42034</a> fix some defeq abuse in differential geometry, but unrelated to that file.)</p>",
+        "id": 613247324,
+        "sender_full_name": "Michael Rothgang",
+        "timestamp": 1785257632
+    },
+    {
+        "content": "<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=NormedSpace.fromTangentSpace#doc\">docs#NormedSpace.fromTangentSpace</a> may be the identification you're looking for, or at least related.</p>",
+        "id": 613247606,
+        "sender_full_name": "Michael Rothgang",
+        "timestamp": 1785257722
+    },
+    {
+        "content": "<p>Okay, fixing the Lean-internal problems <em>and</em> making the file more robust seems like a good compromise ;)</p>\n<p>I'll try my hand for now and then give you an update. (If you're able to easily fix some of the annotations, I'd be very happy too, I just want to avoid that you end up dealing with weird Lean internals.)</p>",
+        "id": 613247607,
+        "sender_full_name": "Paul Reichert",
+        "timestamp": 1785257722
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"634338\">Michael Rothgang</span> <a href=\"#narrow/channel/287929-mathlib4/topic/4.2E33.2E0-rc1.20Multiple.20.60respectTransparency.60-related.20issues/near/613247324\">said</a>:</p>\n<blockquote>\n<p>(Tangentially relevant: <a href=\"https://github.com/leanprover-community/mathlib4/pull/42038\">#42038</a> and <a href=\"https://github.com/leanprover-community/mathlib4/pull/42034\">#42034</a> fix some defeq abuse in differential geometry, but unrelated to that file.)</p>\n</blockquote>\n<p>Great!</p>\n<p><span class=\"user-mention silent\" data-user-id=\"634338\">Michael Rothgang</span> <a href=\"#narrow/channel/287929-mathlib4/topic/4.2E33.2E0-rc1.20Multiple.20.60respectTransparency.60-related.20issues/near/613247606\">said</a>:</p>\n<blockquote>\n<p><a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=NormedSpace.fromTangentSpace#doc\">docs#NormedSpace.fromTangentSpace</a> may be the identification you're looking for, or at least related.</p>\n</blockquote>\n<p>I'll take a look, thanks.</p>",
+        "id": 613247763,
+        "sender_full_name": "Paul Reichert",
+        "timestamp": 1785257775
+    },
+    {
+        "content": "<p>Probably you're already aware; just in case you're not: there is a Lean core bug affecting differential geometry, that I talked through with Julia (in Lisbon, in May). She had a fix for that. I'm not sure that the precise status of that is. Enabling <code>backward.isDefEq.respectTransparency.types</code> was a prerequisite for that (which is true in mathlib now).</p>",
+        "id": 613248008,
+        "sender_full_name": "Michael Rothgang",
+        "timestamp": 1785257856
+    },
+    {
+        "content": "<p>Oh yes, I think that's related to <a href=\"https://github.com/leanprover/lean4/pull/13846\">lean4#13846</a>. Getting that ready is on my to-do list at least, but not done yet unfortunately.</p>",
+        "id": 613248974,
+        "sender_full_name": "Paul Reichert",
+        "timestamp": 1785258116
+    },
+    {
+        "content": "<p>Okay, <code>MFDeriv</code>'s problems vanish after making the type alias <code>TangentSpace</code> implicit-reducible (reasonable, I think: type aliases should almost never be semireducible).</p>\n<p>Regarding <code>UniversalFactorizationRing</code>, there is a bug that makes the comparison <code>HMul.hMul x y =?= Mul.mul x y</code> at implicit transparency fail during instance search <em>if</em> the <code>Mul</code> instance is a metavariable; Lean fails to reduce the LHS there. I have a proof of concept for a fix, but it requires a bit more thought.</p>",
+        "id": 613373825,
+        "sender_full_name": "Paul Reichert",
+        "timestamp": 1785314417
+    },
+    {
+        "content": "<blockquote>\n<p>Okay, <code>MFDeriv</code>'s problems vanish after making the type alias <code>TangentSpace</code> implicit-reducible (reasonable, I think: type aliases should almost never be semireducible).</p>\n</blockquote>\n<p>I am not so sure if this is a good idea. Mathematically, tangent spaces at different points are different objects - being able to identify them all over without any warning is not great. While this identification <em>is</em> used in a number of places; I'd like to see how bad making this identification explicit instead (<a href=\"https://github.com/leanprover-community/mathlib4/pull/42193\">#42193</a>, started by Sébastien) is in practice. This identification will clearly be needed in foundational files; I'm not convinced yet it will show up a lot later (and if so, then that's a better fix).</p>",
+        "id": 613376655,
+        "sender_full_name": "Michael Rothgang",
+        "timestamp": 1785315196
+    },
+    {
+        "content": "<p>(Also, the bug I reported to Julia was about Lean confusing an instance on a <code>TangentSpace</code> with an instance on the underlying normed space <code>E</code>. So, this might also lead to other formalization issues. The code is question is close to getting merged into mathlib, but will probably take a day or two.)</p>",
+        "id": 613377288,
+        "sender_full_name": "Michael Rothgang",
+        "timestamp": 1785315353
+    },
+    {
+        "content": "<p>I think I ran into issues with the <code>TangentSpace</code> identification in a few places, but if there's a way to avoid it, I'm all for it. :)<br>\nBut if you don't want it <code>implicit_reducible</code>, then could we consider making <code>TangentSpace</code> <code>irreducible</code>? Semireducible types lead to really bad behavior.<br>\nAlso note that making <code>TangentSpace</code> implicit-reducible doesn't affect type class search.</p>",
+        "id": 613378253,
+        "sender_full_name": "Paul Reichert",
+        "timestamp": 1785315619
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"221653\">Paul Reichert</span> <a href=\"#narrow/channel/287929-mathlib4/topic/4.2E33.2E0-rc1.20Multiple.20.60respectTransparency.60-related.20issues/near/613373825\">said</a>:</p>\n<blockquote>\n<p>making the type alias <code>TangentSpace</code> implicit-reducible (reasonable, I think: type aliases should almost never be semireducible).</p>\n</blockquote>\n<p>If I recall correctly, <code>TangentSpace</code> was part of the issue half a year ago (<a href=\"https://github.com/leanprover/lean4/pull/9077\">lean#9077</a>) which prompted the FRO to implement the respectTransparency feature. The problem was that this type synonym was being unfolded in some unification where it should not be unfolded.</p>\n<p>Your claim that making type aliases implicit-reducible will fix our problems, makes me feel uneasy, because it seems like we are reverting all of the work from the last half a year and we will be back where we started.</p>",
+        "id": 613381580,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1785316632
+    },
+    {
+        "content": "<p>Am I saying this right <span class=\"user-mention\" data-user-id=\"110050\">@Sébastien Gouëzel</span>?</p>",
+        "id": 613381816,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1785316710
+    },
+    {
+        "content": "<p>The <a href=\"https://github.com/leanprover/lean4/pull/9077\">lean4#9077</a> issue is what I'm currently fixing; my claim that \"it doesn't affect instance search\" was meant as \"after my fix, it doesn't affect instance search\". So after my fix, one shouldn't think of <code>implicit_reducible</code> as having the <a href=\"https://github.com/leanprover/lean4/pull/9077\">lean4#9077</a> problem.</p>\n<p>There's also a wholly different reason for <code>respectTransparency</code>, which is the ability to control the cost of unfolding, making Lean more scalable. If there are <em>scalability</em> issues with the unfolding of <code>TangentSpace</code>, then that would be interesting to know.</p>",
+        "id": 613382674,
+        "sender_full_name": "Paul Reichert",
+        "timestamp": 1785317010
+    },
+    {
+        "content": "<p>Are you mostly worried about instance search or something else?</p>",
+        "id": 613383089,
+        "sender_full_name": "Paul Reichert",
+        "timestamp": 1785317158
+    },
+    {
+        "content": "<p>Yes I am worried about <code>implicit_reducible</code> types having the <a href=\"https://github.com/leanprover/lean4/pull/9077\">lean#9077</a> problem. How are you planning to fix this?</p>\n<p>My understanding was that <a href=\"https://github.com/leanprover/lean4/pull/9077\">lean#9077</a> is caused by the fact that instances are being unified implicitly. And obviously, an <code>implicit_reducible</code> type does not stop this implicit unification.</p>",
+        "id": 613383441,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1785317319
+    },
+    {
+        "content": "<p>Are you planning to, when unifying instances in <code>implicit</code> transparency<code>, also unify their types in </code>instances` transparency?</p>",
+        "id": 613384160,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1785317585
+    },
+    {
+        "content": "<p>Essentially yes; see the thread <a class=\"stream-topic\" data-stream-id=\"287929\" href=\"/#narrow/channel/287929-mathlib4/topic/Fixing.20lean.239077/with/613385160\">#mathlib4 &gt; Fixing lean#9077</a> for a more detailed explanation of the plan.</p>",
+        "id": 613385280,
+        "sender_full_name": "Paul Reichert",
+        "timestamp": 1785317974
+    },
+    {
+        "content": "<blockquote>\n<p>Also note that making <code>TangentSpace</code> implicit-reducible doesn't affect type class search.</p>\n</blockquote>\n<p>I know, and this is very good. (Making <code>TangentSpace</code> <code>instance_reducible</code> is wrong, also mathematically. <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=TangentSpace#doc\">docs#TangentSpace</a> is not a normed space, and intentionally so (there is no canonical norm on it). Making it instance-reducible would find the wrong norm on it.)</p>",
+        "id": 613386431,
+        "sender_full_name": "Michael Rothgang",
+        "timestamp": 1785318386
+    },
+    {
+        "content": "<p>On a positive note: this split into implicit and instance reducible is also great for differential geometry. I didn't think about this back when this was discussed, so let me mention it now :-)<br>\nFor instance, <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=ModelProd#doc\">docs#ModelProd</a> and <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=ModelPi#doc\">docs#ModelPi</a> could never be instance reducible, but they can be implicit reducible just fine.</p>",
+        "id": 613386630,
+        "sender_full_name": "Michael Rothgang",
+        "timestamp": 1785318448
+    },
+    {
+        "content": "<blockquote>\n<p>But if you don't want it <code>implicit_reducible</code>, then could we consider making <code>TangentSpace</code> <code>irreducible</code>? Semireducible types lead to really bad behavior.</p>\n</blockquote>\n<p>Good question! I'll have to think about it. <span class=\"user-mention\" data-user-id=\"110050\">@Sébastien Gouëzel</span> What do you think?</p>",
+        "id": 613386748,
+        "sender_full_name": "Michael Rothgang",
+        "timestamp": 1785318490
+    },
+    {
+        "content": "<p>I just tried activating another round of <code>scripts/rm_set_option.py</code> <a href=\"https://github.com/leanprover-community/mathlib4/actions/runs/30467800259\">here</a>. Hopefully it will manage to remove the <code>set_option</code>s without causing build failures this time.</p>",
+        "id": 613458153,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1785340412
+    },
+    {
+        "content": "<p>That build failure is in the same file that was the cause for <a href=\"https://github.com/leanprover-community/mathlib4/pull/41996\">#41996</a>. I hope that once that lands it will run successfully.</p>",
+        "id": 613516700,
+        "sender_full_name": "Vlad Tsyrklevich",
+        "timestamp": 1785357705
+    },
+    {
+        "content": "<p>Ah you're right. I've taken a look at your PR <a href=\"https://github.com/leanprover-community/mathlib4/pull/41996\">#41996</a>, and I've instead made <a href=\"https://github.com/leanprover-community/mathlib4/pull/42267\">#42267</a>, which instead removes those backwards options altogether, by using some more <code>implicit_reducible</code> in category theory.</p>",
+        "id": 613526582,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1785362294
+    },
+    {
+        "content": "<p>For reference, <a href=\"https://github.com/leanprover-community/mathlib4/pull/41136\">#41136</a> is the auto-generated PR that tries to remove unnecessary <code>set_option</code></p>",
+        "id": 613526675,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1785362347
+    },
+    {
+        "content": "<p>Note that in <a href=\"https://github.com/leanprover-community/mathlib4/pull/41136\">#41136</a> there are some linter warnings from the unused simp arguments linter. The linter fires on these declarations only after removing the backward option. I've created <a href=\"https://github.com/leanprover-community/mathlib4/pull/42270\">#42270</a> that addresses these cases.</p>",
+        "id": 613533366,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1785366612
+    }
+]

@@ -1,0 +1,68 @@
+[
+    {
+        "content": "<p>An experiment to change all <code>haveI</code> in proofs to <code>have</code> (see here <a class=\"message-link\" href=\"/#narrow/channel/287929-mathlib4/topic/letI.2FhaveI.20linter/near/609710747\">#mathlib4 &gt; letI/haveI linter @ 💬</a> ) caused an unexpected slowdown in mathlib, which led to the discovery that the kernel was taking a surprisingly long time to consume a random proof in commutative algebra (the proof of <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=IntermediateField.adjoin_eq_adjoin_pow_expChar_pow_of_isSeparable#doc\">docs#IntermediateField.adjoin_eq_adjoin_pow_expChar_pow_of_isSeparable</a> ). Intrigued, I asked Claude to audit all of mathlib and flag the top 50 declarations in mathlib which were slowest to typecheck in the kernel. Sure eough, <code>adjoin_eq_adjoin_pow_expChar_pow_of_isSeparable</code> was in the top 20 but there are many more, some 5x as bad. A slightly sloppy LLM-generated summary of the results is here <a href=\"https://gist.github.com/kbuzzard/c5821b44b8bb7de13a5b9342eb96fe1f\">https://gist.github.com/kbuzzard/c5821b44b8bb7de13a5b9342eb96fe1f</a> . </p>\n<p>A more careful analysis of <code>adjoin_eq_adjoin_pow_expChar_pow_of_isSeparable</code> showed that the proof was abusing defeq, Lean was letting the proof get away with it, and then the kernel was groaning trying to check that it was OK. I have fixed that particular proof in <a href=\"https://github.com/leanprover-community/mathlib4/pull/41664\">#41664</a> and the result of getting typechecking down from 11,990,363 mHeartbeats to a sensible value (sensible values are more like 10K mHeartbeats: in fact the median is 3526) actually speeds the entire file up by 20%! (there is also a report that mathlib itself speeds up by a lot but this must be bogus). </p>\n<p>If people want to take a look at these files and see if they (or AI) can write proofs which the kernel doesn't find so distasteful then there is probably some low-hanging fruit in that list. </p>\n<p>For those who aren't familiar with the part of the system which I'm highlighting here -- these are proofs which might well compile quickly, but then (in VS Code) a one-line-long orange bar <br>\non the theorem name takes a suspiciously long time to go away. What's happening here is that the elaborator has accepted the proof, but the kernel is having a harder time checking that it really works. If you have a copy of mathlib open then search it for <code>theorem powQuotSuccInclusion_injective</code>, watch the file compile, and observe the one orange line staying for several seconds before the two blue ticks appear. The question is: what is going on in that proof that makes the kernel take so long to be convinced that the proof is OK?</p>",
+        "id": 609873490,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1783957922
+    },
+    {
+        "content": "<p>I just picked a random theorem from the list and tried making it faster, <a href=\"https://github.com/leanprover-community/mathlib4/pull/41700\">#41700</a></p>",
+        "id": 609876207,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1783958649
+    },
+    {
+        "content": "<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">powQuotSuccInclusion_injective</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">i</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ℕ</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n<span class=\"w\">    </span><span class=\"n\">Function</span><span class=\"bp\">.</span><span class=\"n\">Injective</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">powQuotSuccInclusion</span><span class=\"w\"> </span><span class=\"n\">p</span><span class=\"w\"> </span><span class=\"n\">P</span><span class=\"w\"> </span><span class=\"n\">i</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">rintro</span><span class=\"w\"> </span><span class=\"bp\">⟨</span><span class=\"n\">x</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">hx</span><span class=\"bp\">⟩</span><span class=\"w\"> </span><span class=\"bp\">⟨</span><span class=\"n\">y</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">hy</span><span class=\"bp\">⟩</span><span class=\"w\"> </span><span class=\"n\">h</span>\n<span class=\"w\">  </span><span class=\"n\">simpa</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Subtype</span><span class=\"bp\">.</span><span class=\"n\">ext_iff</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"kn\">using</span><span class=\"w\"> </span><span class=\"n\">h</span>\n</code></pre></div>\n<p>sorts out the example I flagged above. Edit: <a href=\"https://github.com/leanprover-community/mathlib4/pull/41701\">#41701</a></p>",
+        "id": 609880133,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1783959747
+    },
+    {
+        "content": "<p>OK so this is having unexpected benefits -- either that or radar is lying to us.</p>\n<p>My original golf of number 20 on <a href=\"https://gist.github.com/kbuzzard/c5821b44b8bb7de13a5b9342eb96fe1f\">the list</a> has a radar output which looks like <a href=\"https://github.com/leanprover-community/mathlib4/pull/41664#issuecomment-4952979462\">this</a> and my instinct was \"OK so -6.6G was about what I was expecting for the file speed-up, and radar also reports -187G for overall instructions but clearly radar is lying to me\". And now Aaron's golf of number 9 has radar <a href=\"https://github.com/leanprover-community/mathlib4/pull/41700#issuecomment-4960148208\">here</a> reporting that build instructions are down 33G, and then my golf of number 2 has radar reporting -279G <a href=\"https://github.com/leanprover-community/mathlib4/pull/41701#issuecomment-4960198431\">here</a>. <span class=\"user-mention\" data-user-id=\"421885\">@Joscha Mennicken</span> are these results genuine? These are PRs which each golf one proof and I would expect the build time of the relevant file to go down, and then I would expect the build time of mathlib in total to go down by pretty much exactly the same amount.</p>",
+        "id": 609921869,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1783961699
+    },
+    {
+        "content": "<p>That might just be noise, and you were lucky it was green all three times? E.g. <a href=\"https://radar.lean-lang.org/repos/mathlib4/commits/7c59a0a6cbff267024f1c701907f704c690782fb\">https://radar.lean-lang.org/repos/mathlib4/commits/7c59a0a6cbff267024f1c701907f704c690782fb</a> looks pretty similar, even though it only adds a lemma. Also, your radar links don't show an increase in task-clock (i.e. total CPU time spent compiling, summed across all cores) alongside the instructions.</p>",
+        "id": 609923023,
+        "sender_full_name": "Joscha Mennicken",
+        "timestamp": 1783962053
+    },
+    {
+        "content": "<p>Yeah this was also my instinct. But my experience with radar is that -279G is quite a surprisingly large amount of noise. </p>\n<p>I've set an LLM off to golf the 17 other proofs in the top 20 and if I make one PR with all of them then it seems like it might be a good test for radar.</p>",
+        "id": 609923298,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1783962138
+    },
+    {
+        "content": "<p>picked the slowest theorem from the list and tried making it faster, <a href=\"https://github.com/leanprover-community/mathlib4/pull/41703\">#41703</a></p>",
+        "id": 609923438,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1783962183
+    },
+    {
+        "content": "<p>Yeah, it's quite a bit of noise. Looking at the last few commits on the right, maybe noise is (hopefully just temporarily) worse right now?<br>\n<img alt=\"image.png\" class=\"inline-image\" data-original-content-type=\"image/png\" data-original-dimensions=\"1052x730\" data-original-src=\"/user_uploads/3121/rbymKCsQkpxYcq1km-wwLlA_/image.png\" src=\"/user_uploads/thumbnail/3121/rbymKCsQkpxYcq1km-wwLlA_/image.png/840x560.webp\"></p>",
+        "id": 609923781,
+        "sender_full_name": "Joscha Mennicken",
+        "timestamp": 1783962289
+    },
+    {
+        "content": "<p>picked another random theorem and tried making it faster, <a href=\"https://github.com/leanprover-community/mathlib4/pull/41704\">#41704</a></p>",
+        "id": 609925587,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1783962932
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover-community/mathlib4/pull/41705\">#41705</a> attempts the top 20, apart from those which were done when I started the LLM</p>",
+        "id": 609943212,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1783967838
+    },
+    {
+        "content": "<p>I set it off before <a href=\"https://github.com/leanprover-community/mathlib4/pull/41703\">#41703</a> and <a href=\"https://github.com/leanprover-community/mathlib4/pull/41704\">#41704</a> so now you can compare and contrast your fix with Opus's.</p>",
+        "id": 609943376,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1783967901
+    }
+]

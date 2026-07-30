@@ -1,0 +1,146 @@
+[
+    {
+        "content": "<p>I just ran into this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span>\n\n<span class=\"c1\">-- ok</span>\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">@</span><span class=\"n\">RingCon</span><span class=\"bp\">.</span><span class=\"n\">hasNSMul</span><span class=\"bp\">._</span><span class=\"n\">aux_1</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"bp\">@</span><span class=\"n\">RingCon</span><span class=\"bp\">.</span><span class=\"n\">instAddMonoidQuotient</span><span class=\"bp\">._</span><span class=\"n\">aux_3</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">rfl</span>\n\n<span class=\"c1\">-- fails</span>\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">@</span><span class=\"n\">RingCon</span><span class=\"bp\">.</span><span class=\"n\">hasNSMul</span><span class=\"bp\">._</span><span class=\"n\">aux_1</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"bp\">@</span><span class=\"n\">RingCon</span><span class=\"bp\">.</span><span class=\"n\">instAddMonoidQuotient</span><span class=\"bp\">._</span><span class=\"n\">aux_3</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">with_reducible_and_instances</span><span class=\"w\"> </span><span class=\"n\">rfl</span>\n</code></pre></div>\n<p>Both of these are providing the <code>NSMul</code> field, but since this is being abstracted by <code>inferInstanceAs</code> in two separate places, it ends up not reducibly defeq.</p>",
+        "id": 603969174,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1781658663
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"479299\">@Jovan Gerbscheid</span>, do I remember correctly that you planned to replace the <code>nsmul</code> field with <code>toNSMul : SMul Nat A</code> which I think would fix this (or allow <code>fast_instance%</code> to)?</p>",
+        "id": 603969300,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1781658709
+    },
+    {
+        "content": "<p>Replacing <code>nsmul</code> with a typeclass would definitely be a good idea, but I think the issue is deeper than that in this corner of the library. Look at</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span>\n\n<span class=\"kn\">example</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">R</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Ring</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">RingCon</span><span class=\"w\"> </span><span class=\"n\">R</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n<span class=\"w\">    </span><span class=\"o\">(</span><span class=\"n\">RingCon</span><span class=\"bp\">.</span><span class=\"n\">hasZSMul</span><span class=\"w\"> </span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">SMul</span><span class=\"w\"> </span><span class=\"n\">ℤ</span><span class=\"w\"> </span><span class=\"n\">c</span><span class=\"bp\">.</span><span class=\"n\">Quotient</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">RingCon</span><span class=\"bp\">.</span><span class=\"n\">instSMulQuotient</span><span class=\"w\"> </span><span class=\"n\">c</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">with_reducible_and_instances</span><span class=\"w\"> </span><span class=\"n\">rfl</span><span class=\"w\"> </span><span class=\"c1\">-- fails</span>\n</code></pre></div>\n<p>The issue is that the <code>Z</code>-action is declared under some assumptions and the general SMul is declared under another set of assumptions (which does not imply the former). Moreover, both actions are behind opaque  functions provided by <code>inferInstanceAs</code>.</p>\n<p>I see two solutions here:<br>\n(1): declare the <code>Z</code>-action only under stronger assumptions (assuming <code>R</code> is a ring), as a special case of the general SMul action.<br>\n(2): don't use <code>inferInstanceAs</code> and make the constructions reducible enough that Lean can see the actions are the same.</p>\n<p>(1) feels more natural to me, because I would think that <code>RingCon</code> is designed for rings, but I'm probably missing some applications (the file is careful to build things for <code>NonUnitalNonAssocCommSemiring</code> and friends). So (2) is maybe safer. Thoughts?</p>",
+        "id": 604046665,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1781681675
+    },
+    {
+        "content": "<p>Minimally invasive fix at <a href=\"https://github.com/leanprover-community/mathlib4/pull/40704\">#40704</a>: I define there all the SMul through the same function, so they are reducibly defeq by design.</p>",
+        "id": 604082549,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1781688528
+    },
+    {
+        "content": "<p>I indeed have a PR that adds an <code>NSMul</code> type class for the <code>nsmul</code> field, but I haven't quite convinced myself that this change is worth the minor slowdown that it causes. In particular, for the issue you describe with <code>inferInstanceAs</code>, it is supposed to be able to handle that correctly with the current setup.</p>",
+        "id": 604093851,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1781690826
+    },
+    {
+        "content": "<p>I have realized that there are other places in Mathlib where this is an issue. <a href=\"https://github.com/leanprover-community/mathlib4/pull/40706\">#40706</a> fixes the ones I've noticed.</p>\n<p>There are two issues here. The first one is that generic SMul definitions should be located before the definitions that could use it like <code>AddMonoid</code> or <code>AddGroup</code>. The second one is that, since this is an <code>nsmul</code> field and not a class field, <code>inferInstanceAs</code> has no reason to try to use the generic <code>SMul</code>, so we should provide it by hand.</p>\n<p>The first one has to be fixed in any case. For the second one, introducing an <code>NSMul</code> typeclass would make it be handled automatically by <code>inferInstanceAs</code>, while for now we have to be careful.</p>",
+        "id": 604098254,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1781691799
+    },
+    {
+        "content": "<p>Iirc <code>SplittingField</code> suffers from the same diamonds, and it is not entirely trivial to fix it there.</p>",
+        "id": 604103104,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1781692878
+    },
+    {
+        "content": "<p>Good catch. I'm proposing a fix in <a href=\"https://github.com/leanprover-community/mathlib4/pull/40708\">#40708</a>, along the same lines as what I've done above.</p>",
+        "id": 604120072,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1781696482
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110050\">Sébastien Gouëzel</span> <a href=\"#narrow/channel/287929-mathlib4/topic/inferInstanceAs.20creates.20non-reducible.20diamonds/near/604082549\">said</a>:</p>\n<blockquote>\n<p>Minimally invasive fix at <a href=\"https://github.com/leanprover-community/mathlib4/pull/40704\">#40704</a>: I define there all the SMul through the same function, so they are reducibly defeq by design.</p>\n</blockquote>\n<p>I should probably have clarified that I already had essentially this fix, and rather was wondering if this should be considered a bug in inferInstanceAs.</p>",
+        "id": 604138815,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1781700208
+    },
+    {
+        "content": "<p>If we define some structure like <code>AddMonoid</code> that needs some SMul, and then later we define a general SMul that specializes to the one used in <code>AddMonoid</code>, I don't see how <code>inferInstanceAs</code> could guess what we want. In this case, I'd say the issue is on our side, and we should move the <code>SMul</code> instance before the <code>AddMonoid</code>.</p>",
+        "id": 604139819,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1781700396
+    },
+    {
+        "content": "<p>Definitely SMul should come earlier, but that doesn't help without also promoting the nsmul field from a function to a typeclass instance. I don't think a new NSMul typeclass would help much, since here we need an automatic  instance from SMul but everywhere else we need the instance the other way</p>",
+        "id": 604140699,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1781700569
+    },
+    {
+        "content": "<p>In <a href=\"https://github.com/leanprover-community/mathlib4/pull/38036\">#38036</a> I have added the <code>NSMul</code> type class, which lets <code>inferInstanceAs</code> use <code>SMul</code> instances for the nsmul field.</p>",
+        "id": 604141206,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1781700664
+    },
+    {
+        "content": "<p>I think <a href=\"https://github.com/leanprover-community/mathlib4/pull/38036\">#38036</a> is a very good idea, and that we should go for it even if there is a small performance penalty, because it removes a footgun that is very hard to notice for non-experts (and even for experts :-)</p>",
+        "id": 604145056,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1781701319
+    },
+    {
+        "content": "<p>Indeed there you add the instance in both directions:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kd\">@[</span><span class=\"n\">default_instance</span><span class=\"w\"> </span><span class=\"n\">high</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">to_additive</span><span class=\"w\"> </span><span class=\"n\">toSMul</span><span class=\"kd\">]</span>\n<span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"n\">NPow</span><span class=\"bp\">.</span><span class=\"n\">toPow</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">NPow</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Pow</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"n\">ℕ</span><span class=\"w\"> </span><span class=\"o\">:=</span>\n<span class=\"w\">  </span><span class=\"bp\">⟨</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"bp\">↦</span><span class=\"w\"> </span><span class=\"n\">NPow</span><span class=\"bp\">.</span><span class=\"n\">npow</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"bp\">⟩</span>\n\n<span class=\"kd\">@[</span><span class=\"n\">to_additive</span><span class=\"w\"> </span><span class=\"n\">ofSMul</span><span class=\"kd\">]</span>\n<span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"n\">NPow</span><span class=\"bp\">.</span><span class=\"n\">ofPow</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"bp\">*</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"n\">Pow</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"n\">ℕ</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">NPow</span><span class=\"w\"> </span><span class=\"n\">M</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">⟨</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">↦</span><span class=\"w\"> </span><span class=\"n\">Pow</span><span class=\"bp\">.</span><span class=\"n\">pow</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"n\">n</span><span class=\"bp\">⟩</span>\n</code></pre></div>",
+        "id": 604145856,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1781701466
+    },
+    {
+        "content": "<p>I would guess that using <code>[toNSMul : SMul Nat A]</code> inside <code>addMonoid</code> is more performant, since unification would not need to unfold these instances</p>",
+        "id": 604147119,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1781701712
+    },
+    {
+        "content": "<p>My motivation for not doing that is that we can continue to write <code>nsmul := ...</code> when declaring instances.</p>\n<p>Also I'm not sure whether <code>inferInstanceAs</code> would support that construction - it might only go into parents that are given by <code>extends</code>.</p>",
+        "id": 604147777,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1781701820
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/channel/287929-mathlib4/topic/inferInstanceAs.20creates.20non-reducible.20diamonds/near/604147777\">said</a>:</p>\n<blockquote>\n<p>My motivation for not doing that is that we can continue to write <code>nsmul := ...</code> when declaring instances.</p>\n</blockquote>\n<p>Do we do this very frequently? <code>toNSMul := .nsmulRec</code> could be made to work, and in other cases I would guess it's better to define a more general smul separately.</p>",
+        "id": 604149351,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1781702110
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"479299\">Jovan Gerbscheid</span> <a href=\"#narrow/channel/287929-mathlib4/topic/inferInstanceAs.20creates.20non-reducible.20diamonds/near/604147777\">said</a>:</p>\n<blockquote>\n<p>My motivation for not doing that is that we can continue to write <code>nsmul := ...</code> when declaring instances.</p>\n<p>Also I'm not sure whether <code>inferInstanceAs</code> would support that construction - it might only go into parents that are given by <code>extends</code>.</p>\n</blockquote>\n<p>This sounds possible, but also arguably like it should be considered a bug.</p>",
+        "id": 604149640,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1781702161
+    },
+    {
+        "content": "<p>Why do we need a new <code>NSMul</code> typeclass instead of just doing <code>extends toSMulNat : SMul Nat alpha</code>?</p>",
+        "id": 604166883,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1781705078
+    },
+    {
+        "content": "<p>You can't also extend the Int version because the smul fields clash</p>",
+        "id": 604167484,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1781705182
+    },
+    {
+        "content": "<p>I thought that's what <code>renaming</code> was for?</p>",
+        "id": 604189585,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1781708903
+    },
+    {
+        "content": "<p>Does that exist again?</p>",
+        "id": 604189853,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1781708957
+    },
+    {
+        "content": "<p>We had it in lean 3</p>",
+        "id": 604189954,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1781708978
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110050\">Sébastien Gouëzel</span> <a href=\"#narrow/channel/287929-mathlib4/topic/inferInstanceAs.20creates.20non-reducible.20diamonds/near/604046665\">said</a>:</p>\n<blockquote>\n<p>(1) feels more natural to me, because I would think that <code>RingCon</code> is designed for rings</p>\n</blockquote>\n<p>No! <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=RingCon#doc\">docs#RingCon</a> exists precisely to be used for semirings, where it is a better notion than that of (two-sided) ideal.</p>",
+        "id": 604191129,
+        "sender_full_name": "Anatole Dedecker",
+        "timestamp": 1781709211
+    }
+]

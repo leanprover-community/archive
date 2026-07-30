@@ -1,0 +1,44 @@
+[
+    {
+        "content": "<p>I noticed that <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Matrix.ProjectiveSpecialLinearGroup#doc\">docs#Matrix.ProjectiveSpecialLinearGroup</a> in mathlib had the surprising type <code>Type (max (max u v) v u)</code>. Presumably this is just some quirk of the universe normalisation algorithm?</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">universe</span><span class=\"w\"> </span><span class=\"n\">u</span><span class=\"w\"> </span><span class=\"n\">v</span>\n\n<span class=\"bp\">#</span><span class=\"n\">check</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"w\"> </span><span class=\"n\">max</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">max</span><span class=\"w\"> </span><span class=\"n\">u</span><span class=\"w\"> </span><span class=\"n\">v</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"n\">u</span><span class=\"w\"> </span><span class=\"c1\">-- Type (max u v)</span>\n<span class=\"bp\">#</span><span class=\"n\">check</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"w\"> </span><span class=\"n\">max</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">max</span><span class=\"w\"> </span><span class=\"n\">u</span><span class=\"w\"> </span><span class=\"n\">v</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"n\">v</span><span class=\"w\"> </span><span class=\"c1\">-- Type (max u v)</span>\n<span class=\"bp\">#</span><span class=\"n\">check</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"w\"> </span><span class=\"n\">max</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">max</span><span class=\"w\"> </span><span class=\"n\">u</span><span class=\"w\"> </span><span class=\"n\">v</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"n\">u</span><span class=\"w\"> </span><span class=\"n\">v</span><span class=\"w\"> </span><span class=\"c1\">-- Type (max u v)</span>\n<span class=\"bp\">#</span><span class=\"n\">check</span><span class=\"w\"> </span><span class=\"kt\">Type</span><span class=\"w\"> </span><span class=\"n\">max</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">max</span><span class=\"w\"> </span><span class=\"n\">u</span><span class=\"w\"> </span><span class=\"n\">v</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"n\">v</span><span class=\"w\"> </span><span class=\"n\">u</span><span class=\"w\"> </span><span class=\"c1\">-- Type (max (max u v) v u)</span>\n</code></pre></div>\n<p>Does this matter? (it's not causing me any problems, I was just surprised).</p>",
+        "id": 591773033,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1777464523
+    },
+    {
+        "content": "<p><a href=\"https://github.com/leanprover/lean4/pull/5695\">lean4#5695</a> I think?</p>",
+        "id": 591861143,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1777485037
+    },
+    {
+        "content": "<p>Kyle has a patch that fixes this but it seems to break mathlib</p>",
+        "id": 591861275,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1777485074
+    },
+    {
+        "content": "<p>Aah yes I see -- if <code>max a b c</code> is turned into <code>max a (max b c)</code> then this would explain it.</p>",
+        "id": 591862373,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1777485372
+    },
+    {
+        "content": "<p>Yeah, touching anything about universes at all can break things in very subtle ways. My own patch was part of a larger experiment to see if being more uniform with normalization and the level defeq algorithm could improve performance (and usability!), but the results are inconclusive. I believe though that 5695 can be resolved with minor breakage at worst, using a simpler approach than in my experiment.</p>\n<p>For the curious, one of the main causes of issues appears to be the <code>Lean.Meta.solveSelfMax</code> procedure. If you are unifying <code>?m =?= max ?m v</code>, where <code>v</code> is some arbitrary level expression not containing <code>?m</code>, then you can create a fresh metavariable <code>?m'</code> and assign <code>?m := max ?m' v</code>. However, if you elsewhere have a constraint like <code>?m =?= max u v</code>, then the success of unification can depend on the order the constraints are processed. If you do <code>?m := max u v</code> first, then <code>?m =?= max ?m v</code> becomes <code>max u v =?= max (max u v) v</code>, which is true (both sides normalize to the same level expression). If you do <code>solveSelfMax</code> first, then <code>?m =?= max u v</code> becomes <code>max ?m' v =?= max u v</code>, which no longer has a unique solution, so it becomes a postponed constraint. Later, the elaborator tries processing these while enabling approximate solutions, and it decides <code>?m' := u</code> is the right approximate solution, rather than <code>?m' := max u v</code>, which also would work. These approximations are delicate and are looking for specific forms. Also, it's possible for <code>solveSelfMax</code> to get into situations where it's not clear that adding further approximations would even help. In any case, it's clear <code>solveSelfMax</code> is helpful and an important procedure, but tweaking any minor details can make it become too active and hinder progress.</p>\n<p>This is all to say that changing normalization to give right-associated <code>max</code> expressions is more subtle that one would hope.</p>",
+        "id": 591871543,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1777488100
+    },
+    {
+        "content": "<p>There's a separate issue here that universe levels for definitions aren't normalized before they're sent to the kernel, locking in expressions like <code>Type (max (max u v) v u)</code> rather than <code>Type (max u v)</code>. I <em>think</em> it shouldn't break anything pre-normalizing, since <code>isLevelDefEq</code> normalizes levels before further processing.</p>",
+        "id": 591871914,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1777488237
+    },
+    {
+        "content": "<p>Let me also mention here that for some mathlib files, a big problem is the fact that <code>instantiateMVars</code> does not normalize universes. See <a class=\"stream-topic\" data-stream-id=\"270676\" href=\"/#narrow/channel/270676-lean4/topic/kernel.20universe.20normalization.20issue/with/572274269\">#lean4 &gt; kernel universe normalization issue</a></p>",
+        "id": 592036009,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1777551001
+    }
+]

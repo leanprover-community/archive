@@ -1,0 +1,158 @@
+[
+    {
+        "content": "<p>There's <em>two</em> weird things (arguably, bugs) that happen with this code. Points if you can predict the messages produced by this without running it!</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">axiom</span><span class=\"w\"> </span><span class=\"n\">RiemannHypothesis</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Prop</span>\n\n<span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">foo</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">h</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">RiemannHypothesis</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">RiemannHypothesis</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">simpa?</span><span class=\"w\"> </span><span class=\"o\">[</span><span class=\"bp\">*</span><span class=\"o\">]</span><span class=\"w\"> </span><span class=\"kn\">using</span><span class=\"w\"> </span><span class=\"n\">f</span><span class=\"w\"> </span><span class=\"s2\">\"Hello world!\"</span>\n</code></pre></div>\n<div class=\"spoiler-block\"><div class=\"spoiler-header\">\n<p>Spoiler</p>\n</div><div class=\"spoiler-content\" aria-hidden=\"true\">\n<p>1) Even though <code>f \"Hello world!\"</code> is not well-formed, <code>simpa</code> resolves the goal <em>before</em> ever trying to elaborate the <code>using ....</code> part, so it never gives an error. A minimal example is</p>\n<div class=\"codehilite\"><pre><span></span><code>example : True := by\n  simpa using g\n</code></pre></div>\n<p>which works fine even though there's no <code>g</code> in context.</p>\n<p>2) The <code>simpa?</code> message is nonsense and suggests <code>simpa only using f \"Hello world!\"</code>, which of course doesn't work. It should be one of <code>simp [h]</code>, <code>simp [*]</code>, or <code>simp only [h]</code> or <code>simp only [*]</code>. (I think the correct answer is <code>simp only [h]</code>.) I'm guessing this is somehow related to some bug where the <code>simpa?</code> version tried to elaborate the conclusion and failed and this caused something else to go astray.</p>\n</div></div>",
+        "id": 581420984,
+        "sender_full_name": "Alex Meiburg",
+        "timestamp": 1774370070
+    },
+    {
+        "content": "<p>What is the preferred behaviour here? It would be great if we could get <code>simpa</code> fixed, but I don't have the time right now to try writing a spec for it.</p>",
+        "id": 588510459,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1776733949
+    },
+    {
+        "content": "<p>I'm happy to \"make it so\" if there's agreement on what changes we want.</p>",
+        "id": 588510478,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1776733964
+    },
+    {
+        "content": "<p>The (1) part seems not too important, arguably the ideal behavior right now. It already prints a warning if the concluding term isn't used, which seems like the best behavior (no need to try to throw an error if we have a working proof.)</p>\n<p>But for (2), the suggested message is wrong, and I think that should be fixed. I <em>thought</em> the buggy behavior was exactly:</p>\n<ul>\n<li>You call <code>simpa? [hypot] using term</code> and <code>term</code> has an error. It incorrectly thinks that <code>hypot</code> isn't used, and suggests <code>simpa only using term</code>, which doesn't work.</li>\n</ul>\n<p>But that isn't true, because this also fails:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">theorem</span><span class=\"w\"> </span><span class=\"n\">foo</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">),</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">by</span>\n<span class=\"w\">  </span><span class=\"n\">simpa?</span><span class=\"w\"> </span><span class=\"c1\">--Try this:  [apply] simpa only</span>\n</code></pre></div>\n<p>where the suggestion of course also doesn't work.</p>\n<p>In this case, <code>simp</code> can close the goal using three lemmas from core, but for some reason <code>simpa?</code> doesn't suggest using any of them. It seems like this only happens when <code>simpa?</code> doesn't end up actually needing an assumption. It just skips outputting any lemmas at all!</p>",
+        "id": 588514509,
+        "sender_full_name": "Alex Meiburg",
+        "timestamp": 1776736699
+    },
+    {
+        "content": "<p>The <code>return {}</code> <a href=\"https://github.com/leanprover/lean4/blob/e2f9df6578e9540249156c64c22f6743f0ceb7ce/src/Lean/Elab/Tactic/Simpa.lean#L47-L49\">here</a> is incorrect, and it should be returning <code>stats</code>. That's the reason for the <code>simpa?</code> issue.</p>\n<p>That same bit of code is responsible for the linter warning you get for a <code>simpa</code> that could be a <code>simp</code>. I'm leaning toward it being an actual error if there's an unnecessary <code>using</code> clause.</p>",
+        "id": 588516113,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1776737728
+    },
+    {
+        "content": "<p>Please don't make it an error!<br>\nI know people writing simp calls by throwing in stuff until it works and then removing unused arga when it works</p>",
+        "id": 588619340,
+        "sender_full_name": "Moritz Roos",
+        "timestamp": 1776776886
+    },
+    {
+        "content": "<p>It would also be very inconsistent for simpa to throw an error and for simp not to</p>",
+        "id": 588619581,
+        "sender_full_name": "Moritz Roos",
+        "timestamp": 1776776943
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"602461\">Moritz Roos</span> <a href=\"#narrow/channel/270676-lean4/topic/silly.20simpa.20bugs/near/588619581\">said</a>:</p>\n<blockquote>\n<p>It would also be very inconsistent for simpa to throw an error and for simp not to</p>\n</blockquote>\n<p>I think this is only about bad <code>using</code> clauses being an error, which simp doesn't have. This isn't about the simplification lemma list, in <code>[]</code></p>",
+        "id": 588620195,
+        "sender_full_name": "Alex Meiburg",
+        "timestamp": 1776777116
+    },
+    {
+        "content": "<p>I think it's in the same spirit as the simp lemma list</p>",
+        "id": 588621647,
+        "sender_full_name": "Moritz Roos",
+        "timestamp": 1776777476
+    },
+    {
+        "content": "<p>I also don't really see any advantages of it being an error rather than a warning</p>",
+        "id": 588622446,
+        "sender_full_name": "Moritz Roos",
+        "timestamp": 1776777676
+    },
+    {
+        "content": "<p>Also I remember faintly some plan to implement simpa with some simp call(s) in the future which maybe? would clash with this?</p>",
+        "id": 588623029,
+        "sender_full_name": "Moritz Roos",
+        "timestamp": 1776777814
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"602461\">@Moritz Roos</span> With <code>simpa [args...] using e</code>, the experience currently is that you get errors if any of the <code>args</code> are malformed. Then once you get those right, either</p>\n<ol>\n<li><code>simp [args...]</code> closes the goal immediately on its own. In that case, it currently gives a linter warning that <code>simpa</code> could be <code>simp. It completely ignores </code>e`, and it could be a bunch of nonsense.</li>\n<li><code>simp [args...]</code> doesn't close the goal. Then, effectively, <code>have tmp := e</code> is elaborated, then <code>simp [args...] at tmp</code> is applied, and finally it does <code>exact e</code>. It gives an error unless <code>exact e</code> works.</li>\n</ol>\n<p>So, you get errors throughout the process already, in a reasonably natural way. Conceptually <code>simpa [args...] using e</code> is <code>have tmp := e; simp [args...] at tmp |-; exact tmp</code>, so it's weird if <code>exact tmp</code> isn't giving an error. The current implementation is as if it's <code>simp [args...] at tmp |- &lt;;&gt; exact tmp</code>, which I don't think is expected.</p>\n<p>If there were a <code>simp%</code> term elaborator, I imagine that you are thinking of <code>simpa [args...] using e</code> to be like <code>simp [args..., simp% e]</code>. I agree that it shouldn't be an error to have an unused simp argument. However, with <code>simpa</code>, it's currently inconsistent among the tactics as being one that only conditionally elaborates one of its arguments.</p>",
+        "id": 588642023,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1776782312
+    },
+    {
+        "content": "<p>Basically, <code>simpa ... using</code> is a way to get around the usual \"no nonterminal simps\" prohibition. I myself see it as the \"<code>simp_exact</code>\" tactic.</p>",
+        "id": 588642469,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1776782402
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/channel/270676-lean4/topic/silly.20simpa.20bugs/near/588516113\">schrieb</a>:</p>\n<blockquote>\n<p>I'm leaning toward it being an actual error if there's an unnecessary <code>using</code> clause.</p>\n</blockquote>\n<p>did you mean to write <code>malformed</code> using clause here?</p>",
+        "id": 588648539,
+        "sender_full_name": "Moritz Roos",
+        "timestamp": 1776783759
+    },
+    {
+        "content": "<p>I mean unnecessary, in the sense that \"the errors of <code>simpa</code> should coincide with the errors you get in <code>have tmp := e; simp [args...] at tmp |-; exact tmp</code>\". An unnecessary <code>using</code> clause corresponds to <code>exact</code> failing due to \"no goals to be solved\".</p>",
+        "id": 588653008,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1776784485
+    },
+    {
+        "content": "<p><a href=\"#narrow/channel/287929-mathlib4/topic/Mathlib.20code.20quality.3A.20simpa\">This</a> is the change how i hope simpa will be changed to</p>",
+        "id": 588654768,
+        "sender_full_name": "Moritz Roos",
+        "timestamp": 1776784882
+    },
+    {
+        "content": "<p>i really don't think of it using <code>exact</code>, even if that is basically the current implementation</p>",
+        "id": 588655080,
+        "sender_full_name": "Moritz Roos",
+        "timestamp": 1776784958
+    },
+    {
+        "content": "<p>I see <code>simpa [args...]</code> as <code>simp [args]; assumption</code> (that's the \"a\"), and <code>using</code> is meant to override which assumption you use. It's possibly an abuse of <code>simpa</code> that you can give the <code>using</code> clause an arbitrary term, rather than a single hypothesis.</p>",
+        "id": 588655466,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1776785042
+    },
+    {
+        "content": "<p>I find this much to unflexible of an implementation :)</p>",
+        "id": 588655976,
+        "sender_full_name": "Moritz Roos",
+        "timestamp": 1776785168
+    },
+    {
+        "content": "<p>What do you think about <code>simp</code> itself having a <code>using</code> clause, and the way <code>simp [args...] using [args...]</code> worked is the way you expect it to?</p>",
+        "id": 588656027,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1776785182
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/channel/270676-lean4/topic/silly.20simpa.20bugs/near/588655466\">said</a>:</p>\n<blockquote>\n<p>It's possibly an abuse of <code>simpa</code> that you can give the <code>using</code> clause an arbitrary term, rather than a single hypothesis.</p>\n</blockquote>\n<p>the only alternative I can see is <code>have := arbitrary_term; simpa [...]</code> which imo looks much worse</p>",
+        "id": 588656212,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1776785223
+    },
+    {
+        "content": "<p>Right, that's why <code>simpa</code> is relaxed <span class=\"user-mention\" data-user-id=\"816344\">@Aaron Liu</span>. The broader context is that I'm wondering if it would be best to deprecate complex terms for <code>using</code> on <code>simpa</code> itself, and have a separate <code>simp_exact</code> tactic.</p>",
+        "id": 588656623,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1776785302
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"306601\">Kyle Miller</span> <a href=\"#narrow/channel/270676-lean4/topic/silly.20simpa.20bugs/near/588656027\">schrieb</a>:</p>\n<blockquote>\n<p>What do you think about <code>simp</code> itself having a <code>using</code> clause, and the way <code>simp [args...] using [args...]</code> worked is the way you expect it to?</p>\n</blockquote>\n<p>I would then vote for abolishing the current <code>simpa</code>, since i don't think it's ever a good idea to call <code>assumption</code> after a simp</p>",
+        "id": 588656676,
+        "sender_full_name": "Moritz Roos",
+        "timestamp": 1776785317
+    },
+    {
+        "content": "<p>See Floris arguments on why changing the semantics is a good idea</p>",
+        "id": 588656756,
+        "sender_full_name": "Moritz Roos",
+        "timestamp": 1776785335
+    },
+    {
+        "content": "<p>Why should i use the implementation with <code>exact</code>, if we also have the more flexible implementation that will not break as easily under new <code>simp</code> lemmas?</p>",
+        "id": 588657254,
+        "sender_full_name": "Moritz Roos",
+        "timestamp": 1776785454
+    },
+    {
+        "content": "<p>Thanks for the pointer <span class=\"user-mention\" data-user-id=\"602461\">@Moritz Roos</span>. I've continued discussion at <a class=\"message-link\" href=\"/#narrow/channel/287929-mathlib4/topic/Mathlib.20code.20quality.3A.20simpa/near/588657641\">#mathlib4 &gt; Mathlib code quality: simpa @ 💬</a></p>",
+        "id": 588657990,
+        "sender_full_name": "Kyle Miller",
+        "timestamp": 1776785633
+    }
+]

@@ -1,0 +1,44 @@
+[
+    {
+        "content": "<p>Hi,</p>\n<p>I'm just getting started with Lean (still very much a beginner, so quite possible I'm missing something which should be obvious). I'm using Claude Code within VSCode with lean-lsp-mcp installed.</p>\n<p>I find that Claude Code continually complains about stale diagnostics. Here are a few examples:</p>\n<blockquote>\n<p>The coercion works — the earlier IDE errors were just stale diagnostics before the rebuild. Now let me update <code>Main.lean</code> to use the terser syntax and verify the full build.</p>\n</blockquote>\n<blockquote>\n<p>These are stale diagnostics again (Main.lean depends on Html which just got rebuilt). Let me rebuild and confirm.</p>\n</blockquote>\n<blockquote>\n<p>That's just an IDE staleness notice. Let me add a <code>#guard</code> test for <code>documentPretty</code> and then rebuild.</p>\n</blockquote>\n<p>This kind of thing is happening almost all the time. Is this expected? Or does it suggest that there's something wrong with my setup? How might I diagnose what's going on if there is?</p>\n<p>Many thanks in advance for any suggestions.</p>",
+        "id": 609718603,
+        "sender_full_name": "Paul Butcher",
+        "timestamp": 1783887248
+    },
+    {
+        "content": "<p>Why don't you just ask Claude this question? I have never seen this with Claude in VS Code so my guess is that the problem is at your end.</p>",
+        "id": 609719197,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1783887851
+    },
+    {
+        "content": "<p>Good point. Apologies for not thinking of it myself.</p>\n<p>This is what Claude says:</p>\n<blockquote>\n<p>Two different things got conflated here, worth separating:</p>\n<ul>\n<li><strong>lean-lsp-mcp</strong> is the MCP server (<code>mcp__lean-lsp__*</code> tools) — I didn't invoke any of those tools in this session at all. All my verification went through <code>lake build</code> directly via Bash.</li>\n<li>The <strong>\"Imports are out of date and must be rebuilt\"</strong> message came from a different channel: the <code>PostToolUse:Edit</code> hook, which reflects VS Code's built-in Lean4 extension and its live editor-side LSP session for the file you have open.</li>\n</ul>\n<p>That message is accurate, not stale or wrong — it's the editor telling you its in-memory elaboration of <code>Html/Document.lean</code> hasn't reprocessed yet because I'd just edited <code>Html/Node.lean</code> (one of its imports) moments earlier on disk. That's expected and routine any time you edit a dependency out from under an open file; the editor's LSP session needs to re-elaborate, and until it does, it correctly flags itself as behind. It isn't a claim about correctness of the code.</p>\n<p>Where I was sloppy: I said \"that's just IDE staleness\" and moved on without spelling out <em>why</em> that's a safe call. The actual justification is that <code>lake build</code> — the compiler, not the editor's incremental session — is ground truth, and I ran it immediately after and it passed cleanly with no errors from <code>Document.lean</code>. So the message resolved itself once the real build reprocessed the file; it wasn't masking anything. I should have said that explicitly instead of a one-line dismissal.</p>\n</blockquote>\n<p>So I guess that's nothing to be worried about (and probably wouldn't happen if I was using Claude without IDE integration?). But I'm surprised that its not actually using the MCP at all. I've double-checked and it's definitely installed, enabled, and connected.</p>",
+        "id": 609719950,
+        "sender_full_name": "Paul Butcher",
+        "timestamp": 1783888617
+    },
+    {
+        "content": "<p>And here's what Claude says about that:</p>\n<blockquote>\n<p>No CLAUDE.md or <code>.claude/</code> config exists in this repo, so there's no standing instruction pointing me at lean-lsp-mcp — I never called <code>ToolSearch</code> for it this session, which is why it never got loaded.<br>\n<strong>Why I defaulted to <code>lake build</code>/<code>grep</code>:</strong></p>\n<ol>\n<li>My task was multi-file (rewriting <code>Node</code>'s representation, adding functions across <code>Node.lean</code>/<code>Document.lean</code>/<code>Html.lean</code>, editing markdown). <code>lake build</code> checks the whole project — including every <code>#guard</code> — in one shot. That's a better fit than lean-lsp-mcp's tools, most of which are scoped to a single file or cursor position (<code>lean_goal</code>, <code>lean_hover_info</code>, <code>lean_diagnostic_messages</code> for one file).</li>\n<li>The <code>PostToolUse:Edit</code> hook already fed me <code>&lt;ide_diagnostics&gt;</code> automatically after every edit — effectively <code>lean_diagnostic_messages</code> for free, without me having to call anything. That closed the gap where I'd otherwise have reached for the MCP.</li>\n<li><code>grep</code> for <code>documentPretty</code> was searching plain text across <code>.lean</code> doc-comments <em>and</em> a <code>.md</code> file. lean-lsp's search tools (<code>lean_references</code>, <code>lean_local_search</code>) resolve real Lean declarations — they wouldn't see prose in a markdown file at all, and once I'd renamed the function there was no declaration left to search for.</li>\n<li>The MCP's own instructions flag <code>lean_build</code> as \"SLOW! Only if needed\" — reinforcing that a full-project check was meant to go through plain <code>lake build</code>, not the MCP.<br>\n<strong>Where that reasoning was weaker:</strong> the termination-proof failure on <code>renderPrettyInto</code> (the <code>sizeOf</code>/<code>decreasing_by</code> issue) is exactly the kind of interactive, single-point problem <code>lean_goal</code>/<code>lean_multi_attempt</code>/<code>lean_diagnostic_messages</code> are built for. I hand-derived the fix and confirmed it via a full rebuild instead of exploring it interactively — that's a real spot where the MCP would likely have been faster.<br>\n<strong>How to get me to use it:</strong> either tell me explicitly in the moment, or — since this is a standing preference, not a one-off — I can save it as a memory now (e.g. \"prefer lean-lsp-mcp tools for single-file diagnostics/goal-state work; reserve <code>lake build</code> for whole-project verification\") so I default to it in future sessions without you repeating yourself. Want me to save that?</li>\n</ol>\n</blockquote>",
+        "id": 609720851,
+        "sender_full_name": "Paul Butcher",
+        "timestamp": 1783889487
+    },
+    {
+        "content": "<p>And for completeness, here's what I've ended up putting in CLAUDE.md. Does this seem reasonable? Anything missing?</p>\n<blockquote>\n<h2>Verifying Lean changes</h2>\n<ul>\n<li>After editing a <code>.lean</code> file, verify it with <code>mcp__lean-lsp__lean_diagnostic_messages</code> (or other lean-lsp-mcp tools — e.g. <code>lean_goal</code>/<code>lean_multi_attempt</code> for interactive proof/termination work).</li>\n<li>Ignore the editor's <code>&lt;ide_diagnostics&gt;</code> hook output.</li>\n<li>Before considering a task complete, run <code>lake build</code> from the repo root as the final ground truth.</li>\n<li>If a change adds or removes an <code>import</code>, use <code>mcp__lean-lsp__lean_build</code> instead of (or in addition to) plain <code>lake build</code>.</li>\n</ul>\n</blockquote>",
+        "id": 609721687,
+        "sender_full_name": "Paul Butcher",
+        "timestamp": 1783890292
+    },
+    {
+        "content": "<p>Please stop posting large amounts of AI-generated text. This text is written for you (and paid for by you), I don't think anyone else is interested in it. Read it or throw it away. If you don't understand any of it then ask the LLM more. Your set-up is your problem. The entire area is a big experiment right now and there are no right or wrong, or even standardised, answers about how to set things up. If you're not happy with your set-up and can't figure out how to fix it then uninstall everything and start again.</p>",
+        "id": 609773772,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1783926767
+    },
+    {
+        "content": "<p>Apologies, I allowed myself to get carried away. Thanks for calling me out.</p>",
+        "id": 609848088,
+        "sender_full_name": "Paul Butcher",
+        "timestamp": 1783951663
+    }
+]
