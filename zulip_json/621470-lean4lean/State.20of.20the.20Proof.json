@@ -1,0 +1,530 @@
+[
+    {
+        "content": "<p>This summary has been helpfully compiled with claude's assistance.</p>\n<h1>Lean4Lean: current state and how to help</h1>\n<p><a href=\"https://github.com/digama0/lean4lean\">Lean4Lean</a> is a reimplementation of the Lean 4 kernel in Lean 4, together with a formalization of Lean's metatheory and an in-progress proof that the implementation satisfies the abstract specification — in the same general direction as MetaCoq, but for Lean. The executable checker has been done for a while: it checks Lean core and Mathlib, and the formalization effort has already <a href=\"https://github.com/digama0/lean4lean/blob/master/bugs-found.md\">found real kernel bugs</a>. The interesting frontier now is the <em>proofs</em>, and there is a lot of well-scoped work available for anyone who wants to help push this to completion. This post is a map of what remains.</p>\n<p>The repo has three layers:</p>\n<ul>\n<li><code>Lean4Lean/*</code>: the executable kernel, derived from the C++ implementation (deliberate differences are tracked in <a href=\"https://github.com/digama0/lean4lean/blob/master/divergences.md\">divergences.md</a>).</li>\n<li><code>Lean4Lean/Theory/*</code>: the abstract metatheory — <code>VExpr</code>, <code>VLevel</code>, <code>VEnv</code>, the typing judgment and its properties.</li>\n<li><code>Lean4Lean/Verify/*</code>: the connection — proofs that the kernel functions are correct with respect to the Theory specification.</li>\n</ul>\n<p>For the overall architecture see the paper <em><a href=\"https://arxiv.org/abs/2403.14064\">Lean4Lean: Verifying a Typechecker for Lean, in Lean</a></em>.</p>",
+        "id": 613874101,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785508647
+    },
+    {
+        "content": "<h2>Axioms.lean: the trust base at the bottom</h2>\n<p><a href=\"https://github.com/digama0/lean4lean/blob/master/Lean4Lean/Verify/Axioms.lean\"><code>Verify/Axioms.lean</code></a> is <em>mostly not intended to be proved</em>. It records our assumptions about the behavior of <code>partial</code> functions and C++-implemented functions at the lowest accessible level — things the Lean logic cannot see through. They come in a few flavors:</p>\n<ul>\n<li><strong>Opaque or <code>partial</code> upstream code.</strong> <code>PersistentHashMap.insertAux</code> and <code>findAux</code>, <code>PersistentArray.push</code>'s <code>insertNewLeaf</code>, <code>Syntax.structEq</code>, <code>mkAppRangeAux</code> — these are <code>partial</code> or <code>opaque</code>, so nothing about them is provable; we axiomatize their observable behavior (e.g. <code>insert</code> behaves like insertion into an association list, up to permutation). Several have upstream issues attached (<a href=\"https://github.com/leanprover/lean4/pull/12798\">lean4#12798</a>, <a href=\"https://github.com/leanprover/lean4/pull/8464\">lean4#8464</a>): if these functions are made total or non-opaque upstream, the axioms turn into theorems and can be deleted.</li>\n<li><strong>C++-implemented <code>Expr</code>/<code>Level</code> primitives.</strong> <code>instantiate</code>, <code>abstract</code>, <code>liftLooseBVars</code>, <code>lowerLooseBVars</code>, <code>hasLooseBVar</code>, <code>eqv</code>, <code>equal</code>, <code>replace</code>, the <code>BEq Level</code> instance, … Each axiom states that the C++ function agrees with a reference implementation written out in Lean — morally an <code>@[implemented_by]</code> read in the other direction. These are the real trusted base of the verification: we verify the kernel <em>algorithm</em> assuming the expression primitives do what their Lean models say.</li>\n<li><strong>Bit-twiddling.</strong> <code>mkData_eq</code>/<code>mkAppData_eq</code> expose the bit-packed <code>Expr.Data</code>/<code>Level.Data</code> representation so that the cached-flag getters (<code>hasFVar</code>, <code>hasLevelParam</code>, <code>looseBVarRange</code>, …) can be related to their structural definitions.</li>\n</ul>\n<p>One historical note: some of the cached-flag axioms were <em>false</em> for a while due to a data-corruption bug (<a href=\"https://github.com/leanprover/lean4/pull/8554\">lean4#8554</a>) that this project uncovered; the fix has long since been merged upstream. Since <code>Expr.data</code> is a computed field, these axioms should now actually be provable by structural induction from <code>mkData_eq</code>/<code>mkAppData_eq</code> — a nice self-contained bit-twiddling project that would move them out of the axiom list entirely. More generally, this file illustrates what the axiom layer is for: it is where the interface between the formalization and reality is written down, and auditing it is itself useful work. Contributions here look like proofs like the above, upstream PRs that shrink the file (making functions total/non-opaque), and review that each remaining axiom faithfully models the C++ behavior.</p>",
+        "id": 613874191,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785508673
+    },
+    {
+        "content": "<h2>The sorries</h2>\n<p>Outside of <code>Experimental/</code> (which is a lab for work-in-progress ideas, where sorries are expected), there are about 22 sorries, and they are much more structured than the raw count suggests: one root accounts for most of them.</p>\n<h3>Root: the missing inductive type specification</h3>\n<p><code>Theory/Inductive.lean</code> is seven lines long and contains the two most consequential sorries in the repo:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">def</span><span class=\"w\"> </span><span class=\"n\">VInductDecl.WF</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">env</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">VEnv</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">decl</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">VInductDecl</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Prop</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"gr\">sorry</span>\n<span class=\"kd\">def</span><span class=\"w\"> </span><span class=\"n\">VEnv.addInduct</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">env</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">VEnv</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">decl</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">VInductDecl</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Option</span><span class=\"w\"> </span><span class=\"n\">VEnv</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"gr\">sorry</span>\n</code></pre></div>\n<p>That is: the abstract theory currently has <em>no specification of inductive types at all</em>. <code>VInductDecl</code> records the syntax of a mutual inductive block, but well-formedness (positivity, universe constraints, large elimination) and the effect of adding one to the environment (recursor types, iota rules) are unspecified. The specification also has to cover <strong>nested inductive types</strong> (which the kernel compiles away by a translation) and <strong>primitive projections</strong> / structure eta, neither of which the theory currently models — <code>VExpr</code> doesn't even have a projection former, so a <code>.proj</code> must translate to its recursor unfolding.</p>\n<p>Nearly everything else that is sorried hangs off this one hole:</p>\n<ul>\n<li><code>addInduct_WF</code> (<code>InductiveLemmas.lean</code>): adding a well-formed inductive preserves environment orderedness. This feeds <code>VEnv.WF → Ordered</code>, a hypothesis of essentially every theorem in <code>Theory/Typing</code> and <code>Verify/Typing</code>.</li>\n<li>The <code>Params</code> class in <code>ChurchRosser.lean</code> abstracts the non-beta reduction rules as <em>patterns</em> (left-hand sides that behave like constructor forms). No instance exists, because the iota rules that would instantiate it don't exist yet. The two sorries inside the Church–Rosser proof (the \"extra rule commutes with congruence\" cases of <code>NormalEq.parRed</code>) are part of the same obligation.</li>\n<li><code>TrProj</code> (<code>Verify/Typing/Expr.lean</code>), the translation relation for <code>Expr.proj</code>, is literally <code>sorry</code> as a definition, and the seven sorries in <code>Verify/Typing/Lemmas.lean</code> are the structural lemmas (weakening, substitution, congruence, uniqueness) that any real definition will owe. Similarly, <code>AddInduct</code> (<code>Verify/Environment/Basic.lean</code>) — the relation connecting the kernel's <code>addInductive</code> to the abstract <code>VEnv.addInduct</code> — is an inductive with <em>no constructors</em>, a sorry in disguise: as it stands, environments containing inductive types are outside the verified <code>TrEnv</code> relation.</li>\n<li>In the verified typechecker, every remaining hole is an inductive-dependent rule: <code>reduceRecursor.WF</code> (iota, including quotient reduction), <code>reduceProj.WF</code>, <code>inferProj.WF</code>, <code>tryEtaStructCore.WF</code> (structure eta), <code>isDefEqUnitLike.WF</code>. Everything around them — <code>inferType</code>, <code>whnf</code>, <code>isDefEq</code> on the non-inductive fragment — is proved.</li>\n</ul>\n<p>So \"specify inductive types\" is not one work item among many; it is the gate for the whole second half of the project. It is also largely <em>design</em> work before it is proof work, and a good fit for someone who enjoys type theory more than proof golf.</p>\n<h3>Injectivity.lean: the hard math</h3>\n<p><code>Theory/Typing/Injectivity.lean</code> states three theorems, with the honest file docstring \"A bunch of important structural theorems which we can't prove :(\":</p>\n<ul>\n<li><code>sort_inv</code>: <code>Sort u ≡ Sort v</code> implies <code>u ≈ v</code>;</li>\n<li><code>forallE_inv_stratified</code>: injectivity of Pi under defeq (in a stratified form suitable for the well-founded induction that consumes it);</li>\n<li><code>sort_forallE_inv</code>: a sort is never defeq to a Pi.</li>\n</ul>\n<p>These are the classical inversion/injectivity properties of definitional equality, and they are <em>hard</em> — the usual proofs go through normalization or a logical relation. They gate a lot: <code>IsDefEq.uniq</code> (unique typing) in <code>UniqueTyping.lean</code> is architecturally complete — a ~100-line well-founded induction — but rests squarely on these three sorries, and Church–Rosser and the whole <code>Verify/TypeChecker</code> stack consume unique typing.</p>\n<p>This is where <code>Experimental/</code> comes in. The current line of attack is a shape-indexed logical relation over a domain-model semantics (finite approximations of values in a Coquand–Huber-style domain, with the shape depth serving as the induction measure). The pipeline <code>SExpr → Shape → Sound → LogRel → Adequacy</code> gets remarkably far: the SExpr analogues of all three injectivity theorems are <em>proved</em> from the adequacy theorem, and <code>Experimental/UniqueTyping.lean</code> derives full unique typing from them without stratified judgments. Two things stand between this and discharging the sorries in <code>Theory/</code>:</p>\n<ol>\n<li><strong>The <code>const</code>/rewrite-rule case of adequacy</strong> — the extension of the logical relation to environment constants and their unfolding rules. This is an open architectural problem, documented in detail in the code comments and in the LaTeX design notes (<code>Experimental/logrel/main.tex</code>). The constant-free core calculus is essentially done.</li>\n<li><strong>The SExpr→VExpr merge</strong> — the experimental development uses its own expression type with explicit substitutions; porting the result back onto the main <code>VExpr</code> judgment is a substantial but well-understood refactor.</li>\n</ol>\n<p>The same mathematics has also been developed in a standalone, cleaner setting: <a href=\"https://github.com/digama0/domain-semantics-lean\">domain-semantics-lean</a> is a self-contained Lean formalization of the domain model with soundness, adequacy, Pi/sort injectivity, and unique typing for an MLTT-style calculus, and there is a paper about the method, <em><a href=\"https://arxiv.org/abs/2607.13662\">Definitional Inversion, Without Normalisation</a></em>. If you want to understand the intended proof before diving into the lean4lean-specific version, start there.</p>\n<p>There is one more independent sorry in this area: <code>IsDefEqU.weakN_iff</code> (<code>UniqueTyping.lean</code>) — the <em>strengthening</em> direction (defeq of weakened terms implies defeq of the originals). Only the forward direction is proved, and a family of <code>weakN_iff</code>/<code>weak'_iff</code> lemmas plus a few uses in Church–Rosser and the cache-typing invariants depend on it.</p>",
+        "id": 613874298,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785508705
+    },
+    {
+        "content": "<h2>Missing theorems</h2>\n<p>Beyond the sorries, there are theorems whose <em>statements</em> don't exist in the repo yet. This is arguably the more important list, since a sorry at least records an obligation.</p>\n<h3>The front-end theorem and the environment layer</h3>\n<p>The strongest theorems currently proved are, roughly: relative to a context that assumes a well-formed environment translation (<code>TrEnv</code>), if <code>checkType e</code> returns <code>ty</code> then <code>e</code> and <code>ty</code> translate to a valid abstract typing judgment; similarly <code>whnf.WF</code>, <code>isDefEq.WF</code>, <code>inferType.WF</code>. The theorem the whole project is aimed at is now <em>stated</em>, as a sorry, in <code>Verify/Environment.lean</code>:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"kd\">theorem</span><span class=\"w\"> </span><span class=\"n\">addDecl.WF</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">wf</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">ves.WF</span><span class=\"w\"> </span><span class=\"n\">env</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">decl</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Declaration</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span>\n<span class=\"w\">    </span><span class=\"o\">(</span><span class=\"n\">addDecl</span><span class=\"w\"> </span><span class=\"n\">env</span><span class=\"w\"> </span><span class=\"n\">decl</span><span class=\"o\">)</span><span class=\"bp\">.</span><span class=\"n\">WF</span><span class=\"w\"> </span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">env'</span><span class=\"w\"> </span><span class=\"bp\">=&gt;</span>\n<span class=\"w\">      </span><span class=\"bp\">∃</span><span class=\"w\"> </span><span class=\"n\">ves'</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">ves'.WF</span><span class=\"w\"> </span><span class=\"n\">env'</span><span class=\"w\"> </span><span class=\"bp\">∧</span><span class=\"w\"> </span><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"n\">safety</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">ves.venv</span><span class=\"w\"> </span><span class=\"n\">safety</span><span class=\"w\"> </span><span class=\"bp\">≤</span><span class=\"w\"> </span><span class=\"n\">ves'.venv</span><span class=\"w\"> </span><span class=\"n\">safety</span>\n</code></pre></div>\n<p>— adding a declaration to a well-formed environment, when the checker succeeds, produces a well-formed environment extending it. But none of the pieces of the proof exist yet; the gap is the whole environment layer:</p>\n<ul>\n<li><code>Environment.lean</code> (<code>addAxiom</code>, <code>addDefinition</code>, <code>addTheorem</code>, <code>addOpaque</code>, <code>addMutual</code>, <code>addDecl</code>) has no theorems about it at all. Nothing relates <code>Lean.Kernel.Environment.add</code> to the <code>TrEnv</code> constructors.</li>\n<li><code>TrEnv</code> is only ever <em>consumed</em> as a hypothesis; no theorem shows any of the <code>add*</code> functions <em>produce</em> it. Nobody ever constructs a <code>VEnvs.WF</code>.</li>\n<li>The repackaging step — from \"<code>checkType</code> succeeded in the empty local context\" to the abstract <code>VDefVal.WF</code> premise that <code>TrEnv</code> extension needs — is missing.</li>\n<li>The quotient layer is in the best shape (the abstract <code>addQuot</code> is specified and <code>addQuot_WF</code> is proved), but the link between the executable <code>Environment.addQuot</code>/<code>checkEqType</code> and the abstract <code>AddQuot</code>/<code>QuotReady</code> is still missing.</li>\n</ul>\n<p>Much of this is straightforward-if-fiddly simulation-style proving, and it is largely independent of both the inductive spec and injectivity (one can state and prove the front-end theorem for the axiom/def/theorem fragment today). The main nontrivial input it needs is the <code>HasPrimitives</code> extension lemma described in the next section. Good entry point for someone who wants to contribute proofs without first absorbing the metatheory.</p>\n<h3>Primitives</h3>\n<p>Lean's kernel has special-cased reduction for <code>Nat</code>/<code>String</code> literals (GMP arithmetic for <code>Nat.add</code> and friends). Lean4Lean checks, at declaration time, that the primitives are declared with the right types and defining equations (<code>Primitive.lean</code>, ~500 lines of <code>isDefEq</code> checks — this is itself a divergence from the C++ kernel, which checks nothing and trusts the prelude). On the verification side, <code>VEnv.HasPrimitives</code> <em>assumes</em> exactly what is needed: e.g. that <code>Nat.add</code> applied to two literals is defeq to the literal sum.</p>\n<p>There is currently <strong>no theorem connecting the two</strong>, and the front-end theorem is where the connection becomes unavoidable. Anyone who attempts <code>addTheorem.WF</code> or the like will find that re-establishing the environment invariant requires showing <code>HasPrimitives</code> is <em>monotonic</em> under environment extension — and it isn't, in full generality: the <code>Reflects*</code> fields are guarded by <code>env.contains</code>, so adding a constant named <code>Nat.add</code> activates new obligations that an arbitrary definition need not satisfy. Monotonicity holds exactly when the added declaration either is not a primitive, or is a primitive that computes on literals — and <code>checkPrimitiveDef</code> succeeding gives you precisely the facts (the checked defining equations, up to defeq) needed to prove the latter, by induction over the literals with the equations as rewrite steps (including the <code>WellFounded.fix</code> unfoldings for <code>Nat.gcd</code> and <code>Nat.bitwise</code>). So the missing piece is a <code>HasPrimitives</code> extension lemma, and it is a required stepping stone of the environment-layer work rather than an optional side quest. The same goes for the smaller <code>safePrimitives</code> assumption. The proofs themselves should be pleasantly concrete: verified evaluation of the recursive definitions of <code>Nat.add</code>, <code>Nat.mul</code>, ….</p>\n<h3>The level algorithm</h3>\n<p>Lean4Lean currently ships an experimental <em>new</em> algorithm for universe level normalization/comparison (<code>normalize'</code>, <code>isEquiv'</code>, <code>geq'</code>), which aims to be complete for level algebra. It has issues — there are known cases where it is incomplete relative to Lean's algorithm (e.g. <code>max 2 v ≥ imax 2 v</code> fails, which is reachable from the inductive constructor universe check), and its verification has a remaining sorry (<code>NormLevel.subsumption_eval</code>, correctness of the subsumption pass, which gates the top-level <code>normalize_eval</code>).</p>\n<p>The plan of record is therefore to <strong>verify the original algorithm</strong> — the straightforward port of the C++ kernel's <code>Level::geq</code> — and keep the new algorithm as a backburner project (it is still interesting as a complete decision procedure, possibly in a hybrid arrangement later). Proving the original algorithm sound is a nicely self-contained task: pure syntactic reasoning about level expressions, no dependence on any of the rest.</p>",
+        "id": 613880833,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785510548
+    },
+    {
+        "content": "<h2>Longer-term directions</h2>\n<p>Two further projects sit beyond the current scope of the repo but are very much part of the plan, and both could be started today by someone interested.</p>\n<h3>Soundness relative to ZFC + inaccessibles</h3>\n<p>Everything above is about the <em>typechecker</em> being faithful to the abstract typing judgment, plus structural properties of that judgment. None of it says the judgment itself is sound — that a well-formed environment cannot prove <code>False</code>. The plan here is to formalize the set-theoretic model construction from the final chapter of my masters thesis (<em><a href=\"https://github.com/digama0/lean-type-theory/releases\">The Type Theory of Lean</a></em>): interpret Lean's type theory into a formalization of ZFC extended with countably many inaccessible cardinals (universes become inaccessibles, <code>Prop</code> becomes <code>{0, 1}</code> with proof irrelevance for free), giving consistency of the <code>VEnv</code> typing judgment relative to that base theory. This builds directly on the <code>Theory/</code> layer — the interpretation function takes <code>VExpr</code>s and typing derivations — and is largely independent of the verification work above. It does need its own infrastructure (a ZFC universe model; Mathlib's <code>ZFSet</code> and <code>Cardinal.IsInaccessible</code> are plausible starting points), and the paper proof has the usual subtleties around definitional equality soundness, but the target is written out in full detail in the thesis; \"only\" the formalization is missing.</p>\n<h3>Verified compilation</h3>\n<p>lean4lean deliberately does not support <code>reduceNative</code> (divergence <a href=\"https://github.com/leanprover-community/mathlib4/pull/1\">#1</a>), because trusting it amounts to trusting the whole compiler — verifying it \"would be an additional chunk of work comparable to this entire repo\". That chunk of work is this project: verify Lean's compiler, or some approximation of it, against the type theory. The model to follow is MetaCoq/MetaRocq's certified erasure — see <em><a href=\"https://dl.acm.org/doi/10.1145/3706056\">Correct and Complete Type Checking and Certified Erasure for Coq, in Coq</a></em> (Sozeau, Forster, Lennon-Bertrand, Tabareau, Winterhalter, JACM 2025) — which proves erasure from the dependently-typed calculus to the untyped λ□ (\"lambda-box\") intermediate language correct, and then feeds a growing family of verified backends. On the Lean side there is already motion: Bas Spitters' group has been working on connecting Lean to λ□ as part of the <a href=\"https://peregrine-project.github.io/\">Peregrine Project</a> (a unified λ□ middle-end for Agda, Lean, and Rocq, whose <code>lbox</code> tool emits OCaml via Malfunction, Wasm, Rust, C, and Elm; see also this <a href=\"https://www.normalesup.org/~sdima/2025_extraction_report.pdf\">2025 report on compiling Lean programs via Rocq's extraction pipeline</a>). What is missing is exactly the piece lean4lean's <code>Theory/</code> layer is positioned to provide: a specification of Lean's erasure and a proof that it preserves the semantics of the typing judgment. Even a first cut — erasure for the non-<code>unsafe</code> fragment, proved correct against <code>VEnv</code> — would make <code>native_decide</code> and verified extraction for Lean far more trustworthy than they are today.</p>",
+        "id": 613880859,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785510558
+    },
+    {
+        "content": "<h2>Summary: where to jump in</h2>\n<p>Roughly independent work packages, in increasing order of prerequisite knowledge:</p>\n<ol>\n<li><strong>Level algorithm</strong>: verify the original C++ comparison algorithm. Self-contained, no metatheory needed.</li>\n<li><strong>Primitives</strong>: the <code>HasPrimitives</code> extension lemma — <code>checkPrimitiveDef</code> succeeding implies the extended environment still <code>HasPrimitives</code>. Concrete computation proofs, and a prerequisite of the front-end theorem.</li>\n<li><strong>Axioms.lean</strong>: prove the cached-flag axioms from <code>mkData_eq</code> now that <a href=\"https://github.com/leanprover/lean4/pull/8554\">lean4#8554</a> is fixed; upstream PRs to make functions total/non-opaque so axioms can be deleted; audit the remaining ones.</li>\n<li><strong>Environment layer / front-end theorem</strong>: state and prove <code>addDecl.WF</code> for the non-inductive fragment. Simulation-style proving against the existing <code>Verify/TypeChecker</code> results.</li>\n<li><strong>Inductive spec</strong>: design and write <code>VInductDecl.WF</code> and <code>VEnv.addInduct</code>, including nested inductives and primitive projections; then the <code>TrProj</code> lemma family and the five inductive-dependent typechecker theorems become available (and the Church–Rosser <code>Params</code> instance becomes constructible).</li>\n<li><strong>Injectivity</strong>: the domain-model logical relation — either help finish the <code>const</code> case of adequacy and the SExpr→VExpr merge in <code>Experimental/</code>, or study the standalone <a href=\"https://github.com/digama0/domain-semantics-lean\">domain-semantics-lean</a> development and the accompanying paper.</li>\n<li><strong>Set-theoretic model</strong>: formalize the ZFC + inaccessibles model of the <code>Theory/</code> typing judgment, following the thesis. Independent of all of the above; needs set theory more than kernel internals.</li>\n<li><strong>Verified compilation</strong>: specify Lean's erasure to λ□ and prove it correct against the type theory, MetaRocq-style, connecting to the existing λ□ backend ecosystem.</li>\n</ol>\n<p>If any of these sounds appealing, say so here (or open an issue on the repo) and I can help you get oriented.</p>",
+        "id": 613880882,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785510564
+    },
+    {
+        "content": "<p>One thing I've been wondering about the alternative extraction mechanisms is how they plan to handle uniqueness based operations, so in particular working with <code>Array</code>, <code>ByteArray</code> and <code>String</code>. The arguably biggest consumer of <code>native_decide</code> today, <code>bv_decide</code>, is more or less fast precisely because we get the good asymptotics from them. Is the plan here to try and somehow convert the datatypes in the compiler? Build an alternative reference counting backend (that seems very annoying to get right to me)?</p>",
+        "id": 613884010,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1785511500
+    },
+    {
+        "content": "<p>If you have semantics for a language like lean IR, I think you would have to model RC counts and uniqueness explicitly</p>",
+        "id": 613884220,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785511564
+    },
+    {
+        "content": "<p>Sure, I'm talking about the lambda box approach that people are going for with perigrene here. Which is to say, if you compile Lean code to say OCaml, what is your <code>Array</code> type going to do?</p>",
+        "id": 613884588,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1785511665
+    },
+    {
+        "content": "<p>that's a question for <span class=\"user-mention\" data-user-id=\"259452\">@Bas Spitters</span></p>",
+        "id": 613884679,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785511689
+    },
+    {
+        "content": "<p>my guess is it's going to be slow</p>",
+        "id": 613884744,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785511703
+    },
+    {
+        "content": "<p>That was my guess as well but I was really hoping it would not be the case as it would be quite useless for <code>bv_decide</code> otherwise :(</p>",
+        "id": 613884837,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1785511731
+    },
+    {
+        "content": "<p>it would be nice if there were uniqueness annotations one could use on lean code to both eliminate the branch you usually get in such code, and also to trigger alternative compilation strategies for backends that would prefer to use a mutable ref in such cases</p>",
+        "id": 613885140,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785511809
+    },
+    {
+        "content": "<p>That would require extending the correctness proof for extraction with a correctness proof for whatever kind of borrow checker we come up with as well right?</p>",
+        "id": 613885461,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1785511897
+    },
+    {
+        "content": "<p>yeah probably, although I imagine there are ways to architect it such that bad annotations just lead to slower code instead of wrong code</p>",
+        "id": 613885600,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785511937
+    },
+    {
+        "content": "<p>Another approach we have been considering is to define a bedrock2 style language with some semantics that just extracts almost directly into C code and then add an axiom that says some magic evaluation function follows these semantics so you can implement your  heavier proof by reflection computation in a very high performance way.</p>",
+        "id": 613886224,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1785512120
+    },
+    {
+        "content": "<p>and then we can of course again play the game of having multiple implementatiosn of the semantics, a verified interpreter, etc. etc.</p>",
+        "id": 613886424,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1785512171
+    },
+    {
+        "content": "<p>Is the set theory model (7) doable without inductive design?  Could one start with the type theory in your and Sebastian’s theses?  If so, do you think after inductives are finished it would be easy to extend to them?</p>",
+        "id": 613917393,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1785521762
+    },
+    {
+        "content": "<p>yes, it's independent work</p>",
+        "id": 613918345,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785522058
+    },
+    {
+        "content": "<p>it would probably live in a separate repo if you want it to depend on mathlib though</p>",
+        "id": 613918477,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785522107
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"395550\">Henrik Böving</span> <a href=\"#narrow/channel/621470-lean4lean/topic/State.20of.20the.20Proof/near/613884010\">said</a>:</p>\n<blockquote>\n<p>One thing I've been wondering about the alternative extraction mechanisms is how they plan to handle uniqueness based operations, so in particular working with <code>Array</code>, <code>ByteArray</code> and <code>String</code>. The arguably biggest consumer of <code>native_decide</code> today, <code>bv_decide</code>, is more or less fast precisely because we get the good asymptotics from them. Is the plan here to try and somehow convert the datatypes in the compiler? Build an alternative reference counting backend (that seems very annoying to get right to me)?</p>\n</blockquote>\n<p>(I'm on holiday... longer answer next week). Rocq has primitive objects, I guess something similar could be done for lean:<br>\n<a href=\"https://rocq-prover.org/doc/V9.2.0/refman/language/core/primitive.html\">https://rocq-prover.org/doc/V9.2.0/refman/language/core/primitive.html</a></p>",
+        "id": 613939574,
+        "sender_full_name": "Bas Spitters",
+        "timestamp": 1785531410
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"395550\">@Henrik Böving</span> in <a href=\"https://github.com/AU-COBRA/AUCurves\">https://github.com/AU-COBRA/AUCurves</a> I have a rust-like analogue of bedrock. I have ported this to lean. It's fast. I hope to release it soon.</p>",
+        "id": 613939885,
+        "sender_full_name": "Bas Spitters",
+        "timestamp": 1785531577
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span> is your set theoretical model of lean very different from the ones for CIC?</p>",
+        "id": 613940083,
+        "sender_full_name": "Bas Spitters",
+        "timestamp": 1785531654
+    },
+    {
+        "content": "<p>Not sure since I don't know them in detail, but I think the answer is no. I view it as an extremely straightforward model, types are sets</p>",
+        "id": 613940171,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785531696
+    },
+    {
+        "content": "<p>there is some complexity in that you have to map forall to two different things depending on whether it is in <code>Prop</code> or <code>Type u</code>: the former becomes a forall, the latter is a dependent function space. This ends up pulling in a dependency on unique typing because the forall is not level annotated</p>",
+        "id": 613940391,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785531798
+    },
+    {
+        "content": "<p>I also avoid the complexity of general inductive types by mapping them to W types before defining the core model, but you could inline this step into the interpretation function</p>",
+        "id": 613940679,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785531946
+    },
+    {
+        "content": "<p>Barras habilitation and Timany and Sozeau fx.<br>\n<a href=\"https://lsv.ens-paris-saclay.fr/~barras/habilitation/barras-habilitation.pdf.gz\">https://lsv.ens-paris-saclay.fr/~barras/habilitation/barras-habilitation.pdf.gz</a></p>",
+        "id": 613941601,
+        "sender_full_name": "Bas Spitters",
+        "timestamp": 1785532397
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/621470-lean4lean/topic/State.20of.20the.20Proof/near/613918477\">said</a>:</p>\n<blockquote>\n<p>it would probably live in a separate repo if you want it to depend on mathlib though</p>\n</blockquote>\n<p>If anyone were interested in contributing the set theoretical model and wanted to ensure that it lives somewhere that keeps pace with the Mathlib toolchain, I'd be very happy to have this live in CSLib. We have a Mathlib dependency already, get included in nightly testing, and on average I'd guess we only let Mathlib compatibility lag by a couple of days.</p>",
+        "id": 613941838,
+        "sender_full_name": "Chris Henson",
+        "timestamp": 1785532532
+    },
+    {
+        "content": "<p>I think that's probably not a good idea, we don't bump as often as mathlib and I don't want to hand off responsibility for that to Kim since every bump involves reviewing and copying every single change made to the C++ kernel in the intervening time period</p>",
+        "id": 613942064,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785532670
+    },
+    {
+        "content": "<p>I imagine this month is going to be more active than most</p>",
+        "id": 613942130,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785532711
+    },
+    {
+        "content": "<p>Hmm, I think I may have underestimated then how sensitive to the C++ changes even the set theoretric model formalization would be. Wherever that code lives, I think it'd be great to include in the new reports for Mathlib compatibility (assuming it needs/wants this for <code>ZFSet</code>, etc.), possibly with some tweaks so it can keep a slower cadence.</p>",
+        "id": 613943485,
+        "sender_full_name": "Chris Henson",
+        "timestamp": 1785533481
+    },
+    {
+        "content": "<p>I made a thread to discuss the set-theoretic model more: <a class=\"stream-topic\" data-stream-id=\"621470\" href=\"/#narrow/channel/621470-lean4lean/topic/Set.20theoretic.20model/with/613957805\">#lean4lean &gt; Set theoretic model</a>.</p>",
+        "id": 613958801,
+        "sender_full_name": "Jason Rute",
+        "timestamp": 1785543279
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/621470-lean4lean/topic/State.20of.20the.20Proof/near/613880882\">said</a>:</p>\n<blockquote>\n<ol>\n<li>prove the cached-flag axioms from <code>mkData_eq</code> now that <a href=\"https://github.com/leanprover/lean4/pull/8554\">lean4#8554</a> is fixed</li>\n</ol>\n</blockquote>\n<p>Just a question on this: are we happy to have <code>bv_decide</code> proofs in <code>lean4lean</code>? It is useful here (but not essential). EDIT: oops, I see it is already used, so the answer is obviously yes!</p>",
+        "id": 614067239,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785586680
+    },
+    {
+        "content": "<p><a href=\"https://github.com/digama0/lean4lean/pull/19\">https://github.com/digama0/lean4lean/pull/19</a> removes the cached-flag axioms</p>",
+        "id": 614071264,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785590608
+    },
+    {
+        "content": "<p><a href=\"https://github.com/digama0/lean4lean/pull/20\">https://github.com/digama0/lean4lean/pull/20</a> updates lean4lean to Lean v4.30.0, including making the corresponding changes that appeared in the lean kernel between v4.29.0 and v4.30.0.</p>\n<p>This PR needs careful review, checking that changes against the changes in lean4. I've attempted to list these changes (with PR numbers, and internal links into the PR diff) in the PR description, but even this list should be checked by someone else!</p>\n<p>After this PR, the bump from v4.30.0 to v4.31.0 should be trivial, and then the bump to v4.32.2 shouldn't be too difficult.</p>",
+        "id": 614127091,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785632814
+    },
+    {
+        "content": "<p>do you have the link to the /compare ?</p>",
+        "id": 614127136,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785632877
+    },
+    {
+        "content": "<p>Sorry, not sure exactly what link you're looking for, but it looks like you've merged already so hopefully we're okay. Thanks for catching the error and correcting it. I've retrospectively updated the PR description.</p>",
+        "id": 614143353,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785651770
+    },
+    {
+        "content": "<p><a href=\"https://github.com/digama0/lean4lean/pull/21\">https://github.com/digama0/lean4lean/pull/21</a> is a small fix to a comment that didn't get fixed in your correction commit.</p>",
+        "id": 614144055,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785652958
+    },
+    {
+        "content": "<p>I've opened</p>\n<ul>\n<li><a href=\"https://github.com/leanprover-community/lean4lean/pull/22\">lean4lean#22</a>, which <em>hopefully</em> correctly reflects the current C++ kernel universe normalization algorithm</li>\n<li><a href=\"https://github.com/leanprover-community/lean4lean/pull/23\">lean4lean#23</a>, which proves all the expected theorems about it</li>\n</ul>\n<p>Obviously <a href=\"https://github.com/leanprover-community/lean4lean/pull/22\">lean4lean#22</a> needs a skeptical review against the actual C++ kernel.</p>",
+        "id": 614153203,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785663591
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>, Codex and I started looking at proving <code>HasPrimitives</code> preservation. It seems problematic.</p>\n<blockquote>\n<p>Quoth <span aria-label=\"robot\" class=\"emoji emoji-1f916\" role=\"img\" title=\"robot\">:robot:</span>:</p>\n<p>I started investigating the <code>HasPrimitives</code> extension lemma and found what appears to be a verification obstruction in <code>checkPrimitiveDef</code>.</p>\n<p>The open equations use:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">defeq1</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">isDefEq</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">arrow</span><span class=\"w\"> </span><span class=\"n\">q</span><span class=\"o\">(</span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">.</span><span class=\"n\">arrow</span><span class=\"w\"> </span><span class=\"n\">q</span><span class=\"o\">(</span><span class=\"n\">Nat</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"n\">b</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>For example, the <code>Nat.add</code> check compares expressions equivalent to:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"n\">_</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">v.value</span><span class=\"w\"> </span><span class=\"bp\">#</span><span class=\"mi\">0</span><span class=\"w\"> </span><span class=\"n\">Nat.zero</span>\n<span class=\"bp\">∀</span><span class=\"w\"> </span><span class=\"n\">_</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"bp\">#</span><span class=\"mi\">0</span>\n</code></pre></div>\n<p>These are not well-typed Pi types: their bodies are Nat-valued terms, not types. Operationally this apparently uses <code>forallE</code> simply as a binder so that <code>isDefEq</code> compares the open bodies.</p>\n<p>The existing verification theorem</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">isDefEq.WF</span>\n<span class=\"w\">  </span><span class=\"o\">(</span><span class=\"n\">he₁</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">c.TrExprS</span><span class=\"w\"> </span><span class=\"n\">e₁</span><span class=\"w\"> </span><span class=\"n\">e₁'</span><span class=\"o\">)</span>\n<span class=\"w\">  </span><span class=\"o\">(</span><span class=\"n\">he₂</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">c.TrExprS</span><span class=\"w\"> </span><span class=\"n\">e₂</span><span class=\"w\"> </span><span class=\"n\">e₂'</span><span class=\"o\">)</span>\n</code></pre></div>\n<p>cannot be applied to these calls. <code>TrExprS.forallE</code> requires an <code>IsType</code> proof for the translated body, which is impossible here because the body has type <code>Nat</code> (or <code>Bool</code>) rather than a sort. Thus I cannot obtain the checked defining equation as an <code>IsDefEqU</code> fact. This occurs before any question of Pi injectivity: I cannot establish the premises of <code>isDefEq.WF</code> in the first place. (<code>Nat.land</code> and <code>Nat.lor</code> additionally use this Nat binder for an expression whose variable is intended to be Bool.)</p>\n<p>There is a second compositional issue: in <code>addDefinition</code>, <code>checkPrimitiveDef v</code> runs before <code>checkConstantVal</code> and before <code>checkType v.value</code>. Therefore, at the point where its <code>isDefEq</code> calls run, the verification also has no <code>TrExprS</code>/typing facts for <code>v.type</code> or <code>v.value</code>.</p>\n<p>So, more precisely, the executable bridge theorem “successful <code>checkPrimitiveDef</code> produces the defining-equation certificate needed to preserve <code>HasPrimitives</code>” does not seem provable through the current <code>M.WF</code>/<code>isDefEq.WF</code> interface. It might instead require a new specification for equality checking on raw open expressions.</p>\n</blockquote>\n<p>Do you have a plan for this fake forall encoding?</p>\n<p>For the proof, should we:</p>\n<ol>\n<li>preserve it and develop an appropriate open/raw-expression verification interface;</li>\n<li>change the checks to compare well-typed lambdas or use local declarations, and possibly run <code>checkPrimitiveDef</code> after the declaration has been type-checked; or</li>\n<li>some other route you have in mind?</li>\n</ol>\n<p>(My personal preference is that we say \"this is an additional feature over the official lean4 kernel, so let's remove it for now and reinstate it once everything else is working\", but it's your call, of course!)</p>",
+        "id": 614159612,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785671414
+    },
+    {
+        "content": "<p>it should be lambda, not forall. Otherwise I think the encoding is correct</p>",
+        "id": 614159928,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785671785
+    },
+    {
+        "content": "<p>it's supposed to check <code>(fun x =&gt; &lt;add&gt; x 0) = (fun x =&gt; 0)</code>, and the bot is showing it in de bruijn for no particular reason, it is correctly scoped but used <code>(forall x, &lt;add&gt; x 0) = (forall x, 0)</code> instead which is not well typed</p>",
+        "id": 614159990,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785671865
+    },
+    {
+        "content": "<blockquote>\n<p>(My personal preference is that we say \"this is an additional feature over the official lean4 kernel, so let's remove it for now and reinstate it once everything else is working\", but it's your call, of course!)</p>\n</blockquote>\n<p>lmao</p>",
+        "id": 614160020,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785671894
+    },
+    {
+        "content": "<p>this isn't a convenience feature for lean4lean, it's impossible to prove the theorem without it</p>",
+        "id": 614160046,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785671931
+    },
+    {
+        "content": "<p>lean4's kernel is known unsound and we're just trying to paper over it by asking people not to modify <code>Lean</code> even though I know 20 people who do so daily</p>",
+        "id": 614160143,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785672008
+    },
+    {
+        "content": "<p><a href=\"https://github.com/digama0/lean4lean/pull/22\">lean4lean#22</a> is the wrong directionality, explained more on the thread. It's too much new code, we want fewer sources of truth not more.</p>",
+        "id": 614160998,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785672725
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>, isn't <a href=\"https://github.com/digama0/lean4lean/pull/22\">lean4lean#22</a> exactly what you asked for above:</p>\n<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/621470-lean4lean/topic/State.20of.20the.20Proof/near/613880833\">said</a>:</p>\n<blockquote>\n<p>The plan of record is therefore to <strong>verify the original algorithm</strong> — the straightforward port of the C++ kernel's <code>Level::geq</code> — and keep the new algorithm as a backburner project (it is still interesting as a complete decision procedure, possibly in a hybrid arrangement later). Proving the original algorithm sound is a nicely self-contained task: pure syntactic reasoning about level expressions, no dependence on any of the rest.</p>\n</blockquote>",
+        "id": 614162670,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785674409
+    },
+    {
+        "content": "<p>Maybe I misunderstood, or this was an LLM misinterpreting your intent?</p>",
+        "id": 614162693,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785674452
+    },
+    {
+        "content": "<p>seems like two layers of LLM confusion yes</p>",
+        "id": 614162715,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785674473
+    },
+    {
+        "content": "<p>I don't want a port of the C++, I want the level functions from lean</p>",
+        "id": 614162731,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785674490
+    },
+    {
+        "content": "<p>but I also want that to match the C++</p>",
+        "id": 614162740,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785674499
+    },
+    {
+        "content": "<p>Okay, but if that's not something we have access to yet... What should we do in the meantime?</p>",
+        "id": 614162767,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785674554
+    },
+    {
+        "content": "<p>it is</p>",
+        "id": 614162772,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785674558
+    },
+    {
+        "content": "<p>you just remove some primes on the function names and hey presto</p>",
+        "id": 614162779,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785674571
+    },
+    {
+        "content": "<p>this is in other words to prove the level functions from lean stdlib, not C++</p>",
+        "id": 614162857,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785674663
+    },
+    {
+        "content": "<p>these are not exactly the same but I don't think the difference matters for mathlib so it's just a divergences.md entry</p>",
+        "id": 614162879,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785674694
+    },
+    {
+        "content": "<p>and if <a href=\"https://github.com/leanprover/lean4/pull/14356\">lean4#14356</a> lands we can discharge it</p>",
+        "id": 614162917,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785674722
+    },
+    {
+        "content": "<p>Ah, I think that's actually what I'd originally had done, then I told off the LLM for not matching the C++, hmm,  hopefully easy to change.</p>",
+        "id": 614163051,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785674850
+    },
+    {
+        "content": "<p>Watch out for LLM NIH syndrome, I don't want lean4lean to explode in size</p>",
+        "id": 614163078,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785674888
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>, <a href=\"https://github.com/digama0/lean4lean/pull/22\">lean4lean#22</a> and <a href=\"https://github.com/digama0/lean4lean/pull/23\">lean4lean#23</a> now just call the stdlib functions, and rewrite the level normalization proof on top of that.</p>",
+        "id": 614205336,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785710177
+    },
+    {
+        "content": "<p>(Just tracking progres, <a href=\"https://github.com/digama0/lean4lean/pull/22\">lean4lean#22</a> has been merged now.)</p>",
+        "id": 614224308,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785724532
+    },
+    {
+        "content": "<p>The next version bump, to v4.31.0, is trivial, as the kernel hasn't changed there: <a href=\"https://github.com/digama0/lean4lean/pull/29\">https://github.com/digama0/lean4lean/pull/29</a>. </p>\n<p>Let's do that as an easy step, and then work out how to want to stage the bigger changes after that.</p>",
+        "id": 614224344,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785724574
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110049\">Mario Carneiro</span> <a href=\"#narrow/channel/621470-lean4lean/topic/State.20of.20the.20Proof/near/613880882\">said</a>:</p>\n<blockquote>\n<ol>\n<li><strong>Environment layer / front-end theorem</strong>: state and prove <code>addDecl.WF</code> for the non-inductive fragment. Simulation-style proving against the existing <code>Verify/TypeChecker</code> results.</li>\n</ol>\n</blockquote>\n<p>I’ve opened draft <a href=\"https://github.com/digama0/lean4lean/pull/28\">lean4lean#28</a>.</p>\n<p>It builds the environment-extension machinery and carries the addDecl.WF proof through the common declaration checks and the axiom, theorem, opaque-header, and nonrecursive-definition paths. The remaining gaps are: <code>checkPrimitiveDef</code>/<code>HasPrimitives</code>, recursive and mutual definitions, and inductives. The quotient branch is necessarily vacuous until inductives are represented.</p>\n<p>So this is intended to land the “straightforward-if-fiddly simulation-style” part you described, rather than to claim that the primitive or inductive steps are finished. But hopefully they can be plugged into this framework.</p>",
+        "id": 614225131,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785725266
+    },
+    {
+        "content": "<p>Just a small update: The Lean4Lean paper is now published (after 2+ years!): <em><a href=\"https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.TYPES.2025.2\">Lean4Lean: Verifying a Typechecker for Lean, in Lean</a></em></p>",
+        "id": 614391444,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785783726
+    },
+    {
+        "content": "<p>Now that <a href=\"https://github.com/digama0/lean4lean/pull/29\">lean4lean#29</a> (the version bump to v4.31.0) has been merged, I've opened <a href=\"https://github.com/digama0/lean4lean/pull/30\">lean4lean#30</a>, which bumps the version to v4.32.2 (and in particular makes the necessary matching bug fix).</p>",
+        "id": 614427993,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785802040
+    },
+    {
+        "content": "<p>Note that version bump for now makes use of <code>set_option backward.do.legacy true</code>, to avoid a bit of additional migration cost. That's tracked in <a href=\"https://github.com/digama0/lean4lean/pull/31\">lean4lean#31</a>.</p>",
+        "id": 614429017,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785802224
+    },
+    {
+        "content": "<p>And then those <code>set_option backward.do.legacy true</code> are removed again in <a href=\"https://github.com/digama0/lean4lean/pull/33\">https://github.com/digama0/lean4lean/pull/33</a>.</p>",
+        "id": 614437393,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785806742
+    },
+    {
+        "content": "<p>... and per the review comment, reverted the changes to <code>ShapeLogRel</code> in <a href=\"https://github.com/digama0/lean4lean/pull/33\">lean4lean#33</a>.</p>",
+        "id": 614440037,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785808580
+    },
+    {
+        "content": "<p><a href=\"https://github.com/digama0/lean4lean/pull/34\">lean4lean#34</a> is the final (for now!) version bump PR, bringing us up to v4.33.0-rc1, i.e. the latest release candidate, including the recent sequence of kernel hardenings.</p>\n<p>It's inevitably a pretty big PR.</p>",
+        "id": 614442036,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1785809693
+    },
+    {
+        "content": "<p><a href=\"https://github.com/digama0/lean4lean/pull/36\">lean4lean#36</a> replaces Std.TreeMap.all_eq_all_toList with a theorem derived from the DTreeMap model lemmas now available in Lean 4.33</p>",
+        "id": 614485185,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1785831710
+    },
+    {
+        "content": "<p>(I didn't prove it even though I could because I know folks don't like it when I touch internals. It should be PR'd to Std)</p>",
+        "id": 614485500,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785831837
+    },
+    {
+        "content": "<p>We can iterate faster this way, then upstream theorems to where they belong later. I don't want the overhead of babysitting PRs onto FRO repos at this point</p>",
+        "id": 614485969,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1785832016
+    },
+    {
+        "content": "<p>(the proof is there, feel free to leave it as an open PR)</p>",
+        "id": 614486121,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1785832063
+    },
+    {
+        "content": "<p>I'll still take the PR, but if you are going to prove it you should keep the issue tracking and submit it upstream too</p>",
+        "id": 614486254,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785832107
+    },
+    {
+        "content": "<p>Issue tracking restored <span aria-label=\"+1\" class=\"emoji emoji-1f44d\" role=\"img\" title=\"+1\">:+1:</span></p>",
+        "id": 614486731,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1785832293
+    },
+    {
+        "content": "<p><a href=\"https://github.com/digama0/lean4lean/pull/37\">lean4lean#37</a> adds a translation from well-formed <code>VExpr</code> definitional equality derivations to the semantically quotiented <code>SExpr</code> judgment and uses it to prove experimental <code>VExpr</code> sort injectivity under <code>SExpr.Params</code></p>\n<p>edit: turned into a draft. it doesn't close any <code>sorry</code>. let me know if you want it as-is</p>",
+        "id": 614517588,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1785843267
+    },
+    {
+        "content": "<p><a href=\"https://github.com/digama0/lean4lean/pull/38\">lean4lean#38</a> proves <code>Ctx.SubstEq.lookup</code></p>",
+        "id": 614553264,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1785854152
+    },
+    {
+        "content": "<p><a href=\"https://github.com/digama0/lean4lean/pull/39\">lean4lean#39</a> proves <code>WHRed.weak'</code></p>",
+        "id": 614562876,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1785856352
+    },
+    {
+        "content": "<p><a href=\"https://github.com/digama0/lean4lean/pull/40\">lean4lean#40</a> proves <code>FinMut.LE.rfl</code></p>",
+        "id": 614564128,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1785856646
+    },
+    {
+        "content": "<p><a href=\"https://github.com/digama0/lean4lean/pull/41\">lean4lean#41</a> proves <code>ShapeFun.bot_app</code></p>",
+        "id": 614568926,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1785857895
+    },
+    {
+        "content": "<p><a href=\"https://github.com/digama0/lean4lean/pull/42\">lean4lean#42</a> proves <code>Shape.Compat.lift</code></p>",
+        "id": 614612863,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1785871081
+    },
+    {
+        "content": "<p>I recommend you don't touch injectivity for the time being, there are some very significant refactors in the works</p>",
+        "id": 614617738,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1785872850
+    },
+    {
+        "content": "<p>Yeah I realized it too late. I'll just close <a href=\"https://github.com/digama0/lean4lean/pull/37\">lean4lean#37</a></p>",
+        "id": 614617915,
+        "sender_full_name": "Arthur Paulino",
+        "timestamp": 1785872907
+    },
+    {
+        "content": "<p>I'm happy to announce that one of the big items from the list is now <strong>complete</strong>: Both level algorithms are fully verified.</p>\n<ul>\n<li>The original level algorithm is sound: <code>u ≈ v → isEquiv u v</code></li>\n<li>The new level algorithm is sound: <code>u ≈ v → isEquiv' u v</code></li>\n<li>The new level algorithm is <em>complete</em>: <code>isEquiv' u v → u ≈ v</code></li>\n</ul>\n<p>The proofs follow the <a href=\"https://lmf.cnrs.fr/downloads/Perso/long.pdf\">paper</a> closely, but they include the new second part of the algorithm which converts sublevels back into levels for a proper normalization - <code>normalize' u = normalize' v ↔ u ≈ v</code> holds in general.</p>",
+        "id": 615778950,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1786430938
+    },
+    {
+        "content": "<p>Congrats!</p>",
+        "id": 615783885,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1786433034
+    },
+    {
+        "content": "<p>the new level algorithm is in <a href=\"https://github.com/leanprover/lean-kernel-arena/pull/127\">leanprover/lean-kernel-arena#127</a>, as well as a one line bug which was causing a massive quadratic performance cost in the arena times. Hopefully after this one we will be back to being 30% slower than the C++ checker rather than 3x slower</p>",
+        "id": 615957976,
+        "sender_full_name": "Mario Carneiro",
+        "timestamp": 1786485438
+    },
+    {
+        "content": "<p>Hmm, the speed up didn’t quite materialize for mathlib at <a href=\"https://arena.lean-lang.org/checker/lean4lean/\">https://arena.lean-lang.org/checker/lean4lean/</a> (but I think it did for others, e.g. cslib)</p>",
+        "id": 616026913,
+        "sender_full_name": "Joachim Breitner",
+        "timestamp": 1786521342
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"110049\">@Mario Carneiro</span>, there are many open PRs where CI hasn't run, because you need to click an approval button for first time contributors. Would you mind doing that?</p>",
+        "id": 616781501,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1786873298
+    }
+]

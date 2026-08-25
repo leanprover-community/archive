@@ -1,0 +1,44 @@
+[
+    {
+        "content": "<p>Currently, <code>DerivingHandler</code> has the type:</p>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">Array</span><span class=\"w\"> </span><span class=\"n\">Name</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">CommandElabM</span><span class=\"w\"> </span><span class=\"n\">Bool</span>\n</code></pre></div>\n<p>I think this type permits more than is necessary, for the following reasons.</p>\n<ol>\n<li><code>Array Name</code> is the array of declaration names supplied to the <code>deriving</code> command. However, deriving type class instances should be performed independently for each declaration. Therefore, <code>DerivingHandler</code> should only need to take a single <code>Name</code>.</li>\n<li>The use of <code>CommandElabM</code> makes the handler’s responsibilities unclear. A deriving handler should take a declaration name <code>decl</code> and generate the syntax for an <code>instance</code> command for <code>decl</code>. If so, the following return type should be sufficient:</li>\n</ol>\n<div class=\"codehilite\" data-code-language=\"Lean\"><pre><span></span><code><span class=\"n\">TermElabM</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">Option</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">TSyntax</span><span class=\"w\"> </span><span class=\"ss\">`command</span><span class=\"o\">))</span>\n</code></pre></div>\n<h2>Benefits of This Proposal</h2>\n<ul>\n<li>\n<p>By accepting a <code>Name</code> rather than an <code>Array Name</code>, the optimization of processing multiple declarations in parallel could be implemented centrally.<br>\nWith the current <code>Array Name</code> argument, the decision of whether and how to process multiple declarations in parallel is left to each individual <code>DerivingHandler</code> implementation.</p>\n</li>\n<li>\n<p>One advantage of returning syntax objects is that it separates code generation from execution. I think this may make testing and debugging easier, but I am not very confident about this, so I would welcome counterarguments.</p>\n</li>\n</ul>",
+        "id": 614193921,
+        "sender_full_name": "Asei Inoue",
+        "timestamp": 1785697334
+    },
+    {
+        "content": "<p>what if it doesn't produce a syntax, but instead runs some command?</p>",
+        "id": 614194984,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1785698419
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"816344\">@Aaron Liu</span> </p>\n<p>If there are cases like that, then changing it to <code>TermElabM</code> certainly would not make sense.</p>\n<p>Are there actually any such cases?</p>",
+        "id": 614195086,
+        "sender_full_name": "Asei Inoue",
+        "timestamp": 1785698511
+    },
+    {
+        "content": "<p>I don't know any deriving handlers, but it certainly seems plausible given the return type</p>",
+        "id": 614195115,
+        "sender_full_name": "Aaron Liu",
+        "timestamp": 1785698544
+    },
+    {
+        "content": "<p>In my opinion, deriving handlers shouldn't use command syntax at all! Using syntax makes everything more error prone and slower. But, of course, it's harder to write a deriving handler that just generates the instance using meta code. What I mean by more error prone is this btw:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">structure</span><span class=\"w\"> </span><span class=\"n\">Test</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"bp\">_</span><span class=\"n\">n</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"bp\">→</span><span class=\"w\"> </span><span class=\"n\">Bool</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"n\">val</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span>\n<span class=\"n\">deriving</span><span class=\"w\"> </span><span class=\"n\">BEq</span><span class=\"w\"> </span><span class=\"c1\">-- error! don't know how to synthesize implicit argument `_n`</span>\n</code></pre></div>\n<p>Like, you'd expect that to work, right? Even if the signature is kinda odd, that seems like something the deriving handler should support; and yet, it just gives me an obscure error message. If you want to write a syntax-based deriving handler properly, there are so many things to keep in mind that are easy to forget. Using meta code directly is generally more robust (if done well).</p>\n<p>So, changing <code>CommandElabM Bool</code> to <code>TermElabM (Option (TSyntax `command))</code> would make things worse, in my opinion.</p>",
+        "id": 614198400,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1785702090
+    },
+    {
+        "content": "<p>Also, you're right that most deriving handlers just iterate the list of declaration names (except <code>ToExpr</code> which behaves incorrectly) but that is really a waste when deriving instances for a mutual inductive. This simple piece of code generates 9 declarations of the shape <code>α → α → Bool</code> (three for each type) where just three would've been sufficient:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">mutual</span>\n\n<span class=\"kn\">inductive</span><span class=\"w\"> </span><span class=\"n\">A</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">base</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">foo</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">B</span><span class=\"o\">)</span>\n\n<span class=\"kn\">inductive</span><span class=\"w\"> </span><span class=\"n\">B</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">base</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">bar</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">C</span><span class=\"o\">)</span>\n\n<span class=\"kn\">inductive</span><span class=\"w\"> </span><span class=\"n\">C</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">base</span>\n<span class=\"w\">  </span><span class=\"bp\">|</span><span class=\"w\"> </span><span class=\"n\">baz</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">A</span><span class=\"o\">)</span>\n\n<span class=\"kn\">end</span>\n\n<span class=\"n\">deriving</span><span class=\"w\"> </span><span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"n\">BEq</span><span class=\"w\"> </span><span class=\"n\">for</span><span class=\"w\"> </span><span class=\"n\">A</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">B</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">C</span>\n</code></pre></div>\n<p>In general, I think much is wrong with how deriving handlers are written in core and I would like a refactor but restricting the type of <code>DerivingHandler</code> would certainly be step back. We should use the flexibility we're given!</p>",
+        "id": 614203115,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1785707558
+    },
+    {
+        "content": "<p>Robin, thanks. I hadn’t considered types defined using mutual. I learned a lot from your explanation.</p>",
+        "id": 614228462,
+        "sender_full_name": "Asei Inoue",
+        "timestamp": 1785727927
+    }
+]

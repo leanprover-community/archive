@@ -1066,5 +1066,179 @@
         "id": 613459215,
         "sender_full_name": "Thomas Murrills",
         "timestamp": 1785340737
+    },
+    {
+        "content": "<p>Thanks to everyone who came out to the Meta Café yesterday! :) <span class=\"user-mention\" data-user-id=\"933054\">@Snir Broshi</span> suggested we take a look at <a href=\"#narrow/channel/287929-mathlib4/topic/Performance.20cost.20of.20info.20tree.20traversal/near/612805647\">this bug in <code>show</code></a>, wherein <code>show thing_that_doesn't_exist</code> fails, but does so with no error on <code>show</code>, instead closing the goal silently with <code>sorry</code>. Quite reasonably Snir thought this might take 15 minutes or so. This was not the case. <span aria-label=\"grinning face with smiling eyes\" class=\"emoji emoji-1f601\" role=\"img\" title=\"grinning face with smiling eyes\">:grinning_face_with_smiling_eyes:</span></p>\n<p>It turned out that the culprit was ultimately Lean's handling of <code>choice</code> nodes in tactic syntax (<code>evalChoice</code>). Since we were overriding the <code>show</code> syntax to log a linter message, both our new syntax parser for <code>show</code> and the original one succeeded. When two parsers of the same priority succeed, Lean effectively just keeps both, and puts them in a new \"choice node\" in the syntax (whose syntax kind is just <code>choice</code> and whose children are the successful parses). Choice nodes have their own special elaborators in each syntax category.</p>\n<p>We found there are two issues with <code>evalChoice</code>, the first of which was actually irrelevant:</p>\n<ol>\n<li><code>evalChoice</code> wraps <code>evalTactic</code> in logic that says \"if you throw an internal unsupported syntax error, try the next tactic. In all other cases, either succeed or pass along the thrown exception to the top level\". However, <code>evalTactic</code> already catches internal unsupported syntax errors and wraps them in a user-friendly error! So it is impossible to hit the \"try the next tactic\" branch. (This was irrelevant to the issue.)</li>\n<li><code>evalChoice</code> uses <code>TacticM</code>'s <code>try</code>/<code>catch</code> when re-throwing the error. <code>TacticM</code>'s <code>try</code>/<code>catch</code> resets the state, which includes resetting the messages! Hence if the thrown error is silent for some reason and expects the noisy errors to have been logged earlier as <em>messages</em> (instead of being part of the thrown exception itself), we will not see any error. This is what was happening.</li>\n</ol>\n<p>In particular, <code>elabTerm</code> implicitly creates this behavior. When it hits an error (like an unknown identifier), it (by default) <em>logs</em> the error, puts a synthetic <code>sorry</code> in place of the failure, and keeps on going. The rest of the code (in this case, of the original <code>show</code>) then gets run using that synthetic sorry. When <em>that</em> code inevitably fails, it throws an exception which includes in that exception's bundled <code>MessageData</code> an expression that contains a synthetic sorry.</p>\n<p>This is important, since when lean eventually logs the <code>MessageData</code> in this thrown exception (see <code>logAt</code>), it checks (1) if it's an error-style message (2) if it has a synthetic sorry somewhere in it. If both are true, it just <em>doesn't log the message</em>. (Note: each <code>MessageData.ofLazy</code> can actually choose what exactly the logic is to say \"yes\" or \"no\", but usually it means \"some expression involved has a synthetic sorry\".)</p>\n<p>So at the end of the day</p>\n<ol>\n<li>the overlapping syntax produced a choice node</li>\n<li><code>evalChoice</code> (which elaborates it) wrongly resets the state when re-throwing an error, obliterating logged messages (incl. those produced during elaboration of <code>show</code>s term argument)</li>\n<li>the re-thrown error contains a synthetic sorry (since it came from an elaboration failure) and so lean doesn't log it (because it expects those previously logged messages to still exist)</li>\n</ol>\n<p>Hence, <code>show</code> silently fails. (And in the course of that failure closes the goal with a sorry too, but that's incidental and not explicitly covered in the above story.) See the linked zulip message above for a MWE :)</p>\n<p>The solution is to intervene at the beginning, and give the syntax <code>(priority := high)</code> so that it does not produce a choice node, and truly overrides the syntax it's trying to override instead of relying on choice node semantics! (<span class=\"user-mention\" data-user-id=\"687698\">@Chris Henson</span> followed through with this in <a href=\"https://github.com/leanprover-community/mathlib4/pull/42264\">#42264</a> after the café—thanks!!)</p>\n<hr>\n<p>We then moved onto discussing the no implicit lambda feature, in the course of illustrating differences with the handling of choice nodes during <em>term</em> elaboration (as opposed to tactic elaboration above). Term elaboration tries all possibilities in the choice node and only succeeds if exactly one of them was successful. Turns out this is rather involved too!</p>\n<p>Tracing the logic of disabling the feature with <code>@</code> on syntax with a choice node revealed that <code>elabChoice</code> should probably call <code>implicitLambda := false</code>, as the outer elaboration of the choice node will have <em>already</em> performed the implicit lambda insertion if necessary. If you don't do this, <code>@</code> in front of a choice node may behave differently than in front of no choice node.</p>",
+        "id": 613713408,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1785436635
+    },
+    {
+        "content": "<p>Anyway, thanks again to the attendees and especially to those who contributed their meta expertise here: <span class=\"user-mention\" data-user-id=\"873547\">@Robin Arnez</span>, <span class=\"user-mention\" data-user-id=\"816344\">@Aaron Liu</span>, <span class=\"user-mention\" data-user-id=\"479299\">@Jovan Gerbscheid</span> :) This session dealt with quite a niche and specific area of Lean (choice nodes and the implicit lambda feature)! It's always nice to be able to dive into an area like that :)</p>",
+        "id": 613714417,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1785437015
+    },
+    {
+        "content": "<p>Next time we'll deal with a much more widespread area of Lean: the module system! Our main questions are</p>\n<ul>\n<li>Why is it like that?</li>\n<li>How does it manifest in the metaprogramming environment?</li>\n<li>What are a metaprogrammer's responsibilities for working in the module system?</li>\n</ul>\n<p>Let me emphasize, though, that we'll be starting at the beginning. So if you find the basics of the module system confusing and unpredictable even on a non-meta level, don't worry—we're going to start by covering them, and build up an understanding of what's going on from the ground up :) (In fact, there's a chance \"why is it like that\" will span the whole session, and we'll break this in two! But I think it's an important topic, so it'll be worth it :) )</p>\n<p>Hope to see you there! <span aria-label=\"coffee\" class=\"emoji emoji-2615\" role=\"img\" title=\"coffee\">:coffee:</span> <a href=\"https://meet.google.com/nxr-kaho-yoj\">https://meet.google.com/nxr-kaho-yoj</a></p>",
+        "id": 613714457,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1785437031
+    },
+    {
+        "content": "<p>Can these meetings be recorded and put on YouTube?</p>",
+        "id": 614625951,
+        "sender_full_name": "Ching-Tsun Chou",
+        "timestamp": 1785875629
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110637\">Ching-Tsun Chou</span> <a href=\"#narrow/channel/579629-Event-announcements/topic/The.20Meta.20Caf.C3.A9/near/614625951\">said</a>:</p>\n<blockquote>\n<p>Can these meetings be recorded and put on YouTube?</p>\n</blockquote>\n<p>I think this was discussed on Zulip and the decision was not to record it on purpose, so that people could feel free to ask naive questions without fear</p>",
+        "id": 614735499,
+        "sender_full_name": "Luigi Massacci",
+        "timestamp": 1785927744
+    },
+    {
+        "content": "<p>Reminder that in a little under an hour, we’ll be looking at the module system and how it works! This session will be about <em>visibility</em>—<code>public</code>, <code>private</code>, and <code>@[expose]</code>—and we’ll be starting from the ground up.</p>\n<p>See you soon! <span aria-label=\"tea\" class=\"emoji emoji-1f375\" role=\"img\" title=\"tea\">:tea:</span> :)</p>",
+        "id": 614788477,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1785942660
+    },
+    {
+        "content": "<p>Reminder that the Meta Café is starting imminently! :) <a href=\"https://meet.google.com/nxr-kaho-yoj\">https://meet.google.com/nxr-kaho-yoj</a></p>",
+        "id": 614798909,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1785945555
+    },
+    {
+        "content": "<p>Thanks, I found the discussion of rfl enlightening.</p>",
+        "id": 614807538,
+        "sender_full_name": "Bolton Bailey",
+        "timestamp": 1785947970
+    },
+    {
+        "content": "<p>(Explanation forthcoming (I'll edit this message :) ))</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">open</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Elab</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"w\"> </span><span class=\"k\">in</span><span class=\"w\"> </span><span class=\"n\">run_tac</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">        </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">Elab</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">withMainContext</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">          </span><span class=\"n\">discard</span><span class=\"w\"> </span><span class=\"bp\">&lt;|</span><span class=\"w\"> </span><span class=\"n\">Mathlib</span><span class=\"bp\">.</span><span class=\"n\">Tactic</span><span class=\"bp\">.</span><span class=\"n\">ExtractGoal</span><span class=\"bp\">.</span><span class=\"n\">goalSignature</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">Lean</span><span class=\"bp\">.</span><span class=\"n\">mkAuxDeclName</span><span class=\"w\"> </span><span class=\"ss\">`extracted</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"bp\">←</span><span class=\"w\"> </span><span class=\"n\">getMainGoal</span><span class=\"o\">)</span>\n</code></pre></div>",
+        "id": 614827260,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1785953900
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> <a href=\"#narrow/channel/113488-general/topic/Discussion.3A.20The.20Meta.20Caf.C3.A9/near/613343814\">said</a>:</p>\n<blockquote>\n<p>Specifically, we ran into the problem that if your Qq expression lives inside a structure on which you have API, destructuring that structure with e.g. <code>let { a, b, c, .. } := s</code> breaks the connection between the projected field values and the structure instance itself.</p>\n</blockquote>\n<p>Did you have an example of this? Is <code>let +generalize</code> the answer?</p>",
+        "id": 614829851,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1785954746
+    },
+    {
+        "content": "<p>Well, take this:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">structure</span><span class=\"w\"> </span><span class=\"n\">MyStruct</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"n\">foo</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span>\n<span class=\"w\">  </span><span class=\"n\">bar</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">Nat</span>\n\n<span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">test</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">MyStruct</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">IO</span><span class=\"w\"> </span><span class=\"n\">Unit</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"o\">{</span><span class=\"w\"> </span><span class=\"n\">foo</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">bar</span><span class=\"w\"> </span><span class=\"o\">}</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">x</span>\n<span class=\"w\">  </span><span class=\"k\">have</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"n\">foo</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">foo</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">rfl</span><span class=\"w\"> </span><span class=\"c1\">-- fails</span>\n</code></pre></div>\n<p>After the <code>let</code>, you can't show that <code>x.foo = foo</code> by rfl, because there is no definitional connection introduced to make that work. You could use <code>let (eq := heq)</code> but that gives you propositional equality and not definitional equality. Our solution was to produce let declarations with the projections, i.e.</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"kn\">def</span><span class=\"w\"> </span><span class=\"n\">test</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">MyStruct</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">IO</span><span class=\"w\"> </span><span class=\"n\">Unit</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"k\">do</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">foo</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"n\">foo</span>\n<span class=\"w\">  </span><span class=\"k\">let</span><span class=\"w\"> </span><span class=\"n\">bar</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"n\">bar</span>\n<span class=\"w\">  </span><span class=\"k\">have</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"bp\">.</span><span class=\"n\">foo</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"n\">foo</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"n\">rfl</span><span class=\"w\"> </span><span class=\"c1\">-- works</span>\n</code></pre></div>",
+        "id": 614830744,
+        "sender_full_name": "Robin Arnez",
+        "timestamp": 1785955030
+    },
+    {
+        "content": "<p>About the <code>+generalize</code>, it's \"not supported in <code>do</code> blocks\", so it doesn't solve my issue. Furthermore, we tried using the legacy do elaborator's behaviour of keeping the propositional equality which relates the discriminant with the match branch, but that didn't work either</p>",
+        "id": 614831402,
+        "sender_full_name": "Fernando LEAL",
+        "timestamp": 1785955236
+    },
+    {
+        "content": "<p>I haven't found a way to minimize the problem from the project yet, but it's something I intend to do as soon as I have more time. But yes, having definitional relations between the discriminant and the projections helped</p>",
+        "id": 614831668,
+        "sender_full_name": "Fernando LEAL",
+        "timestamp": 1785955322
+    },
+    {
+        "content": "<p>Which, update, but I couldn't apply <code>let_projs</code> in all instances were I was running into this issue, because on some other instances I was relying on some <code>=Q</code> assertion which meant that the expression couldn't both be related by the <code>=Q</code> assertion and the discriminant through the <code>let</code>.</p>",
+        "id": 614832001,
+        "sender_full_name": "Fernando LEAL",
+        "timestamp": 1785955434
+    },
+    {
+        "content": "<p>(By the way, issue for the tactic/command choice node bugs from last week: <a href=\"https://github.com/leanprover/lean4/pull/14695\">lean4#14695</a>)</p>",
+        "id": 614858246,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1785965859
+    },
+    {
+        "content": "<p>I would really really really love some reusable documentation coming out of these meetings, though!</p>",
+        "id": 614858297,
+        "sender_full_name": "Michael Rothgang",
+        "timestamp": 1785965887
+    },
+    {
+        "content": "<p>(Still need to make an issue for the <code>implicitLambda</code> choice node bug <span aria-label=\"grinning face with smiling eyes\" class=\"emoji emoji-1f601\" role=\"img\" title=\"grinning face with smiling eyes\">:grinning_face_with_smiling_eyes:</span>)</p>",
+        "id": 614858320,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1785965897
+    },
+    {
+        "content": "<p>I agree! I will say that first and foremost, the <em>space itself</em> (for people to talk about metaprogramming and ask questions casually) is the (non-reusable) resource being created here. But, I am going to think harder about how to foster the development of reusable resources, especially for people in other timezones.</p>\n<p>In the meantime, there's the <a href=\"https://docs.google.com/document/d/1nRIGUMm9S7lnM5GYBYt7I_NtH3xLPZD7WVe_R4l0SPU/edit?usp=sharing\">Meta Café table</a> for collaborative notes during meetings (sometimes more detailed than others); <span class=\"user-mention\" data-user-id=\"690100\">@Fernando LEAL</span> transcribed some especially nice notes today! :) (There are also Gemini note summaries that I post post-meeting, but I'm not sure how useful these are.)</p>\n<p>But notes like this are of course still not at the level of something reusable, so I think I need to dedicate some time to actually \"processing\" them into documentation (or maybe this can be the subject of future cafés, or spinoff meetings). I am most of the way through an explanatory piece about the module system that I wrote in preparation for/tandem with this session, for example, but that sort of work is not a given for every session. (Aside: not sure where to put it yet, but will talk with Anne about this when they get back from time off—not tagging them so as not to disturb them on said time off! <span aria-label=\"grinning face with smiling eyes\" class=\"emoji emoji-1f601\" role=\"img\" title=\"grinning face with smiling eyes\">:grinning_face_with_smiling_eyes:</span>)</p>\n<p>Maybe we need to bite the bullet and record the meetings, or record for half of the meeting and stop for another half...or record them, but only <em>distribute</em> the recording by secret link to \"async café members\". This may seem equivalent from the outside, but I think might <em>feel</em> different to people in the meeting (re: permission to talk freely) than simply \"this is going on a public youtube channel\". (Then when someone <em>wants</em> the resource, they just \"join\" the café, and it's like they could have been there :) )</p>\n<p>Much to think about, but my inclination is to preserve the characteristics of the space (and therefore preserve what it <em>feels like</em> to attend the Meta Café) while <em>also</em> finding a way to foster the creation of reusable resources, instead of trying to turn the space into one.</p>\n<p>Though, let me say that I do really appreciate the interest, <span class=\"user-mention\" data-user-id=\"110637\">@Ching-Tsun Chou</span> (and <span aria-label=\"plus\" class=\"emoji emoji-2795\" role=\"img\" title=\"plus\">:plus:</span>-ers!), and I'll try my best to serve it somehow! :)</p>",
+        "id": 614860488,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1785967112
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"634338\">Michael Rothgang</span> <a href=\"#narrow/channel/579629-Event-announcements/topic/The.20Meta.20Caf.C3.A9/near/614858297\">said</a>:</p>\n<blockquote>\n<p>I would really really really love some reusable documentation coming out of these meetings, though!</p>\n</blockquote>\n<p>Also, outside of any Meta Café related notes like <span class=\"user-mention\" data-user-id=\"548935\">@Thomas Murrills</span> mentioned, there is also the <a href=\"https://leanprover-community.github.io/lean4-metaprogramming-book/\">Metaprogramming in Lean 4</a> book <span aria-label=\"slight smile\" class=\"emoji emoji-1f642\" role=\"img\" title=\"slight smile\">:slight_smile:</span> (I still have to keep reading it myself when I have some time though, just went through a couple chapters so far)</p>",
+        "id": 614861592,
+        "sender_full_name": "David Mazarro",
+        "timestamp": 1785967654
+    },
+    {
+        "content": "<p>On that note I'll also share <a href=\"https://docs.google.com/document/d/1Bt594EIfWxO3AhwkQCY8pJA0grskJANlg4AnENL_uHc/edit?usp=sharing\">this list</a> of links to existing metaprogramming resources that I compiled for the café :) (Suggestions welcome!)</p>",
+        "id": 614862164,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1785967935
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"466290\">Luigi Massacci</span> <a href=\"#narrow/channel/579629-Event-announcements/topic/The.20Meta.20Caf.C3.A9/near/614735499\">said</a>:</p>\n<blockquote>\n<p>I think this was discussed on Zulip and the decision was not to record it on purpose, so that people could feel free to ask naive questions without fear.</p>\n</blockquote>\n<p>Perhaps those who do not wish to be known can submit their questions in writing by DM-ing the presenter, so that he can answer them without revealing who asked them?  That seems to me to strike a good balance between those who have the concerns and those who cannot attend the meetings in person for whatever reasons.</p>",
+        "id": 614880437,
+        "sender_full_name": "Ching-Tsun Chou",
+        "timestamp": 1785977459
+    },
+    {
+        "content": "<p>7 messages were moved here from <a class=\"stream-topic\" data-stream-id=\"579629\" href=\"/#narrow/channel/579629-Event-announcements/topic/The.20Meta.20Caf.C3.A9/with/614616779\">#Event announcements &gt; The Meta Café</a> by <span class=\"user-mention silent\" data-user-id=\"110087\">Kim Morrison</span>.</p>",
+        "id": 614892723,
+        "sender_full_name": "Notification Bot",
+        "timestamp": 1785985816
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"110637\">Ching-Tsun Chou</span> <a href=\"#narrow/channel/113488-general/topic/Discussion.3A.20The.20Meta.20Caf.C3.A9/near/614880437\">said</a>:</p>\n<blockquote>\n<p>Perhaps those who do not wish to be known can submit their questions in writing by DM-ing the presenter, so that he can answer them without revealing who asked them?  That seems to me to strike a good balance between those who have the concerns and those who cannot attend the meetings in person for whatever reasons.</p>\n</blockquote>\n<p>From what I understand, the concept of these sessions is not for them to have one presenter and a listening audience, but for them to be more of a conversation, where people are encouraged to jump in, voice their opinion, questions, etc. I feel that your proposal doesn't work as well in this case</p>",
+        "id": 614945737,
+        "sender_full_name": "Fernando LEAL",
+        "timestamp": 1786008982
+    },
+    {
+        "content": "<p>Last week in the Meta Café, we discussed how visibility works in the module system! We saw how <code>public import</code>s chain together (and private ones don't), how the different pieces of data of a declaration (name &amp; type, rewriting rule &amp; body) can have separate visibilities (<code>@[expose]</code> for the latter), and how Lean converts declarations to axioms behind the scenes when importing downstream (always for theorems, and whenever <code>@[expose]</code> is absent for definitions). </p>\n<p>We also went on a (useful) tangent about the transparency hierarchy and how it governs unfolding (and the difference between transparency settings on declarations and the ambient transparency mode—neither of which are to be confused with transparency <em>hints</em> stored in a declaration, which influence what gets unfolded <em>first</em> as opposed to under what circumstances), and how <code>@[expose]</code> is the precondition for unfolding at all. We also touched on <code>rfl</code> and the auto-applied <code>@[defeq]</code> attribute which complains if your proof is syntactically <code>rfl</code> and you don't have appropriate exposure.</p>\n<p>At the end, we investigated why tactic analysis linters in the nightly regression set were failing with \"Unknown declaration\". The eventual culprit: a call to <code>getConstInfo</code> to find all transitively used constants, which breaks due to <code>set_option backward.privateInPublic true</code> allowing private declarations to seep into the public scope upstream. When downstream imports the public declarations using them, the private ones are unknown and <code>getConstInfo</code> can't look anything up.</p>",
+        "id": 615902740,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1786467590
+    },
+    {
+        "content": "<p>You can see notes in the <a href=\"https://docs.google.com/document/d/1olC4ehrN0gNeCVy2koDKbt_7W1TLHg35A9gYgQrMkpw/edit?usp=sharing\">Meta Café table</a>—thanks especially to <span class=\"user-mention\" data-user-id=\"690100\">@Fernando LEAL</span> for taking many of them live! :) Here also is the <a href=\"https://docs.google.com/document/d/1olC4ehrN0gNeCVy2koDKbt_7W1TLHg35A9gYgQrMkpw/edit?usp=sharing\">Gemini summary</a> (unreviewed).</p>\n<p>Thanks as well to everyone who shared their expertise, as usual, especially <span class=\"user-mention\" data-user-id=\"873547\">@Robin Arnez</span> for taking us through transparency! :)</p>\n<p>Thanks to everyone who came and asked questions! That's the heart of this, after all. :)</p>",
+        "id": 615902902,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1786467619
+    },
+    {
+        "content": "<p>Tomorrow we'll be dealing with the <code>meta</code> phase of the module system! This is far from a repeat of the visibility story—different things matter and must satisfy differently-shaped constraints.</p>\n<p>Hope to see you there! <span aria-label=\"croissant\" class=\"emoji emoji-1f950\" role=\"img\" title=\"croissant\">:croissant:</span> :) <time datetime=\"2026-08-12T16:00:00Z\">2026-08-12T12:00:00-04:00</time> <a href=\"https://meet.google.com/nxr-kaho-yoj\">https://meet.google.com/nxr-kaho-yoj</a></p>",
+        "id": 615903259,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1786467721
+    },
+    {
+        "content": "<p>Reminder that the Meta Café opens again in 2 hours, and we'll be understanding how the <code>meta</code> phase works! Notably, this involves touching on part of Lean we didn't talk about at all last time: the compiler :) See you soon! <span aria-label=\"tea\" class=\"emoji emoji-1f375\" role=\"img\" title=\"tea\">:tea:</span> <time datetime=\"2026-08-12T16:00:00Z\">2026-08-12T12:00:00-04:00</time> <a href=\"https://meet.google.com/nxr-kaho-yoj\">https://meet.google.com/nxr-kaho-yoj</a></p>",
+        "id": 616097993,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1786543201
+    },
+    {
+        "content": "<p>Tomorrow, we'll have one of the more \"chill\" meetings of the Meta Café: bring something you're interested in, a metaprogramming problem you're working on, and we'll chat about it! :) See you soon! <span aria-label=\"croissant\" class=\"emoji emoji-1f950\" role=\"img\" title=\"croissant\">:croissant:</span> <a href=\"https://meet.google.com/nxr-kaho-yoj\">https://meet.google.com/nxr-kaho-yoj</a></p>",
+        "id": 617339325,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1787104653
+    },
+    {
+        "content": "<p>Reminder that the Meta Café starts in just about half an hour, at <time datetime=\"2026-08-19T16:00:00Z\">2026-08-19T12:00:00-04:00</time>! See you there! :) <span aria-label=\"coffee\" class=\"emoji emoji-2615\" role=\"img\" title=\"coffee\">:coffee:</span> <a href=\"https://meet.google.com/nxr-kaho-yoj\">https://meet.google.com/nxr-kaho-yoj</a></p>",
+        "id": 617479968,
+        "sender_full_name": "Thomas Murrills",
+        "timestamp": 1787153348
     }
 ]

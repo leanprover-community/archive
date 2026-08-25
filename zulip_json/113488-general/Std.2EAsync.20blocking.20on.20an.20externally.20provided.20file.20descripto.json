@@ -1,0 +1,80 @@
+[
+    {
+        "content": "<p>This is a followup to <a class=\"stream-topic\" data-stream-id=\"579630\" href=\"/#narrow/channel/579630-Project-announcements/topic/leanpostgres.20library.20.28sibling.20to.20leansqlite.29/with/614268692\">#Project announcements &gt; leanpostgres library (sibling to leansqlite)</a> </p>\n<p><span class=\"user-mention\" data-user-id=\"942100\">@Alfredo Moreira-Rosa</span> I'm not sure it's going to be as easy as I hoped to add asynchrony to leanpostgres.</p>\n<p>The problem is that libpq expects clients to use <code>select</code> to wait on a file descriptor returned by <code>PQsocket</code>. This is exactly what Std.Async does internally, but there isn't (or at least I can't see) any way to give Std.Async a file descriptor from outside. </p>\n<p>Am I missing anything?</p>",
+        "id": 614278179,
+        "sender_full_name": "Paul Butcher",
+        "timestamp": 1785749725
+    },
+    {
+        "content": "<p>In principle this functionality could be built as a third party library and/or upstreamed to Lean at some point. The libuv function to wrap in this case would be <code>uv_tcp_open</code>.</p>\n<p>CC <span class=\"user-mention\" data-user-id=\"481858\">@Sofia Rodrigues</span></p>",
+        "id": 614296368,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1785756304
+    },
+    {
+        "content": "<p>Thanks <span class=\"user-mention\" data-user-id=\"395550\">@Henrik Böving</span>.</p>\n<p>Forgive me, I may well be missing something (I'm still very new to Lean). How could I build this as a third-party library without duplicating large quantities of Std.Async? Is there some way to build an \"extension\" of Std.Async?</p>",
+        "id": 614366316,
+        "sender_full_name": "Paul Butcher",
+        "timestamp": 1785777530
+    },
+    {
+        "content": "<p>I didnt look in detail at your library but I presume you are already doing FFI with postgres yes? In that case you just need to add another function that gives you a lean level UV socket from a file descriptor using the above API, hook that in via FFI too and you should be good to go</p>",
+        "id": 614366550,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1785777618
+    },
+    {
+        "content": "<p>Yes, you're right, that's exactly what I'm doing. And it is exactly that step (creating a lean-level uv socket) that I'm stuck on. I can get a file descriptor out of the FFI easily enough, but I don't know how I would go about turning it into something that Async.block could block on?</p>",
+        "id": 614367359,
+        "sender_full_name": "Paul Butcher",
+        "timestamp": 1785777915
+    },
+    {
+        "content": "<p>You want to build this type <a href=\"https://leanprover-community.github.io/mathlib4_docs/Std/Async/TCP.html#Std.Async.TCP.Socket.Client\">https://leanprover-community.github.io/mathlib4_docs/Std/Async/TCP.html#Std.Async.TCP.Socket.Client</a> which you can do by building a <a href=\"https://leanprover-community.github.io/mathlib4_docs/Std/Internal/UV/TCP.html#Std.Internal.UV.TCP.Socket\">https://leanprover-community.github.io/mathlib4_docs/Std/Internal/UV/TCP.html#Std.Internal.UV.TCP.Socket</a> and these ones in turn are built using FFI. The default way to create one is this C++ function: <a href=\"https://github.com/leanprover/lean4/blob/945e78b86645b179655123cd2fdba83d89d28d07/src/runtime/uv/tcp.cpp#L84\">https://github.com/leanprover/lean4/blob/945e78b86645b179655123cd2fdba83d89d28d07/src/runtime/uv/tcp.cpp#L84</a> and you would in essence build the same function but use <code>uv_tcp_open</code> to get the socket converted into a libuv socket.</p>",
+        "id": 614367899,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1785778136
+    },
+    {
+        "content": "<p>Thanks. That's given me a great avenue to explore. I will look and see how I get on.</p>",
+        "id": 614367978,
+        "sender_full_name": "Paul Butcher",
+        "timestamp": 1785778172
+    },
+    {
+        "content": "<p>It might actually be that the event loop lock is not accessible from outside our C++ compilation unit though. In that case one would indeed have to touch core to make it.</p>",
+        "id": 614368138,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1785778217
+    },
+    {
+        "content": "<p>The initial issue is that I can't see any way I can create a Std.Async.TCP.Socket.Client: its <code>ofNative</code> function is private:</p>\n<p><a href=\"https://github.com/leanprover/lean4/blob/62eed1db4d67327ec8120be05f1a1b0847d74561/src/Std/Async/TCP.lean#L29-L34\">https://github.com/leanprover/lean4/blob/62eed1db4d67327ec8120be05f1a1b0847d74561/src/Std/Async/TCP.lean#L29-L34</a></p>",
+        "id": 614370616,
+        "sender_full_name": "Paul Butcher",
+        "timestamp": 1785778803
+    },
+    {
+        "content": "<p>I’ll create a PR to make <code>ofNative</code> public and add an <code>ofFd</code> function too. I’m still thinking about a nice way to handle file descriptors without making people deal with ugly low level stuff in Lean :/</p>",
+        "id": 614371261,
+        "sender_full_name": "Sofia Rodrigues",
+        "timestamp": 1785778969
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"481858\">Sofia Rodrigues</span> <a href=\"#narrow/channel/113488-general/topic/Std.2EAsync.20blocking.20on.20an.20externally.20provided.20file.20descripto/near/614371261\">said</a>:</p>\n<blockquote>\n<p>I’ll create a PR to make <code>ofNative</code> public and add an <code>ofFd</code> function too. I’m still thinking about a nice way to handle file descriptors without making people deal with ugly low level stuff in Lean :/</p>\n</blockquote>\n<p>I don't think there is a need to make the function public. If users want to break into private APIs like here they can do that:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"n\">module</span>\n<span class=\"kn\">import</span><span class=\"w\"> </span><span class=\"n\">all</span><span class=\"w\"> </span><span class=\"n\">Std</span><span class=\"bp\">.</span><span class=\"n\">Async</span><span class=\"bp\">.</span><span class=\"n\">TCP</span>\n\n<span class=\"bp\">#</span><span class=\"n\">check</span><span class=\"w\"> </span><span class=\"n\">Std</span><span class=\"bp\">.</span><span class=\"n\">Async</span><span class=\"bp\">.</span><span class=\"n\">TCP</span><span class=\"bp\">.</span><span class=\"n\">Socket</span><span class=\"bp\">.</span><span class=\"n\">Client</span><span class=\"bp\">.</span><span class=\"n\">ofNative</span>\n</code></pre></div>\n<p>the intention of making it private was to indicate that this is a sharp cutoff point for the interface we guarantee stability for, should we later decide to switch away from libuv.</p>",
+        "id": 614377903,
+        "sender_full_name": "Henrik Böving",
+        "timestamp": 1785780306
+    },
+    {
+        "content": "<blockquote>\n<p>If users want to break into private APIs like here they can do that:</p>\n</blockquote>\n<p>Ah! I had no idea it was possible to work around private like this. Thanks for the pointer: I'll see how far it gets me.</p>",
+        "id": 614458810,
+        "sender_full_name": "Paul Butcher",
+        "timestamp": 1785820311
+    },
+    {
+        "content": "<p>For completeness, Henrik's suggestion above works, but I got blocked almost immediately afterwards because (as he suspected) the event loop is not accessible to me.</p>\n<p>I'm not going to lose any sleep over this (and I don't suggest anyone else does either): the synchronous version of this library will be sufficient for what I want to do for the foreseeable future. It would be great to create an asynchronous version sometime, and it would be lovely to see Lean allow it sometime, but it's definitely not urgent.</p>",
+        "id": 614509349,
+        "sender_full_name": "Paul Butcher",
+        "timestamp": 1785840300
+    }
+]
