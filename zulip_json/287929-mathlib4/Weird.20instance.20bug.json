@@ -1,0 +1,38 @@
+[
+    {
+        "content": "<p>In <a href=\"https://github.com/leanprover-community/mathlib4/pull/43184\">#43184</a> (test PR for the issue) I added two instances <code>SeminormedGroup.toESeminormedMonoid</code> and <code>SeminormedCommGroup.toESeminormedCommMonoid</code> (and their additive versions). The reason I did that was that I wanted to generalize <a href=\"https://leanprover-community.github.io/mathlib4_docs/Mathlib/Probability/Process/Filtration.html#MeasureTheory.Filtration.memLp_limitProcess_of_eLpNorm_bdd\">MeasureTheory.Filtration.memLp_limitProcess_of_eLpNorm_bdd</a> to a <code>SeminormedAddGroup F</code> (just for the sake of generalization in passing) and I realized that there was no instance synthesis from <code>SeminormedAddGroup</code> to <code>ESeminormedMonoid</code>, which is needed in the proof. By doing so however, the proof of <a href=\"https://leanprover-community.github.io/mathlib4_docs/Mathlib/Probability/Distributions/TwoValued.html#MeasureTheory.integral_of_ae_eq_zero_or_one\">MeasureTheory.integral_of_ae_eq_zero_or_one</a> now fails. It is easily fixable, but I don't get why it fails. In this proof the lemma <a href=\"https://leanprover-community.github.io/mathlib4_docs/Mathlib/MeasureTheory/Function/L1Space/Integrable.html#MeasureTheory.Integrable.smul_measure\">MeasureTheory.Integrable.smul_measure</a> is used inside <code>rw</code>, and <code>rw</code> does not manage to see through the defeq <code>X ⁻¹' {1}</code> and <code>{ω | X ω = 1}</code>.</p>\n<p>I am not very knowledgeable about how to investigate such bugs, but it seems to me that everything should be defeq and I don't understand what is going on at all. Simply adding the explicit shape of the constant <code>X ⁻¹' {1}</code> solves it.</p>",
+        "id": 619795137,
+        "sender_full_name": "Etienne Marion",
+        "timestamp": 1787922912
+    },
+    {
+        "content": "<p><code>rw</code> works up to syntactic equality, not definitional equality.</p>",
+        "id": 619879120,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1787946004
+    },
+    {
+        "content": "<p>I know that, but what is strange is that the proof works without the (seemingly unrelated) instance change.</p>",
+        "id": 619882628,
+        "sender_full_name": "Etienne Marion",
+        "timestamp": 1787947199
+    },
+    {
+        "content": "<p>Different ones inferred? As in, the initial statement had a One from the AddGroup, but then changes to the one from EMonoid, and that's how the One instances don't match anymore syntactically. Perhaps there is some instance flattening which would avoid this.</p>",
+        "id": 619885109,
+        "sender_full_name": "Yakov Pechersky",
+        "timestamp": 1787948080
+    },
+    {
+        "content": "<p>AFAICT the instances are the same everywhere. Actually I would not expect the original proof to work so it is quite puzzling. I guess this is a good example of why complicated proofs should be avoided inside <code>rw</code>.</p>",
+        "id": 619957231,
+        "sender_full_name": "Etienne Marion",
+        "timestamp": 1787992185
+    },
+    {
+        "content": "<p>Claude Opus 5 says (and I didn't check):</p>\n<blockquote>\n<p>Short version</p>\n<p>rw never saw through X ⁻¹' {1} ≡ {ω | X ω = 1}. It can't: rw's kabstract<br>\n  matches only up to instances transparency, and Set.preimage is a plain def. On<br>\n  master the rewrite works because the measure it's matching against is still a<br>\n  metavariable at match time. Your instances change the elaboration order so<br>\n  that it isn't one any more.</p>\n<p>The evidence</p>\n<p>1. rw cannot match those two forms — today, on master:</p>\n<p>lean                                                                     <br>\n  example {Ω : Type} (X : Ω → ℝ) (f : Set Ω → ℕ) (g : ℕ → ℕ)<br>\n      (h : g (f {ω | X ω = 1}) = 0) : g (f (X ⁻¹' {1})) = 0 := by<br>\n    rw [h]   -- Did not find an occurrence of the pattern<br>\n  (and {ω | X ω = 1} = X ⁻¹' {1} is not provable by with_reducible rfl).</p>\n<p>2. What the pattern actually is. Make the rw fail on purpose (... at hXmeas)<br>\n  and look at the reported pattern.</p>\n<p>- master: ∫ (x : ?m.96), ?m.103 x ∂(?m.101 + ?m.102) — both measures are<br>\n    metavariables.</p>\n<p>- your branch (from the CI log of the failing build): ∫ (x : ?m.108), ?m.114 x<br>\n    ∂(?m.101 + μ {ω | X ω = 1} • ?m.110).</p>\n<p>So on master the whole Integrable … argument is postponed by the elaborator;<br>\n  ?ν gets assigned by matching against the goal (μ (X ⁻¹' {1}) • dirac 1), and<br>\n  Integrable.smul_measure _ h is only elaborated afterwards, against that<br>\n  now-concrete type. That check runs at default transparency, where μ (X ⁻¹' <br>\n  {1}) ≠ ∞ and h : ¬μ {ω | X ω = 1} = ⊤ are happily defeq. On your branch the<br>\n  argument is elaborated first, so c := μ {ω | X ω = 1} is read off h and ends<br>\n  up in the pattern — and now the keyed match has to do the set defeq at<br>\n  instances transparency, which it can't.</p>\n<p>3. Why your instances flip that. Integrable takes [ContinuousENorm ε]. On<br>\n  master, for ℝ that instance is the constant</p>\n<p>@SeminormedAddGroup.toContinuousENorm ℝ …</p>\n<p>which is what sits in the Integrable hypotheses of integral_add_measure. But<br>\n  Integrable.smul_measure is stated with [ESeminormedAddMonoid ε], so its<br>\n  conclusion carries @ESeminormedAddMonoid.toContinuousENorm ?ε _ ?inst — a<br>\n  projection out of an instance metavariable. Unifying that against a different<br>\n  constant is stuck, so the elaborator gives up on the argument for now and<br>\n  postpones it. Your PR removes SeminormedGroup.toContinuousENorm in favour of<br>\n  SeminormedGroup.toESeminormedMonoid, so the instance in the goal is now itself<br>\n  headed by ESeminormedAddMonoid.toContinuousENorm; unification becomes<br>\n  first-order, succeeds immediately, and nothing gets postponed.</p>\n<p>I checked that this is really the trigger without building your branch: on<br>\n  current master, replace .smul_measure by an otherwise identical copy stated<br>\n  with [NormedAddCommGroup ε] (so its instance term is the same constant as the<br>\n  goal's), and you get your error verbatim:</p>\n<p>lean<br>\n  theorem Integrable.smul_measure' {α ε : Type*} [MeasurableSpace α]<br>\n  [NormedAddCommGroup ε]<br>\n      {μ : Measure α} {f : α → ε} (h : Integrable f μ) {c : ℝ≥0∞} (hc : c ≠ ∞) :<br>\n      Integrable f (c • μ) := h.smul_measure hc<br>\n  -- ... rw [integral_add_measure ⟨…⟩ &lt;| .smul_measure' (by simp<br>\n  [integrable_dirac]) h]<br>\n  -- Did not find an occurrence of the pattern<br>\n  --   ∫ (x : ?m.108), ?m.113 x ∂(?m.101 + μ {ω | X ω = 1} • ?m.112)</p>\n<p>Fixes</p>\n<p>- What you did — writing by_cases h : μ (X ⁻¹' {1}) = ⊤ — is the right fix: it<br>\n    makes the pattern syntactically match.</p>\n<p>- rw (transparency := .default) [integral_add_measure …] also works<br>\n    (verified), since then Set.preimage unfolds during matching.</p>\n<p>Nothing is wrong with the new instances; the old proof was relying on an<br>\n  elaboration-order accident. The general moral is worth flagging: when a lemma<br>\n  is generalised to a weaker class, the instance in its statement turns into a<br>\n  projection out of a metavariable, and that changes when arguments get<br>\n  elaborated — which silently changes what ends up in a rw pattern.</p>\n</blockquote>",
+        "id": 620020454,
+        "sender_full_name": "Kevin Buzzard",
+        "timestamp": 1788032867
+    }
+]

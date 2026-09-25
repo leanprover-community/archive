@@ -1,0 +1,44 @@
+[
+    {
+        "content": "<p>I was debugging startup cost in <code>leanprover-community/repl</code>, which runs one Lean process per worker and imports a large library into each, so <code>import</code> is most of what those processes do. Related, from a while back: <a href=\"#narrow/stream/270676-lean4/topic/Pre-RFC.3A.20lean.2Flake.20module.20resolution/near/390901727\">Pre-RFC: lean/lake module resolution</a> raised the same file lookups, where the cost was left as an open question.</p>\n<p>On master (<code>43cdd17</code>), <code>strace -c</code> on <code>import Lean</code> with 11 search path roots counts 164,308 syscalls, and <strong>95,000 of them are <code>statx</code> calls that fail with ENOENT</strong>. They factor exactly:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"mi\">95</span><span class=\"o\">,</span><span class=\"mi\">000</span><span class=\"w\"> </span><span class=\"bp\">=</span><span class=\"w\"> </span><span class=\"mi\">2375</span><span class=\"w\"> </span><span class=\"n\">modules</span><span class=\"w\"> </span><span class=\"bp\">×</span><span class=\"w\"> </span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"n\">lookups</span><span class=\"w\"> </span><span class=\"n\">per</span><span class=\"w\"> </span><span class=\"n\">module</span><span class=\"w\"> </span><span class=\"bp\">×</span><span class=\"w\"> </span><span class=\"mi\">10</span><span class=\"w\"> </span><span class=\"n\">roots</span><span class=\"w\"> </span><span class=\"bp\">×</span><span class=\"w\"> </span><span class=\"mi\">2</span><span class=\"w\"> </span><span class=\"n\">probes</span><span class=\"w\"> </span><span class=\"n\">per</span><span class=\"w\"> </span><span class=\"n\">root</span>\n</code></pre></div>\n<p><code>findWithExt</code> resolves a module by walking the search path looking for <code>mod.getRoot</code>, so the answer depends only on the package — but it is recomputed for every module, and all 2375 <code>Lean.*</code> modules re-walk the same 10 roots that cannot contain them. It only happens when there is no artifact table, i.e. for <code>lean file.lean</code>, <code>lake env lean</code> and the REPL, not under <code>lake build</code>.</p>\n<p>What I would like to propose is caching the resolved root per package inside <code>findOLean</code>, keyed on the search path it was resolved against, so that any update of <code>searchPathRef</code> — including the direct <code>set</code>s Lake does — invalidates it. One file, +28/-6: failed <code>statx</code> drops from 95,000 to 60 and total syscalls from 164,308 to 64,608, which is 1.04 s → 0.79 s of wall clock here.</p>\n<p>Is a PR on this welcome? Happy to sort out the details in review.</p>",
+        "id": 625878387,
+        "sender_full_name": "Casavaca",
+        "timestamp": 1790034423
+    },
+    {
+        "content": "<p>I guess this is a question for <span class=\"user-mention\" data-user-id=\"315577\">@Mac Malone</span>.</p>",
+        "id": 625894134,
+        "sender_full_name": "Kim Morrison",
+        "timestamp": 1790039919
+    },
+    {
+        "content": "<p>I would guess this is what <code>lean --setup</code> is intended to solve, which of course requires you to first create a <code>setup.json</code> from the header</p>",
+        "id": 625919804,
+        "sender_full_name": "Eric Wieser",
+        "timestamp": 1790053031
+    },
+    {
+        "content": "<p>The case I measured runs without a setup file — <code>lean file.lean</code>, <code>lake env lean</code> and the REPL. If that path can be made cheaper at no cost to the others, why not?</p>",
+        "id": 626097700,
+        "sender_full_name": "Casavaca",
+        "timestamp": 1790097249
+    },
+    {
+        "content": "<p>This is <a href=\"https://github.com/leanprover/lean4/pull/8092\">lean4#8092</a> with a different proposed solution. <code>lean --setup</code> solves this for any module outside core in <code>lake build</code> (with the artifact table you noted). Core is planned to be covered by the setup sometime in the future, but we have also looked at potentially bundling subsections of core (e.g., <code>Init</code>) into single fat oleans as well</p>\n<p>Where this is a problem ,the perferred solution is to use the setup. <code>lake lean</code> is setup alternative to <code>lake env lean</code> and <code>lean file.lean</code>. It may also be posisble to add setup support to REPL as well.</p>\n<p><span class=\"user-mention silent\" data-user-id=\"310045\">Eric Wieser</span> <a href=\"#narrow/channel/270676-lean4/topic/import.3A.20most.20of.20the.20syscalls.20are.20failed.20search.20path.20probes/near/625919804\">said</a>:</p>\n<blockquote>\n<p>which of course requires you to first create a <code>setup.json</code> from the header</p>\n</blockquote>\n<p>For any module managed by Lake, one can dump the setup JSON using <code>lake query</code> like so:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"bp\">$</span><span class=\"w\"> </span><span class=\"n\">lake</span><span class=\"w\"> </span><span class=\"n\">query</span><span class=\"w\"> </span><span class=\"bp\">+</span><span class=\"n\">Mathlib</span><span class=\"o\">:</span><span class=\"n\">setup</span><span class=\"w\"> </span><span class=\"c1\">--json</span>\n</code></pre></div>",
+        "id": 626205946,
+        "sender_full_name": "Mac Malone",
+        "timestamp": 1790135377
+    },
+    {
+        "content": "<p>Agreed that the setup is the right fix. As you said it doesn't cover core yet, and that is where all the failed lookups come from: on the REPL, <code>lake lean</code> makes exactly as many failed <code>statx</code> calls for <code>Init</code>/<code>Std</code>/<code>Lean</code> modules as <code>lake env lean</code> does.</p>\n<p>Until <code>--setup</code> supports core, would you take a small fix in the meantime? The patch only touches <code>findOLean</code> (+28/-6): it remembers each package's root and forgets it whenever the search path changes, so it is simple to review and simple to remove later.</p>",
+        "id": 626213814,
+        "sender_full_name": "Casavaca",
+        "timestamp": 1790139848
+    },
+    {
+        "content": "<p>If you open a PR, I will take a look and consider it</p>",
+        "id": 626235248,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1790148818
+    }
+]
