@@ -1,0 +1,128 @@
+[
+    {
+        "content": "<p>The current version of the <code>lift</code> tactic makes use of <code>CanLift</code> instances, in which the condition (argument <code>cond</code>) is an <code>outParam</code>. This is because when the tactic is called on <code>a : A</code> with <code>lift a to B using foo</code>, the type of <code>foo</code> is not known, or at least has metavariables (or, even worse, <code>using</code> is optional, so there is no term for which we can check the type!). Consequently, the tactic performs a type class search on the type <code>A</code> of <code>a</code>, and <code>B</code> looking for a <code>CanLift A B ?_ ?_</code> instance. Upon finding one, it infers the <code>coe</code> and <code>cond</code> fields and checks that <code>foo : cond a</code>.</p>\n<p>This is suboptimal, because it means we can only ever supply one kind of condition to lift one type to another. In certain cases, like lifting <code>ℤ</code> to <code>ℕ</code>, that's fine because there is really only one condition that makes sense: <code>0 ≤ n</code>. But for others, there may be a plethora of options. For example, when lifting <code>z : ℂ</code> to <code>ℝ</code>, possible valid conditions include <code>z.im = 0</code>, <code>star z = z</code>, <code>z = ↑z.re</code>, <code>‖z‖ = ‖z.re‖</code>, and many more besides. In the current setup, we can only ever supply a proof that <code>z.im = 0</code>. As another example, to lift a <code>LinearMap</code> to a <code>ContinuousLinearMap</code>, one may wish to supply a proof of continuity, but currently, unless the domain is finite dimensional, this fails because the <code>CanLift</code> instance assumes the space is finite dimensional and the condition is <code>cond := fun _ ↦ True</code>. The problem is exacerbated when one wants to, e.g, lift an indexed family of linear maps to an indexed family of continuous linear maps. This should be possible (since there is a <code>CanLift</code> instance for pi types), but this would again fail unless the domain of each of these in finite dimensional.</p>\n<p>I would like to overcome this problem in the following way.</p>\n<ol>\n<li>Make the <code>cond</code> field of <code>CanLift</code> a <code>semiOutParam</code> (I guess we could also make <code>coe</code> a <code>semiOutParam</code>, but that's maybe a bit more strange).</li>\n<li>When performing type class synthesis, return the <code>coe</code>rcion and an <code>Array</code> of <code>cond</code>itions.</li>\n<li>If <code>using foo</code> is supplied, check if <code>foo : cond _</code> for any <code>cond</code> in the array. If any succeeds, proceed, if not, fail.</li>\n<li>If <code>using</code> is not supplied, look for a <code>default_instance</code> of <code>CanLift A B _ ?cond</code>, and return a goal of <code>?cond _</code> as the tactic currently does. If no <code>default_instance</code> is found, complain.</li>\n</ol>\n<p>One downside: this could cause some amount of combinatorial explosion when used in conjunction with the parametric <code>CanLift</code> instances (like <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=CanLift#doc\">docs#CanLift</a>, <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Prod.instCanLift#doc\">docs#Prod.instCanLift</a>), especially if multiple instances of these are added. However, I think there is little reason to do so, and I think that in practice, the combinatorial explosion will likely not be too large. One alternative would be to have two <code>CanLift</code> classes, one of which allows the <code>cond</code> to vary and the other doesn't, which would allow you to reduce the search space. But I think this is trying to solve a problem that may not exist in practice.</p>\n<p>cc: <span class=\"user-mention\" data-user-id=\"246273\">@Bhavik Mehta</span> and <span class=\"user-mention\" data-user-id=\"110596\">@Rob Lewis</span> with whom I discussed this briefly at ICERM.</p>",
+        "id": 628506295,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1790892403
+    },
+    {
+        "content": "<p><span aria-label=\"thinking\" class=\"emoji emoji-1f914\" role=\"img\" title=\"thinking\">:thinking:</span> I think instead maybe picking the <code>cond</code> for non-using goals should be done via priority instead of <code>default_instance</code> because the latter will return <em>all</em> <code>CanLift _ _ _ _</code> which we then have to filter only to <code>CanLift A B _ _</code>.</p>",
+        "id": 628652152,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1790943843
+    },
+    {
+        "content": "<p>Your proposal of returning an array of conditions is not possible with type class search, because type class search only ever gives you one result.</p>\n<p>What I think is possible though, is:</p>\n<ol>\n<li>If the type of <code>cond</code> is fully known (doesn't contain any metavariables), then run type class search in order to find a <code>CanLift</code> instance where <code>cond</code> is exactly this value</li>\n<li>If the type of <code>cond</code> is not fully known, use the current behaviour, so infer the value of <code>cond</code> in type class search. Which one is synthesized depends on the priorities of the available instances.</li>\n</ol>\n<p>Do you think this is sufficient for what you want?</p>",
+        "id": 629110477,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1791166216
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"197836\">Jireh Loreaux</span> <a href=\"#narrow/channel/287929-mathlib4/topic/allowing.20multiple.20.60CanLift.60.20conditions.20for.20the.20.60lift.60.20tactic/near/628506295\">said</a>:</p>\n<blockquote>\n<p>This is suboptimal, because it means we can only ever supply one kind of condition to lift one type to another. In certain cases, like lifting <code>ℤ</code> to <code>ℕ</code>, that's fine because there is really only one condition that makes sense: <code>0 ≤ n</code>. But for others, there may be a plethora of options. For example, when lifting <code>z : ℂ</code> to <code>ℝ</code>, possible valid conditions include <code>z.im = 0</code>, <code>star z = z</code>, <code>z = ↑z.re</code>, <code>‖z‖ = ‖z.re‖</code>, and many more besides. In the current setup, we can only ever supply a proof that <code>z.im = 0</code>.</p>\n</blockquote>\n<p>In examples like this, should we add a new predicate <code>Complex.isReal</code> that has a whole lot of different constructors, like <code>Complex.isReal.of_im_eq_zero</code> and <code>.of_star_eq_self</code> etc...<br>\nWe could then possibly tag those constructors with some attribute, and the <code>CanLift</code> tactic could try those constructors against <code>foo</code> (if there is a <code>using foo</code> clause) or against local hyps.</p>",
+        "id": 629128366,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1791175987
+    },
+    {
+        "content": "<p>I think <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=IsSelfAdjoint#doc\">docs#IsSelfAdjoint</a> is that predicate</p>",
+        "id": 629129195,
+        "sender_full_name": "Snir Broshi",
+        "timestamp": 1791176408
+    },
+    {
+        "content": "<p>I'm thinking more of the general pattern, together with the attribute system. Maybe I should have made that more clear.</p>",
+        "id": 629134388,
+        "sender_full_name": "Johan Commelin",
+        "timestamp": 1791178912
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"479299\">@Jovan Gerbscheid</span> it's not terribly hard to handroll this. I talked about it with <span class=\"user-mention silent\" data-user-id=\"548935\">Thomas Murrills</span> on Friday, and, because there are not very many parametric <code>CanLift</code> instances, you don't return a ridiculous number of results. Essentially, you can use <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Lean.Elab.SynthInstance.getInstance#doc\">docs#Lean.Elab.SynthInstance.getInstance</a> to find the top-level instances that apply, and then synthesize the instance arguments of those, using the standard method for most, but recursively calling this function when the argument is another <code>CanLift</code> instance.</p>",
+        "id": 629140625,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1791181675
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"112680\">@Johan Commelin</span> yes, I also considered the bespoke predicate design, but I hoped to avoid it if possible. It would be pretty annoying to have a <code>LinearMap.IsContinuous</code> predicate just for the purposes of <code>lift</code>.</p>",
+        "id": 629141323,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1791181897
+    },
+    {
+        "content": "<p>But <code>Continuous</code> is already this predicate?</p>",
+        "id": 629141520,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1791181945
+    },
+    {
+        "content": "<p>I find it weird to complexify the <code>lift</code> tactic to avoid using a lemma translating to the normal form of a condition</p>",
+        "id": 629141692,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1791181999
+    },
+    {
+        "content": "<p>The whole point of the current <code>CanLift</code> instance for linear maps is that you don't have to think about it, the lift just works automatically without supplying any proof. I think that's great, but if we make <code>Continuous</code> the only option, then we have to supply the proof again.</p>",
+        "id": 629145223,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1791183292
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"197836\">Jireh Loreaux</span> <a href=\"#narrow/channel/287929-mathlib4/topic/allowing.20multiple.20.60CanLift.60.20conditions.20for.20the.20.60lift.60.20tactic/near/629145223\">said</a>:</p>\n<blockquote>\n<p>the lift just works automatically without supplying any proof</p>\n</blockquote>\n<p>Sorry, I do not know what you are talking about here. Can you expand?</p>",
+        "id": 629159767,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1791187082
+    },
+    {
+        "content": "<p>Ah sorry, that is what you mean by<br>\n<span class=\"user-mention silent\" data-user-id=\"197836\">Jireh Loreaux</span> <a href=\"#narrow/channel/287929-mathlib4/topic/allowing.20multiple.20.60CanLift.60.20conditions.20for.20the.20.60lift.60.20tactic/near/628506295\">said</a>:</p>\n<blockquote>\n<p>As another example, to lift a <code>LinearMap</code> to a <code>ContinuousLinearMap</code>, one may wish to supply a proof of continuity, but currently, unless the domain is finite dimensional, this fails because the <code>CanLift</code> instance assumes the space is finite dimensional and the condition is <code>cond := fun _ ↦ True</code>.</p>\n</blockquote>",
+        "id": 629159961,
+        "sender_full_name": "Yaël Dillies",
+        "timestamp": 1791187125
+    },
+    {
+        "content": "<p>Can you instead make it that the <code>CanLift</code> condition is <code>Continuous</code> and that there is an autoparam in the <code>CanLift</code> instance with a tactic that would solve the goal automatically in the interesting cases?</p>",
+        "id": 629160905,
+        "sender_full_name": "Sébastien Gouëzel",
+        "timestamp": 1791187279
+    },
+    {
+        "content": "<p>That doesn't work out of the box (I just tried it), but I assume with a little bit of metaprogramming it should be possible</p>",
+        "id": 629161339,
+        "sender_full_name": "Moritz Doll",
+        "timestamp": 1791187384
+    },
+    {
+        "content": "<p>Okay, I will make a different attempt here and report back with an alternative suggestion.</p>",
+        "id": 629233431,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1791205078
+    },
+    {
+        "content": "<p>So, I've thought about this a bit more and I want to highlight something that maybe wasn't clear in what I was saying above. Before we begin, note that we should have the following instance (mainly for use with the existing <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=Prod.instCantLift#doc\">docs#Prod.instCantLift</a>), regardless of our other decisions:</p>\n<div class=\"codehilite\" data-code-language=\"Lean4\"><pre><span></span><code><span class=\"sd\">/-- Useful in conjunction with `Prod.instCanLift` to lift only one element in a pair. -/</span>\n<span class=\"kn\">instance</span><span class=\"w\"> </span><span class=\"n\">instCanLiftId</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"kt\">Sort</span><span class=\"bp\">*</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">:</span><span class=\"w\"> </span><span class=\"n\">CanLift</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"n\">α</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"w\"> </span><span class=\"bp\">↦</span><span class=\"w\"> </span><span class=\"n\">x</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"o\">(</span><span class=\"k\">fun</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"bp\">↦</span><span class=\"w\"> </span><span class=\"n\">True</span><span class=\"o\">)</span><span class=\"w\"> </span><span class=\"kn\">where</span>\n<span class=\"w\">  </span><span class=\"n\">prf</span><span class=\"w\"> </span><span class=\"n\">a</span><span class=\"w\"> </span><span class=\"bp\">_</span><span class=\"w\"> </span><span class=\"o\">:=</span><span class=\"w\"> </span><span class=\"bp\">⟨</span><span class=\"n\">a</span><span class=\"o\">,</span><span class=\"w\"> </span><span class=\"n\">rfl</span><span class=\"bp\">⟩</span>\n</code></pre></div>\n<p>A key advantage of the typeclass based approach is that, by doing the recursion, you can get all the possible conditions, and potentially return them to the user to select from with a <code>lift? a to B</code> variant which outputs something like <code>lift a to B using (?_ : condition chosen by user)</code>. I think that this is not so easy to do in general if you use the single predicate approach in the presence of parametric <code>CanLift</code> instances (i.e., those that take a <code>CanLift</code> instance as an argument). The issue is that the prediate for lifting <code>α × β</code> to <code>γ × δ</code> is just <a href=\"https://leanprover-community.github.io/mathlib4_docs/find/?pattern=And#doc\">docs#And</a>. So to lift <code>ℕ × ℂ</code> to <code>ℕ × ℝ</code>, the predicate would be <code>fun x ↦ True ∧ Complex.IsReal x.2</code>. But if we want to split that <code>Complex.IsReal</code> into a bunch of options using various <code>@[lift]</code> tagged lemmas, then we need to somehow deconstruct this predicate, remembering which pieces of it came from <code>CanLift</code> conditions, and finding all the options associated to those. This seems very hard to me unless we create a bespoke predicate for <em>every</em> kind of lift (in which case we could perform the deconstruction on the head symbol), but this would mean adding synonyms for <code>Continuous</code> and for <code>And</code> et cetera.</p>",
+        "id": 629346168,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1791228688
+    },
+    {
+        "content": "<p>We could create a simp set that is used to preprocess the goal, including the lemmas <code>true_and</code> and <code>and_true</code>?</p>",
+        "id": 629348056,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1791229280
+    },
+    {
+        "content": "<p>Maybe the example was too simple. That's not the problem. The problem is that you need to, based <em>solely</em> on the structure of the resulting predicate (because this is the only information you have after typeclass search succeeds), determine which pieces of it come from <code>CanLift</code> predicates so that you can enumerate all the options.</p>",
+        "id": 629348366,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1791229382
+    },
+    {
+        "content": "<p>Let's take the example of lifting <code>ι → E →ₗ[𝕜] F</code> to <code>ι → E →L[𝕜] F</code>. If we want maximal usability in the outParam approach, we need the lifting condition for linear maps to be <code>Continuous</code>, which would make the lifting condition for this parametric lift <code>fun f ↦ ∀ i, Continuous (f i)</code>. From that predicate, how do we know to tell the user that (at least when <code>E</code> is finite dimensional) an alternate option is <code>∀ i, True</code>?</p>",
+        "id": 629349634,
+        "sender_full_name": "Jireh Loreaux",
+        "timestamp": 1791229801
+    },
+    {
+        "content": "<p>We could add to our simp set the lemma that linear maps are continuous under some type class assumption?</p>",
+        "id": 629356916,
+        "sender_full_name": "Jovan Gerbscheid",
+        "timestamp": 1791231938
+    }
+]

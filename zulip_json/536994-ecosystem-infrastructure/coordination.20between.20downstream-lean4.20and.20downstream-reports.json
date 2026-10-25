@@ -1,0 +1,98 @@
+[
+    {
+        "content": "<p>TL;DR: I would appreciate if breakage due to Mathlib is fixed in the CSLib repo in PRs opened by <code>downstream-reports</code>, not in <code>dowsnstream-lean4</code>. </p>\n<p>The problem here is the timing between these two processes causing duplicate work. Here's an example:</p>\n<ul>\n<li>In <a href=\"https://github.com/leanprover/downstream-lean4/pull/123\">downstream-lean4#123</a> breakage from Mathlib is fixed</li>\n<li>The same problem still needs to be addressed in <a href=\"https://github.com/leanprover/cslib/pull/1059\">cslib#1059</a></li>\n</ul>\n<p>It is much nicer if this is done in the reverse order, as fixes in CSLib's <code>main</code> will automatically be pulled in to  <code>downstream-lean4</code>. I'd prefer to do this consistently so I don't have to think about these accidentally conflicting, needing to check which repo merged a fix first, and just generally to have a separation between core Lean and Mathlib adaptations.</p>\n<p>(You could imagine additional coordination if there were more projects making use of both tools, but this seems overkill when it's just one repo. So not asking for any infrastructure changes, just that I'm able to merge things in the order that makes things easier)</p>",
+        "id": 629046578,
+        "sender_full_name": "Chris Henson",
+        "timestamp": 1791129460
+    },
+    {
+        "content": "<p>Ah, there may be a misunderstanding of intentions here: PRs such as <a href=\"https://github.com/leanprover-community/downstream-lean4/pull/123\">downstream-lean4#123</a> are not intended to ever make it upstream as we already know upstream will have to figure out a <em>correct</em> fix before that which will then silently replace the local fix so they are merely intended to keep the repo green and are reviewed as such. Now if you say these are in fact helpful for figuring out a fix that is good for CSLib as well, I'm happy to discuss how we could do that</p>",
+        "id": 629052166,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1791132906
+    },
+    {
+        "content": "<p>Hmm right, conflicts are later resolved in favor of what is later taken from our <code>main</code> branch. I suppose if I keep this in mind it is fine to completely ignore <em>how</em> <code>downstream-lean4</code> makes such a fix, as it will later take the correct fix from <code>main</code>. (Though there is some care to be taken with timing around a toolchain bump PR...). In practice some of these are very simple changes like imports that I can just take from the <code>downstream-lean4</code> commit, but I'll just do so manually for now.</p>\n<p>It is just a smidgen more confusing, especially when it opens PRs like <a href=\"https://github.com/leanprover/cslib/pull/1058\">cslib#1058</a> that fail because they also move the Mathlib dependency forward. Previously this was gated on a successfully building commit on our nightly testing branch, so this was not really possible. These are all simple to address on our side, I just find myself moving my mental record of what Mathlib commit we're at back and forth more often now.</p>",
+        "id": 629053929,
+        "sender_full_name": "Chris Henson",
+        "timestamp": 1791134091
+    },
+    {
+        "content": "<p>In general here's my mental model of downstream-lean4 (repeating a bit what Sebastian is saying):</p>\n<blockquote>\n<p><code>downstream-lean4</code> is a service meant for <code>lean4</code> developers: its purpose is to give the Lean core developers an 'existence proof', as in \"there exist a set of changes that make this lean4 PR okay for downstreams\". Because these proofs are constructive (abusing the analogy), they can actually serve as the \"actual\" fixes, and the system is 'nice enough' to maintain the bump branch with the accumulated changes , but in a way this is just  a side effect (in fact, I think this only happens for mathlib and cslib?)</p>\n</blockquote>\n<p>In contrast, <code>downstream-reports</code> is a service meant for the downstreams of Mathlib: we don't have automated fixes today, but if we did, the point would be to make any changes directly ingestible in the bump PR. In general the whole point of this service is to facilitate bump PRs and identifying breaking changes, but it is done from the perspective of 'the downstream'.</p>\n<p>(This mental model comes from my latest conversations with <span class=\"user-mention\" data-user-id=\"421885\">@Joscha Mennicken</span>  when we discussed how these two systems could / should interact; I'm happy to revise it.)</p>",
+        "id": 629298699,
+        "sender_full_name": "Marcelo Lynch",
+        "timestamp": 1791217148
+    },
+    {
+        "content": "<p>That sounds right, yeah. Also keep in mind that <code>downstream-lean4</code> is \"latest versions of all subrepos + <em>nightly toolchain</em>\". It includes fixes for mathlib bumps, but may also include other kinds of fixes for the new toolchains, and so it's not trivial to extract \"mathlib bump fixes for <code>main</code>\".</p>",
+        "id": 629310654,
+        "sender_full_name": "Joscha Mennicken",
+        "timestamp": 1791220131
+    },
+    {
+        "content": "<p>Once mathlib and its dependencies are also using downstream-lean4, it may make sense to follow a \"snapshot model\" where downstream-lean4 waits until all relevant repos are green, and then opens all export PRs in one go. This way, the export PRs should be consistent without the kinds of race conditions that break some of the current cslib bump PRs due to mathlib bumps.</p>",
+        "id": 629311688,
+        "sender_full_name": "Joscha Mennicken",
+        "timestamp": 1791220379
+    },
+    {
+        "content": "<p><span class=\"user-mention\" data-user-id=\"439514\">@Marcelo Lynch</span>  I understand, this seems completely reasonable. I think some small tweaks in timing and communication then would better encapsulate this being a tool for <code>lean4</code> developers:</p>\n<ul>\n<li>Currently because <code>downstream-lean4</code> will (almost?) always run before <code>downstream-reports</code>, the result is consistently opening broken adaptation PRs when a dependency adaptation is required. If this timing is slightly adjusted (e.g. for CSLib don't try to open an adaptation that moves the Mathlib revision forward) then I can much more easily treat the initial fix in <code>downstream-lean4</code> as an implementation detail to ignore. I very much understand that it is not possible/practical to separate out changes from nightly Mathlib from the rest of the nightly toolchain. I am not asking for this. Under the previous system we only moved between the dated nightly tags that Mathlib produced, and I would first merge the <code>downstream-reports</code> PRs, which would ensure the adaptation PRs would be left with only changes caused by core. Something analogous is required for the adaptation PRs to be usable further downstream than Mathlib.</li>\n<li>I think the perspective of viewing the adaptation PRs as a \"side effect\" requires a touch more consideration, because this is replacing a system where this was not the case. This is more a communication requirement than needing any sort of technical change. The previous system for Mathlib and CSLib was designed so that individual maintainers pushed these commits, with an implicit responsibility to make the change \"good enough\" to be appropriate for the library, so the final PRs moving these accumulated changes into the repo were pretty lightly reviewed. With this changing, and there being an AI component in the middle of this, I think it should be clear to maintainers that the timing for review scrutiny is shifted a bit. If I should treat <code>downstream-lean4</code> as essentially an implementation detail for core, then I should also much more closely review the toolchain bump PRs into our <code>main</code> branch.</li>\n</ul>",
+        "id": 629314680,
+        "sender_full_name": "Chris Henson",
+        "timestamp": 1791221252
+    },
+    {
+        "content": "<p>(And to be clear I'm still very happy that this work is happening, just trying to give detailed feedback! In practice there have not been any big issues other than me being a bit confused by the order of PRs and notifications.)</p>",
+        "id": 629315603,
+        "sender_full_name": "Chris Henson",
+        "timestamp": 1791221500
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"687698\">Chris Henson</span> <a href=\"#narrow/channel/536994-ecosystem-infrastructure/topic/coordination.20between.20downstream-lean4.20and.20downstream-reports/near/629314680\">said</a>:</p>\n<blockquote>\n<p>then I should also much more closely review the toolchain bump PRs into our <code>main</code> branch</p>\n</blockquote>\n<p>The point of the bump branch is that all the review is happening in the PRs <em>to</em> the bump branch, so that the toolchain bump into the <code>main</code> branch can stay as unreviewed as possible since it just uses the already-reviewed bump branch. This may not be as important for cslib (a leaf node in the dependency graph for now, as far as lean4 releases are concerned, so nothing else directly depends on the bump branch being merged) as it is for mathlib (where the toolchain bump PRs are usually unreviewed beyond \"is CI green\").</p>",
+        "id": 629318190,
+        "sender_full_name": "Joscha Mennicken",
+        "timestamp": 1791222103
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"687698\">Chris Henson</span> <a href=\"#narrow/channel/536994-ecosystem-infrastructure/topic/coordination.20between.20downstream-lean4.20and.20downstream-reports/near/629315603\">said</a>:</p>\n<blockquote>\n<p>(And to be clear I'm still very happy that this work is happening, just trying to give detailed feedback! In practice there have not been any big issues other than me being a bit confused by the order of PRs and notifications.)</p>\n</blockquote>\n<p>Of course; to be fully clear myself, my 'mental model' described with the 'harsh' boundary of 'this is an unsupported side effect' is just the way I try to frame it to understand the general philosophy of the system, and indeed to try to identify these gaps that you are reporting and where 'official support' for them belong. Of course  we should be trying to make these as useful as possible even if they are not 'meant' for it.</p>",
+        "id": 629318559,
+        "sender_full_name": "Marcelo Lynch",
+        "timestamp": 1791222195
+    },
+    {
+        "content": "<blockquote>\n<p>being an AI component in the middle of this</p>\n</blockquote>\n<p>By the way I'm learning of this now -- are there auto-adaptations happening or something like that?</p>",
+        "id": 629319290,
+        "sender_full_name": "Marcelo Lynch",
+        "timestamp": 1791222376
+    },
+    {
+        "content": "<p>Yes, there is a bot in the downstream-lean4 repo that regularly tries to fix breakages and opens these PRs: <a href=\"https://github.com/leanprover/downstream-lean4/pulls?q=is%3Apr+author%3Adownstream-lean4%5Bbot%5D+-label%3Aadaptation\">https://github.com/leanprover/downstream-lean4/pulls?q=is%3Apr+author%3Adownstream-lean4%5Bbot%5D+-label%3Aadaptation</a></p>",
+        "id": 629319601,
+        "sender_full_name": "Joscha Mennicken",
+        "timestamp": 1791222450
+    },
+    {
+        "content": "<p>They are still being merged by humans (but with relatively light review depending on the kind of fix or subrepo, I believe)</p>",
+        "id": 629319987,
+        "sender_full_name": "Joscha Mennicken",
+        "timestamp": 1791222527
+    },
+    {
+        "content": "<p>As perhaps a great case study, <a href=\"https://github.com/leanprover/downstream-lean4/pull/134\">https://github.com/leanprover/downstream-lean4/pull/134</a> just came in with a rather sizeable Mathlib-&gt;CSLib adaptation where I <em>don't</em> directly feel comfortable merging it trusting an upstream fix to cleanly replace it afterwards</p>",
+        "id": 629461115,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1791274265
+    },
+    {
+        "content": "<p>Yes, a good example where the refactor is not trivial. The corresponding <code>downstream-reports</code> PR is <a href=\"https://github.com/leanprover/cslib/pull/1079\">cslib#1079</a> with some discussion. Keeping in mind the perspective of this primarily being a tool for <code>lean4</code> I am fine with whatever is easiest for <code>downstream-lean4</code>, as this is library breakage you probably don't care about from the core perspective. The human involved could choose to leave it alone and know a fix will come from <code>cslib</code> in a couple of days (probably what I would do?), or choose to merge and deal with potential merging issues later.</p>",
+        "id": 629472437,
+        "sender_full_name": "Chris Henson",
+        "timestamp": 1791276863
+    },
+    {
+        "content": "<p><span class=\"user-mention silent\" data-user-id=\"687698\">Chris Henson</span> <a href=\"#narrow/channel/536994-ecosystem-infrastructure/topic/coordination.20between.20downstream-lean4.20and.20downstream-reports/near/629472437\">said</a>:</p>\n<blockquote>\n<p>The human involved could choose to leave it alone and know a fix will come from <code>cslib</code> in a couple of days</p>\n</blockquote>\n<p>agreed</p>",
+        "id": 629474120,
+        "sender_full_name": "Sebastian Ullrich",
+        "timestamp": 1791277197
+    }
+]
